@@ -1,6 +1,6 @@
 use super::*;
 use crate::update_announcements::{
-    register_update_provider, secure_update_ref, trusted_update_publisher, websocket_seed_urls,
+    secure_update_ref, trusted_update_publisher, websocket_seed_urls,
 };
 use fips_core::config::{
     BleConfig, NostrDiscoveryPolicy, PeerConfig, TransportInstances, UdpConfig, WebSocketConfig,
@@ -34,6 +34,20 @@ fn configured_direct_peer_ids(peers: &[PeerConfig]) -> std::collections::BTreeSe
 }
 
 impl AppCore {
+    #[cfg(test)]
+    pub(super) fn reconcile_update_mesh_for_test(
+        &mut self,
+        same_host: bool,
+        rendezvous: SocketAddrV4,
+    ) {
+        self.reconcile_shared_fips(SharedFipsOptions {
+            same_host_hashtree: same_host,
+            rendezvous_addr: Some(rendezvous),
+            websocket: Some(WebSocketConfig::default()),
+            ..SharedFipsOptions::default()
+        });
+    }
+
     pub(in crate::core) fn reconcile_device_sync(&mut self) {
         if self.apply_current_device_labels_to_local_app_keys(false) {
             self.persist_best_effort();
@@ -185,6 +199,7 @@ impl AppCore {
     }
 
     fn reconcile_shared_fips(&mut self, options: SharedFipsOptions) {
+        self.reconcile_update_sources();
         let host_ble_requested = self.pending_host_ble.is_some() || self.host_ble_attached;
         let (mut config, device_sync_enabled) = match self.device_sync_config() {
             Some(config) => {
@@ -575,25 +590,7 @@ impl AppCore {
                 None
             }
         };
-        let update_provider: Option<Arc<dyn nostr_pubsub::NostrEventSubscriber>> =
-            match &update_pubsub {
-                Some(client) => Some(Arc::new(client.fresh_subscriber())),
-                None => config.relay_client.clone().and_then(|client| {
-                    self.runtime
-                        .block_on(RelayEventBus::with_client(
-                            client,
-                            config.relay_urls.clone(),
-                            Duration::from_secs(8),
-                        ))
-                        .ok()
-                        .map(|provider| {
-                            Arc::new(provider) as Arc<dyn nostr_pubsub::NostrEventSubscriber>
-                        })
-                }),
-            };
-        if let Some(provider) = &update_provider {
-            register_update_provider(provider);
-        }
+        self.register_update_sources(update_pubsub.as_ref());
         #[cfg(feature = "stack-fixture")]
         if let (Some(pubsub), Some(logged_in)) = (&update_pubsub, &self.logged_in) {
             crate::stack_mesh_fixture::register(
@@ -707,7 +704,6 @@ impl AppCore {
             _attachment_blobs: attachment_store,
             pubsub: update_pubsub,
             protocol_subscriptions: super::super::mesh_pubsub::MeshProtocolSubscriptions::default(),
-            _update_provider: update_provider,
             recent_peers,
             tasks,
         });
@@ -738,6 +734,7 @@ impl AppCore {
     fn take_device_sync_shutdown(
         &mut self,
     ) -> Option<impl std::future::Future<Output = ()> + Send + 'static> {
+        self.register_update_sources(None);
         self.restore_device_history_progress();
         self.interrupt_direct_files();
         self.host_ble_attached = false;
@@ -782,7 +779,6 @@ impl AppCore {
             roster_at: 0,
             secret_hex: logged_in.device_keys.secret_key().to_secret_hex(),
             relay_urls: Vec::new(),
-            relay_client: None,
             siblings: Vec::new(),
             peers: Vec::new(),
             nearby_ip_enabled: false,
@@ -847,7 +843,6 @@ impl AppCore {
             roster_at,
             secret_hex: logged_in.device_keys.secret_key().to_secret_hex(),
             relay_urls,
-            relay_client: (!logged_in.relay_urls.is_empty()).then(|| logged_in.client.clone()),
             siblings,
             peers,
             nearby_ip_enabled,

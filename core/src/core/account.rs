@@ -529,6 +529,7 @@ impl AppCore {
         );
         self.stop_pending_linked_device();
         self.stop_device_sync();
+        self.clear_update_sources();
         self.state.device_history_sync = None;
         self.private_contacts.reset();
         self.reset_pending_invite_acceptance();

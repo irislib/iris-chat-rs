@@ -1,14 +1,20 @@
-//! Update discovery shares the application's pubsub transport. Standalone
-//! update commands bootstrap FIPS without a login or VPN tunnel.
+//! Update discovery shares the application's peer and message-server transports.
+//! Standalone commands use the same configured servers without a login or VPN.
+
+mod sources;
+pub use sources::AvailableUpdateResolver;
+#[cfg(test)]
+mod shared_tests;
 
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::time::Duration;
 
 use fips_core::config::{TransportInstances, WebSocketConfig};
+use hashtree_blossom::{BlossomClient, BlossomStore};
+use hashtree_core::{HashTree, HashTreeConfig};
 use hashtree_updater::{
-    build_secure_pubsub_blossom_updater, NostrEventSubscriber, SecurePubsubBlossomConfig,
-    SecurePubsubBlossomUpdater, UpdateCheck, UpdateCheckOptions, UpdateError, UpdateEventCache,
-    UpdateRef, UpdateTarget,
+    HashtreeUpdater, NostrEventSubscriber, SecurePubsubBlossomConfig, UpdateCheck,
+    UpdateCheckOptions, UpdateError, UpdateEventCache, UpdateRef, UpdateTarget,
 };
 use nostr::{Keys, ToBech32};
 use nostr_pubsub_fips::{FipsPubsubClient, FipsPubsubClientOptions};
@@ -21,13 +27,46 @@ const DEFAULT_BLOSSOM_READ_SERVERS: &[&str] = &[
     "https://blossom.primal.net",
 ];
 const UPDATE_MANIFEST_TIMEOUT: Duration = Duration::from_secs(8);
-static UPDATE_PROVIDER: OnceLock<Mutex<Option<Weak<dyn NostrEventSubscriber>>>> = OnceLock::new();
+type UpdateProvider = Arc<dyn NostrEventSubscriber>;
+pub type SecureUpdateUpdater = HashtreeUpdater<AvailableUpdateResolver, BlossomStore>;
+struct RegisteredUpdateProviders {
+    providers: Vec<Weak<dyn NostrEventSubscriber>>,
+    relay_urls: Vec<String>,
+}
+static UPDATE_PROVIDERS: OnceLock<Mutex<Option<RegisteredUpdateProviders>>> = OnceLock::new();
 static UPDATE_EVENTS: OnceLock<Mutex<Option<(UpdateRef, UpdateEventCache)>>> = OnceLock::new();
 
-pub(crate) fn register_update_provider(provider: &Arc<dyn NostrEventSubscriber>) {
-    if let Ok(mut registered) = UPDATE_PROVIDER.get_or_init(|| Mutex::new(None)).lock() {
-        *registered = Some(Arc::downgrade(provider));
+pub(crate) fn register_update_providers(providers: &[UpdateProvider], relay_urls: Vec<String>) {
+    if let Ok(mut registered) = UPDATE_PROVIDERS.get_or_init(|| Mutex::new(None)).lock() {
+        *registered = Some(RegisteredUpdateProviders {
+            providers: providers.iter().map(Arc::downgrade).collect(),
+            relay_urls,
+        });
     }
+}
+
+pub(crate) async fn shared_update_providers(
+    peer: Option<UpdateProvider>,
+    client: Option<nostr_sdk::Client>,
+    relay_urls: Vec<String>,
+) -> (Vec<UpdateProvider>, Option<String>) {
+    let mut providers: Vec<_> = peer.into_iter().collect();
+    let mut error = None;
+    if let Some(client) = client {
+        if !relay_urls.is_empty() {
+            match nostr_pubsub_relay::RelayEventBus::with_client(
+                client,
+                relay_urls,
+                UPDATE_MANIFEST_TIMEOUT,
+            )
+            .await
+            {
+                Ok(provider) => providers.push(Arc::new(provider)),
+                Err(failure) => error = Some(failure.to_string()),
+            }
+        }
+    }
+    (providers, error)
 }
 
 pub fn secure_update_ref() -> Result<UpdateRef, UpdateError> {
@@ -51,25 +90,31 @@ fn secure_update_config() -> SecurePubsubBlossomConfig {
     }
 }
 
-pub async fn build_secure_update_updater(
-) -> Result<(UpdateRef, SecurePubsubBlossomUpdater), UpdateError> {
+pub async fn build_secure_update_updater() -> Result<(UpdateRef, SecureUpdateUpdater), UpdateError>
+{
     let reference = secure_update_ref()?;
-    let shared = UPDATE_PROVIDER
+    let (shared, configured_servers) = UPDATE_PROVIDERS
         .get_or_init(|| Mutex::new(None))
         .lock()
         .map_err(|_| UpdateError::Announcement("update provider lock poisoned".into()))?
         .as_ref()
-        .and_then(Weak::upgrade);
-    let provider = match shared {
-        Some(provider) => provider,
-        None => tokio::time::timeout(
-            Duration::from_secs(4),
-            standalone_update_provider(&reference),
-        )
-        .await
-        .map_err(|_| UpdateError::Announcement("timed out starting update pubsub".into()))??,
+        .map(|registered| {
+            (
+                registered
+                    .providers
+                    .iter()
+                    .filter_map(Weak::upgrade)
+                    .collect::<Vec<_>>(),
+                Some(registered.relay_urls.clone()),
+            )
+        })
+        .unwrap_or_default();
+    let providers = if shared.is_empty() {
+        standalone_update_providers(&reference, configured_servers).await?
+    } else {
+        shared
     };
-    let updater = build_secure_pubsub_blossom_updater(provider, secure_update_config()).await?;
+    let updater = build_update_updater(providers, secure_update_config())?;
     let events = UPDATE_EVENTS
         .get_or_init(|| Mutex::new(None))
         .lock()
@@ -84,11 +129,23 @@ pub async fn build_secure_update_updater(
     Ok((reference, updater))
 }
 
+fn build_update_updater(
+    providers: Vec<UpdateProvider>,
+    config: SecurePubsubBlossomConfig,
+) -> Result<SecureUpdateUpdater, UpdateError> {
+    let resolver = AvailableUpdateResolver::new(providers, config.manifest_timeout)?;
+    let blossom = BlossomClient::new_empty(Keys::generate())
+        .with_read_servers(config.blossom_read_servers)
+        .with_timeout(config.download_timeout);
+    let tree = HashTree::new(HashTreeConfig::new(Arc::new(BlossomStore::new(blossom))).public());
+    Ok(HashtreeUpdater::new(resolver, tree))
+}
+
 /// Keep the observed signed root between checks, without treating it as fresh.
 pub async fn check_secure_update(
     current_version: String,
     target: UpdateTarget,
-) -> Result<(SecurePubsubBlossomUpdater, UpdateCheck), UpdateError> {
+) -> Result<(SecureUpdateUpdater, UpdateCheck), UpdateError> {
     let (reference, updater) = build_secure_update_updater().await?;
     let result = updater
         .check(UpdateCheckOptions {
@@ -162,16 +219,67 @@ fn update_pubsub_options(reference: &UpdateRef) -> Result<FipsPubsubClientOption
     })
 }
 
+async fn standalone_update_providers(
+    reference: &UpdateRef,
+    configured_servers: Option<Vec<String>>,
+) -> Result<Vec<UpdateProvider>, UpdateError> {
+    // Retain the user's server choices after shared transports stop, including
+    // an empty list. Only standalone processes use defaults or CLI overrides.
+    let overridden = configured_servers
+        .is_none()
+        .then(|| env_csv("IRIS_UPDATE_RELAYS"))
+        .flatten();
+    let relay_only = overridden.as_ref().is_some_and(|relays| !relays.is_empty());
+    let relays = configured_servers
+        .or(overridden)
+        .unwrap_or_else(crate::core::configured_relays);
+    let peers = async {
+        if relay_only {
+            return Ok(None);
+        }
+        tokio::time::timeout(
+            Duration::from_secs(4),
+            standalone_update_provider(reference),
+        )
+        .await
+        .map_err(|_| UpdateError::Announcement("timed out starting update peers".into()))?
+        .map(Some)
+    };
+    let servers = async {
+        if relays.is_empty() {
+            return Ok(None);
+        }
+        tokio::time::timeout(
+            Duration::from_secs(4),
+            nostr_pubsub_relay::RelayEventBus::new(relays, UPDATE_MANIFEST_TIMEOUT),
+        )
+        .await
+        .map_err(|_| UpdateError::Announcement("timed out starting update message servers".into()))?
+        .map(|provider| Some(Arc::new(provider) as UpdateProvider))
+        .map_err(|error| UpdateError::Announcement(error.to_string()))
+    };
+    let (peers, servers) = tokio::join!(peers, servers);
+    let mut providers = Vec::new();
+    let mut failures = Vec::new();
+    match peers {
+        Ok(Some(provider)) => providers.push(provider),
+        Ok(None) => {}
+        Err(error) => failures.push(error.to_string()),
+    }
+    match servers {
+        Ok(Some(provider)) => providers.push(provider),
+        Ok(None) => {}
+        Err(error) => failures.push(error.to_string()),
+    }
+    if providers.is_empty() {
+        return Err(UpdateError::Announcement(failures.join("; ")));
+    }
+    Ok(providers)
+}
+
 async fn standalone_update_provider(
     reference: &UpdateRef,
 ) -> Result<Arc<dyn NostrEventSubscriber>, UpdateError> {
-    // Relays are an explicit standalone override; no private updater relay list.
-    if let Some(relays) = env_csv("IRIS_UPDATE_RELAYS").filter(|relays| !relays.is_empty()) {
-        return nostr_pubsub_relay::RelayEventBus::new(relays, UPDATE_MANIFEST_TIMEOUT)
-            .await
-            .map(|provider| Arc::new(provider) as Arc<dyn NostrEventSubscriber>)
-            .map_err(|error| UpdateError::Announcement(error.to_string()));
-    }
     let mut config = fips_core::Config::new();
     config.node.control.enabled = false;
     config.node.discovery.nostr.enabled = false;
@@ -239,6 +347,7 @@ fn env_csv(name: &str) -> Option<Vec<String>> {
 mod tests {
     use super::*;
     use hashtree_resolver::{nostr::HASHTREE_KIND, RootResolver};
+    use hashtree_updater::build_secure_pubsub_blossom_updater;
     use nostr::{EventBuilder, Kind, Tag, TagKind};
     use nostr_pubsub::{EventBus, EventSource, InMemoryEventBus, VerifiedEvent};
 
@@ -433,8 +542,10 @@ mod tests {
             .unwrap();
         let provider = Arc::new(InMemoryEventBus::new());
         let shared: Arc<dyn NostrEventSubscriber> = provider.clone();
-        register_update_provider(&shared);
-        let (_, updater) = build_secure_update_updater().await.unwrap();
+        // Registered app-provider wiring is covered in an isolated child by
+        // shared_tests. Keep this live-delivery test independent of AppCore
+        // instances that replace the process registration in parallel tests.
+        let updater = build_update_updater(vec![shared], secure_update_config()).unwrap();
         let key = reference.resolver_key();
         let (resolved, _) = tokio::join!(updater.resolver().resolve(&key), async {
             provider

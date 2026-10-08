@@ -140,6 +140,7 @@ impl AppCore {
             relay_connected_count: 0,
             all_relays_offline_since_secs: None,
             device_sync: None,
+            update_sources: UpdateSources::new(state.preferences.nostr_relay_urls.clone()),
             fips_traffic_history: Default::default(),
             calls: calls::CallRuntime::default(),
             pending_host_ble: None,
@@ -431,6 +432,7 @@ impl AppCore {
         self.push_debug_log("app.shutdown", "stopping core");
         self.pause_pending_linked_device();
         self.stop_device_sync();
+        self.clear_update_sources();
         self.reset_pending_invite_acceptance();
         self.device_invite_poll_token = self.device_invite_poll_token.saturating_add(1);
         self.protocol_reconnect_token = self.protocol_reconnect_token.saturating_add(1);

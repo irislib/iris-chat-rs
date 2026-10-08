@@ -2,6 +2,23 @@
 
 Each release has channel-specific notes. The release tag must match the `##` heading exactly.
 
+## v2026.10.8.3
+
+### GitHub
+
+- Find signed updates through either connected peers or the app's message servers. An unavailable source no longer prevents another source from finding the update.
+- Keep signature, fresh-observation, and rollback checks intact across sources. Use the same message-server defaults for standalone update checks.
+- Show concise update errors on Mac and clear previously saved technical error dumps. Keep full diagnostics in support logs and preserve an already verified update after a failed refresh.
+
+### Apple
+
+- Find updates even when a peer connection is unavailable.
+- Show clearer update errors and keep verified updates available after a failed check.
+
+### Zapstore
+
+- Improve signed update discovery when a network source is unavailable.
+
 ## v2026.10.8.2
 
 ### GitHub

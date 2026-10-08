@@ -676,6 +676,7 @@ pub struct AppCore {
     relay_connected_count: u64,
     all_relays_offline_since_secs: Option<u64>,
     device_sync: Option<DeviceSyncRuntime>,
+    update_sources: UpdateSources,
     fips_traffic_history: Arc<tokio::sync::Mutex<support::TrafficHistory>>,
     calls: calls::CallRuntime,
     pending_host_ble: Option<HostBleAttachment>,

@@ -194,12 +194,6 @@ root stops publication; verify and capture the current root again before retryin
 ```bash
 ./scripts/distribute hashtree --tag v2026.7.28 --check
 ./scripts/distribute hashtree --tag v2026.7.28
-
-./scripts/distribute homebrew --tag v2026.7.28 --check
-./scripts/distribute homebrew --tag v2026.7.28
-
-./scripts/distribute zapstore --tag v2026.7.28 --check
-./scripts/distribute zapstore --tag v2026.7.28
 ```
 
 Hashtree distribution also publishes the same desktop/CLI bytes through Haps,
@@ -224,6 +218,51 @@ data directory and the shipped update settings. Both CLI and native-app checks
 must resolve the requested tag through signed discovery. An HTTP gateway
 readback alone cannot pass promotion. Generated update metadata is tested
 against the app's actual updater library, including same-day revision tags.
+
+After Hashtree publication, the isolated Linux check below is also required
+before continuing to Homebrew or Zapstore or calling the release complete.
+A fresh data directory on the publisher's computer can still discover its
+same-host provider through loopback, so the native check does not establish
+remote-client discovery.
+
+Use the exact attested Linux x64 CLI archive from the immutable GitHub Release,
+extracted without installing or rebuilding it. Docker must support Linux x64
+containers, including emulation on ARM hosts:
+
+```bash
+release_tag=v2026.7.28
+release_check="work/updater-check-${release_tag}"
+mkdir -p "$release_check"
+gh release download "$release_tag" --repo irislib/iris-chat-rs \
+  --pattern "iris-${release_tag}-x86_64-unknown-linux-gnu.tar.gz" --dir "$release_check"
+archive="$release_check/iris-${release_tag}-x86_64-unknown-linux-gnu.tar.gz"
+gh attestation verify "$archive" --repo irislib/iris-chat-rs --source-ref "refs/tags/$release_tag"
+gh release verify-asset "$release_tag" "$archive" --repo irislib/iris-chat-rs
+tar -xzf "$archive" -C "$release_check"
+python3 scripts/check-release-updater.py --isolated-linux \
+  --cli "$release_check/iris/iris" --tag "$release_tag" \
+  --receipt "$release_check/updater-proof.json"
+```
+
+This runs CLI and app checks in separate read-only Ubuntu containers with
+fresh bridge network namespaces and temporary profiles. It mounts only the
+executable and a CA bundle, uses shipped discovery settings, and requires a
+verified result for the exact tag in both modes. A signed result through any
+healthy configured message server is sufficient; another server being
+unavailable does not invalidate that result. No discovery overrides, host
+network, account data, or publisher configuration are passed to the checks.
+If the host has no standard CA bundle, pass `--ca-file /path/to/ca.pem`.
+Preserve the JSON receipt with the release evidence. A failing isolated check
+blocks completion even when the native check succeeds.
+
+After the isolated check passes, publish the remaining local channels:
+
+```bash
+./scripts/distribute homebrew --tag "$release_tag" --check
+./scripts/distribute homebrew --tag "$release_tag"
+./scripts/distribute zapstore --tag "$release_tag" --check
+./scripts/distribute zapstore --tag "$release_tag"
+```
 
 ## 4. Publish to Apple
 
@@ -267,7 +306,9 @@ App Store Connect. Retrying does not rebuild or upload a duplicate build.
   **Immutable**.
 - Hashtree: the distributor refreshes the gateway's cached root and verifies
   the public `release.json` tag and commit against the GitHub manifest before
-  reporting success. A failed readback can be retried with the same tag.
+  reporting success. The attested Linux x64 CLI must also pass the isolated
+  default-settings CLI/app check above. A failed readback can be retried with
+  the same tag.
 - Homebrew: update the tap and run `brew info iris`; its formula URL must
   contain the immutable release tag.
 - Zapstore: confirm the version and publisher in Zapstore.

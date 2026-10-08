@@ -2,7 +2,6 @@ use super::*;
 use fips_core::{FipsEndpoint, PeerIdentity as FipsPeerIdentity};
 use nostr_double_ratchet::{GroupProtocol, GroupStrategy};
 use nostr_pubsub_fips::{FipsPubsubClient, FipsPubsubClientOptions};
-use nostr_pubsub_relay::RelayEventBus;
 use tokio::task::JoinHandle;
 
 use anti_entropy::metadata_page_packets;
@@ -20,6 +19,8 @@ mod records;
 use records::{DeviceSyncRecord, RecordLocator, RecordScope};
 mod runtime;
 mod settings;
+mod update_sources;
+pub(super) use update_sources::UpdateSources;
 mod snapshot;
 #[cfg(test)]
 mod test_support;
@@ -37,7 +38,6 @@ struct DeviceSyncConfig {
     roster_at: u64,
     secret_hex: String,
     relay_urls: Vec<String>,
-    relay_client: Option<Client>,
     siblings: Vec<FipsPeerIdentity>,
     peers: Vec<FipsPeerIdentity>,
     nearby_ip_enabled: bool,
@@ -59,7 +59,6 @@ pub(super) struct DeviceSyncRuntime {
     _attachment_blobs: Option<Arc<super::attachment_upload::AttachmentBlobRuntime>>,
     pub(super) pubsub: Option<Arc<FipsPubsubClient>>,
     pub(super) protocol_subscriptions: super::mesh_pubsub::MeshProtocolSubscriptions,
-    _update_provider: Option<Arc<dyn nostr_pubsub::NostrEventSubscriber>>,
     recent_peers: Option<Arc<RwLock<DeviceSyncRecentPeers>>>,
     tasks: Vec<JoinHandle<()>>,
 }

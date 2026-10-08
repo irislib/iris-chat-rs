@@ -260,7 +260,9 @@ class IOSExcludedManifestTests(unittest.TestCase):
     def test_policy_only_disables_ios_for_its_explicit_tag(self) -> None:
         for tag, platform, expected in [(IOS_EXCLUDED_TAG, "ios", "false"),
                                        (IOS_EXCLUDED_TAG, "macos", "true"),
-                                       (TAG, "ios", "true"), ("v2026.10.8.3", "ios", "true")]:
+                                       (TAG, "ios", "true"), ("v2026.10.8.3", "ios", "false"),
+                                       ("v2026.10.8.3", "macos", "true"),
+                                       ("v2026.10.7", "ios", "true")]:
             with self.subTest(tag=tag, platform=platform):
                 result = self.command("platform-enabled", "--tag", tag, "--platform", platform)
                 self.assertEqual(result.returncode, 0, result.stderr)

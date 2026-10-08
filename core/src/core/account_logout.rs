@@ -12,6 +12,7 @@ impl AppCore {
         let previous_rev = self.state.rev;
         self.stop_pending_linked_device();
         self.stop_device_sync();
+        self.clear_update_sources();
         self.reset_pending_invite_acceptance();
         self.private_chat_invites.clear();
         self.pending_private_invite_responses.clear();

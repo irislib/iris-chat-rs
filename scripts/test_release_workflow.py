@@ -42,7 +42,8 @@ class ReleaseWorkflowTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             for index, (ref, expected) in enumerate([
                 ("v2026.10.8.2", "false"), ("refs/tags/v2026.10.8.2", "false"),
-                ("v2026.10.8.3", "true"), ("main", "true"),
+                ("v2026.10.8.3", "false"), ("refs/tags/v2026.10.8.3", "false"),
+                ("v2026.10.7", "true"), ("main", "true"),
             ]):
                 with self.subTest(ref=ref):
                     output = Path(directory) / str(index)

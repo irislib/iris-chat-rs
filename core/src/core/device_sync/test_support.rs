@@ -41,7 +41,6 @@ impl AppCore {
             _attachment_blobs: None,
             pubsub: None,
             protocol_subscriptions: crate::core::mesh_pubsub::MeshProtocolSubscriptions::default(),
-            _update_provider: None,
             recent_peers: None,
             tasks: Vec::new(),
         });

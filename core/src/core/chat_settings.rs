@@ -546,6 +546,7 @@ impl AppCore {
             false
         };
 
+        self.reconcile_update_sources();
         self.state.preferences = self.preferences.clone();
         if let Some(network_status) = self.state.network_status.as_mut() {
             network_status.relay_urls = self.preferences.nostr_relay_urls.clone();
