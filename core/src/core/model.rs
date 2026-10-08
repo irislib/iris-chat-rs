@@ -293,7 +293,7 @@ pub(super) struct ProtocolSubscriptionRuntime {
     pub(super) protocol_fetch_last_started_at: Option<Instant>,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Debug, Default)]
 pub(super) struct RelayTransportRuntime {
     pub(super) connect_in_flight: bool,
     pub(super) connect_dirty: bool,
@@ -305,12 +305,27 @@ pub(super) struct RelayTransportRuntime {
     pub(super) publish_drain_token: u64,
     pub(super) publish_drain_started_at: Option<Instant>,
     pub(super) publish_drain_failed_count: usize,
+    pub(super) publish_drain_task: Option<RelayPublishDrainTask>,
     pub(super) nearby_replay_started_at: Option<Instant>,
     pub(super) retry_backoff_attempt: u32,
     pub(super) next_retry_due_at: Option<Instant>,
     pub(super) next_retry_reason: Option<String>,
     pub(super) last_connect_reason: Option<String>,
     pub(super) last_drain_reason: Option<String>,
+}
+
+#[derive(Debug)]
+pub(super) struct RelayPublishDrainTask {
+    pub(super) abort: tokio::task::AbortHandle,
+    pub(super) cancelled: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl Drop for RelayPublishDrainTask {
+    fn drop(&mut self) {
+        self.cancelled
+            .store(true, std::sync::atomic::Ordering::Release);
+        self.abort.abort();
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

@@ -91,8 +91,9 @@ impl PrivateBlockPolicy {
         for (index, (_, event, state)) in events.iter().enumerate() {
             if state.blocked {
                 let since = state.blocked_since.unwrap_or(event.created_at.as_secs());
-                let until = events[index + 1..]
+                let until = events
                     .iter()
+                    .skip(index + 1)
                     .find(|(_, _, next)| !next.blocked)
                     .map(|(_, event, _)| event.created_at.as_secs().max(since.saturating_add(1)));
                 self.intervals.push((since, until));
@@ -197,6 +198,9 @@ impl AppCore {
         let Some(state) = policy.head().and_then(block_event_state) else {
             return false;
         };
+        let Ok(target_key) = PublicKey::from_hex(&state.target) else {
+            return false;
+        };
         let deleted_at = policy
             .events
             .values()
@@ -204,16 +208,49 @@ impl AppCore {
             .map(|state| state.deleted_at)
             .max()
             .unwrap_or(0);
-        if deleted_at > 0
+        // A historical open block can precede its unblock during startup or
+        // catch-up. Hold newer work until the final state is known, and retire
+        // only signed deletions plus intervals that are already closed.
+        let retirement_cutoff = policy
+            .intervals
+            .iter()
+            .filter_map(|(_, until)| *until)
+            .map(|until| until.saturating_sub(1))
+            .max()
+            .unwrap_or(0)
+            .max(deleted_at);
+        let changed = self.is_owner_blocked(&state.target) != state.blocked;
+        if state.blocked && !self.is_owner_blocked(&state.target) {
+            // Fail closed while cancelling, including a storage failure below.
+            self.preferences
+                .blocked_owner_pubkeys
+                .push(state.target.clone());
+        }
+        if let Some(engine) = self.protocol_engine.as_mut() {
+            engine.hold_pending_direct_sends(target_key, true);
+        }
+        if retirement_cutoff > 0
+            && !self.cancel_direct_sends_for_block(&state.target, Some(retirement_cutoff))
+        {
+            if !self.is_owner_blocked(&state.target) {
+                self.preferences
+                    .blocked_owner_pubkeys
+                    .push(state.target.clone());
+            }
+            return false;
+        }
+        if retirement_cutoff > 0
             && self
                 .chat_deletions
                 .get(&state.target)
-                .is_none_or(|old| *old < deleted_at)
-            && !self.apply_chat_deletion(&state.target, deleted_at)
+                .is_none_or(|old| *old < retirement_cutoff)
+            && !self.apply_chat_deletion(&state.target, retirement_cutoff)
         {
             return false;
         }
-        let changed = self.is_owner_blocked(&state.target) != state.blocked;
+        if let Some(engine) = self.protocol_engine.as_mut() {
+            engine.hold_pending_direct_sends(target_key, state.blocked);
+        }
         self.preferences
             .blocked_owner_pubkeys
             .retain(|key| key != &state.target);

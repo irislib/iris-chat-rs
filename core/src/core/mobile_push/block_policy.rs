@@ -11,9 +11,6 @@ pub(super) fn suppresses(conn: &rusqlite::Connection, author: &str, created: Opt
         if blocked {
             return Ok(true);
         }
-        let Some(created) = created else {
-            return Ok(false);
-        };
         let owner: Option<String> = conn
             .query_row(
                 "SELECT value FROM app_meta WHERE key='account_owner_pubkey_hex'",
@@ -25,7 +22,10 @@ pub(super) fn suppresses(conn: &rusqlite::Connection, author: &str, created: Opt
             return Ok(false);
         };
         let intervals = super::super::storage::blocked_message_intervals(conn, &owner)?;
-        Ok(conn.query_row("SELECT EXISTS(SELECT 1 FROM json_each(?1) WHERE json_extract(value,'$.author')=?2 AND ?3>=json_extract(value,'$.since') AND (json_extract(value,'$.until') IS NULL OR ?3<json_extract(value,'$.until')))",rusqlite::params![intervals,author,created],|row|row.get(0))?)
+        // The signed policy and intervals commit before preferences. An open
+        // interval therefore also proves a current block during that crash
+        // window, even for a newly delivered old or missing message timestamp.
+        Ok(conn.query_row("SELECT EXISTS(SELECT 1 FROM json_each(?1) WHERE json_extract(value,'$.author')=?2 AND (json_extract(value,'$.until') IS NULL OR (?3>=json_extract(value,'$.since') AND ?3<json_extract(value,'$.until'))))",rusqlite::params![intervals,author,created],|row|row.get(0))?)
     };
     check().unwrap_or(true)
 }

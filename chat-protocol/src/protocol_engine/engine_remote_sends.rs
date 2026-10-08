@@ -135,7 +135,8 @@ impl ProtocolEngine {
             let mut effects = Vec::new();
             let mut processed = 0usize;
             for mut pending in std::mem::take(&mut engine.pending_remote_sends) {
-                if pending.next_retry_at_secs > now.get()
+                if engine.held_direct_chats.contains(&pending.chat_id)
+                    || pending.next_retry_at_secs > now.get()
                     || processed >= PENDING_GROUP_FANOUT_RETRY_BATCH_SIZE
                 {
                     engine.pending_remote_sends.push(pending);

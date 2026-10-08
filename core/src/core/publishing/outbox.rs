@@ -1,12 +1,13 @@
 use super::*;
 
 impl AppCore {
-    pub(super) fn remember_pending_relay_publish(
+    pub(super) fn remember_pending_relay_publish_with_authored_at(
         &mut self,
         event: &Event,
         label: &str,
         chat_id: Option<String>,
         inner_event_id: Option<String>,
+        authored_at_secs: Option<u64>,
     ) -> Option<PendingPublishChange> {
         let logged_in = self.logged_in.as_ref()?;
         let owner_pubkey_hex = logged_in.owner_pubkey.to_hex();
@@ -40,7 +41,7 @@ impl AppCore {
                 .inner_event_id
                 .or_else(|| existing.inner_event_id.clone());
             pending.chat_id = pending.chat_id.or_else(|| existing.chat_id.clone());
-            if &pending == existing {
+            if &pending == existing && authored_at_secs.is_none() {
                 return Some(PendingPublishChange::Existing);
             }
         }
@@ -58,7 +59,10 @@ impl AppCore {
         if !self.prune_or_skip_superseded_local_invite_publish(&pending, event) {
             return None;
         }
-        if let Err(error) = self.app_store.upsert_pending_relay_publish(&pending) {
+        if let Err(error) = self
+            .app_store
+            .upsert_pending_relay_publish_with_authored_at(&pending, authored_at_secs)
+        {
             self.push_debug_log("publish.runtime.queue", format!("store_failed={error}"));
             return None;
         }

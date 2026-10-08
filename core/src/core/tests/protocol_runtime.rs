@@ -585,11 +585,13 @@ fn first_contact_publishes_bootstrap_and_payload_durably() {
         .expect("payload event");
     let payload_id = payload.id.to_string();
     let bootstrap_publish = ProtocolPublish {
+        authored_at_secs: None,
         event: bootstrap,
         chat_id: chat_id.clone(),
         inner_event_id: None,
     };
     let payload_publish = ProtocolPublish {
+        authored_at_secs: None,
         event: payload,
         chat_id: chat_id.clone(),
         inner_event_id: Some(message_id.clone()),
@@ -1008,6 +1010,7 @@ fn protocol_invite_response_publish_prunes_superseded_pending_bootstrap() {
     let newer_id = newer.id.to_string();
 
     assert!(core.publish_protocol_event(ProtocolPublish {
+        authored_at_secs: None,
         event: older,
         chat_id: chat_id.clone(),
         inner_event_id: None,
@@ -1015,6 +1018,7 @@ fn protocol_invite_response_publish_prunes_superseded_pending_bootstrap() {
     assert!(core.pending_relay_publishes.contains_key(&older_id));
 
     assert!(core.publish_protocol_event(ProtocolPublish {
+        authored_at_secs: None,
         event: newer,
         chat_id,
         inner_event_id: None,
@@ -1138,6 +1142,7 @@ fn protocol_control_publish_prunes_superseded_rows_already_in_storage() {
     }
 
     assert!(core.publish_protocol_event(ProtocolPublish {
+        authored_at_secs: None,
         event: newest,
         chat_id: chat_id.clone(),
         inner_event_id: None,
@@ -1194,6 +1199,7 @@ fn older_protocol_control_publish_is_skipped_when_newer_row_is_already_stored() 
         .expect("store pending publish");
 
     assert!(!core.publish_protocol_event(ProtocolPublish {
+        authored_at_secs: None,
         event: older,
         chat_id: chat_id.clone(),
         inner_event_id: None,
@@ -1441,11 +1447,13 @@ fn distinct_protocol_publishes_for_same_target_are_kept() {
     let second_event_id = second.id.to_string();
 
     assert!(core.publish_protocol_event(ProtocolPublish {
+        authored_at_secs: None,
         event: first,
         chat_id: chat_id.clone(),
         inner_event_id: Some(message_id.clone()),
     }));
     assert!(core.publish_protocol_event(ProtocolPublish {
+        authored_at_secs: None,
         event: second,
         chat_id: chat_id.clone(),
         inner_event_id: Some(message_id),

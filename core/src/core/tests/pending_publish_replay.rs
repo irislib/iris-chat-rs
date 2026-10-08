@@ -18,6 +18,7 @@ fn pending_publish_replays_do_not_rewrite_offline_outbox() {
     let effects = (0..32)
         .map(|index| {
             ProtocolEffect::Publish(ProtocolPublish {
+                authored_at_secs: None,
                 event: EventBuilder::new(
                     Kind::from(MESSAGE_EVENT_KIND as u16),
                     format!("pending control {index} {}", "x".repeat(4096)),
@@ -100,6 +101,7 @@ fn pending_publish_replay_preserves_attempts_and_enriches_metadata() {
         DeliveryState::Queued,
     );
     assert!(core.publish_protocol_event(ProtocolPublish {
+        authored_at_secs: None,
         event: event.clone(),
         chat_id: chat.clone(),
         inner_event_id: Some("inner".into()),

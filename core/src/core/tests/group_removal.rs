@@ -154,6 +154,7 @@ fn group_removal_discards_durable_message_outbox_but_keeps_membership_controls()
             .sign_with_keys(&device)
             .unwrap();
         assert!(core.publish_protocol_event(ProtocolPublish {
+            authored_at_secs: None,
             event,
             chat_id: chat_id.clone(),
             inner_event_id: message_id
@@ -175,6 +176,7 @@ fn group_removal_discards_durable_message_outbox_but_keeps_membership_controls()
         .sign_with_keys(&device)
         .unwrap();
     assert!(!core.publish_protocol_event(ProtocolPublish {
+        authored_at_secs: None,
         event,
         chat_id,
         inner_event_id: Some("late-message".into())

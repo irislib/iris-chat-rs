@@ -69,6 +69,8 @@ enum ProtocolAppKeysEvidence {
 
 #[derive(Clone, Debug)]
 pub struct ProtocolPublish {
+    /// Original plaintext timestamp, preserved when sealing happens on a later retry.
+    pub authored_at_secs: Option<u64>,
     pub event: Event,
     pub chat_id: String,
     pub inner_event_id: Option<String>,
@@ -398,6 +400,7 @@ pub struct ProtocolEngine {
     pending_inbound: Vec<ProtocolPendingInbound>,
     pending_group_fanouts: Vec<ProtocolPendingGroupFanout>,
     pending_local_sibling_sends: Vec<ProtocolPendingLocalSiblingSend>,
+    held_direct_chats: BTreeSet<String>,
     pending_remote_sends: Vec<ProtocolPendingRemoteSend>,
     pending_group_pairwise_payloads: Vec<ProtocolPendingGroupPairwisePayload>,
     pending_group_sender_key_messages: PendingGroupMessages,

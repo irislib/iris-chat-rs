@@ -1,6 +1,8 @@
 use super::*;
 use crate::core::protocol::PROTOCOL_RECONNECT_CHECK_SECS;
 
+mod cancellation;
+mod carrier_cancellation;
 mod nearby;
 mod outbox;
 
@@ -33,16 +35,22 @@ impl AppCore {
         let (inner_event_id, chat_id) = completion
             .map(|(inner_event_id, chat_id)| (Some(inner_event_id), Some(chat_id)))
             .unwrap_or((None, None));
-        self.publish_runtime_event_with_metadata(event, label, chat_id, inner_event_id)
+        self.publish_runtime_event_with_metadata(event, label, chat_id, inner_event_id, None)
     }
 
     pub(super) fn publish_protocol_event(&mut self, publish: ProtocolPublish) -> bool {
+        // Retry batches may already contain sealed events when a block arrives.
+        // Guard before call push as well as before the durable/network outboxes.
+        if self.blocked_direct_publication(&publish.chat_id) {
+            return false;
+        }
         self.publish_call_push_for_protocol(&publish);
         self.publish_runtime_event_with_metadata(
             publish.event,
             APPCORE_PROTOCOL_LABEL,
             Some(publish.chat_id),
             publish.inner_event_id,
+            publish.authored_at_secs,
         )
     }
 
@@ -126,7 +134,14 @@ impl AppCore {
         label: &'static str,
         chat_id: Option<String>,
         inner_event_id: Option<String>,
+        authored_at_secs: Option<u64>,
     ) -> bool {
+        if chat_id
+            .as_deref()
+            .is_some_and(|id| self.blocked_direct_publication(id))
+        {
+            return false;
+        }
         if private_contacts::obsolete_private_contact_event(&event)
             || private_device_labels::obsolete_private_app_keys_event(&event)
         {
@@ -148,7 +163,13 @@ impl AppCore {
         }
         self.remember_event(event.id.to_string());
         let event_id = event.id.to_string();
-        match self.remember_pending_relay_publish(&event, label, chat_id, inner_event_id) {
+        match self.remember_pending_relay_publish_with_authored_at(
+            &event,
+            label,
+            chat_id,
+            inner_event_id,
+            authored_at_secs,
+        ) {
             None => return false,
             Some(PendingPublishChange::Existing) => {
                 // Retrying the protocol is not another network attempt. Existing
@@ -215,11 +236,7 @@ impl AppCore {
                 .is_some_and(|started_at| started_at.elapsed() >= PENDING_RELAY_DRAIN_STALE_AFTER)
         {
             let inflight = self.pending_relay_publish_inflight.len();
-            self.pending_relay_publish_inflight.clear();
-            self.relay_transport_runtime.publish_drain_in_flight = false;
-            self.relay_transport_runtime.publish_drain_dirty = false;
-            self.relay_transport_runtime.publish_drain_started_at = None;
-            self.relay_transport_runtime.publish_drain_failed_count = 0;
+            self.cancel_relay_publish_drain();
             self.push_debug_log(
                 "relay.transport.drain",
                 format!("reason={reason} reset_stale_in_flight={inflight}"),
@@ -321,17 +338,26 @@ impl AppCore {
                 },
             )));
         });
-        self.runtime.spawn(async move {
+        let cancelled = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let worker_cancelled = cancelled.clone();
+        let worker = self.runtime.spawn(async move {
             let mut queued = candidates.into_iter();
             let mut join_set = tokio::task::JoinSet::new();
             loop {
+                if worker_cancelled.load(std::sync::atomic::Ordering::Acquire) {
+                    break;
+                }
                 while join_set.len() < PENDING_RELAY_DRAIN_CONCURRENCY {
                     let Some((pending, event)) = queued.next() else {
                         break;
                     };
                     let relay_urls = relay_urls.clone();
                     let client = client.clone();
+                    let cancelled = worker_cancelled.clone();
                     join_set.spawn(async move {
+                        if cancelled.load(std::sync::atomic::Ordering::Acquire) {
+                            return None;
+                        }
                         let event_id = pending.event_id.clone();
                         let label = pending.label.clone();
                         let result = tokio::time::timeout(
@@ -371,18 +397,18 @@ impl AppCore {
                                 )
                             }
                         };
-                        RelayPublishDrainResult {
+                        Some(RelayPublishDrainResult {
                             event_id,
                             success,
                             relay_urls: accepted_relays,
                             detail,
-                        }
+                        })
                     });
                 }
                 if join_set.is_empty() {
                     break;
                 }
-                if let Some(Ok(result)) = join_set.join_next().await {
+                if let Some(Ok(Some(result))) = join_set.join_next().await {
                     let _ = tx.send(CoreMsg::Internal(Box::new(
                         InternalEvent::RelayPublishDrainProgress { token, result },
                     )));
@@ -394,6 +420,10 @@ impl AppCore {
                     results: Vec::new(),
                 },
             )));
+        });
+        self.relay_transport_runtime.publish_drain_task = Some(RelayPublishDrainTask {
+            abort: worker.abort_handle(),
+            cancelled,
         });
     }
 
@@ -408,6 +438,13 @@ impl AppCore {
         let mut selected = Vec::with_capacity(batch_size);
         let mut eligible_count = 0usize;
         for pending in self.pending_relay_publishes.values() {
+            if pending
+                .chat_id
+                .as_deref()
+                .is_some_and(|chat| self.blocked_direct_publication(chat))
+            {
+                continue;
+            }
             if self
                 .pending_relay_publish_inflight
                 .contains(&pending.event_id)
@@ -562,6 +599,7 @@ impl AppCore {
         if token != self.relay_transport_runtime.publish_drain_token {
             return;
         }
+        self.relay_transport_runtime.publish_drain_task.take();
         self.relay_transport_runtime.publish_drain_in_flight = false;
         self.relay_transport_runtime.publish_drain_started_at = None;
         let drain_dirty = self.relay_transport_runtime.publish_drain_dirty;
@@ -663,6 +701,11 @@ impl AppCore {
         self.pending_relay_publish_inflight.remove(&event_id);
         self.push_debug_log("publish.runtime", detail.clone());
         let pending = self.pending_relay_publishes.get(&event_id).cloned();
+        // A cancelled worker may have queued its final acknowledgement already.
+        // It must not trigger call wakeups or recreate delivery state.
+        if pending.is_none() {
+            return false;
+        }
         let message_ref = pending
             .as_ref()
             .and_then(|pending| Some((pending.chat_id.clone()?, pending.inner_event_id.clone()?)));

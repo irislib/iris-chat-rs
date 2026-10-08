@@ -164,6 +164,16 @@ impl AppStore {
         &self,
         pending: &PendingRelayPublish,
     ) -> anyhow::Result<()> {
+        self.upsert_pending_relay_publish_with_authored_at(pending, None)
+    }
+
+    pub(crate) fn upsert_pending_relay_publish_with_authored_at(
+        &self,
+        pending: &PendingRelayPublish,
+        authored_at_secs: Option<u64>,
+    ) -> anyhow::Result<()> {
+        // Cached handshake responses can serve multiple sends. Keep the latest
+        // dependent plaintext timestamp so a newer retained send keeps its bootstrap.
         let conn = self
             .conn
             .lock()
@@ -171,9 +181,9 @@ impl AppStore {
         conn.execute(
             "INSERT INTO pending_relay_publishes(
                 event_id, owner_pubkey_hex, label, event_json, inner_event_id,
-                chat_id, created_at_secs, attempt_count, last_error
+                chat_id, created_at_secs, attempt_count, last_error, authored_at_secs
              )
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
              ON CONFLICT(event_id) DO UPDATE SET
                 owner_pubkey_hex = excluded.owner_pubkey_hex,
                 label = excluded.label,
@@ -182,7 +192,8 @@ impl AppStore {
                 chat_id = COALESCE(excluded.chat_id, pending_relay_publishes.chat_id),
                 created_at_secs = excluded.created_at_secs,
                 attempt_count = excluded.attempt_count,
-                last_error = excluded.last_error",
+                last_error = excluded.last_error,
+                authored_at_secs = COALESCE(MAX(pending_relay_publishes.authored_at_secs, excluded.authored_at_secs), pending_relay_publishes.authored_at_secs, excluded.authored_at_secs)",
             params![
                 &pending.event_id,
                 &pending.owner_pubkey_hex,
@@ -193,6 +204,7 @@ impl AppStore {
                 pending.created_at_secs as i64,
                 pending.attempt_count as i64,
                 &pending.last_error,
+                authored_at_secs.map(|at| at.min(i64::MAX as u64) as i64),
             ],
         )?;
         Ok(())

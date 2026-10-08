@@ -5,10 +5,12 @@ fn protocol_effects_from_prepared(
     chat_id: String,
     event_ids: &mut Vec<String>,
 ) -> anyhow::Result<Vec<ProtocolEffect>> {
+    let authored_at_secs = protocol_payload_authored_at(&prepared.payload);
     let mut publishes = Vec::new();
     for response in &prepared.invite_responses {
         let event = engine.cached_invite_response_with_owner_proof(response)?;
         publishes.push(ProtocolPublish {
+            authored_at_secs,
             event,
             chat_id: chat_id.clone(),
             inner_event_id: None,
@@ -18,6 +20,7 @@ fn protocol_effects_from_prepared(
         let event = message_event_for_delivery(delivery)?;
         event_ids.push(event.id.to_string());
         let publish = ProtocolPublish {
+            authored_at_secs,
             event,
             chat_id: chat_id.clone(),
             inner_event_id: inner_event_id.clone(),
@@ -38,6 +41,7 @@ fn protocol_effects_from_group_prepared_publish(
     for response in &prepared.invite_responses {
         let event = engine.cached_invite_response_with_owner_proof(response)?;
         publishes.push(ProtocolPublish {
+            authored_at_secs: None,
             event,
             chat_id: chat_id.clone(),
             inner_event_id: None,
@@ -47,6 +51,7 @@ fn protocol_effects_from_group_prepared_publish(
         let event = message_event_for_delivery(delivery)?;
         event_ids.push(event.id.to_string());
         let publish = ProtocolPublish {
+            authored_at_secs: None,
             event,
             chat_id: chat_id.clone(),
             inner_event_id: inner_event_id.clone(),
@@ -57,6 +62,7 @@ fn protocol_effects_from_group_prepared_publish(
         let event = group_sender_key_message_event(sender_key_message)?;
         event_ids.push(event.id.to_string());
         publishes.push(ProtocolPublish {
+            authored_at_secs: None,
             event,
             chat_id: chat_id.clone(),
             inner_event_id: inner_event_id.clone(),
@@ -123,7 +129,9 @@ pub fn resolve_invite_owner(
         anyhow::bail!("invite owner hint disagrees with invite payload");
     }
 
-    Ok(owner_pubkey_hint.or(embedded_owner).unwrap_or(inviter_device))
+    Ok(owner_pubkey_hint
+        .or(embedded_owner)
+        .unwrap_or(inviter_device))
 }
 
 fn app_keys_device_pubkeys(app_keys: &AppKeys) -> BTreeSet<PublicKey> {
@@ -368,4 +376,14 @@ fn current_unix_millis() -> u64 {
         .as_millis()
         .try_into()
         .unwrap_or(u64::MAX)
+}
+
+fn protocol_payload_authored_at(payload: &[u8]) -> Option<u64> {
+    let decoded = decode_local_sibling_payload(payload);
+    let payload = decoded
+        .as_ref()
+        .map_or(payload, |(_, _, inner)| inner.as_slice());
+    serde_json::from_slice::<UnsignedEvent>(payload)
+        .ok()
+        .map(|event| event.created_at.as_secs())
 }

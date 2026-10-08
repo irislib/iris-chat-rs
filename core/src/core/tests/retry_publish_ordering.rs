@@ -28,6 +28,7 @@ fn retry_batch_publish_registration_blocks_delivery_until_relay_success() {
         "test_retry_publish_ordering",
         ProtocolRetryBatch {
             effects: vec![ProtocolEffect::Publish(ProtocolPublish {
+                authored_at_secs: None,
                 event,
                 chat_id: chat_id.clone(),
                 inner_event_id: Some(message_id.clone()),

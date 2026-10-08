@@ -2,6 +2,7 @@ use super::*;
 
 impl AppCore {
     pub(super) fn clear_chats_and_deletions(&mut self) {
+        self.cancel_all_publication_tasks();
         self.threads.clear();
         self.chat_deletions.clear();
         self.chat_read_states.clear();

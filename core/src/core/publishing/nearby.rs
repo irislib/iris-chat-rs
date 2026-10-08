@@ -27,6 +27,12 @@ impl AppCore {
             .pending_relay_publishes
             .values()
             .rev()
+            .filter(|pending| {
+                !pending
+                    .chat_id
+                    .as_deref()
+                    .is_some_and(|chat| self.blocked_direct_publication(chat))
+            })
             .take(64)
             .filter_map(|pending| serde_json::from_str::<Event>(&pending.event_json).ok())
             .collect::<Vec<_>>();

@@ -500,7 +500,7 @@ fn decrypted_mobile_push_resolution(
     }
     let created = serde_json::from_str::<serde_json::Value>(&inner_json)
         .ok()
-        .and_then(|value| value["created_at"].as_u64());
+        .and_then(|value| value.get("created_at").and_then(serde_json::Value::as_u64));
     if block_policy::suppresses_in_data_dir(data_dir, &sender_owner.to_hex(), created) {
         return suppressed_resolution();
     }

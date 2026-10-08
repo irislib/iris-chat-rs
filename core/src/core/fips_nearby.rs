@@ -329,6 +329,7 @@ impl AppCore {
         }
         let outbox = runtime.nearby_outbox.clone();
         let event_id = event.id.to_string();
+        let cancelled = self.publication_task_token(&event_id);
         let local_hex = self
             .logged_in
             .as_ref()
@@ -342,6 +343,9 @@ impl AppCore {
             .filter_map(|device| fips_peer_from_hex(&device.identity_pubkey_hex))
             .collect::<Vec<_>>();
         self.runtime.spawn(async move {
+            if cancelled.load(std::sync::atomic::Ordering::Acquire) {
+                return;
+            }
             let mut targets = configured
                 .into_iter()
                 .map(|peer| (peer.npub(), peer))
@@ -354,6 +358,9 @@ impl AppCore {
                 }
             }
             for (npub, target) in targets {
+                if cancelled.load(std::sync::atomic::Ordering::Acquire) {
+                    break;
+                }
                 if outbox
                     .read()
                     .map(|queue| queue.acknowledged_by(&npub, &event_id))

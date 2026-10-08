@@ -85,6 +85,12 @@ impl AppCore {
         message: &ChatMessageSnapshot,
         reason: &'static str,
     ) -> DirectTextDrainResult {
+        if self.blocked_direct_publication(chat_id) {
+            return DirectTextDrainResult {
+                changed: false,
+                blocked: false,
+            };
+        }
         let readiness = self
             .protocol_engine
             .as_ref()

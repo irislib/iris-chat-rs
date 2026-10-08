@@ -633,6 +633,11 @@ pub(super) fn ensure_schema(conn: &mut Connection) -> anyhow::Result<()> {
     if !column_exists(&tx, "preferences", "hide_blocked_group_messages")? {
         tx.execute_batch("ALTER TABLE preferences ADD COLUMN hide_blocked_group_messages INTEGER NOT NULL DEFAULT 0;")?;
     }
+    if !column_exists(&tx, "pending_relay_publishes", "authored_at_secs")? {
+        tx.execute_batch(
+            "ALTER TABLE pending_relay_publishes ADD COLUMN authored_at_secs INTEGER;",
+        )?;
+    }
     // Target lookups span old device identities after account restoration.
     // Index the guarded JSON fields so history exports never scan every control
     // for each message; unrelated/non-JSON app metadata remains valid.

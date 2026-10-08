@@ -169,8 +169,12 @@ impl AppCore {
         let Ok(event) = VerifiedEvent::try_from(event.clone()) else {
             return;
         };
+        let cancelled = self.publication_task_token(&event.as_event().id.to_hex());
         self.runtime.spawn(async move {
             let _permit = permit;
+            if cancelled.load(std::sync::atomic::Ordering::Acquire) {
+                return;
+            }
             let result = tokio::time::timeout(
                 Duration::from_secs(2),
                 client.publish(event, EventSource::local_index("iris-chat")),
@@ -261,6 +265,7 @@ impl AppCore {
             .collect::<Vec<_>>();
         mesh.protocol_subscriptions.outbox_cursor = batch.last().map(|(id, _)| id.clone());
         for (_, pending) in batch {
+            if pending.chat_id.as_deref().is_some_and(|chat| self.blocked_direct_publication(chat)) { continue; }
             // Existing authenticated receipts stop mesh retries; relay persistence is separate.
             if self.mesh_message_retry_needed(&pending) != Some(false) {
                 if let Ok(event) = serde_json::from_str::<Event>(&pending.event_json) {

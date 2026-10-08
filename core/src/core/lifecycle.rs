@@ -156,6 +156,7 @@ impl AppCore {
             #[cfg(test)]
             test_fips_udp: None,
             pending_relay_publishes: BTreeMap::new(),
+            publication_task_cancellations: Default::default(),
             pending_relay_publish_inflight: HashSet::new(),
             pending_decrypted_delivery_acks: HashSet::new(),
             event_transport_channels: BTreeMap::new(),
@@ -464,6 +465,7 @@ impl AppCore {
         // without touching SQLite. The persist below is the only write we
         // want before iOS suspends us.
         self.suspended = true;
+        self.cancel_all_publication_tasks();
         self.private_contacts.stop_network();
         self.push_debug_log("app.suspend", "pausing network and flushing storage");
         self.pause_pending_linked_device();

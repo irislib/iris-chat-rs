@@ -276,8 +276,7 @@ impl ProtocolEngine {
             // Publish the actual invite response, then an expired typing rumor
             // through the newly-created session. The second event bootstraps
             // the inviter's receiving state without showing a typing indicator.
-            let response_event =
-                self.cached_invite_response_with_owner_proof(&response)?;
+            let response_event = self.cached_invite_response_with_owner_proof(&response)?;
             let mut typing = pairwise_codec::typing_event(
                 self.owner_pubkey,
                 pairwise_codec::EncodeOptions::new(now.get(), current_unix_millis())
@@ -310,11 +309,13 @@ impl ProtocolEngine {
                 device_id: inviter_device.to_hex(),
                 effects: vec![
                     ProtocolEffect::Publish(ProtocolPublish {
+                        authored_at_secs: Some(now.get()),
                         event: response_event,
                         chat_id: chat_id.clone(),
                         inner_event_id: None,
                     }),
                     ProtocolEffect::Publish(ProtocolPublish {
+                        authored_at_secs: Some(now.get()),
                         event: typing_event,
                         chat_id,
                         inner_event_id: None,
