@@ -29,6 +29,9 @@ impl AppCore {
         requested_roster_at: u64,
         page: Option<DeviceSyncPage>,
     ) {
+        if !self.device_sync_peer_is_authorized(source_pubkey_hex) {
+            return;
+        }
         let Some(local_roster_at) = self.device_sync_roster_at() else {
             return;
         };
@@ -94,6 +97,9 @@ impl AppCore {
         source_pubkey_hex: &str,
         page: Option<DeviceSyncPage>,
     ) {
+        if !self.device_sync_peer_is_authorized(source_pubkey_hex) {
+            return;
+        }
         let Some(roster_at) = self.device_sync_roster_at() else {
             return;
         };

@@ -167,6 +167,7 @@ include!("tests/message_expiry.rs");
 include!("tests/group_removal.rs");
 include!("tests/device_sync_helpers.rs");
 include!("tests/device_sync.rs");
+include!("tests/device_sync_authorization.rs");
 include!("tests/device_sync_history.rs");
 include!("tests/device_sync_history_restart.rs");
 include!("tests/device_sync_records.rs");

@@ -796,7 +796,7 @@ impl AppCore {
         let siblings = roster
             .into_iter()
             .flat_map(|roster| roster.devices.iter())
-            .filter(|device| device.identity_pubkey_hex != local_hex)
+            .filter(|device| self.device_sync_peer_is_authorized(&device.identity_pubkey_hex))
             .filter_map(|device| fips_peer_from_hex(&device.identity_pubkey_hex))
             .collect::<Vec<_>>();
         let mut peer_by_npub = BTreeMap::new();
@@ -825,9 +825,10 @@ impl AppCore {
             return None;
         }
         let key = format!(
-            "{}:{}:{}:{}:{}:{}",
+            "{}:{}:{:?}:{}:{}:{}:{}",
             owner_hex,
             roster_at,
+            siblings,
             peers
                 .iter()
                 .map(FipsPeerIdentity::npub)

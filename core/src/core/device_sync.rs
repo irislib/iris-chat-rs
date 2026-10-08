@@ -472,7 +472,12 @@ impl AppCore {
             runtime.snapshot_pending = true;
             return;
         }
-        let siblings = runtime.siblings.clone();
+        let siblings = runtime
+            .siblings
+            .clone()
+            .into_iter()
+            .filter(|peer| self.device_sync_peer_is_authorized(&peer.pubkey().to_string()))
+            .collect::<Vec<_>>();
         let Some(roster_at) = self.device_sync_roster_at() else {
             return;
         };
@@ -539,9 +544,11 @@ impl AppCore {
         let recipients = siblings
             .into_iter()
             .filter(|peer| {
-                self.device_history_send_since(&peer.pubkey().to_string())
-                    .or_else(|| self.device_sync_peer_since(&peer.pubkey().to_string()))
-                    .is_some_and(|since| created_at >= since)
+                self.device_sync_peer_is_authorized(&peer.pubkey().to_string())
+                    && self
+                        .device_history_send_since(&peer.pubkey().to_string())
+                        .or_else(|| self.device_sync_peer_since(&peer.pubkey().to_string()))
+                        .is_some_and(|since| created_at >= since)
             })
             .collect::<Vec<_>>();
         send_device_sync_packets(&tcp, &recipients, std::slice::from_ref(&packet));
@@ -594,7 +601,7 @@ impl AppCore {
         let Some(logged_in) = self.logged_in.as_ref() else {
             return false;
         };
-        source_pubkey_hex != logged_in.device_keys.public_key().to_hex()
+        !source_pubkey_hex.eq_ignore_ascii_case(&logged_in.device_keys.public_key().to_hex())
             && self
                 .app_keys
                 .get(&logged_in.owner_pubkey.to_hex())
