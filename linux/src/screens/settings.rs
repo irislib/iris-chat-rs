@@ -1,5 +1,9 @@
 mod messaging;
+mod view;
 use messaging::messaging_group;
+#[cfg(feature = "ui-tests")]
+pub use view::verify_ui;
+pub(crate) use view::SettingsView;
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -90,99 +94,41 @@ impl SettingsPage {
 }
 
 pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
-    let root = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-    root.set_hexpand(true);
-    root.set_vexpand(true);
+    SettingsView::new(state, manager).root.upcast()
+}
 
-    let stack = gtk::Stack::new();
-    stack.set_hexpand(true);
-    stack.set_vexpand(true);
-    stack.set_transition_type(gtk::StackTransitionType::Crossfade);
-
-    if let Some(account) = state.account.as_ref() {
-        stack.add_named(
-            &settings_detail_page(vec![profile_group(account, &state.preferences, manager)]),
-            Some(SettingsPage::Profile.id()),
-        );
-    }
-
-    stack.add_named(
-        &device_roster::content(state, manager),
-        Some(SettingsPage::Devices.id()),
-    );
-
-    stack.add_named(
-        &settings_detail_page(vec![general_group(&state.preferences, manager)]),
-        Some(SettingsPage::General.id()),
-    );
-    stack.add_named(
-        &settings_detail_page(vec![messaging_group(&state.preferences, manager)]),
-        Some(SettingsPage::Messaging.id()),
-    );
-    stack.add_named(
-        &settings_detail_page(vec![notifications_group(&state.preferences, manager)]),
-        Some(SettingsPage::Notifications.id()),
-    );
-    stack.add_named(
-        &settings_detail_page(vec![media_group(&state.preferences, manager)]),
-        Some(SettingsPage::Media.id()),
-    );
-    stack.add_named(
-        &settings_detail_page(vec![nearby_group(&state.preferences, manager)]),
-        Some(SettingsPage::Nearby.id()),
-    );
-    stack.add_named(
-        &settings_detail_page(vec![relays_group(&state.preferences, manager)]),
-        Some(SettingsPage::MessageServers.id()),
-    );
-    stack.add_named(
-        &settings_detail_page(vec![updates_group()]),
-        Some(SettingsPage::Updates.id()),
-    );
-    let mut about_groups = Vec::new();
-    if iris_chat_core::is_trusted_test_build() {
-        about_groups.push(trusted_build_group());
-    }
-    about_groups.push(about_group(state));
-    stack.add_named(
-        &settings_detail_page(about_groups),
-        Some(SettingsPage::About.id()),
-    );
-    stack.add_named(
-        &settings_detail_page(vec![support_group(manager)]),
-        Some(SettingsPage::Support.id()),
-    );
-    stack.add_named(
-        &settings_detail_page(vec![account_data_group(manager)]),
-        Some(SettingsPage::AccountData.id()),
-    );
-
-    let sidebar = settings_menu(state, &stack);
-    let sidebar_scroll = gtk::ScrolledWindow::builder()
-        .hscrollbar_policy(gtk::PolicyType::Never)
-        .min_content_width(300)
-        .child(&sidebar)
-        .build();
-    sidebar_scroll.set_width_request(320);
-    root.append(&sidebar_scroll);
-
-    let separator = gtk::Separator::new(gtk::Orientation::Vertical);
-    root.append(&separator);
-
-    let detail_scroll = gtk::ScrolledWindow::builder()
-        .hscrollbar_policy(gtk::PolicyType::Never)
-        .child(&stack)
-        .build();
-    root.append(&detail_scroll);
-
-    let default_page = if state.account.is_some() {
-        SettingsPage::Profile
-    } else {
-        SettingsPage::Messaging
+fn page_widget(page: SettingsPage, state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
+    let group = match page {
+        SettingsPage::Profile => {
+            return state
+                .account
+                .as_ref()
+                .map(|account| {
+                    settings_detail_page(vec![profile_group(account, &state.preferences, manager)])
+                        .upcast()
+                })
+                .unwrap_or_else(|| gtk::Box::new(gtk::Orientation::Vertical, 0).upcast())
+        }
+        SettingsPage::Devices => return device_roster::content(state, manager),
+        SettingsPage::General => general_group(&state.preferences, manager),
+        SettingsPage::Messaging => messaging_group(&state.preferences, manager),
+        SettingsPage::Notifications => notifications_group(&state.preferences, manager),
+        SettingsPage::Media => media_group(&state.preferences, manager).group,
+        SettingsPage::Nearby => nearby_group(&state.preferences, manager),
+        SettingsPage::MessageServers => relays_group(&state.preferences, manager),
+        SettingsPage::Updates => updates_group(),
+        SettingsPage::Support => support_group(manager),
+        SettingsPage::AccountData => account_data_group(manager),
+        SettingsPage::About => {
+            let mut groups = Vec::new();
+            if iris_chat_core::is_trusted_test_build() {
+                groups.push(trusted_build_group());
+            }
+            groups.push(about_group(state));
+            return settings_detail_page(groups).upcast();
+        }
     };
-    stack.set_visible_child_name(default_page.id());
-
-    root.upcast()
+    settings_detail_page(vec![group]).upcast()
 }
 
 fn settings_detail_page(groups: Vec<adw::PreferencesGroup>) -> adw::PreferencesPage {
@@ -197,7 +143,11 @@ fn settings_detail_page(groups: Vec<adw::PreferencesGroup>) -> adw::PreferencesP
     page
 }
 
-fn settings_menu(state: &AppState, stack: &gtk::Stack) -> adw::PreferencesPage {
+fn settings_menu(
+    state: &AppState,
+    stack: &gtk::Stack,
+    split: &adw::NavigationSplitView,
+) -> adw::PreferencesPage {
     let page = adw::PreferencesPage::new();
     page.set_margin_top(12);
     page.set_margin_bottom(24);
@@ -216,6 +166,7 @@ fn settings_menu(state: &AppState, stack: &gtk::Stack) -> adw::PreferencesPage {
             title,
             Some("My profile"),
             stack,
+            split,
         ));
         page.add(&group);
     }
@@ -233,6 +184,7 @@ fn settings_menu(state: &AppState, stack: &gtk::Stack) -> adw::PreferencesPage {
             settings_page.title(),
             None,
             stack,
+            split,
         ));
     }
     page.add(&primary);
@@ -249,6 +201,7 @@ fn settings_menu(state: &AppState, stack: &gtk::Stack) -> adw::PreferencesPage {
             settings_page.title(),
             None,
             stack,
+            split,
         ));
     }
     page.add(&secondary);
@@ -260,6 +213,7 @@ fn settings_menu(state: &AppState, stack: &gtk::Stack) -> adw::PreferencesPage {
             settings_page.title(),
             None,
             stack,
+            split,
         ));
     }
     page.add(&advanced);
@@ -272,6 +226,7 @@ fn settings_menu_row(
     title: &str,
     subtitle: Option<&str>,
     stack: &gtk::Stack,
+    split: &adw::NavigationSplitView,
 ) -> adw::ActionRow {
     let row = adw::ActionRow::builder()
         .title(title)
@@ -283,9 +238,14 @@ fn settings_menu_row(
     let chevron = gtk::Image::from_icon_name("go-next-symbolic");
     chevron.add_css_class("dim-label");
     row.add_suffix(&chevron);
-    let stack = stack.clone();
+    let stack = stack.downgrade();
+    let split = split.downgrade();
+    row.set_widget_name(&format!("settings-category-{}", page.id()));
     row.connect_activated(move |_| {
-        stack.set_visible_child_name(page.id());
+        if let (Some(stack), Some(split)) = (stack.upgrade(), split.upgrade()) {
+            stack.set_visible_child_name(page.id());
+            split.set_show_content(true);
+        }
     });
     row
 }
@@ -334,14 +294,64 @@ fn trusted_build_group() -> adw::PreferencesGroup {
         .build()
 }
 
-fn media_group(prefs: &PreferencesSnapshot, manager: &Rc<AppManager>) -> adw::PreferencesGroup {
+struct MediaGroup {
+    group: adw::PreferencesGroup,
+    enabled: adw::SwitchRow,
+    fallback: adw::SwitchRow,
+    url: adw::EntryRow,
+    key: adw::EntryRow,
+    salt: adw::EntryRow,
+    saved: PreferencesSnapshot,
+    updating: Rc<Cell<bool>>,
+}
+
+impl MediaGroup {
+    fn update(&mut self, prefs: &PreferencesSnapshot) {
+        self.updating.set(true);
+        self.enabled.set_active(prefs.image_proxy_enabled);
+        self.fallback.set_active(prefs.image_proxy_fallback_enabled);
+        for (entry, old, new) in [
+            (
+                &self.url,
+                &self.saved.image_proxy_url,
+                &prefs.image_proxy_url,
+            ),
+            (
+                &self.key,
+                &self.saved.image_proxy_key_hex,
+                &prefs.image_proxy_key_hex,
+            ),
+            (
+                &self.salt,
+                &self.saved.image_proxy_salt_hex,
+                &prefs.image_proxy_salt_hex,
+            ),
+        ] {
+            // Preserve unsaved sibling fields when another setting is applied.
+            // Keeping the actual editor also preserves its caret and focus.
+            if entry.text().as_str() == old && old != new {
+                entry.set_text(new);
+            }
+        }
+        self.saved = prefs.clone();
+        self.updating.set(false);
+    }
+}
+
+fn media_group(prefs: &PreferencesSnapshot, manager: &Rc<AppManager>) -> MediaGroup {
     let group = adw::PreferencesGroup::builder().title("Media").build();
+    let updating = Rc::new(Cell::new(false));
 
     let enabled = adw::SwitchRow::builder().title("Image proxy").build();
+    enabled.set_widget_name("settings-image-proxy-enabled");
     enabled.set_active(prefs.image_proxy_enabled);
     {
         let manager = manager.clone();
+        let updating = updating.clone();
         enabled.connect_active_notify(move |row| {
+            if updating.get() {
+                return;
+            }
             manager.dispatch(AppAction::SetImageProxyEnabled {
                 enabled: row.is_active(),
             });
@@ -353,6 +363,7 @@ fn media_group(prefs: &PreferencesSnapshot, manager: &Rc<AppManager>) -> adw::Pr
         .title("Load original images if the proxy fails")
         .subtitle("Image hosts may see your IP address.")
         .build();
+    fallback.set_widget_name("settings-image-proxy-fallback");
     fallback.set_active(prefs.image_proxy_fallback_enabled);
     enabled
         .bind_property("active", &fallback, "sensitive")
@@ -360,7 +371,11 @@ fn media_group(prefs: &PreferencesSnapshot, manager: &Rc<AppManager>) -> adw::Pr
         .build();
     {
         let manager = manager.clone();
+        let updating = updating.clone();
         fallback.connect_active_notify(move |row| {
+            if updating.get() {
+                return;
+            }
             manager.dispatch(AppAction::SetImageProxyFallbackEnabled {
                 enabled: row.is_active(),
             });
@@ -368,7 +383,11 @@ fn media_group(prefs: &PreferencesSnapshot, manager: &Rc<AppManager>) -> adw::Pr
     }
     group.add(&fallback);
 
-    let url = adw::EntryRow::builder().title("Proxy URL").build();
+    let url = adw::EntryRow::builder()
+        .title("Proxy URL")
+        .show_apply_button(true)
+        .build();
+    url.set_widget_name("settings-image-proxy-url");
     url.set_text(&prefs.image_proxy_url);
     let manager_for_apply = manager.clone();
     url.connect_apply(move |row| {
@@ -378,7 +397,12 @@ fn media_group(prefs: &PreferencesSnapshot, manager: &Rc<AppManager>) -> adw::Pr
     });
     group.add(&url);
 
-    let key = adw::EntryRow::builder().title("Proxy key").build();
+    let key = adw::PasswordEntryRow::builder()
+        .title("Proxy key")
+        .show_apply_button(true)
+        .build();
+    key.set_widget_name("settings-image-proxy-key");
+    key.set_text(&prefs.image_proxy_key_hex);
     let manager_for_key = manager.clone();
     key.connect_apply(move |row| {
         manager_for_key.dispatch(AppAction::SetImageProxyKeyHex {
@@ -387,7 +411,12 @@ fn media_group(prefs: &PreferencesSnapshot, manager: &Rc<AppManager>) -> adw::Pr
     });
     group.add(&key);
 
-    let salt = adw::EntryRow::builder().title("Proxy salt").build();
+    let salt = adw::PasswordEntryRow::builder()
+        .title("Proxy salt")
+        .show_apply_button(true)
+        .build();
+    salt.set_widget_name("settings-image-proxy-salt");
+    salt.set_text(&prefs.image_proxy_salt_hex);
     let manager_for_salt = manager.clone();
     salt.connect_apply(move |row| {
         manager_for_salt.dispatch(AppAction::SetImageProxySaltHex {
@@ -402,13 +431,35 @@ fn media_group(prefs: &PreferencesSnapshot, manager: &Rc<AppManager>) -> adw::Pr
         .build();
     {
         let manager = manager.clone();
+        let url = url.downgrade();
+        let key = key.downgrade();
+        let salt = salt.downgrade();
         reset.connect_activated(move |_| {
+            let defaults = PreferencesSnapshot::default();
+            if let Some(url) = url.upgrade() {
+                url.set_text(&defaults.image_proxy_url);
+            }
+            if let Some(key) = key.upgrade() {
+                key.set_text(&defaults.image_proxy_key_hex);
+            }
+            if let Some(salt) = salt.upgrade() {
+                salt.set_text(&defaults.image_proxy_salt_hex);
+            }
             manager.dispatch(AppAction::ResetImageProxySettings);
         });
     }
     group.add(&reset);
 
-    group
+    MediaGroup {
+        group,
+        enabled,
+        fallback,
+        url,
+        key: key.upcast(),
+        salt: salt.upcast(),
+        saved: prefs.clone(),
+        updating,
+    }
 }
 
 fn updates_group() -> adw::PreferencesGroup {
@@ -589,10 +640,13 @@ fn profile_group(
     save.add_css_class("suggested-action");
     save.set_valign(gtk::Align::Center);
     let manager_for_save = manager.clone();
-    let row_for_save = name_row.clone();
+    let row_for_save = name_row.downgrade();
     let about_buffer_for_save = about_view.buffer();
     let picture_url = account.picture_url.clone();
     save.connect_clicked(move |_| {
+        let Some(row_for_save) = row_for_save.upgrade() else {
+            return;
+        };
         let value = row_for_save.text().trim().to_string();
         if value.is_empty() {
             return;
@@ -766,6 +820,9 @@ fn present_qr_dialog(
 
 fn general_group(prefs: &PreferencesSnapshot, manager: &Rc<AppManager>) -> adw::PreferencesGroup {
     let group = adw::PreferencesGroup::builder().title("General").build();
+    group.add(&crate::widgets::text_size::settings_row(
+        manager.app_data_dir(),
+    ));
 
     if startup::is_supported() {
         let startup_row = adw::SwitchRow::builder().title("Start at login").build();
@@ -844,8 +901,11 @@ fn relays_group(prefs: &PreferencesSnapshot, manager: &Rc<AppManager>) -> adw::P
     add_button.set_tooltip_text(Some("Add"));
 
     let manager_for_button = manager.clone();
-    let row_for_button = add_row.clone();
+    let row_for_button = add_row.downgrade();
     add_button.connect_clicked(move |_| {
+        let Some(row_for_button) = row_for_button.upgrade() else {
+            return;
+        };
         let value = row_for_button.text().trim().to_string();
         if value.is_empty() {
             return;

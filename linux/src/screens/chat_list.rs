@@ -14,23 +14,142 @@ use crate::screens::confirm_delete_chat;
 use crate::widgets::clickable::PointerCursorExt;
 use crate::widgets::image_cache;
 
+#[derive(PartialEq)]
+struct ListKey {
+    chats: Vec<ChatThreadSnapshot>,
+    preferences: PreferencesSnapshot,
+    nearby: iris_chat_core::DesktopNearbySnapshot,
+    search: SearchUiState,
+    results: Option<SearchResultSnapshot>,
+    discovering: bool,
+    selected: Option<String>,
+}
+
+pub(crate) struct ChatListView {
+    pub root: gtk::Box,
+    entry: gtk::SearchEntry,
+    scope: gtk::Box,
+    scrolled: gtk::ScrolledWindow,
+    sync: super::sync_status::SyncStatus,
+    rendered: Option<ListKey>,
+}
+
+impl ChatListView {
+    pub fn new(manager: &Rc<AppManager>) -> Self {
+        let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        root.set_vexpand(true);
+        let (search_box, entry, scope) = build_search_box(manager);
+        root.append(&search_box);
+        let sync = super::sync_status::SyncStatus::new();
+        root.append(&sync.root);
+        let scrolled = gtk::ScrolledWindow::new();
+        scrolled.set_hscrollbar_policy(gtk::PolicyType::Never);
+        scrolled.set_vexpand(true);
+        root.append(&scrolled);
+        Self {
+            root,
+            entry,
+            scope,
+            scrolled,
+            sync,
+            rendered: None,
+        }
+    }
+
+    pub fn update(&mut self, state: &AppState, manager: &Rc<AppManager>) {
+        self.sync.update(state);
+        let ui = manager.search_ui();
+        // Keep the live editor (including selection and IME preedit) mounted.
+        if self.entry.text().as_str() != ui.query {
+            self.entry.set_text(&ui.query);
+        }
+        let scope_changed = self.rendered.as_ref().is_none_or(|old| {
+            old.search.scope_chat_id != ui.scope_chat_id
+                || old.search.scope_display_name != ui.scope_display_name
+        });
+        if scope_changed {
+            while let Some(child) = self.scope.first_child() {
+                self.scope.remove(&child);
+            }
+            if let (Some(id), Some(name)) = (&ui.scope_chat_id, &ui.scope_display_name) {
+                self.scope.append(&build_scope_chip(manager, id, name));
+            }
+            self.scope.set_visible(self.scope.first_child().is_some());
+            self.entry.set_placeholder_text(Some("Search"));
+        }
+        let focus_requested = self
+            .rendered
+            .as_ref()
+            .is_none_or(|old| old.search.focus_request != ui.focus_request)
+            && ui.focus_request > 0;
+        let key = ListKey {
+            chats: state.chat_list.clone(),
+            preferences: state.preferences.clone(),
+            nearby: manager.nearby_snapshot(),
+            results: if ui.is_active() {
+                manager.search_results(50)
+            } else {
+                None
+            },
+            discovering: state.user_discovery_syncing,
+            selected: state.current_chat.as_ref().map(|c| c.chat_id.clone()),
+            search: ui,
+        };
+        if self.rendered.as_ref() != Some(&key) {
+            let focus =
+                crate::widgets::keyboard_list::FocusBookmark::capture(self.scrolled.upcast_ref());
+            let offset = self.scrolled.vadjustment().value();
+            let body = build_body(state, manager, &key.search, key.results.as_ref());
+            if let Some(id) = key.selected.as_ref() {
+                mark_selected(body.upcast_ref(), &format!("iris-keyboard-chat-{id}"));
+            }
+            self.scrolled.set_child(Some(&body));
+            self.scrolled.vadjustment().set_value(offset);
+            if let Some(focus) = focus {
+                focus.restore(self.scrolled.upcast_ref());
+            }
+            self.rendered = Some(key);
+        }
+        if focus_requested {
+            self.entry.grab_focus();
+        }
+    }
+}
+
+fn mark_selected(widget: &gtk::Widget, name: &str) {
+    if widget.widget_name() == name {
+        widget.add_css_class("selected-chat");
+    }
+    let mut child = widget.first_child();
+    while let Some(widget) = child {
+        mark_selected(&widget, name);
+        child = widget.next_sibling();
+    }
+}
+
 pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
-    let outer = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    outer.set_vexpand(true);
+    let mut view = ChatListView::new(manager);
+    view.update(state, manager);
+    view.root.upcast()
+}
 
-    let ui_state = manager.search_ui();
-    let search_box = build_search_box(manager, &ui_state, state);
-    outer.append(&search_box);
-
-    let scrolled = gtk::ScrolledWindow::new();
-    scrolled.set_hscrollbar_policy(gtk::PolicyType::Never);
-    scrolled.set_vexpand(true);
-
+fn build_body(
+    state: &AppState,
+    manager: &Rc<AppManager>,
+    ui_state: &SearchUiState,
+    results: Option<&SearchResultSnapshot>,
+) -> gtk::Box {
     let body = gtk::Box::new(gtk::Orientation::Vertical, 0);
     body.set_widget_name("iris-keyboard-chat-list");
     if ui_state.is_active() {
-        let results = manager.run_search(50);
-        append_search_results(&body, state, manager, &results);
+        if let Some(results) = results {
+            append_search_results(&body, state, manager, results);
+        } else {
+            let searching = gtk::Label::new(Some("Searching…"));
+            searching.add_css_class("dim-label");
+            searching.set_margin_top(20);
+            body.append(&searching);
+        }
     } else {
         body.set_margin_top(12);
         body.set_margin_bottom(12);
@@ -89,9 +208,7 @@ pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
     }
 
     crate::widgets::keyboard_list::install(&body);
-    scrolled.set_child(Some(&body));
-    outer.append(&scrolled);
-    outer.upcast()
+    body
 }
 
 impl SearchUiState {
@@ -100,11 +217,8 @@ impl SearchUiState {
     }
 }
 
-fn build_search_box(
-    manager: &Rc<AppManager>,
-    ui_state: &SearchUiState,
-    _state: &AppState,
-) -> gtk::Box {
+fn build_search_box(manager: &Rc<AppManager>) -> (gtk::Box, gtk::SearchEntry, gtk::Box) {
+    let ui_state = manager.search_ui();
     let wrapper = gtk::Box::new(gtk::Orientation::Vertical, 6);
     wrapper.set_margin_top(8);
     wrapper.set_margin_start(12);
@@ -112,26 +226,18 @@ fn build_search_box(
 
     let row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
 
-    if let (Some(chat_id), Some(name)) = (
-        ui_state.scope_chat_id.as_ref(),
-        ui_state.scope_display_name.as_ref(),
-    ) {
-        let chip = build_scope_chip(manager, chat_id, name);
-        row.append(&chip);
-    }
+    let scope = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+    scope.set_visible(false);
+    wrapper.append(&scope);
 
     let entry = gtk::SearchEntry::new();
     entry.set_widget_name("iris-keyboard-search");
     entry.set_hexpand(true);
     entry.set_text(&ui_state.query);
-    if let Some(name) = ui_state.scope_display_name.as_ref() {
-        entry.set_placeholder_text(Some(&format!("Search in {name}…")));
-    } else {
-        entry.set_placeholder_text(Some("Search chats, groups, messages…"));
-    }
+    entry.set_placeholder_text(Some("Search"));
 
     let manager_for_change = manager.clone();
-    entry.connect_search_changed(move |entry| {
+    entry.connect_changed(move |entry| {
         let text = entry.text().to_string();
         if manager_for_change.search_ui().query == text {
             return;
@@ -161,7 +267,7 @@ fn build_search_box(
     row.append(&entry);
     wrapper.append(&row);
 
-    wrapper
+    (wrapper, entry, scope)
 }
 
 fn build_scope_chip(manager: &Rc<AppManager>, _chat_id: &str, name: &str) -> gtk::Widget {
@@ -170,6 +276,8 @@ fn build_scope_chip(manager: &Rc<AppManager>, _chat_id: &str, name: &str) -> gtk
     chip.add_css_class("card");
     let label = gtk::Label::new(Some(name));
     label.add_css_class("caption-heading");
+    label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    label.set_max_width_chars(28);
     chip.append(&label);
     let close = gtk::Button::from_icon_name("window-close-symbolic");
     close.add_css_class("flat");
@@ -371,7 +479,11 @@ fn message_hit_row(
 ) -> adw::ActionRow {
     let row = adw::ActionRow::builder()
         .title(escape(&hit.chat_display_name))
-        .subtitle(escape(&hit.body))
+        .subtitle(escape(
+            &hit.body.split_whitespace().collect::<Vec<_>>().join(" "),
+        ))
+        .title_lines(1)
+        .subtitle_lines(1)
         .activatable(true)
         .build();
     row.show_pointer_cursor();
@@ -511,6 +623,7 @@ fn nearby_row(manager: &Rc<AppManager>) -> gtk::Widget {
 fn nearby_icon_button(manager: &Rc<AppManager>, active: bool, size: i32) -> gtk::Button {
     let button = gtk::Button::new();
     button.add_css_class("flat");
+    button.add_css_class("nearby-avatar-button");
     button.show_pointer_cursor();
     button.set_size_request(size, size);
     button.set_tooltip_text(Some("Nearby"));
@@ -528,7 +641,7 @@ fn nearby_icon(active: bool, size: i32) -> gtk::Box {
     background.set_size_request(size, size);
     background.set_valign(gtk::Align::Start);
     background.set_halign(gtk::Align::Center);
-    background.add_css_class("circular");
+    background.add_css_class("nearby-avatar");
     background.add_css_class(if active {
         "nearby-active"
     } else {
@@ -536,6 +649,7 @@ fn nearby_icon(active: bool, size: i32) -> gtk::Box {
     });
     let icon = gtk::Image::from_icon_name("network-wireless-symbolic");
     icon.set_pixel_size(24);
+    icon.set_vexpand(true);
     icon.set_valign(gtk::Align::Center);
     icon.set_halign(gtk::Align::Center);
     icon.add_css_class(if active {
@@ -754,7 +868,11 @@ fn row_for(
             .or_else(|| chat.subtitle.clone())
             .unwrap_or_else(|| "No messages yet".to_string())
     };
-    row.set_subtitle(&escape(&subtitle));
+    row.set_title_lines(1);
+    row.set_subtitle_lines(1);
+    row.set_subtitle(&escape(
+        &subtitle.split_whitespace().collect::<Vec<_>>().join(" "),
+    ));
 
     let suffix = gtk::Box::new(gtk::Orientation::Vertical, 4);
     suffix.set_valign(gtk::Align::Center);

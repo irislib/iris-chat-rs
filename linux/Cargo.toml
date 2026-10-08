@@ -93,6 +93,12 @@ path = "tests/history.rs"
 harness = false
 required-features = ["ui-tests"]
 
+[[test]]
+name = "layout"
+path = "tests/layout.rs"
+harness = false
+required-features = ["ui-tests"]
+
 # Keep the ICE consent-check fix identical across native entry points.
 [patch.crates-io]
 webrtc-ice = { path = "../core/vendor/webrtc-ice" }

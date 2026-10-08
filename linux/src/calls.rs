@@ -599,6 +599,7 @@ impl Calls {
 
 #[cfg(feature = "ui-tests")]
 pub fn verify_ui(manager: Rc<AppManager>) {
+    #[cfg(target_os = "linux")]
     screen_share::verify_capture_ui();
     let parent = adw::ApplicationWindow::builder().title("Call test").build();
     let calls = Calls::new(&parent, manager);

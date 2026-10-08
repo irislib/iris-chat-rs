@@ -27,10 +27,14 @@ mod composer_clipboard;
 #[cfg(feature = "ui-tests")]
 pub use composer_clipboard::tests::verify_ui as verify_composer_clipboard_ui;
 mod direct_files;
+mod expiry;
 #[cfg(feature = "ui-tests")]
 pub use direct_files::verify_ui as verify_direct_files_ui;
+pub(super) use expiry::settings_row as disappearing_messages_row;
 mod grouping;
 mod message_actions;
+#[cfg(feature = "ui-tests")]
+pub use message_actions::verify_ui as verify_message_actions_ui;
 mod safety;
 mod timeline;
 mod view;
@@ -314,7 +318,7 @@ pub fn present_chat_info(
     content.append(&delete);
 
     dialog.set_child(Some(&content));
-    dialog.present(parent);
+    crate::widgets::dialogs::present(&dialog, parent);
 }
 
 fn profile_about_card(about: &str) -> gtk::Widget {
@@ -684,7 +688,7 @@ fn present_message_info(
 
     scroll.set_child(Some(&content));
     dialog.set_child(Some(&scroll));
-    dialog.present(parent);
+    crate::widgets::dialogs::present(&dialog, parent);
     let shown = message.clone();
     message_actions::watch_message(&dialog, message, manager, move |current| {
         current.deleted_for_everyone == shown.deleted_for_everyone
@@ -857,68 +861,6 @@ fn info_recipient_row(
     parent.append(&row);
 }
 
-fn ttl_strip(chat: &CurrentChatSnapshot, manager: &Rc<AppManager>) -> gtk::Widget {
-    let row = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-    row.set_margin_start(12);
-    row.set_margin_end(12);
-    row.set_margin_top(6);
-    row.set_halign(gtk::Align::End);
-
-    let label = match chat.message_ttl_seconds {
-        None | Some(0) => "No expiry".to_string(),
-        Some(s) if s < 3600 => format!("Expires {}m", s / 60),
-        Some(s) if s < 86_400 => format!("Expires {}h", s / 3600),
-        Some(s) if s < 86_400 * 7 => format!("Expires {}d", s / 86_400),
-        Some(s) => format!("Expires {}w", s / (86_400 * 7)),
-    };
-
-    let menu_button = gtk::MenuButton::new();
-    menu_button.set_label(&label);
-    menu_button.add_css_class("flat");
-    menu_button.add_css_class("caption");
-    menu_button.set_sensitive(!is_removed_group(chat));
-
-    let popover = gtk::Popover::new();
-    let list = gtk::Box::new(gtk::Orientation::Vertical, 4);
-    list.set_margin_top(6);
-    list.set_margin_bottom(6);
-    list.set_margin_start(6);
-    list.set_margin_end(6);
-
-    let options: &[(&str, Option<u64>)] = &[
-        ("No expiry", None),
-        ("1 hour", Some(3600)),
-        ("6 hours", Some(6 * 3600)),
-        ("1 day", Some(86_400)),
-        ("1 week", Some(7 * 86_400)),
-    ];
-    for (option_label, ttl) in options {
-        let item = gtk::Button::with_label(option_label);
-        item.add_css_class("flat");
-        item.set_halign(gtk::Align::Fill);
-        let manager = manager.clone();
-        let chat_id = chat.chat_id.clone();
-        let ttl_value = *ttl;
-        let popover_for_close = popover.clone();
-        item.connect_clicked(move |_| {
-            if !can_change_chat(&manager, &chat_id) {
-                return;
-            }
-            manager.dispatch(AppAction::SetChatMessageTtl {
-                chat_id: chat_id.clone(),
-                ttl_seconds: ttl_value,
-            });
-            popover_for_close.popdown();
-        });
-        list.append(&item);
-    }
-    popover.set_child(Some(&list));
-    menu_button.set_popover(Some(&popover));
-
-    row.append(&menu_button);
-    row.upcast()
-}
-
 pub(crate) fn mark_visible_seen(chat: &CurrentChatSnapshot, manager: &Rc<AppManager>) {
     if !manager.can_mark_active_chat_seen() {
         return;
@@ -1088,41 +1030,18 @@ fn render_message(
         bubble.append(&footer);
     }
 
-    let popover = build_message_popover(message, chat, manager);
-    popover.set_parent(&bubble);
-    let popover_for_gesture = popover.clone();
-    let gesture = gtk::GestureClick::new();
-    gesture.set_button(3);
-    gesture.connect_pressed(move |_, _, x, y| {
-        popover_for_gesture
-            .set_pointing_to(Some(&gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
-        popover_for_gesture.popup();
-    });
-    bubble.add_controller(gesture);
-
-    let popover_for_long = popover.clone();
-    let long_press = gtk::GestureLongPress::new();
-    long_press.connect_pressed(move |_, x, y| {
-        popover_for_long.set_pointing_to(Some(&gtk::gdk::Rectangle::new(x as i32, y as i32, 1, 1)));
-        popover_for_long.popup();
-    });
-    bubble.add_controller(long_press);
-
     column.append(&bubble);
 
     if !message.deleted_for_everyone && !message.reactions.is_empty() {
         column.append(&reactions_row(message, &message.reactions, manager));
     }
 
+    let spacer = message_actions::install_hover_actions(&row, &bubble, message, chat, manager);
     if message.is_outgoing {
-        let spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-        spacer.set_hexpand(true);
         row.append(&spacer);
         row.append(&column);
     } else {
         row.append(&column);
-        let spacer = gtk::Box::new(gtk::Orientation::Horizontal, 0);
-        spacer.set_hexpand(true);
         row.append(&spacer);
     }
 
@@ -1495,21 +1414,39 @@ fn reactions_row(
     reactions: &[MessageReactionSnapshot],
     manager: &Rc<AppManager>,
 ) -> gtk::Widget {
-    let row = gtk::Box::new(gtk::Orientation::Horizontal, 4);
-    row.set_margin_start(8);
-    row.set_margin_end(8);
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 2);
+    row.set_widget_name("messageReactions");
+    row.set_margin_start(6);
+    row.set_margin_end(6);
     row.set_halign(if message.is_outgoing {
-        gtk::Align::End
-    } else {
         gtk::Align::Start
+    } else {
+        gtk::Align::End
     });
     for reaction in reactions {
-        let chip = gtk::Button::with_label(&format!("{} {}", reaction.emoji, reaction.count));
-        chip.add_css_class("pill");
-        chip.add_css_class("flat");
+        let chip = gtk::Button::new();
+        chip.add_css_class("reaction-chip");
+        chip.set_valign(gtk::Align::Center);
+        chip.show_pointer_cursor();
+        let content = gtk::Box::new(gtk::Orientation::Horizontal, 2);
+        content.set_baseline_position(gtk::BaselinePosition::Center);
+        let emoji = gtk::Label::new(Some(&reaction.emoji));
+        emoji.add_css_class("reaction-emoji");
+        emoji.set_valign(gtk::Align::Baseline);
+        content.append(&emoji);
+        if reaction.count > 1 {
+            let count = gtk::Label::new(Some(&reaction.count.to_string()));
+            count.add_css_class("reaction-count");
+            count.set_valign(gtk::Align::Baseline);
+            content.append(&count);
+        }
+        chip.set_child(Some(&content));
+        let label = format!("{} {}", reaction.emoji, reaction.count);
+        chip.set_tooltip_text(Some(&label));
+        chip.update_property(&[gtk::accessible::Property::Label(&label)]);
         chip.set_sensitive(can_change_chat(manager, &message.chat_id));
         if reaction.reacted_by_me {
-            chip.add_css_class("suggested-action");
+            chip.add_css_class("reaction-selected");
         }
         let manager = manager.clone();
         let chat_id = message.chat_id.clone();
@@ -2140,7 +2077,7 @@ fn present_forward_dialog(parent: Option<&gtk::Window>, text: &str, manager: &Rc
         empty.set_vexpand(true);
         content.append(&empty);
         dialog.set_child(Some(&content));
-        dialog.present(parent);
+        crate::widgets::dialogs::present(&dialog, parent);
         return;
     }
 
@@ -2215,7 +2152,7 @@ fn present_forward_dialog(parent: Option<&gtk::Window>, text: &str, manager: &Rc
     });
 
     dialog.set_child(Some(&content));
-    dialog.present(parent);
+    crate::widgets::dialogs::present(&dialog, parent);
 }
 
 fn image_album(

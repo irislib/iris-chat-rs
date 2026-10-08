@@ -30,147 +30,14 @@ pub fn build_ui(app: &adw::Application, present_on_create: bool) -> Option<Rc<Ap
 
     let window = adw::ApplicationWindow::builder()
         .application(app)
-        .default_width(420)
+        .default_width(1080)
         .default_height(740)
         .title("Iris Chat")
         .build();
     window.add_css_class("iris-root");
     crate::widgets::text_size::install(&window, manager.app_data_dir());
 
-    let header = adw::HeaderBar::new();
-    let title_label = gtk::Label::new(None);
-    title_label.add_css_class("heading");
-    title_label.set_xalign(0.0);
-    title_label.set_halign(gtk::Align::Start);
-    let title_status = gtk::Box::new(gtk::Orientation::Horizontal, 4);
-    title_status.set_halign(gtk::Align::Start);
-    title_status.set_visible(false);
-    let title_status_icon = gtk::Image::from_icon_name("notifications-disabled-symbolic");
-    title_status_icon.add_css_class("dim-label");
-    title_status.append(&title_status_icon);
-    let title_status_label = gtk::Label::new(Some("muted"));
-    title_status_label.add_css_class("caption");
-    title_status_label.add_css_class("dim-label");
-    title_status.append(&title_status_label);
-    let title_column = gtk::Box::new(gtk::Orientation::Vertical, 0);
-    title_column.set_valign(gtk::Align::Center);
-    title_column.set_halign(gtk::Align::Start);
-    title_column.append(&title_label);
-    title_column.append(&title_status);
-    let title_slot = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    title_slot.set_valign(gtk::Align::Center);
-    // Expand to fill the header center so an empty-space tap on the
-    // chat header still opens the chat info screen, not just clicks
-    // landing on the avatar/name. The inner title_column is
-    // halign-Start so visual layout stays left-aligned.
-    title_slot.set_hexpand(true);
-    title_slot.set_halign(gtk::Align::Fill);
-    title_slot.append(&title_column);
-    // Use an empty title so the header bar doesn't reserve centered space
-    // for it; we pack the avatar+name on the left edge instead.
-    let empty_title = gtk::Label::new(None);
-    header.set_title_widget(Some(&empty_title));
-    header.pack_start(&title_slot);
-
-    let back_button = gtk::Button::from_icon_name("go-previous-symbolic");
-    back_button.set_tooltip_text(Some("Back"));
-    back_button.set_visible(false);
-    {
-        let manager = manager.clone();
-        back_button.connect_clicked(move |_| {
-            manager.dispatch(AppAction::NavigateBack);
-        });
-    }
-    header.pack_start(&back_button);
-
-    let new_chat_button = gtk::Button::from_icon_name("list-add-symbolic");
-    new_chat_button.set_tooltip_text(Some("New chat"));
-    new_chat_button.set_visible(false);
-    {
-        let manager = manager.clone();
-        new_chat_button.connect_clicked(move |_| {
-            manager.dispatch(AppAction::PushScreen {
-                screen: Screen::NewChat,
-            });
-        });
-    }
-    header.pack_end(&new_chat_button);
-
-    let settings_button = gtk::Button::new();
-    settings_button.add_css_class("flat");
-    settings_button.add_css_class("circular");
-    settings_button.set_tooltip_text(Some("Settings"));
-    settings_button.set_visible(false);
-    {
-        let manager = manager.clone();
-        settings_button.connect_clicked(move |_| {
-            manager.dispatch(AppAction::PushScreen {
-                screen: Screen::Settings,
-            });
-        });
-    }
-    header.pack_start(&settings_button);
-
-    let voice_call_button = gtk::Button::from_icon_name("call-start-symbolic");
-    voice_call_button.set_tooltip_text(Some("Voice call"));
-    let video_call_button = gtk::Button::from_icon_name("camera-video-symbolic");
-    video_call_button.set_tooltip_text(Some("Video call"));
-    for (button, video) in [(&voice_call_button, false), (&video_call_button, true)] {
-        button.add_css_class("flat");
-        button.add_css_class("circular");
-        button.set_size_request(44, 44);
-        let manager = manager.clone();
-        button.connect_clicked(move |_| {
-            if let Some(chat) = manager.current_state().current_chat {
-                manager.dispatch(AppAction::StartCall {
-                    chat_id: chat.chat_id,
-                    video,
-                });
-            }
-        });
-        header.pack_end(button);
-    }
-
-    let chat_info_button = gtk::Button::from_icon_name("dialog-information-symbolic");
-    chat_info_button.set_tooltip_text(Some("Chat info"));
-    chat_info_button.set_visible(false);
-    {
-        let manager = manager.clone();
-        chat_info_button.connect_clicked(move |btn| {
-            let state = manager.current_state();
-            let Some(chat) = state.current_chat.as_ref() else {
-                return;
-            };
-            if let Some(group_id) = chat.group_id.as_ref() {
-                manager.dispatch(AppAction::PushScreen {
-                    screen: Screen::GroupDetails {
-                        group_id: group_id.clone(),
-                    },
-                });
-            } else {
-                let parent = btn.root().and_then(|r| r.downcast::<gtk::Window>().ok());
-                crate::screens::chat::present_chat_info(
-                    parent.as_ref(),
-                    crate::screens::chat::ChatInfoSnapshot {
-                        social_connection: chat.social_connection.clone(),
-                        chat_id: chat.chat_id.clone(),
-                        display_name: chat.display_name.clone(),
-                        nickname: chat.nickname.clone(),
-                        contact_note: chat.contact_note.clone(),
-                        profile_name: chat.profile_name.clone(),
-                        subtitle: chat.subtitle.clone(),
-                        picture_url: chat.picture_url.clone(),
-                        about: chat.about.clone(),
-                        is_muted: chat.is_muted,
-                        show_message_action: false,
-                        preferences: state.preferences.clone(),
-                    },
-                    manager.clone(),
-                );
-            }
-        });
-    }
-    header.pack_end(&chat_info_button);
+    let (header, header_widgets) = build_header(&manager);
 
     let toolbar = adw::ToolbarView::new();
     toolbar.add_css_class("iris-root");
@@ -180,28 +47,15 @@ pub fn build_ui(app: &adw::Application, present_on_create: bool) -> Option<Rc<Ap
     content_slot.install_section_shortcuts(&window, &manager);
 
     let toast_overlay = adw::ToastOverlay::new();
+    content_slot.install_toolbar(&toolbar, &header, &header_widgets.back);
+    toolbar.set_content(Some(&content_slot.detail));
     toast_overlay.set_child(Some(&content_slot.root));
-    toolbar.set_content(Some(&toast_overlay));
 
-    window.set_content(Some(&toolbar));
+    window.set_content(Some(&toast_overlay));
 
     let calls = crate::calls::Calls::new(&window, manager.clone());
     let current = Rc::new(RefCell::new(manager.current_state()));
     let last_toast: Rc<RefCell<Option<String>>> = Rc::new(RefCell::new(None));
-    let header_widgets = HeaderWidgets {
-        back: back_button.clone(),
-        new_chat: new_chat_button.clone(),
-        settings: settings_button.clone(),
-        chat_info: chat_info_button.clone(),
-        voice_call: voice_call_button,
-        video_call: video_call_button,
-        title: title_label.clone(),
-        title_column: title_column.clone(),
-        title_status: title_status.clone(),
-        title_status_icon: title_status_icon.clone(),
-        title_status_label: title_status_label.clone(),
-        title_slot: title_slot.clone(),
-    };
     attach_user_activity_tracking(&window, &manager, &current);
     apply_state(&content_slot, &header_widgets, &manager, &current.borrow());
     show_toast_if_changed(&toast_overlay, &last_toast, &current.borrow().toast);
@@ -328,6 +182,135 @@ pub fn build_ui(app: &adw::Application, present_on_create: bool) -> Option<Rc<Ap
     Some(manager)
 }
 
+fn build_header(manager: &Rc<AppManager>) -> (adw::HeaderBar, HeaderWidgets) {
+    let header = adw::HeaderBar::new();
+    let title_label = gtk::Label::new(None);
+    title_label.add_css_class("heading");
+    title_label.set_xalign(0.0);
+    title_label.set_halign(gtk::Align::Start);
+    title_label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+    title_label.set_hexpand(true);
+    let title_status = gtk::Box::new(gtk::Orientation::Horizontal, 4);
+    title_status.set_halign(gtk::Align::Start);
+    title_status.set_visible(false);
+    let title_status_icon = gtk::Image::from_icon_name("notifications-disabled-symbolic");
+    title_status_icon.add_css_class("dim-label");
+    title_status.append(&title_status_icon);
+    let title_status_label = gtk::Label::new(Some("muted"));
+    title_status_label.add_css_class("caption");
+    title_status_label.add_css_class("dim-label");
+    title_status.append(&title_status_label);
+    let title_column = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    title_column.set_valign(gtk::Align::Center);
+    title_column.set_halign(gtk::Align::Start);
+    title_column.append(&title_label);
+    title_column.append(&title_status);
+    let title_slot = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    title_slot.set_valign(gtk::Align::Center);
+    // Expand to fill the header center so an empty-space tap on the
+    // chat header still opens the chat info screen, not just clicks
+    // landing on the avatar/name. The inner title_column is
+    // halign-Start so visual layout stays left-aligned.
+    title_slot.set_hexpand(true);
+    title_slot.set_halign(gtk::Align::Fill);
+    title_slot.append(&title_column);
+    // Use an empty title so the header bar doesn't reserve centered space
+    // for it; we pack the avatar+name on the left edge instead.
+    let empty_title = gtk::Label::new(None);
+    header.set_title_widget(Some(&empty_title));
+
+    let back_button = gtk::Button::from_icon_name("go-previous-symbolic");
+    back_button.set_tooltip_text(Some("Back"));
+    back_button.set_visible(false);
+    {
+        let manager = manager.clone();
+        back_button.connect_clicked(move |_| {
+            manager.dispatch(AppAction::NavigateBack);
+        });
+    }
+    back_button.add_css_class("circular");
+    header.pack_start(&back_button);
+    header.pack_start(&title_slot);
+
+    let voice_call_button = gtk::Button::from_icon_name("call-start-symbolic");
+    voice_call_button.set_tooltip_text(Some("Voice call"));
+    let video_call_button = gtk::Button::from_icon_name("camera-video-symbolic");
+    video_call_button.set_tooltip_text(Some("Video call"));
+    for (button, video) in [(&voice_call_button, false), (&video_call_button, true)] {
+        button.add_css_class("flat");
+        button.add_css_class("circular");
+        button.set_size_request(44, 44);
+        let manager = manager.clone();
+        button.connect_clicked(move |_| {
+            if let Some(chat) = manager.current_state().current_chat {
+                manager.dispatch(AppAction::StartCall {
+                    chat_id: chat.chat_id,
+                    video,
+                });
+            }
+        });
+        header.pack_end(button);
+    }
+
+    let chat_info_button = gtk::Button::from_icon_name("help-about-symbolic");
+    chat_info_button.set_tooltip_text(Some("Chat info"));
+    chat_info_button.add_css_class("flat");
+    chat_info_button.add_css_class("circular");
+    chat_info_button.set_visible(false);
+    {
+        let manager = manager.clone();
+        chat_info_button.connect_clicked(move |btn| {
+            let state = manager.current_state();
+            let Some(chat) = state.current_chat.as_ref() else {
+                return;
+            };
+            if let Some(group_id) = chat.group_id.as_ref() {
+                manager.dispatch(AppAction::PushScreen {
+                    screen: Screen::GroupDetails {
+                        group_id: group_id.clone(),
+                    },
+                });
+            } else {
+                let parent = btn.root().and_then(|r| r.downcast::<gtk::Window>().ok());
+                crate::screens::chat::present_chat_info(
+                    parent.as_ref(),
+                    crate::screens::chat::ChatInfoSnapshot {
+                        social_connection: chat.social_connection.clone(),
+                        chat_id: chat.chat_id.clone(),
+                        display_name: chat.display_name.clone(),
+                        nickname: chat.nickname.clone(),
+                        contact_note: chat.contact_note.clone(),
+                        profile_name: chat.profile_name.clone(),
+                        subtitle: chat.subtitle.clone(),
+                        picture_url: chat.picture_url.clone(),
+                        about: chat.about.clone(),
+                        is_muted: chat.is_muted,
+                        show_message_action: false,
+                        preferences: state.preferences.clone(),
+                    },
+                    manager.clone(),
+                );
+            }
+        });
+    }
+    header.pack_end(&chat_info_button);
+
+    let header_widgets = HeaderWidgets {
+        back: back_button.clone(),
+        chat_info: chat_info_button.clone(),
+        voice_call: voice_call_button,
+        video_call: video_call_button,
+        title: title_label.clone(),
+        title_column: title_column.clone(),
+        title_status: title_status.clone(),
+        title_status_icon: title_status_icon.clone(),
+        title_status_label: title_status_label.clone(),
+        title_slot: title_slot.clone(),
+        avatar_key: Rc::new(RefCell::new(None)),
+    };
+    (header, header_widgets)
+}
+
 fn attach_user_activity_tracking(
     window: &adw::ApplicationWindow,
     manager: &Rc<AppManager>,
@@ -417,8 +400,6 @@ fn show_toast_if_changed(
 #[derive(Clone)]
 struct HeaderWidgets {
     back: gtk::Button,
-    new_chat: gtk::Button,
-    settings: gtk::Button,
     chat_info: gtk::Button,
     voice_call: gtk::Button,
     video_call: gtk::Button,
@@ -428,6 +409,17 @@ struct HeaderWidgets {
     title_status_icon: gtk::Image,
     title_status_label: gtk::Label,
     title_slot: gtk::Box,
+    avatar_key: Rc<RefCell<Option<HeaderAvatarKey>>>,
+}
+
+#[derive(PartialEq)]
+struct HeaderAvatarKey {
+    id: String,
+    name: String,
+    picture: Option<String>,
+    connection: Option<iris_chat_core::SocialConnectionSnapshot>,
+    direct: bool,
+    preferences: iris_chat_core::PreferencesSnapshot,
 }
 
 fn apply_state(slot: &Content, header: &HeaderWidgets, manager: &Rc<AppManager>, state: &AppState) {
@@ -455,9 +447,6 @@ fn apply_state(slot: &Content, header: &HeaderWidgets, manager: &Rc<AppManager>,
 
     if manager.bootstrap_in_flight() {
         header.back.set_visible(false);
-        header.new_chat.set_visible(false);
-        header.settings.set_visible(false);
-        header.settings.set_child(gtk::Widget::NONE);
         header.chat_info.set_visible(false);
         header.title.set_label("Loading");
         header.title_status.set_visible(false);
@@ -468,42 +457,37 @@ fn apply_state(slot: &Content, header: &HeaderWidgets, manager: &Rc<AppManager>,
     let screen = current_screen(state);
     header
         .back
-        .set_visible(!state.router.screen_stack.is_empty());
-    header
-        .new_chat
-        .set_visible(matches!(screen, Screen::ChatList));
-    let show_settings = matches!(screen, Screen::ChatList) && state.account.is_some();
-    header.settings.set_visible(show_settings);
-    if show_settings {
-        if let Some(account) = state.account.as_ref() {
-            header
-                .settings
-                .set_child(Some(&build_own_avatar(account, state)));
-        }
-    } else {
-        header.settings.set_child(gtk::Widget::NONE);
-    }
+        .set_visible(slot.show_back(&screen, !state.router.screen_stack.is_empty()));
     header
         .chat_info
         .set_visible(matches!(screen, Screen::Chat { .. }));
 
     let title_text =
         chat_title(&screen, state).unwrap_or_else(|| screens::title(&screen).to_string());
-    header.title.set_label(&title_text);
     let chat_in_view = matches!(screen, Screen::Chat { .. })
         .then(|| state.current_chat.as_ref())
         .flatten();
-    if let Some(chat) = chat_in_view.filter(|chat| chat.kind == iris_chat_core::ChatKind::Direct) {
-        header
-            .title
-            .set_markup(&crate::widgets::person_name::markup(
-                &title_text,
-                &chat.chat_id,
-                crate::widgets::person_name::explicit(
-                    chat.nickname.as_deref(),
-                    chat.profile_name.as_deref(),
-                ),
-            ));
+    let title_markup = if let Some(chat) =
+        chat_in_view.filter(|chat| chat.kind == iris_chat_core::ChatKind::Direct)
+    {
+        crate::widgets::person_name::markup(
+            &title_text,
+            &chat.chat_id,
+            crate::widgets::person_name::explicit(
+                chat.nickname.as_deref(),
+                chat.profile_name.as_deref(),
+            ),
+        )
+    } else {
+        glib::markup_escape_text(if matches!(screen, Screen::ChatList) {
+            "Iris Chat"
+        } else {
+            &title_text
+        })
+        .to_string()
+    };
+    if header.title.label() != title_markup {
+        header.title.set_markup(&title_markup);
     }
     let header_status: Option<(&str, String)> = chat_in_view.and_then(|chat| {
         if let Some(ttl) = chat.message_ttl_seconds {
@@ -524,33 +508,45 @@ fn apply_state(slot: &Content, header: &HeaderWidgets, manager: &Rc<AppManager>,
         header.title_status.set_visible(false);
     }
 
-    // Tear down any avatar from a previous render.
-    while let Some(child) = header.title_slot.first_child() {
-        if child == header.title_column.clone().upcast::<gtk::Widget>() {
-            // Keep the heading column in place.
-            break;
+    let avatar_key = chat_in_view.map(|chat| HeaderAvatarKey {
+        id: chat.chat_id.clone(),
+        name: chat.display_name.clone(),
+        picture: chat.picture_url.clone(),
+        connection: chat.social_connection.clone(),
+        direct: chat.kind == iris_chat_core::ChatKind::Direct,
+        preferences: state.preferences.clone(),
+    });
+    if *header.avatar_key.borrow() != avatar_key {
+        // Tear down any avatar from a previous render.
+        while let Some(child) = header.title_slot.first_child() {
+            if child == header.title_column.clone().upcast::<gtk::Widget>() {
+                // Keep the heading column in place.
+                break;
+            }
+            header.title_slot.remove(&child);
         }
-        header.title_slot.remove(&child);
-    }
-    if matches!(screen, Screen::Chat { .. }) {
-        if let Some(chat) = state.current_chat.as_ref() {
-            let avatar = build_chat_header_avatar(chat, state, manager);
-            header.title_slot.prepend(&avatar);
-            attach_chat_title_click(&header.title_slot, manager, chat);
-        }
-    } else {
-        for ctrl in header
-            .title_slot
-            .observe_controllers()
-            .into_iter()
-            .flatten()
-        {
-            if let Ok(ev) = ctrl.downcast::<gtk::EventController>() {
-                if ev.is::<gtk::GestureClick>() {
-                    header.title_slot.remove_controller(&ev);
+        if matches!(screen, Screen::Chat { .. }) {
+            if let Some(chat) = state.current_chat.as_ref() {
+                let avatar = build_chat_header_avatar(chat, state, manager);
+                header.title_slot.prepend(&avatar);
+                attach_chat_title_click(&header.title_slot, manager, chat);
+            }
+        } else {
+            for ctrl in header
+                .title_slot
+                .observe_controllers()
+                .into_iter()
+                .flatten()
+            {
+                if let Ok(ev) = ctrl.downcast::<gtk::EventController>() {
+                    if ev.is::<gtk::GestureClick>() {
+                        header.title_slot.remove_controller(&ev);
+                    }
                 }
             }
         }
+
+        *header.avatar_key.borrow_mut() = avatar_key;
     }
 
     slot.update(&screen, state, manager);
@@ -576,9 +572,7 @@ fn build_own_avatar(account: &AccountSnapshot, state: &AppState) -> gtk::Widget 
     };
     let avatar = adw::Avatar::new(28, Some(label), true);
     if let Some(url) = account.picture_url.as_deref() {
-        if url.starts_with("http://") || url.starts_with("https://") {
-            image_cache::fetch_proxied_into_avatar(&avatar, url, &state.preferences, 56);
-        }
+        image_cache::fetch_proxied_into_avatar(&avatar, url, &state.preferences, 56);
     }
     avatar.upcast()
 }
@@ -590,9 +584,7 @@ fn build_chat_header_avatar(
 ) -> gtk::Widget {
     let avatar = adw::Avatar::new(32, Some(&chat.display_name), true);
     if let Some(url) = chat.picture_url.as_deref() {
-        if url.starts_with("http://") || url.starts_with("https://") {
-            image_cache::fetch_proxied_into_avatar(&avatar, url, &state.preferences, 64);
-        }
+        image_cache::fetch_proxied_into_avatar(&avatar, url, &state.preferences, 64);
     }
     crate::widgets::social_badge::user_avatar(
         &avatar,

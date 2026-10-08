@@ -108,7 +108,7 @@ pub fn present(parent: Option<&gtk::Window>, manager: Rc<AppManager>) {
     });
 
     dialog.set_child(Some(&content));
-    dialog.present(parent);
+    crate::widgets::dialogs::present(&dialog, parent);
 }
 
 fn refresh(

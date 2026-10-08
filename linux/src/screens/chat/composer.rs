@@ -72,7 +72,7 @@ impl EditControls {
         input.remove_css_class("editing-message");
         banner.set_visible(false);
         attach.set_sensitive(true);
-        send.set_icon_name("document-send-symbolic");
+        send.set_icon_name("go-up-symbolic");
         send.add_css_class("circular");
         send.set_tooltip_text(Some("Send"));
         preview.set_visible(
@@ -186,7 +186,7 @@ impl Composer {
             .icon_name("list-add-symbolic")
             .build();
         attach.add_css_class("flat");
-        attach.add_css_class("circular");
+        crate::widgets::controls::composer_control(&attach);
         attach.set_tooltip_text(Some("Add attachment"));
         attach.set_sensitive(!state.busy.uploading_attachment);
         let popover = gtk::Popover::new();
@@ -323,7 +323,7 @@ impl Composer {
         let emoji_btn = gtk::MenuButton::new();
         emoji_btn.set_icon_name("face-smile-symbolic");
         emoji_btn.add_css_class("flat");
-        emoji_btn.add_css_class("circular");
+        crate::widgets::controls::composer_control(&emoji_btn);
         emoji_btn.set_tooltip_text(Some("Insert emoji"));
         let emoji_chooser = gtk::EmojiChooser::new();
         emoji_btn.set_popover(Some(&emoji_chooser));
@@ -371,9 +371,9 @@ impl Composer {
         }
 
         let busy = state.busy.sending_message;
-        let send = gtk::Button::from_icon_name("document-send-symbolic");
+        let send = gtk::Button::from_icon_name("go-up-symbolic");
         send.add_css_class("suggested-action");
-        send.add_css_class("circular");
+        crate::widgets::controls::composer_control(&send);
         send.set_tooltip_text(Some("Send"));
         send.set_sensitive(!busy);
         row.append(&send);

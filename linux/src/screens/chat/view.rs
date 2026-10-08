@@ -13,7 +13,6 @@ pub struct ChatView {
     file_drop_target: Option<gtk::DropTarget>,
     rendered: Option<(CurrentChatSnapshot, PreferencesSnapshot)>,
     timeline: Option<timeline::Timeline>,
-    ttl: gtk::Box,
     notice: gtk::Box,
 }
 
@@ -48,7 +47,6 @@ impl ChatView {
             file_drop_target: None,
             rendered: None,
             timeline: None,
-            ttl: gtk::Box::new(gtk::Orientation::Vertical, 0),
             notice: gtk::Box::new(gtk::Orientation::Vertical, 0),
         }
     }
@@ -82,7 +80,6 @@ impl ChatView {
         if self.timeline.is_none() {
             clear(&self.body);
             let timeline = timeline::Timeline::new(&self.chat_id, manager);
-            self.body.append(&self.ttl);
             self.body.append(&timeline.viewport.scroll);
             self.body.append(&self.notice);
             self.timeline = Some(timeline);
@@ -99,9 +96,7 @@ impl ChatView {
         content.direct_chat_capability = None;
         let key = (content, state.preferences.clone());
         if self.rendered.as_ref() != Some(&key) {
-            clear(&self.ttl);
             clear(&self.notice);
-            self.ttl.append(&ttl_strip(chat, manager));
             self.notice
                 .append(&crate::widgets::contact_actions::name_notice(chat, manager));
             self.rendered = Some(key);

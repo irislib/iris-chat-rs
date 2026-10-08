@@ -1,6 +1,8 @@
 pub mod audio_message;
 pub mod clickable;
 pub mod contact_actions;
+pub mod controls;
+pub mod dialogs;
 pub mod image_cache;
 pub mod keyboard_list;
 pub mod message_timeline;

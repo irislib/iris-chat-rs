@@ -20,5 +20,5 @@ mod style;
 fn main() {
     adw::init().expect("GTK display required");
     style::install_css();
-    window::composer_tests::run();
+    window::composer_tests::run_layout();
 }

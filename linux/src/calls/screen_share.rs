@@ -7,7 +7,7 @@ use iris_chat_core::DesktopCallMedia;
 use std::{
     cell::{Cell, RefCell},
     collections::HashMap,
-    ffi::{c_char, c_int, c_ulong, c_void, CStr, CString},
+    ffi::c_ulong,
     os::fd::{AsRawFd, FromRawFd, OwnedFd},
     rc::Rc,
     sync::{
@@ -15,6 +15,9 @@ use std::{
         Arc,
     },
 };
+
+#[cfg(target_os = "linux")]
+use std::ffi::{c_char, c_int, c_void, CStr, CString};
 
 const DEST: &str = "org.freedesktop.portal.Desktop";
 const PATH: &str = "/org/freedesktop/portal/desktop";
@@ -475,6 +478,12 @@ async fn choose_x11(
     pipeline(source, selection).map(Some)
 }
 
+#[cfg(not(target_os = "linux"))]
+fn x11_choices(_parent: &gtk::Window) -> Vec<(c_ulong, String)> {
+    Vec::new()
+}
+
+#[cfg(target_os = "linux")]
 fn x11_choices(parent: &gtk::Window) -> Vec<(c_ulong, String)> {
     use glib::translate::ToGlibPtr;
     // GTK traps X11 errors on its own connection, including a window closing
@@ -560,12 +569,14 @@ fn x11_choices(parent: &gtk::Window) -> Vec<(c_ulong, String)> {
         result
     }
 }
+#[cfg(target_os = "linux")]
 #[link(name = "gtk-4")]
 unsafe extern "C" {
     fn gdk_x11_display_get_xdisplay(display: *mut gtk::gdk::ffi::GdkDisplay) -> *mut c_void;
     fn gdk_x11_display_error_trap_push(display: *mut gtk::gdk::ffi::GdkDisplay);
     fn gdk_x11_display_error_trap_pop_ignored(display: *mut gtk::gdk::ffi::GdkDisplay);
 }
+#[cfg(target_os = "linux")]
 #[link(name = "X11")]
 unsafe extern "C" {
     fn XDefaultRootWindow(display: *mut c_void) -> c_ulong;

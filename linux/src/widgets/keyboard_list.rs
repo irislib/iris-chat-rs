@@ -57,7 +57,8 @@ fn scroll(widget: &gtk::Widget) -> Option<gtk::ScrolledWindow> {
 }
 
 pub fn focus_list(root: &gtk::Widget, preferred_chat: Option<&str>) -> bool {
-    find(root, "iris-keyboard-chat-list")
+    let focused = find(root, "iris-keyboard-chat-list")
+        .filter(|list| list.is_mapped())
         .and_then(|list| {
             let rows = rows(&list);
             preferred_chat
@@ -68,11 +69,19 @@ pub fn focus_list(root: &gtk::Widget, preferred_chat: Option<&str>) -> bool {
                 .or_else(|| rows.first())
                 .cloned()
         })
-        .is_some_and(|row| row.grab_focus())
+        .is_some_and(|row| row.grab_focus());
+    // An empty search still has a useful destination. Do not leave a pending
+    // section-focus request waiting for rows that may never appear.
+    focused
+        || find(root, "iris-keyboard-search")
+            .filter(|entry| entry.is_mapped())
+            .is_some_and(|entry| entry.grab_focus())
 }
 
 pub fn focus_composer(root: &gtk::Widget) -> bool {
-    find(root, "iris-chat-composer").is_some_and(|input| input.grab_focus())
+    find(root, "iris-chat-composer")
+        .filter(|input| input.is_mapped())
+        .is_some_and(|input| input.grab_focus())
 }
 
 fn find(root: &gtk::Widget, name: &str) -> Option<gtk::Widget> {

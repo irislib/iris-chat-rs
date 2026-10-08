@@ -1,4 +1,5 @@
 use super::*;
+use gtk::gdk::prelude::TextureExt;
 use std::io::{Read, Write};
 use std::net::TcpListener;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -8,6 +9,49 @@ use std::time::{Duration, Instant};
 static TEST_LOCK: Mutex<()> = Mutex::new(());
 
 const PNG: &[u8] = include_bytes!("../../resources/iris-chat-16.png");
+
+#[test]
+fn uploaded_images_and_profile_pictures_use_core_attachment_downloads() {
+    for url in [
+        "htree://nhash1image/photo%20name.png",
+        "nhash://nhash1image/avatar.jpg",
+        " htree://nhash1image ",
+    ] {
+        let candidates = image_load_urls(
+            url.to_string(),
+            PreferencesSnapshot::default(),
+            Some(320),
+            Some(320),
+            false,
+        );
+        assert_eq!(candidates.len(), 1);
+        let bytes = load_image_bytes(&candidates[0], false, |nhash| {
+            assert_eq!(nhash, "nhash1image");
+            AttachmentDownloadResult {
+                data_base64: Some(base64::engine::general_purpose::STANDARD.encode(PNG)),
+                error: None,
+            }
+        })
+        .expect("uploaded image should resolve through the attachment downloader");
+        let texture = gdk::Texture::from_bytes(&glib::Bytes::from(&bytes)).unwrap();
+        assert_eq!(texture.width(), 16);
+        assert_eq!(texture.height(), 16);
+    }
+
+    assert!(
+        load_image_bytes("htree://nhash1image/photo.png", false, |_| {
+            AttachmentDownloadResult {
+                data_base64: None,
+                error: Some("Image unavailable".into()),
+            }
+        })
+        .is_none()
+    );
+    assert!(load_image_bytes("htree:///photo.png", false, |_| {
+        panic!("empty hashes must not start attachment downloads")
+    })
+    .is_none());
+}
 
 struct ImageServer {
     url: String,

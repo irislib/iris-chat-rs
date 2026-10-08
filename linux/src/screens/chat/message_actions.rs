@@ -1,5 +1,10 @@
 use super::*;
 
+mod hover;
+pub(super) use hover::install_hover_actions;
+#[cfg(feature = "ui-tests")]
+pub use hover::verify_ui;
+
 pub(super) fn can_delete_for_everyone(message: &ChatMessageSnapshot) -> bool {
     message.is_outgoing
         && message.kind == ChatMessageKind::User
@@ -163,7 +168,7 @@ fn present_history(
     toolbar.set_content(Some(&scroll));
     dialog.set_child(Some(&toolbar));
     populate_history(&versions, target);
-    dialog.present(parent);
+    crate::widgets::dialogs::present(&dialog, parent);
 
     let mut rendered = target.edit_history.clone();
     watch_message(&dialog, target, manager, move |message| {

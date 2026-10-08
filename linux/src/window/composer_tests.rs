@@ -3,9 +3,11 @@ use std::time::{Duration, Instant};
 
 mod group_member_picker_tests;
 mod group_membership_tests;
+mod layout_tests;
 
 const PEER: &str = "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
 
+#[track_caller]
 fn pump_until(mut ready: impl FnMut() -> bool) {
     let context = glib::MainContext::default();
     let deadline = Instant::now() + Duration::from_secs(10);
@@ -59,8 +61,6 @@ fn header() -> HeaderWidgets {
     title_slot.append(&title_column);
     HeaderWidgets {
         back: gtk::Button::new(),
-        new_chat: gtk::Button::new(),
-        settings: gtk::Button::new(),
         chat_info: gtk::Button::new(),
         voice_call: gtk::Button::new(),
         video_call: gtk::Button::new(),
@@ -70,7 +70,51 @@ fn header() -> HeaderWidgets {
         title_status_icon: gtk::Image::new(),
         title_status_label: gtk::Label::new(None),
         title_slot,
+        avatar_key: Rc::new(RefCell::new(None)),
     }
+}
+
+pub fn run_layout() {
+    let data = tempfile::tempdir().unwrap();
+    std::env::set_var("IRIS_UI_TEST_RUN_ID", "linux-layout-regression");
+    std::env::set_var("IRIS_UI_TEST_DATA_DIR", data.path());
+    std::env::set_var("XDG_CONFIG_HOME", data.path().join("config"));
+    std::env::set_var("XDG_DATA_HOME", data.path().join("data"));
+    adw::init().expect("GTK display required");
+    let manager = Rc::new(AppManager::new());
+    let rx = manager.update_rx();
+    let drain = || {
+        while let Ok(update) = rx.try_recv() {
+            manager.apply_update(update);
+        }
+    };
+    manager.dispatch(AppAction::CreateAccount {
+        name: "Layout test".into(),
+    });
+    pump_until(|| {
+        drain();
+        manager.current_state().account.is_some()
+    });
+    manager.dispatch(AppAction::CreateChat {
+        peer_input: PEER.into(),
+    });
+    pump_until(|| {
+        drain();
+        manager.current_state().current_chat.is_some()
+    });
+    crate::app_manager::verify_search_ui(manager.clone());
+    eprintln!("Checking responsive layout");
+    layout_tests::run(manager.clone());
+    eprintln!("Checking Settings and text size");
+    crate::screens::settings::verify_ui(manager.clone());
+    crate::widgets::text_size::verify_ui(manager.clone());
+    eprintln!("Checking hover actions");
+    crate::screens::chat::verify_message_actions_ui(manager.clone());
+    eprintln!("Checking outside-click dismissal");
+    crate::widgets::dialogs::verify_ui();
+    println!(
+        "PASS: responsive layout, stable inputs, sync status, hover actions and click-away dialogs"
+    );
 }
 
 pub fn run() {
@@ -347,7 +391,7 @@ pub fn run() {
     );
     println!("PASS: Linux notification warm/cold target, pending auth, one-shot and logout/account guards");
 
-    let target = file_drop_target(slot.root.upcast_ref()).expect("whole-chat file drop target");
+    let target = file_drop_target(slot.detail.upcast_ref()).expect("whole-chat file drop target");
     let apply_drop_state = |mut state: AppState| {
         state.rev = manager.current_state().rev + 1;
         manager.apply_update(AppUpdate::FullState(state));

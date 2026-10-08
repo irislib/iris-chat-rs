@@ -7,7 +7,7 @@ use crate::app_manager::AppManager;
 
 mod add_device;
 pub mod chat;
-mod chat_list;
+pub(crate) mod chat_list;
 mod create_account;
 mod create_invite;
 mod device_revoked;
@@ -19,7 +19,8 @@ mod new_chat;
 mod new_group;
 mod remote_signer;
 mod restore_account;
-mod settings;
+pub(crate) mod settings;
+mod sync_status;
 mod welcome;
 
 pub fn render(screen: &Screen, state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
@@ -251,7 +252,7 @@ pub(crate) fn show_chat_mute_options(
     });
     content.append(&cancel);
     dialog.set_child(Some(&content));
-    dialog.present(parent);
+    crate::widgets::dialogs::present(&dialog, parent);
 }
 
 pub(crate) fn confirm_delete_chat(
@@ -363,6 +364,9 @@ fn chat_details_actions(
         searching.redraw_ui();
     });
     group.add(&search);
+    if let Some(expiry) = chat::disappearing_messages_row(manager, chat_id) {
+        group.add(&expiry);
+    }
     let pin = adw::ActionRow::builder().activatable(true).build();
     let update_title = |row: &adw::ActionRow, pinned| {
         row.set_title(if pinned { "Unpin chat" } else { "Pin chat" })

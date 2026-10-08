@@ -4,10 +4,11 @@ use std::rc::Rc;
 use std::sync::{LazyLock, Mutex};
 use std::thread;
 
+use base64::Engine;
 use gtk::gdk;
 use gtk::glib;
 use gtk::prelude::ObjectExt;
-use iris_chat_core::{image_load_urls, PreferencesSnapshot};
+use iris_chat_core::{image_load_urls, AttachmentDownloadResult, PreferencesSnapshot};
 
 static BYTES_CACHE: LazyLock<Mutex<HashMap<String, Vec<u8>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
@@ -180,31 +181,11 @@ where
     let (tx, rx) = async_channel::bounded::<Option<Vec<u8>>>(1);
     let url_for_thread = url_owned.clone();
     thread::spawn(move || {
-        let origin = reqwest::Url::parse(&url_for_thread)
-            .ok()
-            .map(|url| url.origin());
-        let redirects = if allow_cross_origin_redirects {
-            reqwest::redirect::Policy::limited(10)
-        } else {
-            reqwest::redirect::Policy::custom(move |attempt| {
-                if attempt.previous().len() >= 10 {
-                    attempt.error("too many image redirects")
-                } else if Some(attempt.url().origin()) == origin {
-                    attempt.follow()
-                } else {
-                    attempt.stop()
-                }
-            })
-        };
-        let bytes = reqwest::blocking::Client::builder()
-            .timeout(std::time::Duration::from_secs(15))
-            .redirect(redirects)
-            .build()
-            .ok()
-            .and_then(|c| c.get(&url_for_thread).send().ok())
-            .and_then(|resp| resp.error_for_status().ok())
-            .and_then(|resp| resp.bytes().ok())
-            .map(|b| b.to_vec());
+        let bytes = load_image_bytes(
+            &url_for_thread,
+            allow_cross_origin_redirects,
+            iris_chat_core::download_hashtree_attachment,
+        );
         let _ = tx.send_blocking(bytes);
     });
 
@@ -214,6 +195,50 @@ where
         let bytes = rx.recv().await.ok().flatten();
         complete_fetch(url_for_main, generation, bytes);
     });
+}
+
+fn load_image_bytes(
+    url: &str,
+    allow_cross_origin_redirects: bool,
+    download_hashtree: impl FnOnce(String) -> AttachmentDownloadResult,
+) -> Option<Vec<u8>> {
+    let url = url.trim();
+    // Uploaded images and profile pictures use encrypted, content-addressed
+    // links. Their bytes must be resolved and decrypted by core, not HTTP.
+    if let Some(path) = url
+        .strip_prefix("htree://")
+        .or_else(|| url.strip_prefix("nhash://"))
+    {
+        let nhash = path.split('/').next().filter(|hash| !hash.is_empty())?;
+        let encoded = download_hashtree(nhash.to_string()).data_base64?;
+        return base64::engine::general_purpose::STANDARD
+            .decode(encoded)
+            .ok();
+    }
+
+    let origin = reqwest::Url::parse(url).ok().map(|url| url.origin());
+    let redirects = if allow_cross_origin_redirects {
+        reqwest::redirect::Policy::limited(10)
+    } else {
+        reqwest::redirect::Policy::custom(move |attempt| {
+            if attempt.previous().len() >= 10 {
+                attempt.error("too many image redirects")
+            } else if Some(attempt.url().origin()) == origin {
+                attempt.follow()
+            } else {
+                attempt.stop()
+            }
+        })
+    };
+    reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .redirect(redirects)
+        .build()
+        .ok()
+        .and_then(|client| client.get(url).send().ok())
+        .and_then(|response| response.error_for_status().ok())
+        .and_then(|response| response.bytes().ok())
+        .map(|bytes| bytes.to_vec())
 }
 
 fn complete_fetch(url_for_main: String, generation: u64, bytes: Option<Vec<u8>>) {

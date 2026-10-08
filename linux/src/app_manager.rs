@@ -8,6 +8,10 @@ use attachment_drafts::AttachmentDrafts;
 mod history;
 #[cfg(feature = "ui-tests")]
 pub use history::verify_ui as verify_history_ui;
+#[path = "app_manager/search.rs"]
+mod search;
+#[cfg(feature = "ui-tests")]
+pub use search::verify_ui as verify_search_ui;
 
 use std::cell::{Cell, RefCell};
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -51,7 +55,7 @@ struct ClientDebugLogEntry {
 
 /// Chat-list search box state. Lives on the UI thread; queries are
 /// re-issued against the core whenever any field changes.
-#[derive(Default, Clone)]
+#[derive(Default, Clone, PartialEq, Eq)]
 pub struct SearchUiState {
     pub query: String,
     pub people_expanded: bool,
@@ -85,6 +89,7 @@ pub struct AppManager {
     notification_routing: RefCell<crate::platform::notifications::NotificationRouting>,
     staged_attachments: std::rc::Rc<RefCell<AttachmentDrafts>>,
     search_ui: RefCell<SearchUiState>,
+    search: RefCell<search::Search>,
     client_debug_log: RefCell<Vec<ClientDebugLogEntry>>,
     window_active: Cell<bool>,
     last_user_activity: RefCell<Instant>,
@@ -242,6 +247,7 @@ impl AppManager {
             ),
             staged_attachments: AttachmentDrafts::for_application(),
             search_ui: RefCell::new(SearchUiState::default()),
+            search: RefCell::new(search::Search::default()),
             client_debug_log: RefCell::new(Vec::new()),
             window_active: Cell::new(false),
             last_user_activity: RefCell::new(Instant::now()),
@@ -289,17 +295,6 @@ impl AppManager {
 
     pub fn clear_search(&self) {
         *self.search_ui.borrow_mut() = SearchUiState::default();
-    }
-
-    pub fn run_search(&self, limit: u32) -> SearchResultSnapshot {
-        let snapshot = self.search_ui.borrow().clone();
-        let query = snapshot.query;
-        let scope_chat_id = snapshot.scope_chat_id;
-        self.catch_ffi_logged(
-            "ffiapp.search",
-            SearchResultSnapshot::empty(query.clone(), scope_chat_id.clone()),
-            || self.ffi.search(query, scope_chat_id, limit),
-        )
     }
 
     pub fn mutual_groups(&self, owner_input: &str) -> Vec<ChatThreadSnapshot> {
@@ -888,6 +883,8 @@ impl AppManager {
             self.show_toast(SECRET_CLEAR_FAILURE_TOAST);
             return;
         }
+        self.clear_search();
+        self.search.borrow_mut().clear();
         crate::widgets::image_cache::clear();
         self.dispatch_to_rust(AppAction::Logout, false);
         let _ = std::fs::remove_dir_all(&self.data_dir);
