@@ -190,8 +190,12 @@ using `haps-release.json` and the existing dedicated Hashtree signing identity.
 The Haps checksum/layout/signer check runs before publication, including with
 `--check`; Nostr publication runs only after the canonical Hashtree updater
 readback succeeds. Any Haps failure fails distribution. No separate build,
-catalog maintenance, or mobile installer execution is involved. The local
-publisher needs Haps with `import-release` support and Python 3.9 or newer.
+catalog maintenance, or mobile installer execution is involved. Haps publication
+uses the public relays in the dedicated Hashtree configuration, bypassing local
+daemon preferences and inherited `NOSTR_RELAYS`; a local storage acknowledgment
+is not proof of public delivery. Verify both packages from a fresh consumer
+before treating Haps distribution as complete. The local publisher needs Haps
+with `import-release` support and Python 3.9 or newer.
 
 Use this order: Hashtree, Homebrew, Zapstore. Homebrew refuses to publish
 until the exact Hashtree tag exists. Commands are safe to retry with the same

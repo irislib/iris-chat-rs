@@ -280,9 +280,13 @@ publish_hashtree() {
     htree release publish "$IRIS_HASHTREE_RELEASE_TREE" "$TAG" "$cid" \
       --expected-root "$IRIS_HASHTREE_EXPECTED_ROOT"
   verify_hashtree_publication
+  # A local daemon ACK confirms storage, not delivery to public relays.
   HTREE_CONFIG_DIR="$IRIS_HASHTREE_CONFIG_DIR" \
   HTREE_DATA_DIR="$IRIS_HASHTREE_DATA_DIR" \
-  HAPS_HOME="$IRIS_HASHTREE_DATA_DIR/haps" haps "${haps_args[@]}" --publish
+  HTREE_PREFER_LOCAL_DAEMON=false \
+  HTREE_LOCAL_DAEMON_ONLY=false \
+  HAPS_HOME="$IRIS_HASHTREE_DATA_DIR/haps" \
+    env -u NOSTR_RELAYS haps "${haps_args[@]}" --publish
   echo "Published $TAG to Hashtree: $(hashtree_gateway_base_url "$TAG")"
 }
 

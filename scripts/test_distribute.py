@@ -141,6 +141,10 @@ class DistributeTests(unittest.TestCase):
             assert args[args.index('--tag') + 1] == os.environ['FAKE_TAG']
             assert args[args.index('--key-file') + 1] == os.environ['IRIS_HASHTREE_NSEC_PATH']
             assert os.environ['HAPS_HOME'] == os.environ['IRIS_HASHTREE_DATA_DIR'] + '/haps'
+            if args[-1] == '--publish' and os.environ.get('FAKE_REQUIRE_PUBLIC_HAPS') == '1':
+                assert os.environ.get('HTREE_PREFER_LOCAL_DAEMON') == 'false', 'local ACK is not public delivery'
+                assert os.environ.get('HTREE_LOCAL_DAEMON_ONLY') == 'false', 'local-only overrides daemon preference'
+                assert 'NOSTR_RELAYS' not in os.environ, 'use the dedicated publication relay configuration'
             with open(os.environ['FAKE_COMMAND_LOG'], 'a') as log:
                 log.write('haps ' + ' '.join(args) + '\n')
             if os.environ.get('FAKE_HAPS_FAIL') == args[-1]:
@@ -341,6 +345,21 @@ class DistributeTests(unittest.TestCase):
         self.assertNotIn("htree add", log)
         self.assertNotIn("htree release publish", log)
         self.assertNotIn("curl", log)
+
+    def test_haps_publication_bypasses_local_daemon(self) -> None:
+        for inherited in [None, "true"]:
+            with self.subTest(inherited=inherited):
+                env = self.environment()
+                env["FAKE_REQUIRE_PUBLIC_HAPS"] = "1"
+                env["NOSTR_RELAYS"] = "ws://127.0.0.1:9999"
+                if inherited is None:
+                    env.pop("HTREE_PREFER_LOCAL_DAEMON", None)
+                    env.pop("HTREE_LOCAL_DAEMON_ONLY", None)
+                else:
+                    env["HTREE_PREFER_LOCAL_DAEMON"] = inherited
+                    env["HTREE_LOCAL_DAEMON_ONLY"] = inherited
+                result = self.run_distribution("hashtree", env=env)
+                self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_haps_failure_blocks_or_fails_final_publication(self) -> None:
         for phase in ['--check', '--publish']:
