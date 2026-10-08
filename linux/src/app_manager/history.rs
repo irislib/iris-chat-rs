@@ -56,6 +56,9 @@ impl Paging {
         }
     }
     pub(super) fn reconcile(&mut self, previous: &AppState, incoming: &mut AppState) {
+        if previous.message_visibility_revision != incoming.message_visibility_revision {
+            self.clear();
+        }
         let scope = Self::scope(incoming);
         let recent_ids = (scope.is_some() && scope == self.scope)
             .then(|| self.recent_ids.clone())

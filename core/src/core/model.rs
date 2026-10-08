@@ -524,6 +524,8 @@ pub(super) struct PersistedPreferences {
     pub(super) send_read_receipts: bool,
     #[serde(default = "default_true")]
     pub(super) allow_message_deletion_by_others: bool,
+    #[serde(default)]
+    pub(super) hide_blocked_group_messages: bool,
     #[serde(default = "default_true")]
     pub(super) desktop_notifications_enabled: bool,
     #[serde(default = "default_true")]
@@ -581,6 +583,7 @@ impl Default for PersistedPreferences {
             send_typing_indicators: defaults.send_typing_indicators,
             send_read_receipts: defaults.send_read_receipts,
             allow_message_deletion_by_others: defaults.allow_message_deletion_by_others,
+            hide_blocked_group_messages: defaults.hide_blocked_group_messages,
             desktop_notifications_enabled: defaults.desktop_notifications_enabled,
             invite_acceptance_notifications_enabled: defaults
                 .invite_acceptance_notifications_enabled,

@@ -114,6 +114,7 @@ fun ChatListScreen(
     val account = appManager.account.collectAsStateWithLifecycle().value
     val preferences by appManager.preferences.collectAsStateWithLifecycle()
     val chatList by appManager.chatList.collectAsStateWithLifecycle()
+    val messageVisibilityRevision by appManager.messageVisibilityRevision.collectAsStateWithLifecycle()
     val userDiscoveryRevision by appManager.userDiscoveryRevision.collectAsStateWithLifecycle()
     val userDiscoverySyncing by appManager.userDiscoverySyncing.collectAsStateWithLifecycle()
     val deviceHistorySync by appManager.deviceHistorySync.collectAsStateWithLifecycle()
@@ -128,12 +129,12 @@ fun ChatListScreen(
     val searchActive = trimmedQuery.isNotEmpty()
     var expandedSearchSections by remember(trimmedQuery) { mutableStateOf(emptySet<SearchSection>()) }
     var messageSearchLimit by remember(trimmedQuery) { mutableStateOf(InitialMessageSearchLimit) }
-    var searchResults by remember { mutableStateOf<SearchResultSnapshot?>(null) }
+    var searchResults by remember(messageVisibilityRevision) { mutableStateOf<SearchResultSnapshot?>(null) }
     var globalSearchRequested by remember { mutableStateOf(false) }
 
     // Keep Rust/SQLite work out of composition. The empty call cancels any
     // debounced or in-flight global lookup when search closes.
-    LaunchedEffect(trimmedQuery, messageSearchLimit, userDiscoveryRevision) {
+    LaunchedEffect(trimmedQuery, messageSearchLimit, userDiscoveryRevision, messageVisibilityRevision) {
         searchResults =
             if (trimmedQuery.isEmpty()) {
                 if (globalSearchRequested) {

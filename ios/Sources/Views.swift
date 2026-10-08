@@ -314,7 +314,7 @@ struct MessageRequestSafetyModifier: ViewModifier {
                 .accessibilityIdentifier("messageRequestBlockCancelButton")
             },
             message: { _ in
-                Text("They won't be able to message you. No notification is sent.")
+                Text("This deletes your direct chat on your devices. Their new messages will be blocked.")
             }
         )
         .confirmationDialog(
@@ -349,7 +349,7 @@ struct MessageRequestSafetyModifier: ViewModifier {
                 .accessibilityIdentifier("messageRequestBlockAndReportCancelButton")
             },
             message: { _ in
-                Text("This prepares a report for support and blocks this user. No notification is sent.")
+                Text("This deletes your direct chat on your devices, blocks new messages, and prepares a report for support.")
             }
         )
         .confirmationDialog(

@@ -7,7 +7,7 @@ use rusqlite::{params, Connection, Transaction};
 // Bump when a non-additive change to the schema lands and migrate
 // inside `ensure_schema` below. Greenfield: version 1 is the initial
 // shape and there is no previous JSON layout to migrate from.
-const SCHEMA_VERSION: u32 = 41;
+const SCHEMA_VERSION: u32 = 42;
 
 const INITIAL_SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS direct_file_transfers (
@@ -629,6 +629,9 @@ pub(super) fn ensure_schema(conn: &mut Connection) -> anyhow::Result<()> {
     }
     if !column_exists(&tx, "preferences", "allow_message_deletion_by_others")? {
         tx.execute_batch("ALTER TABLE preferences ADD COLUMN allow_message_deletion_by_others INTEGER NOT NULL DEFAULT 1;")?;
+    }
+    if !column_exists(&tx, "preferences", "hide_blocked_group_messages")? {
+        tx.execute_batch("ALTER TABLE preferences ADD COLUMN hide_blocked_group_messages INTEGER NOT NULL DEFAULT 0;")?;
     }
     // Target lookups span old device identities after account restoration.
     // Index the guarded JSON fields so history exports never scan every control

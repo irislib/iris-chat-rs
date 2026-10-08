@@ -186,7 +186,7 @@ fn appcore_direct_message_event_with_author_keys_for_test(
     )
 }
 
-fn logged_in_test_core_with_updates(
+pub(super) fn logged_in_test_core_with_updates(
     label: &str,
     owner: &Keys,
     device: &Keys,

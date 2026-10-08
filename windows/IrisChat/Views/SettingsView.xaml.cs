@@ -1,6 +1,7 @@
 using System;
 using System.ComponentModel;
 using System.IO;
+using System.Linq;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
@@ -16,6 +17,7 @@ public partial class SettingsView : UserControl
 
     private static string IrisChatProfileUrl(string npub) => $"https://chat.iris.to/#/{npub}";
 
+    private (string Id, string Name, string UserId)[]? _renderedBlockedPeople;
     private bool _suppressToggleDispatch;
     private string _selectedPage = "Profile";
     private bool _profileQrVisible;
@@ -65,6 +67,7 @@ public partial class SettingsView : UserControl
         TypingToggle.IsChecked = prefs.sendTypingIndicators;
         ReceiptsToggle.IsChecked = prefs.sendReadReceipts;
         AllowMessageDeletionToggle.IsChecked = prefs.allowMessageDeletionByOthers;
+        HideBlockedGroupMessagesToggle.IsChecked = prefs.hideBlockedGroupMessages;
         NotificationsToggle.IsChecked = prefs.desktopNotificationsEnabled;
         StartupToggle.IsChecked = prefs.startupAtLoginEnabled;
         NearbyEnabledToggle.IsChecked = prefs.nearbyEnabled;
@@ -88,6 +91,7 @@ public partial class SettingsView : UserControl
             ImageProxySaltInput.Text = prefs.imageProxySaltHex;
 
         RebuildRelays(prefs);
+        RebuildBlockedPeople();
 
         VersionText.Text = $"Version {App.CurrentManager.BuildSummary()}";
         RelaySetText.Text = string.Empty;
@@ -107,6 +111,34 @@ public partial class SettingsView : UserControl
         UpdateStatusText.Text = App.CurrentManager.UpdateStatus;
         CheckUpdatesButton.IsEnabled = !App.CurrentManager.UpdateChecking && !App.CurrentManager.UpdateInstalling;
         InstallUpdateButton.IsEnabled = App.CurrentManager.UpdateInstallEnabled;
+    }
+
+    private void RebuildBlockedPeople()
+    {
+        var people = App.CurrentManager.State.blockedPeople
+            .Select(person => (Id: person.ownerPubkeyHex, Name: person.displayLabel, UserId: person.userId))
+            .ToArray();
+        if (_renderedBlockedPeople != null && _renderedBlockedPeople.SequenceEqual(people)) return;
+        _renderedBlockedPeople = people;
+        BlockedPeopleList.Children.Clear();
+        if (people.Length == 0)
+            BlockedPeopleList.Children.Add(new TextBlock { Text = "No blocked people", Style = (Style)FindResource("MutedText") });
+        foreach (var person in people)
+        {
+            var row = new Grid { Margin = new Thickness(0, 4, 0, 4) };
+            row.ColumnDefinitions.Add(new ColumnDefinition());
+            row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            var identity = new StackPanel { VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 12, 0) };
+            identity.Children.Add(new TextBlock { Text = person.Name, TextTrimming = TextTrimming.CharacterEllipsis });
+            identity.Children.Add(new TextBlock { Text = person.UserId, TextTrimming = TextTrimming.CharacterEllipsis, Style = (Style)FindResource("MutedText") });
+            row.Children.Add(identity);
+            var unblock = new Button { Content = "Unblock", Style = (Style)FindResource("GhostButton"), VerticalAlignment = VerticalAlignment.Center };
+            System.Windows.Automation.AutomationProperties.SetName(unblock, $"Unblock {person.Name}");
+            unblock.Click += (_, _) => App.CurrentManager.SetUserBlocked(person.Id, false);
+            Grid.SetColumn(unblock, 1);
+            row.Children.Add(unblock);
+            BlockedPeopleList.Children.Add(row);
+        }
     }
 
     private void OnSettingsMenuClick(object sender, RoutedEventArgs e)
@@ -223,6 +255,12 @@ public partial class SettingsView : UserControl
     {
         if (_suppressToggleDispatch) return;
         App.CurrentManager.SetReadReceiptsEnabled(ReceiptsToggle.IsChecked == true);
+    }
+
+    private void OnHideBlockedGroupMessagesChanged(object sender, RoutedEventArgs e)
+    {
+        if (_suppressToggleDispatch) return;
+        App.CurrentManager.SetHideBlockedGroupMessages(HideBlockedGroupMessagesToggle.IsChecked == true);
     }
 
     private void OnAllowMessageDeletionChanged(object sender, RoutedEventArgs e)

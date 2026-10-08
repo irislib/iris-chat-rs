@@ -222,6 +222,51 @@ pub fn verify_ui(manager: Rc<AppManager>) {
         named(view.root.upcast_ref(), "textSizeSetting").expect("visible text-size setting");
     pump_until(|| text_size.is_mapped());
     screenshot(&window, "linux-settings-general-narrow.png");
+    let target = "a".repeat(64);
+    manager.dispatch(AppAction::SetUserBlocked {
+        owner_pubkey_hex: target.clone(),
+        blocked: true,
+    });
+    pump_until(|| {
+        while let Ok(update) = rx.try_recv() {
+            if let Some(iris_chat_core::AppUpdate::FullState(state)) = manager.apply_update(update)
+            {
+                view.update(&state, &manager);
+            }
+        }
+        manager.current_state().blocked_people.len() == 1
+    });
+    view.split.set_show_content(false);
+    pump_until(|| view.menu.is_mapped());
+    select(&view, "messaging");
+    let unblock = named(
+        view.root.upcast_ref(),
+        &format!("settings-unblock-{target}"),
+    )
+    .unwrap()
+    .downcast::<gtk::Button>()
+    .unwrap();
+    pump_until(|| unblock.is_mapped());
+    screenshot(&window, "linux-settings-blocked-narrow.png");
+    window.set_default_size(900, 740);
+    pump_until(|| window.width() >= 850 && !view.split.is_collapsed());
+    screenshot(&window, "linux-settings-blocked-wide.png");
+    unblock.emit_clicked();
+    pump_until(|| {
+        while let Ok(update) = rx.try_recv() {
+            if let Some(iris_chat_core::AppUpdate::FullState(state)) = manager.apply_update(update)
+            {
+                view.update(&state, &manager);
+            }
+        }
+        manager.current_state().blocked_people.is_empty()
+    });
+    assert!(named(
+        view.root.upcast_ref(),
+        &format!("settings-unblock-{target}")
+    )
+    .is_none());
+    drop(unblock);
     drop(detail_scroll);
     let weak_root = view.root.downgrade();
     // This test selects editor text. Release Linux's primary-selection owner

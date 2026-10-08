@@ -417,6 +417,16 @@ struct SettingsScreen: View {
                 .irisControlTint()
                 .accessibilityIdentifier("myProfileAcceptUnknownMessagesToggle")
 
+                Toggle(
+                    "Hide past group messages from blocked people",
+                    isOn: Binding(
+                        get: { manager.state.preferences.hideBlockedGroupMessages },
+                        set: { manager.dispatch(.setHideBlockedGroupMessages(enabled: $0)) }
+                    )
+                )
+                .irisControlTint()
+                .accessibilityIdentifier("myProfileHideBlockedGroupMessagesToggle")
+
                 Toggle("Voice calls", isOn: Binding(
                     get: { manager.state.preferences.voiceCallsEnabled },
                     set: { manager.dispatch(.setVoiceCallsEnabled(enabled: $0)) }
@@ -446,6 +456,8 @@ struct SettingsScreen: View {
                 .accessibilityIdentifier("myProfileCallQualityButton")
 
             }
+
+            BlockedPeopleSettings(manager: manager)
 
         case .notifications:
             IrisSectionCard {

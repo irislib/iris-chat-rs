@@ -248,6 +248,10 @@ impl AppCore {
                 chat_id,
                 message_id,
             } => self.mutate_own_message(&chat_id, &message_id, None),
+            AppAction::SetHideBlockedGroupMessages { enabled } => {
+                self.preferences.hide_blocked_group_messages = enabled;
+                self.rebuild_persist_and_emit_state();
+            }
             AppAction::SetAllowMessageDeletionByOthers { enabled } => {
                 self.preferences.allow_message_deletion_by_others = enabled;
                 self.persist_best_effort();

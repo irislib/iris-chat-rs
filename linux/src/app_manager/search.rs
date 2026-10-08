@@ -7,6 +7,7 @@ const CACHE_LIMIT: usize = 8;
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct Key {
     generation: u64,
+    visibility_revision: u64,
     account: Option<String>,
     query: String,
     scope: Option<String>,
@@ -167,6 +168,7 @@ impl AppManager {
         Request {
             key: Key {
                 generation: self.search.borrow().generation,
+                visibility_revision: state.message_visibility_revision,
                 account: state
                     .account
                     .as_ref()

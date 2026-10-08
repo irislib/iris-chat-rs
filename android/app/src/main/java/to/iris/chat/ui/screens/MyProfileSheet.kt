@@ -381,6 +381,12 @@ fun MyProfileSheet(
                                     tag = "myProfileAcceptChatRequestsSwitch",
                                 )
                                 SettingsToggleRow(
+                                    title = "Hide past group messages from blocked people",
+                                    checked = preferences.hideBlockedGroupMessages,
+                                    onCheckedChange = { appManager.dispatch(AppAction.SetHideBlockedGroupMessages(it)) },
+                                    tag = "myProfileHideBlockedGroupMessagesSwitch",
+                                )
+                                SettingsToggleRow(
                                     title = "Typing indicators",
                                     checked = sendTypingIndicators,
                                     onCheckedChange = { enabled ->
@@ -403,6 +409,7 @@ fun MyProfileSheet(
                                     tag = "myProfileReadReceiptsSwitch",
                                 )
                             }
+                            BlockedPeopleSettings(appState.blockedPeople, appManager::dispatch)
                         }
 
                         SettingsPage.Notifications -> {

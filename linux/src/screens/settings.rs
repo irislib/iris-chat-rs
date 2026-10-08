@@ -2,7 +2,7 @@ mod media;
 mod messaging;
 mod view;
 use media::{media_group, MediaGroup};
-use messaging::messaging_group;
+use messaging::{blocked_people_group, messaging_group};
 #[cfg(feature = "ui-tests")]
 pub use view::verify_ui;
 pub(crate) use view::SettingsView;
@@ -113,7 +113,13 @@ fn page_widget(page: SettingsPage, state: &AppState, manager: &Rc<AppManager>) -
         }
         SettingsPage::Devices => return device_roster::content(state, manager),
         SettingsPage::General => general_group(&state.preferences, manager),
-        SettingsPage::Messaging => messaging_group(&state.preferences, manager),
+        SettingsPage::Messaging => {
+            return settings_detail_page(vec![
+                messaging_group(&state.preferences, manager),
+                blocked_people_group(state, manager),
+            ])
+            .upcast()
+        }
         SettingsPage::Notifications => notifications_group(&state.preferences, manager),
         SettingsPage::Media => media_group(&state.preferences, manager).group,
         SettingsPage::Nearby => nearby_group(&state.preferences, manager),

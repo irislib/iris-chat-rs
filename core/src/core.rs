@@ -351,7 +351,7 @@ fn build_chat_snapshot_with_messages(
         return None;
     }
     let thread = state.chat_list.iter().find(|chat| chat.chat_id == chat_id);
-    let mut messages = load_chat_messages(shared_db, chat_id, request)?;
+    let mut messages = load_chat_messages(shared_db, chat_id, request, state)?;
     let group_id = group_id_from_chat_id(chat_id);
     let kind = thread
         .map(|thread| thread.kind.clone())
@@ -429,6 +429,7 @@ fn load_chat_messages(
     shared_db: Option<&SharedConnection>,
     chat_id: &str,
     request: ChatPageRequest<'_>,
+    state: &AppState,
 ) -> Option<Vec<ChatMessageSnapshot>> {
     let Some(shared) = shared_db else {
         return match request {
@@ -444,17 +445,51 @@ fn load_chat_messages(
         // Contention is not evidence that the remaining history is empty.
         _ => shared.try_lock().ok()?,
     };
+    let preferences = &state.preferences;
+    let intervals_json = if is_group_chat_id(chat_id) {
+        state
+            .account
+            .as_ref()
+            .map(|account| storage::blocked_message_intervals(&conn, &account.public_key_hex))
+            .transpose()
+            .ok()?
+    } else {
+        None
+    };
+    let intervals = intervals_json.as_deref();
+    let hidden_authors_json = (preferences.hide_blocked_group_messages
+        && is_group_chat_id(chat_id))
+    .then(|| serde_json::to_string(&preferences.blocked_owner_pubkeys).ok())
+    .flatten();
+    let hidden = hidden_authors_json.as_deref();
     let result = match request {
-        ChatPageRequest::Latest { limit } => storage::load_recent_messages(&conn, chat_id, limit),
+        ChatPageRequest::Latest { limit } => {
+            storage::load_recent_messages_with_visibility(&conn, chat_id, limit, hidden, intervals)
+        }
         ChatPageRequest::Before {
             before_message_id,
             limit,
-        } => storage::load_messages_before(&conn, chat_id, before_message_id, limit),
+        } => storage::load_messages_before_with_visibility(
+            &conn,
+            chat_id,
+            before_message_id,
+            limit,
+            hidden,
+            intervals,
+        ),
         ChatPageRequest::Around {
             message_id,
             before_limit,
             after_limit,
-        } => storage::load_messages_around(&conn, chat_id, message_id, before_limit, after_limit),
+        } => storage::load_messages_around_with_visibility(
+            &conn,
+            chat_id,
+            message_id,
+            before_limit,
+            after_limit,
+            hidden,
+            intervals,
+        ),
     };
     let messages = result
         .map_err(|error| crate::perflog!("chat.page.read.failed error={error}"))

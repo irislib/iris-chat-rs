@@ -18,6 +18,7 @@ const PAGES: [SettingsPage; 12] = [
 struct Rendered {
     account: Option<iris_chat_core::AccountSnapshot>,
     preferences: PreferencesSnapshot,
+    blocked_people: Vec<iris_chat_core::FollowedUserSearchResult>,
     devices: Option<iris_chat_core::DeviceRosterSnapshot>,
     roster_busy: bool,
     network: Option<iris_chat_core::NetworkStatusSnapshot>,
@@ -150,11 +151,13 @@ impl SettingsView {
             let changed = self.rendered.as_ref().is_none_or(|old| match page {
                 SettingsPage::Profile => account_changed || preferences_changed,
                 SettingsPage::General
-                | SettingsPage::Messaging
                 | SettingsPage::Notifications
                 | SettingsPage::Media
                 | SettingsPage::Nearby
                 | SettingsPage::MessageServers => preferences_changed,
+                SettingsPage::Messaging => {
+                    preferences_changed || old.blocked_people != state.blocked_people
+                }
                 SettingsPage::Devices => {
                     old.devices != state.device_roster
                         || old.roster_busy != state.busy.updating_roster
@@ -174,6 +177,7 @@ impl SettingsView {
         self.rendered = Some(Rendered {
             account: state.account.clone(),
             preferences: state.preferences.clone(),
+            blocked_people: state.blocked_people.clone(),
             devices: state.device_roster.clone(),
             roster_busy: state.busy.updating_roster,
             network: state.network_status.clone(),

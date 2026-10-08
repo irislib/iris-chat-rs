@@ -285,7 +285,8 @@ struct DesktopChatSidebar: View {
     private var searchRequest: GroupedSearchSession.Request? {
         search.request(
             for: searchText,
-            discoveryRevision: manager.state.userDiscoveryRevision
+            discoveryRevision: manager.state.userDiscoveryRevision,
+            visibilityRevision: manager.state.messageVisibilityRevision
         )
     }
 

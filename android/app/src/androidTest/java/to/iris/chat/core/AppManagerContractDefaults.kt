@@ -32,6 +32,8 @@ internal object AppManagerContractDefaults {
                     uploadProgress = null,
                 ),
             chatList = emptyList(),
+            blockedPeople = emptyList(),
+            messageVisibilityRevision = 0u,
             currentChat = null,
             groupDetails = null,
             publicInvite = null,

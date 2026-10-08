@@ -757,7 +757,7 @@ public partial class ChatView : UserControl
     {
         ShowSafetyActionDialog(
             $"Block {displayName}?",
-            "They will not be able to message you.",
+            "This deletes your direct chat on your devices. Their new messages will be blocked.",
             ("Block", true, () => App.CurrentManager.SetUserBlocked(chatId, true)),
             ("Block and report", true, () => ReportUser(chatId, displayName, block: true)),
             ("Delete chat", true, () =>
@@ -787,7 +787,7 @@ public partial class ChatView : UserControl
     {
         ShowSafetyActionDialog(
             $"Block and report {displayName}?",
-            "This prepares a report for support and blocks this user.",
+            "This deletes your direct chat on your devices, blocks new messages, and prepares a report for support.",
             ("Block and report", true, () => ReportUser(chatId, displayName, block: true)),
             ("Delete chat", true, () =>
             {

@@ -13,6 +13,9 @@ public sealed partial class AppManager
     public void DeleteMessageForEveryone(string chatId, string messageId) =>
         DispatchToRust(new AppAction.DeleteMessageForEveryone(chatId, messageId));
 
+    public void SetHideBlockedGroupMessages(bool enabled) =>
+        DispatchToRust(new AppAction.SetHideBlockedGroupMessages(enabled));
+
     public void SetAllowMessageDeletionByOthers(bool enabled) =>
         DispatchToRust(new AppAction.SetAllowMessageDeletionByOthers(enabled));
 }

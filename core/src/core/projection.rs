@@ -2,6 +2,8 @@ use super::chat_typing::typing_indicator_is_active;
 use super::*;
 use crate::state::{ChatKind, ChatMessageKind, MutualGroupsSnapshot};
 
+mod blocked_people;
+
 /// Direct chats where every loaded message is incoming behave like a
 /// Signal "message request": somebody messaged us, we haven't replied,
 /// so the UI gates the conversation behind Accept / Delete / Block and
@@ -267,6 +269,8 @@ impl AppCore {
         self.mobile_push_dirty = false;
         self.state.mobile_push = self.cached_mobile_push.clone();
         self.state.preferences = self.preferences.clone();
+        self.state.blocked_people = self.blocked_people_snapshot();
+        self.state.message_visibility_revision = self.message_visibility_revision();
         self.state.user_discovery_revision = self.user_discovery_revision;
         self.state.user_discovery_syncing = self.user_discovery_syncing;
 
@@ -311,11 +315,10 @@ impl AppCore {
         self.state.chat_list = threads
             .iter()
             .map(|thread| {
-                let last_message = thread
-                    .messages
-                    .iter()
-                    .rev()
-                    .find(|m| !self.is_live_call_history(m));
+                let last_message = thread.messages.iter().rev().find(|m| {
+                    !self.is_live_call_history(m)
+                        && !self.group_message_is_hidden(&thread.chat_id, m)
+                });
                 let thread_kind = chat_kind_for_id(&thread.chat_id);
                 let group_snapshot = self.group_snapshot_for_chat_id(&thread.chat_id);
                 let is_muted = self.is_chat_muted(&thread.chat_id);
@@ -488,7 +491,10 @@ impl AppCore {
                     messages: thread
                         .messages
                         .iter()
-                        .filter(|message| !self.is_live_call_history(message))
+                        .filter(|message| {
+                            !self.is_live_call_history(message)
+                                && !self.group_message_is_hidden(&thread.chat_id, message)
+                        })
                         .map(|message| {
                             self.decorate_message_snapshot(
                                 message,
@@ -735,11 +741,10 @@ impl AppCore {
 
                 let chat_id = group_chat_id(&group.group_id);
                 let thread = self.threads.get(&chat_id)?;
-                let last_message = thread
-                    .messages
-                    .iter()
-                    .rev()
-                    .find(|m| !self.is_live_call_history(m));
+                let last_message = thread.messages.iter().rev().find(|m| {
+                    !self.is_live_call_history(m)
+                        && !self.group_message_is_hidden(&thread.chat_id, m)
+                });
                 Some(ChatThreadSnapshot {
                     social_connection: None,
                     chat_id,

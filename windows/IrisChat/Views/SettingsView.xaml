@@ -315,8 +315,12 @@
                                   Checked="OnTypingChanged" Unchecked="OnTypingChanged" />
                         <CheckBox x:Name="ReceiptsToggle" Content="Received / seen" Margin="0,0,0,8"
                                   Checked="OnReceiptsChanged" Unchecked="OnReceiptsChanged" />
+                        <CheckBox x:Name="HideBlockedGroupMessagesToggle" Content="Hide past group messages from blocked people"
+                                  Checked="OnHideBlockedGroupMessagesChanged" Unchecked="OnHideBlockedGroupMessagesChanged" />
                         <CheckBox x:Name="AllowMessageDeletionToggle" Content="Allow others to delete their messages"
                                   Checked="OnAllowMessageDeletionChanged" Unchecked="OnAllowMessageDeletionChanged" />
+                        <TextBlock Text="Blocked people" Style="{StaticResource SectionTitleText}" Margin="0,20,0,8" />
+                        <StackPanel x:Name="BlockedPeopleList" />
                     </StackPanel>
                 </Border>
 

@@ -498,3 +498,40 @@ fn migrates_v34_private_contact_details_without_changing_nicknames() {
     assert_eq!(saved, ("Alice".to_string(), None, 0));
     assert_eq!(user_version(&conn), SCHEMA_VERSION);
 }
+
+#[test]
+fn migrates_v41_blocked_history_visibility_without_changing_existing_preferences() {
+    let mut conn = Connection::open_in_memory().unwrap();
+    ensure_schema(&mut conn).unwrap();
+    conn.execute_batch("ALTER TABLE preferences DROP COLUMN hide_blocked_group_messages;
+         INSERT INTO preferences (
+            id, send_typing_indicators, send_read_receipts, desktop_notifications_enabled,
+            startup_at_login_enabled, nostr_relay_urls_json, image_proxy_enabled,
+            image_proxy_url, image_proxy_key_hex, image_proxy_salt_hex, mobile_push_server_url,
+            blocked_owner_pubkeys_json, allow_message_deletion_by_others
+         ) VALUES (1, 0, 1, 1, 0, '[]', 1, 'https://custom.example', 'key', 'salt', '', '[\"blocked-person\"]', 0);
+         PRAGMA user_version = 41;").unwrap();
+    ensure_schema(&mut conn).unwrap();
+    let saved: (i64, String, i64, i64) = conn.query_row(
+        "SELECT hide_blocked_group_messages, blocked_owner_pubkeys_json, send_read_receipts, allow_message_deletion_by_others FROM preferences WHERE id = 1", [],
+        |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?))).unwrap();
+    assert_eq!(saved, (0, "[\"blocked-person\"]".into(), 1, 0));
+    assert_eq!(user_version(&conn), SCHEMA_VERSION);
+    conn.execute(
+        "UPDATE preferences SET hide_blocked_group_messages = 1 WHERE id = 1",
+        [],
+    )
+    .unwrap();
+    ensure_schema(&mut conn).unwrap();
+    let retained: i64 = conn
+        .query_row(
+            "SELECT hide_blocked_group_messages FROM preferences WHERE id = 1",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(
+        retained, 1,
+        "reopening must preserve the opted-in preference"
+    );
+}

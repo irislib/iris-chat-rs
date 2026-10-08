@@ -251,7 +251,9 @@ pub(super) fn present_block_user_dialog(
     content.set_margin_start(18);
     content.set_margin_end(18);
 
-    let message = gtk::Label::new(Some("They will not be able to message you."));
+    let message = gtk::Label::new(Some(
+        "This deletes your direct chat on your devices. Their new messages will be blocked.",
+    ));
     message.add_css_class("dim-label");
     message.set_wrap(true);
     message.set_xalign(0.0);
@@ -407,7 +409,7 @@ fn present_block_and_report_user_dialog(
     content.set_margin_end(18);
 
     let message = gtk::Label::new(Some(
-        "This prepares a report for support and blocks this user.",
+        "This deletes your direct chat on your devices, blocks new messages, and prepares a report for support.",
     ));
     message.add_css_class("dim-label");
     message.set_wrap(true);

@@ -941,6 +941,8 @@ class AppManagerContractTest {
                     uploadProgress = null,
                 ),
             chatList = emptyList(),
+            blockedPeople = emptyList(),
+            messageVisibilityRevision = 0u,
             currentChat = currentChat,
             groupDetails = null,
             publicInvite = null,

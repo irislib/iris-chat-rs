@@ -46,6 +46,7 @@ public sealed partial class AppManager
 
     private AppState ReconcileHistory(AppState previous, AppState incoming)
     {
+        if (previous.messageVisibilityRevision != incoming.messageVisibilityRevision) ResetHistoryPaging();
         var scope = HistoryScope(incoming);
         var recentIds = scope != null && scope == _historyScope ? _historyRecentIds : null;
         if (scope != _historyScope) ResetHistoryPaging();

@@ -37,7 +37,8 @@ struct ChatListScreen: View {
     private var searchRequest: GroupedSearchSession.Request? {
         search.request(
             for: searchText,
-            discoveryRevision: manager.state.userDiscoveryRevision
+            discoveryRevision: manager.state.userDiscoveryRevision,
+            visibilityRevision: manager.state.messageVisibilityRevision
         )
     }
 
@@ -201,6 +202,7 @@ struct GroupedSearchSession {
         let query: String
         let messageLimit: UInt32
         let discoveryRevision: UInt64
+        let visibilityRevision: UInt64
     }
 
     private struct Entry {
@@ -214,17 +216,18 @@ struct GroupedSearchSession {
 
     init() {}
 
-    func request(for text: String, discoveryRevision: UInt64) -> Request? {
+    func request(for text: String, discoveryRevision: UInt64, visibilityRevision: UInt64 = 0) -> Request? {
         let query = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !query.isEmpty else { return nil }
-        return Request(query: query, messageLimit: messageLimit, discoveryRevision: discoveryRevision)
+        return Request(query: query, messageLimit: messageLimit, discoveryRevision: discoveryRevision, visibilityRevision: visibilityRevision)
     }
 
     func snapshot(for request: Request?) -> SearchResultSnapshot? {
         // Discovery and pagination refresh the same query in the background.
         // Keep its current rows visible until the replacement arrives, while
         // never displaying results belonging to a different search term.
-        guard let request, entry?.request.query == request.query else { return nil }
+        guard let request, entry?.request.query == request.query,
+              entry?.request.visibilityRevision == request.visibilityRevision else { return nil }
         return entry?.snapshot
     }
 

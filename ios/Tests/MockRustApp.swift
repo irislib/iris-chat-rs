@@ -84,6 +84,8 @@ final class MockRustApp: RustAppClient {
             uploadProgress: nil
         ),
         chatList: [],
+        blockedPeople: [],
+        messageVisibilityRevision: 0,
         currentChat: nil,
         groupDetails: nil,
         publicInvite: nil,

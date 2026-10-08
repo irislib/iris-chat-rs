@@ -305,6 +305,7 @@ class AppManager(
     val busy: StateFlow<BusyState> = slice { it.busy }
     val chatList: StateFlow<List<ChatThreadSnapshot>> =
         slice { it.chatList }
+    val messageVisibilityRevision: StateFlow<ULong> = slice { it.messageVisibilityRevision }
     val userDiscoveryRevision: StateFlow<ULong> =
         slice { it.userDiscoveryRevision }
     val userDiscoverySyncing: StateFlow<Boolean> =
@@ -659,12 +660,14 @@ class AppManager(
             }
             olderChatPageLoads += trimmedChat
         }
+        val visibilityRevision = mutableState.value.messageVisibilityRevision
         val firstMessageId = firstMessage.id
         applicationScope.launch(ioDispatcher) {
             val page =
                 runCatching {
                     rust.chatSnapshotBefore(trimmedChat, firstMessageId, CHAT_PAGE_SIZE)
                 }.getOrNull()
+            if (mutableState.value.messageVisibilityRevision != visibilityRevision) return@launch
             synchronized(olderChatPageLoads) {
                 olderChatPageLoads -= trimmedChat
             }
@@ -691,6 +694,7 @@ class AppManager(
         if (current?.chatId == trimmedChat && current.messages.any { it.id == trimmedMessage }) {
             return
         }
+        val visibilityRevision = mutableState.value.messageVisibilityRevision
         val key = "$trimmedChat\u001F$trimmedMessage"
         synchronized(aroundChatPageLoads) {
             if (key in aroundChatPageLoads) {
@@ -708,6 +712,7 @@ class AppManager(
                         afterLimit = CHAT_AROUND_AFTER_LIMIT,
                     )
                 }.getOrNull()
+            if (mutableState.value.messageVisibilityRevision != visibilityRevision) return@launch
             synchronized(aroundChatPageLoads) {
                 aroundChatPageLoads -= key
             }
@@ -1279,6 +1284,12 @@ class AppManager(
         oldState: AppState,
         nextState: AppState,
     ): AppState {
+        if (oldState.messageVisibilityRevision != nextState.messageVisibilityRevision) {
+            olderChatPageLoads.clear()
+            aroundChatPageLoads.clear()
+            exhaustedOlderChatPages.clear()
+            return nextState
+        }
         val oldChat = oldState.currentChat ?: return nextState
         val newChat = nextState.currentChat ?: return nextState
         if (
@@ -1321,22 +1332,6 @@ class AppManager(
             typingIndicators = page.typingIndicators.ifEmpty { existing.typingIndicators },
             draft = page.draft.ifEmpty { existing.draft },
         )
-    }
-
-    private fun compareChatMessages(lhs: ChatMessageSnapshot, rhs: ChatMessageSnapshot): Int {
-        lhs.createdAtSecs.compareTo(rhs.createdAtSecs).takeIf { it != 0 }?.let { return it }
-        val lhsNumeric = lhs.id.toULongOrNull()
-        val rhsNumeric = rhs.id.toULongOrNull()
-        if (lhsNumeric != null && rhsNumeric != null && lhsNumeric != rhsNumeric) {
-            return lhsNumeric.compareTo(rhsNumeric)
-        }
-        if (lhsNumeric != null && rhsNumeric == null) {
-            return -1
-        }
-        if (lhsNumeric == null && rhsNumeric != null) {
-            return 1
-        }
-        return lhs.id.compareTo(rhs.id)
     }
 
     private fun activeChatId(state: AppState): String? =

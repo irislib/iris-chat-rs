@@ -129,6 +129,7 @@ func makeAppState(
     router: Router = Router(defaultScreen: .welcome, screenStack: []),
     account: AccountSnapshot? = nil,
     chatList: [ChatThreadSnapshot] = [],
+    blockedPeople: [FollowedUserSearchResult] = [],
     currentChat: CurrentChatSnapshot? = nil,
     mobilePush: MobilePushSyncSnapshot = MobilePushSyncSnapshot(
             callDevicePubkeyHex: nil, callAuthorPubkeys: [],
@@ -180,6 +181,8 @@ func makeAppState(
         deviceHistorySync: nil,
         busy: makeBusyState(),
         chatList: chatList,
+        blockedPeople: blockedPeople,
+        messageVisibilityRevision: 0,
         currentChat: currentChat,
         groupDetails: nil,
         publicInvite: nil,

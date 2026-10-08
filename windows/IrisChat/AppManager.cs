@@ -1382,6 +1382,8 @@ public sealed partial class AppManager : INotifyPropertyChanged
             null
         ),
         Array.Empty<ChatThreadSnapshot>(),
+        Array.Empty<FollowedUserSearchResult>(),
+        0,
         null,
         null,
         null,

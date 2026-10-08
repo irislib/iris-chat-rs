@@ -359,6 +359,8 @@ private func fallbackAppState(toast: String?) -> AppState {
             uploadProgress: nil
         ),
         chatList: [],
+        blockedPeople: [],
+        messageVisibilityRevision: 0,
         currentChat: nil,
         groupDetails: nil,
         publicInvite: nil,

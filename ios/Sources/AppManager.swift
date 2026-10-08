@@ -2853,19 +2853,20 @@ final class AppManager: ObservableObject {
             return
         }
         let oldState = state
-        if oldState.account?.publicKeyHex != nextState.account?.publicKeyHex {
+        let visibilityChanged = oldState.messageVisibilityRevision != nextState.messageVisibilityRevision
+        if oldState.account?.publicKeyHex != nextState.account?.publicKeyHex || visibilityChanged {
             pendingNavigationOverride = nil
             chatSnapshotCache.removeAll()
             chatSnapshotCacheOrder.removeAll()
         }
         var reconciledState = stateByReconcilingPendingNavigation(nextState)
-        syncChatPageScope(to: &reconciledState)
+        syncChatPageScope(to: &reconciledState, force: visibilityChanged)
         if let rawChat = nextState.currentChat,
            activeChatSnapshotID(in: reconciledState) == rawChat.chatId,
            reconciledState.currentChat?.chatId == rawChat.chatId {
             var chat = rawChat
             chat.messages = chatHistory.replaceRecent(
-                rawChat.messages, in: oldState.currentChat?.chatId == rawChat.chatId
+                rawChat.messages, in: !visibilityChanged && oldState.currentChat?.chatId == rawChat.chatId
                     ? oldState.currentChat!.messages : []
             )
             reconciledState.currentChat = chat
@@ -3146,10 +3147,10 @@ final class AppManager: ObservableObject {
         rememberChatSnapshot(current)
     }
 
-    private func syncChatPageScope(to nextState: inout AppState) {
+    private func syncChatPageScope(to nextState: inout AppState, force: Bool = false) {
         let route = nextState.router.screenStack.last ?? nextState.router.defaultScreen
         let accountID = nextState.account?.publicKeyHex
-        guard route != chatPageRoute || accountID != chatPageAccountID else { return }
+        guard force || route != chatPageRoute || accountID != chatPageAccountID else { return }
         chatPageGeneration &+= 1
         chatPageRoute = route
         chatPageAccountID = accountID

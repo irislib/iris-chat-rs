@@ -292,7 +292,7 @@ struct DirectChatInfoScreen: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("You will not send messages to this user.")
+            Text("This deletes your direct chat on your devices. Their new messages will be blocked.")
         }
         .confirmationDialog(
             "Unblock user?",

@@ -86,6 +86,8 @@ pub fn build_large_test_app_state(
         device_history_sync: None,
         busy: Default::default(),
         chat_list,
+        blocked_people: Vec::new(),
+        message_visibility_revision: 0,
         current_chat: Some(current_chat),
         group_details: Some(fixture_group_details(group_chat_count.max(1))),
         public_invite: None,

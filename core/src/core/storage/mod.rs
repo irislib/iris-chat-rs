@@ -14,9 +14,12 @@ pub use account::validate_account_storage;
 pub(crate) use connection::{open_database, DataDirLock, CORE_DB_FILENAME};
 pub(crate) use iris_chat_protocol::{SharedConnection, SqliteStorageAdapter};
 pub(crate) use store::{
-    load_messages_around, load_messages_before, load_recent_messages, search_messages_fts,
-    AppStore, PersistedMessageSearchHit, SaveSnapshot,
+    load_messages_around_with_visibility, load_messages_before_with_visibility,
+    load_recent_messages_with_visibility, search_messages_fts, AppStore, PersistedMessageSearchHit,
+    SaveSnapshot,
 };
 
 mod store_block_intervals;
+#[cfg(test)]
+pub(crate) use store::{load_messages_around, load_recent_messages};
 pub(crate) use store_block_intervals::blocked_message_intervals;

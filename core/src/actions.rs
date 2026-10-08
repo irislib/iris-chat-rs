@@ -304,6 +304,9 @@ pub enum AppAction {
         chat_id: String,
         message_id: String,
     },
+    SetHideBlockedGroupMessages {
+        enabled: bool,
+    },
     SetAllowMessageDeletionByOthers {
         enabled: bool,
     },

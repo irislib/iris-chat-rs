@@ -99,6 +99,25 @@ pub fn verify_ui(manager: Rc<AppManager>) {
 
     let previous = manager.current_state();
     warm_window_checks(&previous, &all);
+    let mut paging = Paging::default();
+    let mut before = previous.clone();
+    paging.reconcile(&AppState::empty(), &mut before);
+    let generation = paging.generation;
+    let mut filtered = previous.clone();
+    filtered.message_visibility_revision += 1;
+    filtered.current_chat.as_mut().unwrap().messages = all[235..].to_vec();
+    paging.reconcile(&previous, &mut filtered);
+    assert_eq!(filtered.current_chat.as_ref().unwrap().messages, all[235..]);
+    assert!(
+        !paging.complete(
+            generation,
+            &own,
+            all[0].id.clone(),
+            previous.current_chat.clone(),
+            &mut filtered
+        ),
+        "An in-flight page from the old visibility policy must be discarded"
+    );
     for fresh_messages in [all[161..].to_vec(), all[160..239].to_vec(), vec![]] {
         let mut fresh = previous.clone();
         let chat = fresh.current_chat.as_mut().unwrap();

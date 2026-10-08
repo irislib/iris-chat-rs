@@ -96,6 +96,31 @@ final class ChatReadResponsivenessTests: XCTestCase {
     }
 
     @MainActor
+    func testVisibilityChangeDiscardsPreviouslyLoadedHistory() async throws {
+        var state = buildLargeTestAppState(directChatCount: 1, groupChatCount: 0, messagesInCurrentChat: 160)
+        state.rev = 1
+        let history = try XCTUnwrap(state.currentChat)
+        state.router.screenStack = [.chat(chatId: history.chatId)]
+        let rust = MockRustApp(state: state)
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let manager = AppManager(rust: rust, secretStore: InMemorySecretStore(), pendingDeviceLinkSecretStore: InMemoryPendingDeviceLinkSecretStore(), desktopNotifications: NoopDesktopNotificationPoster(), dataDir: directory, environment: [:])
+        try await loadOlderHistory(history, via: rust, into: manager)
+        XCTAssertEqual(manager.state.currentChat?.messages.count, 160)
+        state.rev = 2
+        state.messageVisibilityRevision += 1
+        state.currentChat?.messages = Array(history.messages.suffix(5))
+        rust.emit(.fullState(state))
+        let changed = await waitUntil { manager.state.rev == 2 }
+        XCTAssertTrue(changed)
+        XCTAssertEqual(manager.state.currentChat?.messages, state.currentChat?.messages)
+        manager.navigateBack()
+        manager.dispatch(.openChat(chatId: history.chatId))
+        XCTAssertEqual(manager.state.currentChat?.messages, state.currentChat?.messages,
+                       "Navigation must not restore pages hidden by a block interval")
+    }
+
+    @MainActor
     private func loadOlderHistory(_ history: CurrentChatSnapshot, via rust: MockRustApp, into manager: AppManager) async throws {
         while let first = manager.state.currentChat?.messages.first,
               let index = history.messages.firstIndex(where: { $0.id == first.id }), index > 0 {

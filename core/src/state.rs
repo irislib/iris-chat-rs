@@ -68,6 +68,9 @@ pub struct PreferencesSnapshot {
     pub send_read_receipts: bool,
     #[uniffi(default = true)]
     pub allow_message_deletion_by_others: bool,
+    /// Reversibly hide saved group messages written by blocked people.
+    #[uniffi(default = false)]
+    pub hide_blocked_group_messages: bool,
     pub desktop_notifications_enabled: bool,
     pub invite_acceptance_notifications_enabled: bool,
     pub startup_at_login_enabled: bool,
@@ -119,6 +122,7 @@ impl Default for PreferencesSnapshot {
             send_typing_indicators: false,
             send_read_receipts: false,
             allow_message_deletion_by_others: true,
+            hide_blocked_group_messages: false,
             desktop_notifications_enabled: true,
             invite_acceptance_notifications_enabled: true,
             startup_at_login_enabled: true,
@@ -741,6 +745,9 @@ pub struct AppState {
     pub device_history_sync: Option<DeviceHistorySyncSnapshot>,
     pub busy: BusyState,
     pub chat_list: Vec<ChatThreadSnapshot>,
+    pub blocked_people: Vec<FollowedUserSearchResult>,
+    /// Invalidates native message pages after visibility policy changes.
+    pub message_visibility_revision: u64,
     pub current_chat: Option<CurrentChatSnapshot>,
     pub group_details: Option<GroupDetailsSnapshot>,
     pub public_invite: Option<PublicInviteSnapshot>,
@@ -770,6 +777,8 @@ impl AppState {
             device_history_sync: None,
             busy: BusyState::default(),
             chat_list: Vec::new(),
+            blocked_people: Vec::new(),
+            message_visibility_revision: 0,
             current_chat: None,
             group_details: None,
             public_invite: None,

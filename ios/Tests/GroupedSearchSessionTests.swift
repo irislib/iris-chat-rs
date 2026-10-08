@@ -26,6 +26,8 @@ final class GroupedSearchSessionTests: XCTestCase {
         XCTAssertEqual(session.snapshot(for: request)?.people.count, 11)
         XCTAssertNil(session.snapshot(for: session.request(for: "Other", discoveryRevision: 1)))
         XCTAssertEqual(session.snapshot(for: session.request(for: "Needle", discoveryRevision: 2))?.people.count, 11)
+        XCTAssertNil(session.snapshot(for: session.request(for: "Needle", discoveryRevision: 2, visibilityRevision: 1)),
+                     "A visibility change must immediately hide cached message results")
         XCTAssertNil(session.snapshot(for: nil))
     }
 

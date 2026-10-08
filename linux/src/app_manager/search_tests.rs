@@ -49,6 +49,7 @@ fn request(query: &str, revision: u64) -> Request {
     Request {
         key: Key {
             generation: 0,
+            visibility_revision: 0,
             account: Some("account-a".into()),
             query: query.into(),
             scope: None,
@@ -166,7 +167,17 @@ fn verify_worker() {
     );
     release.send(()).unwrap();
     search.complete(response(&responses), after_login.clone());
-    assert!(search.request(after_login).is_some());
+    assert!(search.request(after_login.clone()).is_some());
+    let mut hidden = after_login;
+    hidden.key.visibility_revision += 1;
+    assert!(
+        search.request(hidden.clone()).is_none(),
+        "Visibility changes invalidate cached search rows"
+    );
+    assert_eq!(starts.recv_timeout(Duration::from_secs(3)).unwrap(), hidden);
+    release.send(()).unwrap();
+    search.complete(response(&responses), hidden.clone());
+    assert!(search.request(hidden).is_some());
 }
 
 fn response(responses: &async_channel::Receiver<Response>) -> Response {
