@@ -185,7 +185,12 @@ class DistributeTests(unittest.TestCase):
             case "$1" in
               user) printf '%s\n' "$FAKE_ACTIVE_HTREE_NPUB" ;;
               add) printf '%s\n' 'cid: fake-cid' ;;
-              release) exit 0 ;;
+              release)
+                if [[ "${FAKE_HTREE_ROOT_CONFLICT:-0}" == "1" ]]; then
+                  echo "Observed release tree differs from --expected-root" >&2
+                  exit 29
+                fi
+                exit 0 ;;
             esac
             """,
         )
@@ -282,6 +287,7 @@ class DistributeTests(unittest.TestCase):
                 "IRIS_HASHTREE_NSEC_PATH": str(self.hashtree_nsec),
                 "IRIS_HASHTREE_CONFIG_DIR": str(self.hashtree_config),
                 "IRIS_HASHTREE_DATA_DIR": str(self.root / "htree-data"),
+                "IRIS_HASHTREE_EXPECTED_ROOT": "verified-previous-root",
                 "IRIS_ZAPSTORE_NSEC_PATH": str(self.zapstore_nsec),
             }
         )
@@ -457,7 +463,7 @@ class DistributeTests(unittest.TestCase):
         output = first.stdout + first.stderr + second.stdout + second.stderr
         self.assertNotIn("hashtree-secret", output)
         log = self.log.read_text()
-        command = f"htree release publish releases/iris-chat-rs {TAG} fake-cid"
+        command = f"htree release publish releases/iris-chat-rs {TAG} fake-cid --expected-root verified-previous-root"
         self.assertEqual(log.count(command), 2)
         refresh = f"https://upload.iris.to/api/nostr/resolve/{HASHTREE_NPUB}/releases%2Firis-chat-rs?refresh=1"
         readback = f"https://upload.iris.to/{HASHTREE_NPUB}/releases%2Firis-chat-rs/{TAG}/release.json"
@@ -471,6 +477,32 @@ class DistributeTests(unittest.TestCase):
                 self.assertIn("--connect-timeout 10", line)
                 self.assertIn("--max-time 30", line)
         self.assertNotIn("latest", log)
+
+    def test_hashtree_publish_requires_an_explicit_verified_root(self) -> None:
+        env = self.environment()
+        env.pop("IRIS_HASHTREE_EXPECTED_ROOT")
+        result = self.run_distribution("hashtree", env=env)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("IRIS_HASHTREE_EXPECTED_ROOT", result.stderr)
+        self.assertFalse(self.log.exists(), "missing root must stop before external commands")
+
+    def test_hashtree_check_does_not_require_a_publish_root(self) -> None:
+        env = self.environment()
+        env.pop("IRIS_HASHTREE_EXPECTED_ROOT")
+        result = self.run_distribution("hashtree", "--check", env=env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("htree release publish", self.log.read_text())
+
+    def test_hashtree_root_conflict_stops_followup_publication(self) -> None:
+        env = self.environment()
+        env["FAKE_HTREE_ROOT_CONFLICT"] = "1"
+        result = self.run_distribution("hashtree", env=env)
+        self.assertEqual(result.returncode, 29)
+        self.assertIn("differs from --expected-root", result.stderr)
+        log = self.log.read_text()
+        self.assertIn("--expected-root verified-previous-root", log)
+        self.assertNotIn("--publish", log)
+        self.assertNotIn("signed-updater", log)
 
     def test_hashtree_publish_requires_the_signed_updater_to_accept_the_release(self) -> None:
         for field, value in (("FAKE_SIGNED_UPDATE_FAIL", "1"),

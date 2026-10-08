@@ -47,7 +47,8 @@ Optional path overrides are `IRIS_HASHTREE_NSEC_PATH`,
 Local distribution requires an authenticated GitHub CLI with `release verify`
 support, plus `jq`, `python3`, and the channel tools:
 
-- Hashtree: `htree`, `nak`, `curl`, and Haps with the `import-release` subcommand
+- Hashtree: `htree` with `release publish --expected-root` support, `nak`, `curl`,
+  and Haps with the `import-release` subcommand
 - Homebrew: `htree`, `nak`, `curl`, and `git`
 - Zapstore: `zsp`, `nak`, `base64`, and `sed`
 
@@ -165,6 +166,13 @@ or local channels are published.
 
 Run one channel at a time. `--check` downloads and verifies the exact assets,
 manifest, attestations, and signer without publishing:
+
+Before Hashtree publication, resolve the existing release-tree CID through
+signed discovery and independently compare it with the refreshed public gateway.
+Inspect that root's version entries, then export it as
+`IRIS_HASHTREE_EXPECTED_ROOT`. Publication requires this explicit root so a
+missing live lookup cannot replace the existing release history. A conflicting
+root stops publication; verify and capture the current root again before retrying.
 
 ```bash
 ./scripts/distribute hashtree --tag v2026.7.28 --check

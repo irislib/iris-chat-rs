@@ -32,6 +32,7 @@ Local publishing paths:
   IRIS_HASHTREE_NSEC_PATH   ~/.config/iris-chat/htree-nsec
   IRIS_HASHTREE_CONFIG_DIR  ~/.config/iris-chat/htree-release-config
   IRIS_HASHTREE_DATA_DIR    ~/.config/iris-chat/htree-release-data
+  IRIS_HASHTREE_EXPECTED_ROOT  Verified current release-tree CID (required to publish)
   IRIS_ZAPSTORE_NSEC_PATH   ~/.config/iris-chat/zapstore-nsec
 EOF
 }
@@ -73,6 +74,11 @@ esac
 
 if [[ ! "$TAG" =~ ^v[0-9]{4}\.[1-9][0-9]?\.[1-9][0-9]?(\.[1-9][0-9]?)?$ ]]; then
   echo "--tag must be an explicit release-date tag such as v2026.7.28." >&2
+  exit 2
+fi
+
+if [[ "$CHANNEL" == "hashtree" && "$CHECK_ONLY" -eq 0 && -z "${IRIS_HASHTREE_EXPECTED_ROOT:-}" ]]; then
+  echo "Set IRIS_HASHTREE_EXPECTED_ROOT to the independently verified current release-tree CID before publishing." >&2
   exit 2
 fi
 
@@ -271,7 +277,8 @@ publish_hashtree() {
   fi
   HTREE_CONFIG_DIR="$IRIS_HASHTREE_CONFIG_DIR" \
   HTREE_DATA_DIR="$IRIS_HASHTREE_DATA_DIR" \
-    htree release publish "$IRIS_HASHTREE_RELEASE_TREE" "$TAG" "$cid"
+    htree release publish "$IRIS_HASHTREE_RELEASE_TREE" "$TAG" "$cid" \
+      --expected-root "$IRIS_HASHTREE_EXPECTED_ROOT"
   verify_hashtree_publication
   HTREE_CONFIG_DIR="$IRIS_HASHTREE_CONFIG_DIR" \
   HTREE_DATA_DIR="$IRIS_HASHTREE_DATA_DIR" \
