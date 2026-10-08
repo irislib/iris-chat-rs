@@ -13,6 +13,9 @@ impl AppCore {
         match rumor.kind {
             // An old client would bridge these facts into static-key relay records.
             10451 => Some(true),
+            block_sync::BLOCK_CONTROL_KIND => {
+                Some(self.receive_block_control(owner, device, &rumor.content))
+            }
             PRIVATE_CONTACT_CONTROL_KIND => {
                 Some(self.receive_private_contact_control(owner, device, &rumor.content))
             }

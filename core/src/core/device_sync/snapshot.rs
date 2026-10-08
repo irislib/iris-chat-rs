@@ -261,7 +261,8 @@ impl AppCore {
         }
         let now = unix_now().get();
         for message in snapshot.messages {
-            if self.chat_activity_is_deleted(&message.chat_id, message.created_at)
+            if !self.block_allows_history(&message.chat_id, &message.author, message.created_at)
+                || self.chat_activity_is_deleted(&message.chat_id, message.created_at)
                 || message.created_at < cutoff
                 || message
                     .expires_at

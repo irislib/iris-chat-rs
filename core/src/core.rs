@@ -89,6 +89,7 @@ mod calls;
 pub(crate) mod direct_file_tcp;
 pub(crate) mod direct_files;
 pub(crate) use calls::push::{build_call_push_subscription_request, resolve_call_push_invite};
+mod block_sync;
 mod chat_deletions;
 mod chat_mute_sync;
 mod chat_pin_sync;
@@ -626,6 +627,8 @@ pub struct AppCore {
     chat_read_states: BTreeMap<String, ChatReadState>,
     chat_mute_states: BTreeMap<String, ChatMuteState>,
     chat_pin_states: BTreeMap<String, ChatPinState>,
+    private_blocks: BTreeMap<String, block_sync::PrivateBlockPolicy>,
+    private_block_revision: u64,
     active_chat_id: Option<String>,
     screen_stack: Vec<Screen>,
     next_message_id: u64,

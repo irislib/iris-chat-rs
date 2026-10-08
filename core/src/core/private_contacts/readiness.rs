@@ -8,7 +8,7 @@ impl AppCore {
         sender: Option<PublicKey>,
         rumor: &RuntimeRumor,
     ) -> Option<bool> {
-        if !matches!(rumor.kind, 10449 | 10450 | 10452 | 10453) {
+        if !matches!(rumor.kind, 10449 | 10450 | 10452 | 10453 | 10454) {
             return None;
         }
         let Some(account) = self

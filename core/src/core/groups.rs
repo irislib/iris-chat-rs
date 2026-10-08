@@ -536,6 +536,24 @@ impl AppCore {
             );
             return true;
         }
+        if (self.is_owner_blocked(&sender_owner.to_hex())
+            || !self.block_allows_history(
+                chat_id,
+                &sender_owner.to_hex(),
+                runtime_rumor.created_at_secs,
+            ))
+            && matches!(
+                runtime_rumor.kind,
+                CHAT_MESSAGE_KIND
+                    | REACTION_KIND
+                    | TYPING_KIND
+                    | RECEIPT_KIND
+                    | MESSAGE_EDIT_KIND
+                    | MESSAGE_DELETE_KIND
+            )
+        {
+            return true;
+        }
         let local_owner = self
             .logged_in
             .as_ref()

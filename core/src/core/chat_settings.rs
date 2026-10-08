@@ -264,48 +264,6 @@ impl AppCore {
         self.rebuild_persist_and_emit_state();
     }
 
-    pub(super) fn set_user_blocked(&mut self, owner_pubkey_hex: &str, blocked: bool) {
-        let normalized = owner_pubkey_hex.trim().to_lowercase();
-        if normalized.is_empty() {
-            return;
-        }
-        let already_blocked = self
-            .preferences
-            .blocked_owner_pubkeys
-            .iter()
-            .any(|hex| hex == &normalized);
-        if blocked == already_blocked {
-            return;
-        }
-        if blocked {
-            self.preferences
-                .blocked_owner_pubkeys
-                .push(normalized.clone());
-            self.preferences.blocked_owner_pubkeys.sort();
-            self.preferences.blocked_owner_pubkeys.dedup();
-            self.cancel_direct_files_for_chat(&normalized);
-            // Stop ringing and media now, before any queued answer or frame
-            // can run; the periodic call tick is only a fallback.
-            if self.calls.active.is_some()
-                && self
-                    .state
-                    .call
-                    .as_ref()
-                    .is_some_and(|call| call.chat_id == normalized)
-            {
-                self.finish_call("Call ended");
-            }
-        } else {
-            self.preferences
-                .blocked_owner_pubkeys
-                .retain(|hex| hex != &normalized);
-        }
-        self.bump_user_discovery_revision();
-        self.request_protocol_subscription_refresh();
-        self.mark_mobile_push_dirty();
-        self.rebuild_persist_and_emit_state();
-    }
-
     pub(super) fn accept_message_request(&mut self, chat_id: &str) {
         let normalized = chat_id.trim().to_lowercase();
         if normalized.is_empty() {

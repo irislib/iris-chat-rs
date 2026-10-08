@@ -17,3 +17,6 @@ pub(crate) use store::{
     load_messages_around, load_messages_before, load_recent_messages, search_messages_fts,
     AppStore, PersistedMessageSearchHit, SaveSnapshot,
 };
+
+mod store_block_intervals;
+pub(crate) use store_block_intervals::blocked_message_intervals;

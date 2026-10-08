@@ -18,6 +18,9 @@ impl AppCore {
                     continue;
                 }
                 match record {
+                    DeviceSyncRecord::PrivateBlock { event } => {
+                        self.project_private_block(&event);
+                    }
                     DeviceSyncRecord::MessageMutation { mutation: m } => {
                         self.project_message_mutations(&m.chat_id, &m.message_id);
                     }

@@ -29,6 +29,7 @@ pub(super) enum DeviceSyncRecord {
     Group { group: DeviceSyncGroup },
     GroupSettings { settings: DeviceSyncGroupSettings },
     Profile { event: Event },
+    PrivateBlock { event: Event },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -59,6 +60,7 @@ pub(super) struct DeviceSyncGroupSettings {
 impl DeviceSyncRecord {
     pub(super) fn id(&self) -> [u8; 32] {
         let value = match self {
+            Self::PrivateBlock { event } => return event.id.to_bytes(),
             Self::Message { message } => serde_json::json!([message.chat_id, message.id]),
             Self::MessageMutation { mutation: m } => {
                 serde_json::json!(["messageMutation", m.chat_id, m.id])
@@ -120,6 +122,10 @@ impl DeviceSyncRecord {
     }
     fn storage_key(&self) -> Option<String> {
         Some(match self {
+            Self::PrivateBlock { event } => {
+                let state = super::super::block_sync::block_event_state(event)?;
+                serde_json::json!(["privateBlock", state.target, event.id.to_hex()]).to_string()
+            }
             Self::MessageMutation { mutation: m } => {
                 serde_json::json!(["messageMutation", m.chat_id, m.message_id, m.id]).to_string()
             }
@@ -137,6 +143,10 @@ impl DeviceSyncRecord {
     }
     fn wins(&self, previous: &Self) -> bool {
         match (self, previous) {
+            (Self::PrivateBlock { event: a }, Self::PrivateBlock { event: b }) => {
+                super::super::block_sync::block_event_version(a)
+                    > super::super::block_sync::block_event_version(b)
+            }
             (Self::Reaction { reaction: a }, Self::Reaction { reaction: b }) => {
                 (effective_ms(a.created_at, a.created_at_ms), &a.id)
                     > (effective_ms(b.created_at, b.created_at_ms), &b.id)
@@ -162,6 +172,10 @@ fn valid_time(seconds: u64, millis: Option<u64>) -> bool {
 }
 
 impl AppCore {
+    pub(in crate::core) fn apply_private_block_event(&mut self, event: Event) -> bool {
+        self.apply_sync_record(DeviceSyncRecord::PrivateBlock { event })
+    }
+
     fn sync_record_author_allowed(&self, chat: &str, author: &str, admin: bool) -> bool {
         let Some(local) = self
             .logged_in
@@ -190,7 +204,8 @@ impl AppCore {
                 messages::history_message_allowed(self, message)
             }
             DeviceSyncRecord::MessageMutation { mutation: m } => {
-                self.message_mutation_allowed(m).unwrap_or(false)
+                self.block_allows_history(&m.chat_id, &m.author, m.created_at)
+                    && self.message_mutation_allowed(m).unwrap_or(false)
             }
             DeviceSyncRecord::Reaction { reaction: r } => {
                 !r.id.is_empty()
@@ -199,6 +214,7 @@ impl AppCore {
                     && r.message_id.len() <= 128
                     && r.emoji.len() <= 256
                     && valid_time(r.created_at, r.created_at_ms)
+                    && self.block_allows_history(&r.chat_id, &r.author, r.created_at)
                     && !self.sync_reaction_target_expired(&r.chat_id, &r.message_id)
                     && self.sync_record_author_allowed(&r.chat_id, &r.author, false)
                     && !self.chat_activity_is_deleted(&r.chat_id, r.created_at)
@@ -219,6 +235,7 @@ impl AppCore {
                         true,
                     )
             }
+            DeviceSyncRecord::PrivateBlock { event } => self.private_block_event_allowed(event),
             DeviceSyncRecord::Profile { event } => {
                 event.kind == Kind::Metadata
                     && event.verify().is_ok()
@@ -389,6 +406,11 @@ impl AppCore {
                 };
                 if accepted {
                     match &record {
+                        DeviceSyncRecord::PrivateBlock { event } => {
+                            if !self.project_private_block(event) {
+                                return false;
+                            }
+                        }
                         DeviceSyncRecord::MessageMutation { mutation: m } => {
                             if !self.project_message_mutations(&m.chat_id, &m.message_id) {
                                 return false;

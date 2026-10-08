@@ -207,6 +207,7 @@ pub(super) fn history_message_allowed(core: &AppCore, message: &DeviceSyncMessag
         && message.id.len() <= 128
         && message.body.len() <= 32 * 1024
         && PublicKey::from_hex(&message.author).is_ok()
+        && core.block_allows_history(&message.chat_id, &message.author, message.created_at)
         && !core.chat_activity_is_deleted(&message.chat_id, message.created_at)
         && !core
             .app_store

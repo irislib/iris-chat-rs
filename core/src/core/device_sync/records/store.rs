@@ -10,18 +10,33 @@ impl AppCore {
             login.device_keys.public_key().to_hex()
         ))
     }
+    // Account state survives replacing this installation's device key. Other
+    // record projections retain their existing device/history ownership rules.
+    fn record_storage_path(&self, key: &str) -> Option<String> {
+        let parts: Vec<String> = serde_json::from_str(key).ok()?;
+        if parts.first().is_some_and(|kind| kind == "privateBlock") {
+            return Some(format!(
+                "iris-chat-sync-record-v1:{}:private-state:{key}",
+                self.logged_in.as_ref()?.owner_pubkey.to_hex()
+            ));
+        }
+        Some(format!("{}{key}", self.sync_record_prefix()?))
+    }
     pub(super) fn store_sync_record(&self, record: &DeviceSyncRecord) -> anyhow::Result<bool> {
-        let prefix = self
-            .sync_record_prefix()
+        let key = self
+            .record_storage_path(
+                &record
+                    .storage_key()
+                    .ok_or_else(|| anyhow::anyhow!("Not a durable head"))?,
+            )
             .ok_or_else(|| anyhow::anyhow!("No account"))?;
-        let key = format!(
-            "{prefix}{}",
-            record
-                .storage_key()
-                .ok_or_else(|| anyhow::anyhow!("Not a durable head"))?
-        );
+        let intervals = if let DeviceSyncRecord::PrivateBlock { event } = record {
+            Some(self.block_intervals_with_event(event)?)
+        } else {
+            None
+        };
         let shared = self.app_store.shared();
-        let conn = shared.lock().map_err(|_| anyhow::anyhow!("Storage lock"))?;
+        let mut conn = shared.lock().map_err(|_| anyhow::anyhow!("Storage lock"))?;
         let previous: Option<String> = conn
             .query_row("SELECT value FROM app_meta WHERE key=?1", [&key], |row| {
                 row.get(0)
@@ -36,7 +51,18 @@ impl AppCore {
                 return Ok(false);
             }
         }
-        conn.execute("INSERT INTO app_meta(key,value) VALUES (?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value", rusqlite::params![key,serde_json::to_string(record)?])?;
+        let tx = conn.transaction()?;
+        tx.execute("INSERT INTO app_meta(key,value) VALUES (?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value", rusqlite::params![key,serde_json::to_string(record)?])?;
+        if let Some(intervals) = intervals {
+            let owner = self
+                .logged_in
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("No account"))?
+                .owner_pubkey
+                .to_hex();
+            tx.execute("INSERT INTO app_meta(key,value) VALUES (?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value", rusqlite::params![format!("iris-chat-private-block-intervals-v1:{owner}"),intervals])?;
+        }
+        tx.commit()?;
         Ok(true)
     }
     pub(super) fn reaction_records_for_message(
@@ -89,7 +115,7 @@ impl AppCore {
              WHERE key>=?1 AND key<?2 AND key>?3
                AND ((key>=?4 AND key<?5)
                     OR CASE WHEN json_valid(value)
-                        THEN json_extract(value, '$.type') = 'messageMutation' END)
+                        THEN json_extract(value, '$.type') IN ('messageMutation', 'privateBlock') END)
              ORDER BY key LIMIT 256",
         )?;
         let rows = query.query_map(
@@ -129,15 +155,13 @@ impl AppCore {
                 group: DeviceSyncGroup::from_current(self, self.groups.get(id)?),
             }),
             RecordLocator::Head(key) => {
-                let prefix = self.sync_record_prefix()?;
+                let path = self.record_storage_path(key)?;
                 let shared = self.app_store.shared();
                 let conn = shared.lock().ok()?;
                 let json: Option<String> = conn
-                    .query_row(
-                        "SELECT value FROM app_meta WHERE key=?1",
-                        [format!("{prefix}{key}")],
-                        |row| row.get(0),
-                    )
+                    .query_row("SELECT value FROM app_meta WHERE key=?1", [path], |row| {
+                        row.get(0)
+                    })
                     .optional()
                     .ok()?;
                 if let Some(json) = json {
@@ -163,10 +187,10 @@ impl AppCore {
         &self,
         record: &DeviceSyncRecord,
     ) -> bool {
-        let Some(prefix) = self.sync_record_prefix() else {
-            return false;
-        };
-        let Some(key) = record.storage_key() else {
+        let Some(path) = record
+            .storage_key()
+            .and_then(|key| self.record_storage_path(&key))
+        else {
             return false;
         };
         let shared = self.app_store.shared();
@@ -174,11 +198,9 @@ impl AppCore {
             return false;
         };
         let json: Option<String> = conn
-            .query_row(
-                "SELECT value FROM app_meta WHERE key=?1",
-                [format!("{prefix}{key}")],
-                |row| row.get(0),
-            )
+            .query_row("SELECT value FROM app_meta WHERE key=?1", [path], |row| {
+                row.get(0)
+            })
             .optional()
             .ok()
             .flatten();

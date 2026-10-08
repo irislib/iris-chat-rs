@@ -15,7 +15,8 @@ impl AppCore {
                     || requested.iter().collect::<BTreeSet<_>>().len() != requested.len()))
             || requested.iter().any(|id| !state.requested.contains(id))
             || records.iter().any(|record| {
-                record.scope() != state.scope
+                (matches!(record, DeviceSyncRecord::PrivateBlock { .. }) && !state.private_events)
+                    || record.scope() != state.scope
                     || !state.filter.contains(record.timestamp())
                     || !state.requested.contains(&hex(&record.id()))
             })
@@ -32,6 +33,31 @@ impl AppCore {
         let mut mutations = Vec::new();
         self.enter_batch();
         for (hash, record) in std::mem::take(&mut state.pending_records) {
+            let blocked = match &record {
+                DeviceSyncRecord::Message { message } => !self.block_allows_history(
+                    &message.chat_id,
+                    &message.author,
+                    message.created_at,
+                ),
+                DeviceSyncRecord::Reaction { reaction } => !self.block_allows_history(
+                    &reaction.chat_id,
+                    &reaction.author,
+                    reaction.created_at,
+                ),
+                DeviceSyncRecord::MessageMutation { mutation } => !self.block_allows_history(
+                    &mutation.chat_id,
+                    &mutation.author,
+                    mutation.created_at,
+                ),
+                _ => false,
+            };
+            if blocked {
+                // An intentional private block resolves this requested record;
+                // it must not keep initial history in a perpetual waiting state.
+                state.received.insert(hash);
+                continue;
+            }
+
             if let DeviceSyncRecord::Message { mut message } = record {
                 if !state.initial {
                     message.legacy_reactions = None;

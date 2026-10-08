@@ -16,7 +16,8 @@ mod history_policy;
 mod messages;
 mod recent_peers;
 mod records;
-use records::{DeviceSyncRecord, RecordLocator, RecordScope};
+use records::RecordScope;
+use records::{DeviceSyncRecord, RecordLocator};
 mod runtime;
 mod settings;
 mod update_sources;
@@ -77,6 +78,8 @@ enum DeviceSyncPacket {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         record_reconcile: Option<u8>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
+        private_events: Option<u8>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         history_since: Option<u64>,
     },
     ResyncRequired {
@@ -88,6 +91,8 @@ enum DeviceSyncPacket {
         next: Option<DeviceSyncPage>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         record_reconcile: Option<u8>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        private_events: Option<u8>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         history_since: Option<u64>,
     },
@@ -106,6 +111,8 @@ enum DeviceSyncPacket {
         v: u8,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         message_mutations: Option<u8>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        private_events: Option<u8>,
         scope: RecordScope,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         prefix: Option<String>,
@@ -384,6 +391,7 @@ impl AppCore {
                 roster_at,
                 page,
                 record_reconcile,
+                private_events,
                 history_since,
             } if v == DEVICE_SYNC_VERSION => {
                 self.negotiate_device_history(
@@ -393,6 +401,7 @@ impl AppCore {
                     history_since,
                     record_reconcile,
                 );
+                self.negotiate_private_events(source_pubkey_hex, private_events);
                 self.reply_device_sync_snapshot(source_pubkey_hex, roster_at, page);
             }
             DeviceSyncPacket::ResyncRequired { v } if v == DEVICE_SYNC_VERSION => {
@@ -404,9 +413,11 @@ impl AppCore {
                 roster_at,
                 next,
                 record_reconcile,
+                private_events,
                 history_since,
             } if v == DEVICE_SYNC_VERSION => {
                 self.negotiate_device_records(source_pubkey_hex, record_reconcile);
+                self.negotiate_private_events(source_pubkey_hex, private_events);
                 if let Some(next) = next {
                     self.request_device_sync_snapshot(source_pubkey_hex, Some(next));
                 } else if record_reconcile == Some(1) {

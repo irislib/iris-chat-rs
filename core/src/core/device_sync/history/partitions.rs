@@ -116,6 +116,7 @@ impl AppCore {
                 &prefix,
                 HistoryMutationAccess {
                     supported: true,
+                    private_events: self.private_events_supported(peer),
                     target_since: self.device_history_mutation_target_since(peer),
                 },
             ) else {
@@ -151,6 +152,7 @@ impl AppCore {
             let packet = DeviceSyncPacket::HistoryOpen {
                 v: 1,
                 message_mutations: Some(1),
+                private_events: self.private_events_supported(peer).then_some(1),
                 session: session.clone(),
                 scope,
                 prefix: (!prefix.is_empty()).then_some(prefix),
@@ -217,6 +219,15 @@ impl AppCore {
         }
         if let Some(since) = restart {
             self.start_device_reconcile(peer, since, state.scope);
+        }
+        if state.scope == RecordScope::State && !plan.withheld && restart.is_none() {
+            let deferred = self.device_sync.as_mut().and_then(|runtime| {
+                runtime.history.state_ready.insert(peer.to_string());
+                runtime.history.deferred_history.remove(peer)
+            });
+            if let Some(since) = deferred {
+                self.start_device_history(peer, since);
+            }
         }
         if plan.link_id.is_some() {
             if let Some(record) = self.device_history_transfer(peer) {

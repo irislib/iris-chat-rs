@@ -19,6 +19,9 @@ pub(super) struct HistoryState {
     record_limit: Option<usize>,
     pub(super) agreed: BTreeMap<String, u64>,
     pub(super) typed: BTreeSet<String>,
+    private_events: BTreeSet<String>,
+    state_ready: BTreeSet<String>,
+    deferred_history: BTreeMap<String, u64>,
     partitions: BTreeMap<(String, RecordScope), HistoryPartition>,
     restart: BTreeMap<(String, RecordScope), u64>,
     sessions: BTreeMap<(String, String), HistorySession>,
@@ -43,12 +46,14 @@ struct HistorySession {
     withheld: bool,
     batch_imported: u64,
     imported_original: bool,
+    private_events: bool,
     deferred_mutation: bool,
 }
 
 #[derive(Clone, Copy)]
 struct HistoryMutationAccess {
     supported: bool,
+    private_events: bool,
     target_since: u64,
 }
 
@@ -161,6 +166,8 @@ impl HistorySession {
         let mut add = |record: DeviceSyncRecord| {
             if (mutation_access.supported
                 || !matches!(record, DeviceSyncRecord::MessageMutation { .. }))
+                && (mutation_access.private_events
+                    || !matches!(record, DeviceSyncRecord::PrivateBlock { .. }))
                 && record.scope() == scope
                 && filter.contains(record.timestamp())
                 && hex(&record.id()).starts_with(prefix)
@@ -232,6 +239,7 @@ impl HistorySession {
             withheld: false,
             batch_imported: 0,
             imported_original: false,
+            private_events: mutation_access.private_events,
             deferred_mutation: false,
         })
     }
@@ -298,6 +306,9 @@ impl AppCore {
                 .retain(|(source, _), _| source != peer);
             runtime.history.agreed.remove(peer);
             runtime.history.typed.remove(peer);
+            runtime.history.private_events.remove(peer);
+            runtime.history.state_ready.remove(peer);
+            runtime.history.deferred_history.remove(peer);
             runtime
                 .history
                 .partitions
@@ -360,7 +371,24 @@ impl AppCore {
             }
         }
     }
+    pub(super) fn negotiate_private_events(&mut self, peer: &str, capability: Option<u8>) {
+        if capability == Some(1) && self.device_sync_peer_is_authorized(peer) {
+            if let Some(runtime) = &mut self.device_sync {
+                if runtime.history.private_events.len() < MAX_SESSIONS {
+                    runtime.history.private_events.insert(peer.to_string());
+                }
+            }
+        }
+    }
+    pub(super) fn private_events_supported(&self, peer: &str) -> bool {
+        self.device_sync
+            .as_ref()
+            .is_some_and(|runtime| runtime.history.private_events.contains(peer))
+    }
     pub(super) fn start_device_state(&mut self, peer: &str) {
+        if let Some(runtime) = &mut self.device_sync {
+            runtime.history.state_ready.remove(peer);
+        }
         if self
             .device_sync
             .as_ref()
@@ -370,6 +398,17 @@ impl AppCore {
         }
     }
     pub(super) fn start_device_history(&mut self, peer: &str, agreed_since: u64) {
+        if self.private_events_supported(peer) {
+            if let Some(runtime) = &mut self.device_sync {
+                if !runtime.history.state_ready.contains(peer) {
+                    runtime
+                        .history
+                        .deferred_history
+                        .insert(peer.to_string(), agreed_since);
+                    return;
+                }
+            }
+        }
         if self
             .device_sync
             .as_ref()
@@ -511,6 +550,7 @@ impl AppCore {
             .retain(|_, state| state.started.elapsed() < TTL);
         if let DeviceSyncPacket::HistoryOpen {
             message_mutations,
+            private_events,
             since,
             until,
             frame,
@@ -576,6 +616,8 @@ impl AppCore {
                 &prefix,
                 HistoryMutationAccess {
                     supported: message_mutations == Some(1),
+                    private_events: private_events == Some(1)
+                        && self.private_events_supported(peer),
                     target_since: self.device_history_mutation_target_since(peer),
                 },
             ) else {

@@ -60,11 +60,11 @@ fn blocking_a_peer_removes_them_from_chat_list_and_subscribable_set() {
         blocked: false,
     });
     assert!(core.user_discovery_revision > blocked_revision);
-    assert!(core
+    assert!(!core
         .state
         .chat_list
         .iter()
-        .any(|chat| chat.chat_id == peer_hex));
+        .any(|chat| chat.chat_id == peer_hex), "unblock must not restore deleted direct history");
 }
 
 #[test]

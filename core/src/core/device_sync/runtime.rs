@@ -286,6 +286,7 @@ impl AppCore {
                 roster_at: config.roster_at,
                 page: None,
                 record_reconcile: Some(1),
+                private_events: Some(1),
                 history_since: None,
             });
             let resync_required = serde_json::to_vec(&DeviceSyncPacket::ResyncRequired {
