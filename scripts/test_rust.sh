@@ -37,6 +37,8 @@ fi
 # Dependency unit tests are not included by the app's ordinary test command.
 cargo test --manifest-path "${ROOT_DIR}/core/vendor/webrtc-ice/Cargo.toml" \
     --locked --lib agent::agent_idle_regression_test
+cargo test --manifest-path "${ROOT_DIR}/core/vendor/webrtc-ice/Cargo.toml" \
+    --locked --lib candidate::candidate_equality_test
 
 # Prefer cargo-nextest when available: it runs test binaries in parallel
 # (cargo test runs them serially), which makes a big difference for the

@@ -15,6 +15,9 @@ class RustRunnerTests(unittest.TestCase):
         commands = [[
             "test", "--manifest-path", str(ROOT / "core/vendor/webrtc-ice/Cargo.toml"),
             "--locked", "--lib", "agent::agent_idle_regression_test",
+        ], [
+            "test", "--manifest-path", str(ROOT / "core/vendor/webrtc-ice/Cargo.toml"),
+            "--locked", "--lib", "candidate::candidate_equality_test",
         ]]
         for crate in CRATES:
             args = ["--manifest-path", str(ROOT / crate / "Cargo.toml"), "--locked"]
