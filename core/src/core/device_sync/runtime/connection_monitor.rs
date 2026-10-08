@@ -277,7 +277,7 @@ mod tests {
         outbox
             .write()
             .unwrap()
-            .acknowledge(&sibling.npub(), &event_id);
+            .acknowledge(sibling.npub(), &event_id);
         datagrams.clear();
         assert!(
             tokio::time::timeout(

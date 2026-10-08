@@ -86,6 +86,12 @@ jobs:
           cargo fmt --manifest-path protocol-ffi/Cargo.toml -- --check
           cargo fmt --manifest-path linux/Cargo.toml -- --check
 
+      - name: Rust lint including test targets
+        run: |
+          for crate in core chat-protocol protocol-ffi; do
+            cargo clippy --manifest-path "$crate/Cargo.toml" --locked --all-targets -- -D warnings
+          done
+
       - name: Rust tests
         run: |
           mkdir -p work/private-controls
