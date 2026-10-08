@@ -2,6 +2,27 @@
 
 Each release has channel-specific notes. The release tag must match the `##` heading exactly.
 
+## v2026.10.9
+
+### GitHub
+
+- Sync signed block and unblock events privately between currently authorized devices on the same account. Recheck device membership before importing or exporting private sync data.
+- Delete direct conversations when blocking someone, stop queued sends across message servers and nearby connections, and keep blocked-period messages from returning after sync or restart. Preserve conversations reopened after unblocking.
+- Keep existing shared-group history visible by default, with an option to hide past messages from blocked people. Apply visibility consistently to search, older-message pages, previews, and cached views.
+- Add blocked-people settings with Unblock controls across native apps, and suppress new blocked messages and notification previews while preserving shared-group membership controls.
+
+### Apple
+
+- Manage blocked people in Settings and choose whether to hide their past group messages.
+- Keep blocks in sync with your devices and remove direct chats when blocking.
+- Stop queued messages and unwanted notifications from returning after syncing or restarting.
+
+### Zapstore
+
+- Manage blocked people in Settings and choose whether to hide their past group messages.
+- Keep blocks in sync with your devices and remove direct chats when blocking.
+- Stop queued messages and unwanted notifications from returning after syncing or restarting.
+
 ## v2026.10.8.3
 
 ### GitHub
