@@ -2,6 +2,28 @@
 
 Each release has channel-specific notes. The release tag must match the `##` heading exactly.
 
+## v2026.10.8.2
+
+### GitHub
+
+- Give Linux a responsive desktop chat layout, keeping the chat list visible in wide windows and adapting to smaller screens. Harmonize headers, round controls, message previews, reactions, and hover actions.
+- Keep Linux typing and search responsive during background updates, show linked-device message sync progress, and allow informational popups to close when clicking outside.
+- Restore encrypted image attachments on Linux. Add visible text-size controls and persistent image-proxy settings, and move disappearing-message options into chat details.
+- Make edit history easy to find in message menus and Message Details across native apps. Show the latest revision first, follow incoming edits, preserve selected text on Linux, and close history when its message or account is no longer available.
+- Avoid repeated address allocations while comparing ICE candidates.
+- Preserve existing Hashtree release history during publication and publish signed Haps announcements directly to public message servers.
+
+### Apple
+
+- Find edit history from the message menu or Message Details on Mac.
+- Read the latest version first and follow new edits while history is open.
+
+### Zapstore
+
+- Find edit history from the message menu or Message Details.
+- Read the latest version first and follow new edits while history is open.
+- Close history when a message is deleted or expires, or when leaving the chat.
+
 ## v2026.10.8.1
 
 ### GitHub

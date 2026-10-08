@@ -46,7 +46,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.ripple
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -69,7 +68,6 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.TextUnit
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.delay
 import kotlin.math.abs
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.LinkAnnotation
@@ -1961,7 +1959,7 @@ private fun MessageInfoUserRow(
     }
 }
 
-private fun messageInfoDateTime(secs: Long): String {
+internal fun messageInfoDateTime(secs: Long): String {
     val formatter = DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT)
     return formatter.format(Date(secs * 1000L))
 }
@@ -2030,70 +2028,3 @@ internal val ChatEmojiChoices =
         "❤️", "🔥", "✨", "🙏", "👍", "👀", "🎉", "💜",
         "🌞", "🌙", "⭐️", "🍓", "☕️", "🌊", "🚀", "✅",
     )
-
-
-@Composable
-private fun MessageEditHistoryDialog(
-    message: ChatMessageSnapshot,
-    appManager: AppManager?,
-    onDismiss: () -> Unit,
-) {
-    val appState = appManager?.state?.collectAsStateWithLifecycle()
-    val accountAtOpen = remember(appManager, message.chatId, message.id) {
-        appState?.value?.account?.publicKeyHex
-    }
-    val candidate = if (appManager == null) message else {
-        appState?.value?.takeIf {
-            val active = it.router.screenStack.lastOrNull() ?: it.router.defaultScreen
-            it.account?.publicKeyHex == accountAtOpen && it.account != null &&
-                active is to.iris.chat.rust.Screen.Chat && active.chatId == message.chatId
-        }
-            ?.currentChat?.takeIf { it.chatId == message.chatId }
-            ?.messages?.find { it.id == message.id }
-    }
-    val current = candidate?.takeIf {
-        !it.deletedForEveryone && it.editHistory.isNotEmpty() &&
-            (it.expiresAtSecs?.let { expiry -> expiry > (System.currentTimeMillis() / 1000).toULong() } != false)
-    }
-    LaunchedEffect(current == null) {
-        if (current == null) onDismiss()
-    }
-    LaunchedEffect(current?.expiresAtSecs) {
-        current?.expiresAtSecs?.let { expiry ->
-            delay((expiry.toLong() * 1000 - System.currentTimeMillis()).coerceAtLeast(0))
-            onDismiss()
-        }
-    }
-    if (current == null) return
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Edit history") },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
-        text = {
-            SelectionContainer {
-                Column(
-                    modifier = Modifier.heightIn(max = 520.dp).verticalScroll(rememberScrollState()).testTag("messageEditHistory"),
-                    verticalArrangement = Arrangement.spacedBy(18.dp),
-                ) {
-                    current.editHistory.asReversed().forEachIndexed { index, version ->
-                        Column(
-                            modifier = Modifier.testTag("messageEditVersion-${version.id}"),
-                            verticalArrangement = Arrangement.spacedBy(4.dp),
-                        ) {
-                            Text(
-                                when (index) {
-                                    0 -> "Current"
-                                    current.editHistory.lastIndex -> "Original"
-                                    else -> "Edit ${current.editHistory.lastIndex - index}"
-                                },
-                                style = MaterialTheme.typography.titleSmall,
-                            )
-                            Text(messageInfoDateTime(version.createdAtSecs.toLong()), style = MaterialTheme.typography.labelSmall)
-                            Text(parseReplyEncodedMessage(version.body).body)
-                        }
-                    }
-                }
-            }
-        },
-    )
-}

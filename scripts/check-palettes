@@ -186,7 +186,7 @@ checks += assert_contains(
 )
 
 checks += assert_contains(
-    "linux/src/main.rs",
+    "linux/src/style.rs",
     [
         ("light.background", f'background: "{css_color(light["background"])}"'),
         ("light.panel", f'panel: "{css_color(light["panel"])}"'),
