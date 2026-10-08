@@ -27,9 +27,7 @@ final class FipsBlePhysicalUITests: XCTestCase {
         app.launchEnvironment["IRIS_DISABLE_NOTIFICATIONS"] = "1"
         app.launchEnvironment["IRIS_FIPS_PHYSICAL_PEER_DEVICE_HEX"] =
             environment["IRIS_FIPS_PHYSICAL_PEER_DEVICE_HEX"]
-        if environment["IRIS_FIPS_IDLE_METRICS"] == "1" {
-            app.launchEnvironment["IRIS_FIPS_BLE_TRACE"] = "1"
-        }
+        app.launchEnvironment["IRIS_FIPS_BLE_TRACE"] = environment["IRIS_FIPS_BLE_TRACE"]
         app.launch()
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 20))
         dismissBlockingSystemAlertIfPresent()
