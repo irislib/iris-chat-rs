@@ -9,10 +9,6 @@ cd "${ROOT_DIR}/core"
 # with other worktrees. Explicit caller overrides still take precedence.
 export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-${ROOT_DIR}/core/target}"
 
-# Dependency unit tests are not included by the app's ordinary test command.
-cargo test --manifest-path "${ROOT_DIR}/core/vendor/webrtc-ice/Cargo.toml" \
-    --locked --lib agent::agent_idle_regression_test
-
 # Device approval has its own build-time relay, separate from SetNostrRelays.
 # Keep FFI integration tests local unless the caller supplies a fixture.
 if [[ -z "${IRIS_DEVICE_APPROVAL_RELAY_URL:-}" ]]; then
@@ -37,6 +33,10 @@ PY
         --pid-file "${approval_fixture}/relay.pid" --log-file "${approval_fixture}/relay.log"
     export IRIS_DEVICE_APPROVAL_RELAY_URL="ws://127.0.0.1:${approval_port}"
 fi
+
+# Dependency unit tests are not included by the app's ordinary test command.
+cargo test --manifest-path "${ROOT_DIR}/core/vendor/webrtc-ice/Cargo.toml" \
+    --locked --lib agent::agent_idle_regression_test
 
 # Prefer cargo-nextest when available: it runs test binaries in parallel
 # (cargo test runs them serially), which makes a big difference for the
