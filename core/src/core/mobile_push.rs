@@ -1,11 +1,12 @@
 use super::*;
-use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine};
+use base64::{Engine, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use nostr::Tag;
 use rusqlite::OptionalExtension;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
+mod block_policy;
 mod control_preview;
 mod diagnostics;
 mod invite_owner;
@@ -497,6 +498,12 @@ fn decrypted_mobile_push_resolution(
     if inner_kind == super::calls::push::CALL_OFFER_KIND as u64 {
         return suppressed_resolution();
     }
+    let created = serde_json::from_str::<serde_json::Value>(&inner_json)
+        .ok()
+        .and_then(|value| value["created_at"].as_u64());
+    if block_policy::suppresses_in_data_dir(data_dir, &sender_owner.to_hex(), created) {
+        return suppressed_resolution();
+    }
     let sender_name = lookup_sender_display_name(data_dir, &sender_owner)
         .or_else(|| lookup_direct_thread_sender_name(data_dir, &sender_owner));
     let group_title = group_id
@@ -602,17 +609,24 @@ fn lookup_mobile_push_preview(
     {
         return Some(control);
     }
-    let (chat_id, body, author_hex, dismiss): (String, String, String, bool) = conn
+    let (chat_id, body, author_hex, dismiss, author_owner, created): (String, String, String, bool, Option<String>, u64) = conn
         .query_row(
-            "SELECT chat_id, body, author, is_outgoing = 1 OR delivery = 'seen' OR deleted_for_everyone = 1
+            "SELECT chat_id, body, author, is_outgoing = 1 OR delivery = 'seen' OR deleted_for_everyone = 1, author_owner_pubkey_hex, created_at_secs
              FROM messages
              WHERE source_event_id = ?1
              LIMIT 1",
             [outer_event_id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?)),
         )
         .ok()?;
 
+    if block_policy::suppresses(
+        &conn,
+        author_owner.as_deref().unwrap_or(&author_hex),
+        Some(created),
+    ) {
+        return Some(suppressed_resolution());
+    }
     if dismiss {
         return Some(read_state::dismissed_resolution());
     }
@@ -702,9 +716,15 @@ fn lookup_recent_group_mobile_push_preview(
 ) -> Option<MobilePushNotificationResolution> {
     let conn = open_lookup_connection(data_dir)?;
     let min_created_at_secs = i64::try_from(min_created_at_secs).ok()?;
-    let (chat_id, body, author_owner_hex, author): (String, String, Option<String>, String) = conn
+    let (chat_id, body, author_owner_hex, author, created): (
+        String,
+        String,
+        Option<String>,
+        String,
+        u64,
+    ) = conn
         .query_row(
-            "SELECT chat_id, body, author_owner_pubkey_hex, author
+            "SELECT chat_id, body, author_owner_pubkey_hex, author, created_at_secs
              FROM messages
              WHERE chat_id LIKE 'group:%'
                AND is_outgoing = 0
@@ -712,9 +732,24 @@ fn lookup_recent_group_mobile_push_preview(
              ORDER BY created_at_secs DESC, rowid DESC
              LIMIT 1",
             [min_created_at_secs],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                ))
+            },
         )
         .ok()?;
+    if block_policy::suppresses(
+        &conn,
+        author_owner_hex.as_deref().unwrap_or(&author),
+        Some(created),
+    ) {
+        return Some(suppressed_resolution());
+    }
     let group_id = chat_id.strip_prefix(GROUP_CHAT_PREFIX)?.to_string();
     if is_chat_muted_in(&conn, &chat_id) {
         return Some(suppressed_resolution());

@@ -1197,6 +1197,13 @@ impl AppCore {
             });
             if !self
                 .should_accept_direct_runtime_message(effective_sender_owner, chat_id.as_deref())
+                || !self.block_allows_history(
+                    chat_id
+                        .as_deref()
+                        .unwrap_or(&effective_sender_owner.to_hex()),
+                    &effective_sender_owner.to_hex(),
+                    outer_created_at_secs,
+                )
             {
                 return true;
             }
@@ -1266,8 +1273,27 @@ impl AppCore {
         );
         let is_outgoing = effective_sender_owner == local_owner;
         if !is_outgoing
-            && !is_group_chat_id(&chat_id)
-            && !self.should_accept_direct_runtime_message(effective_sender_owner, Some(&chat_id))
+            && (!is_group_chat_id(&chat_id)
+                || matches!(
+                    kind,
+                    CHAT_MESSAGE_KIND
+                        | REACTION_KIND
+                        | TYPING_KIND
+                        | RECEIPT_KIND
+                        | MESSAGE_EDIT_KIND
+                        | MESSAGE_DELETE_KIND
+                ))
+            && (self.is_owner_blocked(&effective_sender_owner.to_hex())
+                || !self.block_allows_history(
+                    &chat_id,
+                    &effective_sender_owner.to_hex(),
+                    created_at_secs,
+                )
+                || (!is_group_chat_id(&chat_id)
+                    && !self.should_accept_direct_runtime_message(
+                        effective_sender_owner,
+                        Some(&chat_id),
+                    )))
         {
             return true;
         }

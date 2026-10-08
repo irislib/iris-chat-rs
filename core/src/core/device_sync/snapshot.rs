@@ -205,6 +205,7 @@ impl AppCore {
             if PublicKey::from_hex(&chat.id).is_ok()
                 && !self.threads.contains_key(&chat.id)
                 && !self.chat_activity_is_deleted(&chat.id, chat.updated_at)
+                && self.block_allows_history(&chat.id, &chat.id, chat.updated_at)
             {
                 self.ensure_thread_record(&chat.id, chat.updated_at);
                 changed = true;

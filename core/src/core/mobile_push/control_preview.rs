@@ -13,6 +13,8 @@ struct ControlPreview {
     kind: u64,
     body: String,
     typing_until: Option<u64>,
+    #[serde(default)]
+    created_at: Option<u64>,
 }
 
 pub(super) fn body(kind: u64, content: &str, inner_json: &str) -> String {
@@ -52,6 +54,8 @@ impl AppCore {
             return;
         };
         if sender == owner
+            || self.is_owner_blocked(&sender.to_hex())
+            || !self.block_allows_history(chat_id, &sender.to_hex(), rumor.created_at_secs)
             || !matches!(
                 rumor.kind,
                 RECEIPT_KIND
@@ -69,6 +73,7 @@ impl AppCore {
             sender: sender.to_hex(),
             chat_id: chat_id.to_string(),
             kind: rumor.kind as u64,
+            created_at: Some(rumor.created_at_secs),
             body: if rumor.kind == TYPING_KIND {
                 if message_expiration_from_tags(rumor.tags.iter())
                     .is_some_and(|time| time <= rumor.created_at_secs)
@@ -150,7 +155,9 @@ pub(super) fn lookup(
         return Some(suppressed_resolution());
     }
     super::super::storage::validate_account_storage(conn, &preview.owner).ok()?;
-    if is_chat_muted_in(conn, &preview.chat_id) {
+    if block_policy::suppresses(conn, &preview.sender, preview.created_at)
+        || is_chat_muted_in(conn, &preview.chat_id)
+    {
         return Some(suppressed_resolution());
     }
     let sender = PublicKey::from_hex(&preview.sender).ok()?;

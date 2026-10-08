@@ -94,17 +94,15 @@ impl PrivateBlockPolicy {
                 let until = events[index + 1..]
                     .iter()
                     .find(|(_, _, next)| !next.blocked)
-                    .map(|(_, event, _)| event.created_at.as_secs());
-                if until.is_none_or(|until| until > since) {
-                    self.intervals.push((since, until));
-                }
+                    .map(|(_, event, _)| event.created_at.as_secs().max(since.saturating_add(1)));
+                self.intervals.push((since, until));
             } else if let Some(since) = state.blocked_since {
                 // The unblock explicitly attests its observed interval, so live
                 // delivery remains safe when it arrives before the older block.
-                let until = event.created_at.as_secs();
-                if until > since {
-                    self.intervals.push((since, Some(until)));
-                }
+                // Timestamps have second precision: a block and unblock in
+                // the same second must still suppress that indistinguishable second.
+                let until = event.created_at.as_secs().max(since.saturating_add(1));
+                self.intervals.push((since, Some(until)));
             }
         }
         self.normalize_intervals();
