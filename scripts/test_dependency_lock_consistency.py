@@ -64,6 +64,30 @@ def local_protocol_issues(root: Path) -> list[str]:
 
 
 class DependencyLockConsistencyTests(unittest.TestCase):
+    def test_native_roots_use_the_same_vendored_ice_fix(self):
+        vendor = ROOT / "core" / "vendor" / "webrtc-ice"
+        provenance = (vendor / "UPSTREAM.toml").read_text(encoding="utf-8")
+        self.assertIn('version = "0.17.1"', provenance)
+        self.assertIn(
+            'crate_sha256 = "23ede72a36e5dda685814c389b2b34ac60b3ed000a81789e93626e27180eb785"',
+            provenance,
+        )
+        for license_name in ("LICENSE-MIT", "LICENSE-APACHE"):
+            self.assertTrue((vendor / license_name).is_file())
+        for consumer in ("core", "linux"):
+            with self.subTest(consumer=consumer):
+                manifest = (ROOT / consumer / "Cargo.toml").read_text(encoding="utf-8")
+                patch = re.search(r"(?ms)^\[patch\.crates-io\]\s*\n(.*?)(?=^\[|\Z)", manifest)
+                self.assertIsNotNone(patch, "Every native Cargo root must apply the ICE patch")
+                dependency = re.search(r'(?m)^webrtc-ice\s*=\s*\{\s*path\s*=\s*"([^"]+)"\s*\}', patch.group(1))
+                self.assertIsNotNone(dependency)
+                self.assertEqual((ROOT / consumer / dependency.group(1)).resolve(), vendor.resolve())
+                entries = [block for block in (ROOT / consumer / "Cargo.lock").read_text().split("[[package]]")
+                           if re.search(r'(?m)^name = "webrtc-ice"$', block)]
+                self.assertEqual(len(entries), 1, "Do not ship a second unpatched ICE version")
+                self.assertRegex(entries[0], r'(?m)^version = "0\.17\.1"$')
+                self.assertNotRegex(entries[0], r"(?m)^(source|checksum) =", "ICE must resolve to the local patch")
+
     def test_local_protocol_manifests_and_locks_match_package_version(self):
         self.assertEqual(local_protocol_issues(ROOT), [])
 

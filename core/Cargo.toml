@@ -102,3 +102,7 @@ tempfile = "3"
 [target.'cfg(windows)'.dependencies]
 widestring = "1.2"
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_System_Threading", "Win32_System_Pipes"] }
+
+# Keep the ICE consent-check fix identical across native entry points.
+[patch.crates-io]
+webrtc-ice = { path = "vendor/webrtc-ice" }

@@ -65,6 +65,10 @@ baseline_limit_for() {
 
 is_skipped_source() {
   case "$1" in
+    core/vendor/*)
+      # Preserve upstream source layout for small, auditable dependency patches.
+      return 0
+      ;;
     */Bindings/*|*.lock|*.png|*.jpg|*.jpeg|*.icns|*.jar|*.ico|*.json|*.toml|*.yaml|*.yml|*.md|*.plist|*.entitlements|*.xml|*.xaml|*.xcassets/*)
       return 0
       ;;

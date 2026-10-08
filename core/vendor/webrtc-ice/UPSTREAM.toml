@@ -1,0 +1,10 @@
+name = "webrtc-ice"
+version = "0.17.1"
+crate_sha256 = "23ede72a36e5dda685814c389b2b34ac60b3ed000a81789e93626e27180eb785"
+repository = "https://github.com/webrtc-rs/webrtc"
+revision = "e9fe1bc4207a0c6b8d28d5583a118419be60f3c2"
+path_in_repository = "ice"
+licenses = ["MIT", "Apache-2.0"]
+patch = "Answer STUN requests without generating another triggered check for a succeeded pair, per RFC 8445 section 7.3.1.4. Periodic consent checks and unvalidated-pair nomination remain unchanged."
+regression_module = "src/agent/agent_idle_regression_test.rs"
+regression_lock = "Cargo.lock pins the standalone upstream test dependencies; native runtime resolution is pinned by core/Cargo.lock and linux/Cargo.lock."
