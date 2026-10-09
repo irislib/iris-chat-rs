@@ -39,6 +39,10 @@ final class InMemoryPendingDeviceLinkSecretStore: PendingDeviceLinkSecretStore {
 private final class MockDesktopNotificationPoster: DesktopNotificationPosting {
     var posts: [(accountID: String, chatID: String, title: String, body: String)] = []
     var clearCount = 0
+    var readClears: [(accountID: String, chatIDs: Set<String>)] = []
+    func clearRead(accountID: String, chatIDs: Set<String>) {
+        readClears.append((accountID, chatIDs))
+    }
     func post(accountID: String, chatID: String, title: String, body: String) {
         posts.append((accountID: accountID, chatID: chatID, title: title, body: body))
     }
@@ -1067,6 +1071,39 @@ final class IrisChatTests: XCTestCase {
         }
         XCTAssertTrue(updated)
         XCTAssertEqual((try XCTUnwrap(JSONSerialization.jsonObject(with: try XCTUnwrap(manager.supportBundleJson().data(using: .utf8))) as? [String: Any]))["ok"] as? Bool, true)
+    }
+
+    @MainActor
+    func testNotificationsSurviveForegroundUntilTheirChatBecomesRead() async {
+        let unread = makeChatThread(unreadCount: 2)
+        let rust = MockRustApp(state: makeLargeFixtureState(
+            rev: 1, account: makeAccount(), chatList: [unread]
+        ))
+        let notifications = MockDesktopNotificationPoster()
+        let manager = AppManager(
+            rust: rust, secretStore: InMemorySecretStore(), desktopNotifications: notifications
+        )
+        manager.appBackgrounded()
+        manager.appForegrounded()
+        XCTAssertEqual(notifications.clearCount, 0)
+        XCTAssertTrue(notifications.readClears.isEmpty)
+
+        // A partial read (including one synced from another device) must not
+        // dismiss the chat's remaining unread desktop notification.
+        rust.emit(.fullState(makeLargeFixtureState(
+            rev: 2, account: makeAccount(), chatList: [makeChatThread(unreadCount: 1)]
+        )))
+        let partialRead = await waitUntil { manager.state.rev == 2 }
+        XCTAssertTrue(partialRead)
+        XCTAssertTrue(notifications.readClears.isEmpty)
+        rust.emit(.fullState(makeLargeFixtureState(
+            rev: 3, account: makeAccount(), chatList: [makeChatThread(unreadCount: 0)]
+        )))
+        let cleared = await waitUntil { notifications.readClears.count == 1 }
+        XCTAssertTrue(cleared)
+        XCTAssertEqual(notifications.readClears.first?.accountID, "owner")
+        XCTAssertEqual(notifications.readClears.first?.chatIDs, ["chat-1"])
+        XCTAssertEqual(notifications.clearCount, 0)
     }
 
     @MainActor

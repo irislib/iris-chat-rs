@@ -31,7 +31,20 @@ impl ProtocolEngine {
                 .collect();
             let expires_at_secs = serde_json::from_slice::<UnsignedEvent>(&payload)
                 .ok()
-                .and_then(|event| event.tags.expiration().map(|time| time.as_secs()));
+                .and_then(|event| {
+                    event.tags.expiration().map(|time| {
+                        // An already-expired typing rumor means "stopped typing".
+                        // It must reach ready devices; don't mistake its control
+                        // tag for an expired message. Bound retries to the typing TTL.
+                        if event.kind.as_u16() as u32 == nostr_double_ratchet::TYPING_KIND
+                            && time.as_secs() <= event.created_at.as_secs()
+                        {
+                            now.get().saturating_add(10)
+                        } else {
+                            time.as_secs()
+                        }
+                    })
+                });
             ProtocolPendingRemoteSend {
                 recipient_owner,
                 eligible_devices,

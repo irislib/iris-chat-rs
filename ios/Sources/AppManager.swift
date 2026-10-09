@@ -2193,9 +2193,8 @@ final class AppManager: ObservableObject {
 #if os(iOS)
         processPendingShareFilesIfNeeded()
 #endif
-        if !AppPaths.notificationsDisabledForAutomation(environment: ProcessInfo.processInfo.environment) {
-            UNUserNotificationCenter.current().removeAllDeliveredNotifications()
-        }
+        // App activation is not a read acknowledgement. Read-state cleanup
+        // dismisses only messages read here or on a linked device.
 #endif
     }
 
@@ -3418,6 +3417,13 @@ final class AppManager: ObservableObject {
             appForeground: appSceneIsActive,
             openChatId: routerOpenChatId(router: nextState.router)
         )
+        let previouslyUnread = Set(oldState.chatList.filter { $0.unreadCount > 0 }.map(\.chatId))
+        let newlyRead = Set(nextState.chatList.filter {
+            $0.unreadCount == 0 && previouslyUnread.contains($0.chatId)
+        }.map(\.chatId))
+        if !newlyRead.isEmpty {
+            desktopNotifications.clearRead(accountID: accountID, chatIDs: newlyRead)
+        }
         for candidate in candidates {
             desktopNotifications.post(accountID: accountID, chatID: candidate.chatId, title: candidate.title, body: candidate.body)
         }

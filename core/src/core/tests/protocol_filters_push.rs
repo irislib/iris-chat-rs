@@ -2644,20 +2644,26 @@ fn privacy_and_notification_defaults_match_fresh_installs() {
     let decoded = serde_json::from_str::<PersistedPreferences>("{}").expect("decode preferences");
     let state = AppState::empty();
 
-    assert!(!persisted.send_typing_indicators);
-    assert!(!persisted.send_read_receipts);
+    assert!(persisted.send_typing_indicators);
+    assert!(persisted.send_read_receipts);
     assert!(persisted.desktop_notifications_enabled);
     assert!(persisted.invite_acceptance_notifications_enabled);
 
-    assert!(!decoded.send_typing_indicators);
-    assert!(!decoded.send_read_receipts);
+    assert!(decoded.send_typing_indicators);
+    assert!(decoded.send_read_receipts);
     assert!(decoded.desktop_notifications_enabled);
     assert!(decoded.invite_acceptance_notifications_enabled);
 
-    assert!(!state.preferences.send_typing_indicators);
-    assert!(!state.preferences.send_read_receipts);
+    assert!(state.preferences.send_typing_indicators);
+    assert!(state.preferences.send_read_receipts);
     assert!(state.preferences.desktop_notifications_enabled);
     assert!(state.preferences.invite_acceptance_notifications_enabled);
+
+    let opted_out = serde_json::from_str::<PersistedPreferences>(
+        r#"{"send_typing_indicators":false,"send_read_receipts":false}"#,
+    ).expect("decode explicit preferences");
+    assert!(!opted_out.send_typing_indicators);
+    assert!(!opted_out.send_read_receipts);
 }
 
 #[test]

@@ -624,6 +624,7 @@ var irisToolbarTrailingPlacement: ToolbarItemPlacement {
 
 protocol DesktopNotificationPosting {
     func post(accountID: String, chatID: String, title: String, body: String)
+    func clearRead(accountID: String, chatIDs: Set<String>)
     func clear()
 }
 
@@ -635,6 +636,7 @@ final class NoopDesktopNotificationPoster: DesktopNotificationPosting {
         _ = body
     }
     func clear() {}
+    func clearRead(accountID: String, chatIDs: Set<String>) {}
 }
 
 final class SystemDesktopNotificationPoster: DesktopNotificationPosting {
@@ -676,6 +678,25 @@ final class SystemDesktopNotificationPoster: DesktopNotificationPosting {
                 break
             @unknown default:
                 break
+            }
+        }
+    }
+
+    func clearRead(accountID: String, chatIDs: Set<String>) {
+        guard !chatIDs.isEmpty,
+              !AppPaths.notificationsDisabledForAutomation(environment: environment) else { return }
+        let readAt = Date()
+        center.getDeliveredNotifications { [center] notifications in
+            let identifiers = notifications.compactMap { notification -> String? in
+                let info = notification.request.content.userInfo
+                guard notification.date <= readAt,
+                      info["iris_account_id"] as? String == accountID,
+                      let chatID = info["chatId"] as? String,
+                      chatIDs.contains(chatID) else { return nil }
+                return notification.request.identifier
+            }
+            if !identifiers.isEmpty {
+                center.removeDeliveredNotifications(withIdentifiers: identifiers)
             }
         }
     }

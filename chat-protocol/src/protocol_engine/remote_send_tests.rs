@@ -172,6 +172,22 @@ fn remote_direct_pending_history_excludes_new_devices_and_prunes_revoked_devices
 }
 
 #[test]
+fn remote_direct_stop_typing_reaches_ready_device_and_expires_pending_retry() {
+    let mut f = remote_send_fixture();
+    let now = unix_now().get();
+    let peer = f.peer_owner.public_key();
+    let stop = pairwise_codec::typing_event(
+        f.owner.public_key(),
+        pairwise_codec::EncodeOptions::new(now, now.saturating_mul(1000)).with_expiration(1),
+    ).unwrap();
+    let sent = f.sender.send_direct_unsigned_event(peer, &peer.to_hex(), stop, UnixSeconds(now)).unwrap();
+    assert!(sent.effects.iter().any(|effect| matches!(effect, ProtocolEffect::Publish(_))));
+    assert!(f.sender.has_pending_retry_work());
+    assert!(f.sender.retry_pending_protocol(NdrUnixSeconds(now + 11)).unwrap().effects.is_empty());
+    assert!(!f.sender.has_pending_retry_work());
+}
+
+#[test]
 fn remote_direct_pending_payload_is_discarded_when_expired() {
     let mut f = remote_send_fixture();
     let now = unix_now().get();

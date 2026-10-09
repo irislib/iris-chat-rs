@@ -533,9 +533,9 @@ pub(super) struct PersistedPreferences {
     pub(super) call_quality: String,
     #[serde(default)]
     pub(super) call_max_bitrate_bps: u32,
-    #[serde(default)]
+    #[serde(default = "default_true")]
     pub(super) send_typing_indicators: bool,
-    #[serde(default)]
+    #[serde(default = "default_true")]
     pub(super) send_read_receipts: bool,
     #[serde(default = "default_true")]
     pub(super) allow_message_deletion_by_others: bool,

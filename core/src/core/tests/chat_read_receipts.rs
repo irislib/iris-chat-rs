@@ -218,7 +218,8 @@ fn encrypted_receipts_update_stored_messages_outside_the_loaded_chat_window() {
         }
         let invite = create_private_invite_for_test(&mut bob);
         prove_invite_owner(&mut alice, &bob_owner, &bob_device, 10);
-        bob.preferences.send_read_receipts = true;
+        assert!(bob.preferences.send_read_receipts, "receipts must work by default");
+        assert!(alice.preferences.send_typing_indicators, "typing must work by default");
         bob.accept_direct_peer(&bob_chat);
         if linked_reader {
             bob.logged_in.as_mut().unwrap().owner_keys = None;
@@ -226,6 +227,14 @@ fn encrypted_receipts_update_stored_messages_outside_the_loaded_chat_window() {
         alice.handle_action(AppAction::AcceptInvite {
             invite_input: invite,
         });
+        deliver_pending_relay_events_for_test(&alice, &mut bob);
+        alice.send_typing(&alice_chat);
+        deliver_pending_relay_events_for_test(&alice, &mut bob);
+        bob.rebuild_state();
+        assert!(bob.state.chat_list.iter().any(|chat| chat.chat_id == bob_chat && chat.is_typing));
+        alice.stop_typing(&alice_chat);
+        deliver_pending_relay_events_for_test(&alice, &mut bob);
+        assert!(bob.typing_indicators.is_empty());
         for text in ["first waiting for receipt", "second waiting for receipt"] {
             alice.handle_action(AppAction::SendMessage {
                 chat_id: alice_chat.clone(),
