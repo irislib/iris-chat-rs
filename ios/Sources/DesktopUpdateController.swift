@@ -7,6 +7,7 @@ import SwiftUI
 final class DesktopUpdateController: ObservableObject {
     @Published private(set) var checking = false
     @Published private(set) var installing = false
+    @Published private(set) var installFailure: String?
     @Published private(set) var available = false
     @Published private(set) var version = ""
     @Published private(set) var status = ""
@@ -36,6 +37,8 @@ final class DesktopUpdateController: ObservableObject {
     private var startupCheckDone = false
     private let defaults: UserDefaults
     private let fetchUpdate: () async throws -> IrisDesktopUpdateResult
+    private let downloadUpdate: () async throws -> URL
+    private let applyDownload: ((URL) throws -> Void)?
     private let now: () -> Date
     private(set) var diagnostics: [ClientDebugLogEntry] = []
     private static let checkFailureStatus = "Couldn’t check for updates. Try again."
@@ -47,10 +50,14 @@ final class DesktopUpdateController: ObservableObject {
         fetchUpdate: @escaping () async throws -> IrisDesktopUpdateResult = {
             await Task.detached { irisDesktopUpdateCheck() }.value
         },
+        downloadUpdate: @escaping () async throws -> URL = { try await DesktopUpdateController.downloadEmbeddedUpdate() },
+        applyDownload: ((URL) throws -> Void)? = nil,
         now: @escaping () -> Date = Date.init
     ) {
         self.defaults = defaults
         self.fetchUpdate = fetchUpdate
+        self.downloadUpdate = downloadUpdate
+        self.applyDownload = applyDownload
         self.now = now
         self.autoCheck = defaults.object(forKey: "updates.autoCheck") as? Bool ?? true
         self.autoInstall = defaults.bool(forKey: "updates.autoInstall")
@@ -71,6 +78,10 @@ final class DesktopUpdateController: ObservableObject {
 
     var canInstall: Bool {
         available && hasUpdateAsset && !checking && !installing
+    }
+
+    var bannerStatus: String {
+        installFailure ?? (installing ? status : (version.isEmpty ? "Update available" : "\(version) available"))
     }
 
     func runStartupCheckIfNeeded() {
@@ -107,7 +118,7 @@ final class DesktopUpdateController: ObservableObject {
 
     @discardableResult
     func check(manual: Bool = true) -> Task<Void, Never>? {
-        guard !checking else { return nil }
+        guard !checking && !installing else { return nil }
         task?.cancel()
         checking = true
         if manual {
@@ -139,26 +150,33 @@ final class DesktopUpdateController: ObservableObject {
         return 6 * 60 * 60 * 1_000_000_000
     }
 
-    func install() {
+    @discardableResult
+    func install() -> Task<Void, Never>? {
         guard hasUpdateAsset else {
             status = "No macOS update found"
-            return
+            return nil
         }
-        guard !installing else { return }
+        guard !installing && !checking else { return nil }
+        installFailure = nil
         installing = true
         status = "Downloading \(version)"
-        Task { [weak self] in
+        return Task { [weak self] in
             guard let self else { return }
             do {
-                let savedUrl = try await self.downloadEmbeddedUpdate()
+                let savedUrl = try await self.downloadUpdate()
                 try await MainActor.run {
-                    try self.installDownloaded(savedUrl)
+                    if let applyDownload = self.applyDownload {
+                        try applyDownload(savedUrl)
+                    } else {
+                        try self.installDownloaded(savedUrl)
+                    }
                 }
             } catch {
                 await MainActor.run {
                     self.installing = false
                     self.recordFailure(operation: "install", detail: error.localizedDescription)
                     self.status = Self.failureStatus(error, fallback: "Couldn’t install the update. Try again.")
+                    self.installFailure = self.status
                 }
             }
         }
@@ -213,7 +231,7 @@ final class DesktopUpdateController: ObservableObject {
         }
     }
 
-    private func downloadEmbeddedUpdate() async throws -> URL {
+    private static func downloadEmbeddedUpdate() async throws -> URL {
         let downloadDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("IrisChatDownloads", isDirectory: true)
         let result = await Task.detached {

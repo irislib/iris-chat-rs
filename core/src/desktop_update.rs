@@ -1,12 +1,23 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::{Mutex, OnceLock};
 
 use anyhow::{anyhow, Context, Result};
-use hashtree_updater::{DownloadOptions, UpdateAsset, UpdateManifest, UpdateTarget};
+use hashtree_updater::{
+    DownloadOptions, UpdateAsset, UpdateCheck, UpdateManifest, UpdateRef, UpdateTarget,
+};
 use serde::Deserialize;
 
-use crate::update_announcements::check_secure_update;
+use crate::update_announcements::{
+    build_cached_update_downloader, check_secure_update, secure_update_ref, AvailableUpdateResolver,
+};
+
+// Keep the signed, content-addressed selection offered to the user. Installing
+// it must not depend on discovering the same release a second time.
+static VERIFIED_APP_UPDATE: OnceLock<
+    Mutex<Option<(UpdateRef, AvailableUpdateResolver, UpdateCheck)>>,
+> = OnceLock::new();
 
 const HTREE_MANIFEST_URL: &str = "https://upload.iris.to/npub1399g0q2gtwjcglyjcg3jw3rcllqhm375pwases5hkvqa56aqe5wsz2eaap/releases%2Firis-chat-rs/latest/release.json";
 const UPDATE_CONNECT_TIMEOUT_SECS: &str = "4";
@@ -167,12 +178,27 @@ fn run_secure_update(operation: UpdateOperation) -> Result<IrisDesktopUpdateResu
 }
 
 async fn run_secure_update_async(operation: UpdateOperation) -> Result<IrisDesktopUpdateResult> {
-    let (updater, mut check) = check_secure_update(
-        current_version().to_string(),
-        UpdateTarget::new(current_target()),
-    )
-    .await
-    .context("failed to resolve signed release")?;
+    let reference = secure_update_ref()?;
+    let cached = VERIFIED_APP_UPDATE
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .map_err(|_| anyhow!("update selection lock poisoned"))?
+        .as_ref()
+        .filter(|(key, _, _)| key == &reference)
+        .map(|(_, resolver, check)| (resolver.clone(), check.clone()));
+    let (updater, mut check) = if let Some((resolver, check)) =
+        cached.filter(|_| matches!(operation, UpdateOperation::Download { .. }))
+    {
+        let updater = build_cached_update_downloader(resolver);
+        (updater, check)
+    } else {
+        check_secure_update(
+            current_version().to_string(),
+            UpdateTarget::new(current_target()),
+        )
+        .await
+        .context("failed to resolve signed release")?
+    };
     let asset = preferred_secure_app_asset(&check.manifest).ok_or_else(|| {
         anyhow!(
             "release {} has no app update for {}",
@@ -181,6 +207,11 @@ async fn run_secure_update_async(operation: UpdateOperation) -> Result<IrisDeskt
         )
     })?;
     check.asset = Some(asset.clone());
+    *VERIFIED_APP_UPDATE
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .map_err(|_| anyhow!("update selection lock poisoned"))? =
+        Some((reference, updater.resolver().clone(), check.clone()));
     let tag = display_manifest_tag(&check.manifest);
     let available = version_is_newer(&tag, current_version());
 

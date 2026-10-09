@@ -105,6 +105,56 @@ final class DesktopUpdateTests: XCTestCase {
         XCTAssertNotNil(updates.lastCheckedAt)
     }
 
+    func testInstallFailureIsVisibleAndRetryUsesVerifiedDownload() async throws {
+        let suite = "DesktopUpdateTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        var failDownload = true
+        var installed: URL?
+        let archive = URL(fileURLWithPath: "/tmp/update.app.tar.gz")
+        let updates = DesktopUpdateController(defaults: defaults, fetchUpdate: {
+            self.result(available: true)
+        }, downloadUpdate: {
+            if failDownload { throw URLError(.networkConnectionLost) }
+            return archive
+        }, applyDownload: { installed = $0 })
+        await updates.check()?.value
+        await updates.install()?.value
+        XCTAssertFalse(updates.installing)
+        XCTAssertTrue(updates.canInstall)
+        XCTAssertEqual(updates.bannerStatus, "Couldn’t install the update. Try again.")
+        XCTAssertEqual(updates.diagnostics.last?.category, "updates.install.failed")
+        await updates.check(manual: false)?.value
+        XCTAssertEqual(updates.bannerStatus, "Couldn’t install the update. Try again.")
+        let host = NSHostingView(rootView: IrisTheme { DesktopUpdateStripe(updates: updates).frame(width: 720) })
+        host.setFrameSize(host.fittingSize)
+        try capture(host, name: "desktop-update-install-failed")
+        failDownload = false
+        await updates.install()?.value
+        XCTAssertEqual(installed, archive)
+        XCTAssertNil(updates.installFailure)
+    }
+
+    func testCheckCannotReplaceAnActiveInstall() async throws {
+        let suite = "DesktopUpdateTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        var resume: CheckedContinuation<URL, Error>?
+        let updates = DesktopUpdateController(defaults: defaults, fetchUpdate: {
+            self.result(available: true)
+        }, downloadUpdate: {
+            try await withCheckedThrowingContinuation { resume = $0 }
+        }, applyDownload: { _ in })
+        await updates.check()?.value
+        let installation = updates.install()
+        while resume == nil { await Task.yield() }
+        XCTAssertNil(updates.check())
+        XCTAssertNil(updates.install())
+        XCTAssertEqual(updates.bannerStatus, "Downloading v2026.10.8.2")
+        resume?.resume(returning: URL(fileURLWithPath: "/tmp/update.app.tar.gz"))
+        await installation?.value
+    }
+
     private var longDiscoveryFailure: String {
         "failed to resolve signed release: no current peer observation\n" +
             (1...40).map { "Attempt \($0): signed release lookup failed; peer observation unavailable." }

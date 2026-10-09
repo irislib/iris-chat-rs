@@ -134,11 +134,24 @@ fn build_update_updater(
     config: SecurePubsubBlossomConfig,
 ) -> Result<SecureUpdateUpdater, UpdateError> {
     let resolver = AvailableUpdateResolver::new(providers, config.manifest_timeout)?;
+    Ok(build_update_downloader(resolver, config))
+}
+
+pub(crate) fn build_cached_update_downloader(
+    resolver: AvailableUpdateResolver,
+) -> SecureUpdateUpdater {
+    build_update_downloader(resolver, secure_update_config())
+}
+
+fn build_update_downloader(
+    resolver: AvailableUpdateResolver,
+    config: SecurePubsubBlossomConfig,
+) -> SecureUpdateUpdater {
     let blossom = BlossomClient::new_empty(Keys::generate())
         .with_read_servers(config.blossom_read_servers)
         .with_timeout(config.download_timeout);
     let tree = HashTree::new(HashTreeConfig::new(Arc::new(BlossomStore::new(blossom))).public());
-    Ok(HashtreeUpdater::new(resolver, tree))
+    HashtreeUpdater::new(resolver, tree)
 }
 
 /// Keep the observed signed root between checks, without treating it as fresh.

@@ -764,7 +764,7 @@ struct DesktopUpdateStripe: View {
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundStyle(palette.muted)
 
-            Text(updates.version.isEmpty ? "Update available" : "\(updates.version) available")
+            Text(updates.bannerStatus)
                 .font(.system(.subheadline, design: .rounded, weight: .semibold))
                 .foregroundStyle(palette.textPrimary)
                 .lineLimit(1)
@@ -781,7 +781,7 @@ struct DesktopUpdateStripe: View {
             Button {
                 updates.install()
             } label: {
-                Text(updates.installing ? "Installing…" : "Install")
+                Text(updates.installing ? "Installing…" : (updates.installFailure == nil ? "Install" : "Try again"))
             }
             .buttonStyle(IrisSecondaryButtonStyle(compact: true))
             .disabled(!updates.canInstall)
