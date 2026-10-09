@@ -2,6 +2,28 @@
 
 Each release has channel-specific notes. The release tag must match the `##` heading exactly.
 
+## v2026.10.9.1
+
+### GitHub
+
+- Preserve unread notifications when opening the app on iOS and macOS. Clear notifications using message read state, including reads synced from linked devices.
+- Enable typing indicators and received/seen receipts by default for new settings while preserving existing preferences. Deliver stopped-typing updates instead of discarding them as expired messages.
+- Install already verified desktop updates even when discovery becomes unavailable. Show installation failures with a retry option and prevent background checks from interrupting installation.
+- Include iOS builds with the latest private block sync and blocked-people settings.
+
+### Apple
+
+- Keep unread notifications when opening the app, and clear them as messages are read on your devices.
+- Turn on typing indicators and received/seen status by default for new installs. Existing settings stay unchanged.
+- Clear typing indicators promptly when someone stops typing.
+- Manage blocked people in Settings and keep blocks in sync with your devices.
+- Improve desktop update installation and show a retry option if installation fails.
+
+### Zapstore
+
+- Turn on typing indicators and received/seen status by default for new installs. Existing settings stay unchanged.
+- Clear typing indicators promptly when someone stops typing.
+
 ## v2026.10.9
 
 ### GitHub
