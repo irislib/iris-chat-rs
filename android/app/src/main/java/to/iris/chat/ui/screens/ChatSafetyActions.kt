@@ -311,7 +311,7 @@ fun MessageRequestBlockDialog(
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Block $displayName?") },
-        text = { Text("This deletes your direct chat on your devices. Their new messages will be blocked.") },
+        text = { Text("Their new messages and calls will be blocked. Your chat history will be kept.") },
         confirmButton = {
             Column(horizontalAlignment = Alignment.End) {
                 TextButton(
@@ -356,7 +356,7 @@ fun MessageRequestBlockAndReportDialog(
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Block and report $displayName?") },
-        text = { Text("This deletes your direct chat on your devices, blocks new messages, and prepares a report for support.") },
+        text = { Text("Their new messages and calls will be blocked, and a report prepared for support. Your chat history will be kept.") },
         confirmButton = {
             Column(horizontalAlignment = Alignment.End) {
                 TextButton(

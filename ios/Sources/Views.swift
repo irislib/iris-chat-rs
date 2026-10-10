@@ -314,7 +314,7 @@ struct MessageRequestSafetyModifier: ViewModifier {
                 .accessibilityIdentifier("messageRequestBlockCancelButton")
             },
             message: { _ in
-                Text("This deletes your direct chat on your devices. Their new messages will be blocked.")
+                Text("Their new messages and calls will be blocked. Your chat history will be kept.")
             }
         )
         .confirmationDialog(
@@ -349,7 +349,7 @@ struct MessageRequestSafetyModifier: ViewModifier {
                 .accessibilityIdentifier("messageRequestBlockAndReportCancelButton")
             },
             message: { _ in
-                Text("This deletes your direct chat on your devices, blocks new messages, and prepares a report for support.")
+                Text("Their new messages and calls will be blocked, and a report prepared for support. Your chat history will be kept.")
             }
         )
         .confirmationDialog(

@@ -12,6 +12,7 @@ pub(super) struct BlockState {
     blocked: bool,
     revision: u64,
     blocked_since: Option<u64>,
+    // Legacy wire field. Blocks no longer create chat deletions.
     deleted_at: u64,
 }
 
@@ -170,10 +171,7 @@ impl AppCore {
             .cloned()
     }
 
-    pub(super) fn block_allows_history(&self, chat: &str, author: &str, created: u64) -> bool {
-        if !is_group_chat_id(chat) && self.is_owner_blocked(author) {
-            return false;
-        }
+    pub(super) fn block_allows_history(&self, _chat: &str, author: &str, created: u64) -> bool {
         self.private_blocks
             .get(author)
             .is_none_or(|policy| !policy.suppresses(created))
@@ -208,14 +206,14 @@ impl AppCore {
             .map(|state| state.deleted_at)
             .max()
             .unwrap_or(0);
-        // A historical open block can precede its unblock during startup or
-        // catch-up. Hold newer work until the final state is known, and retire
-        // only signed deletions plus intervals that are already closed.
+        // Cancel pending sends through each block's start, extending through
+        // completed blocked intervals. Hold newer work while blocked: an old
+        // transition can precede its unblock during startup or catch-up.
+        // A legacy deletion timestamp can retire sends, but never delete history.
         let retirement_cutoff = policy
             .intervals
             .iter()
-            .filter_map(|(_, until)| *until)
-            .map(|until| until.saturating_sub(1))
+            .map(|(since, until)| until.map_or(*since, |until| until.saturating_sub(1)))
             .max()
             .unwrap_or(0)
             .max(deleted_at);
@@ -237,15 +235,6 @@ impl AppCore {
                     .blocked_owner_pubkeys
                     .push(state.target.clone());
             }
-            return false;
-        }
-        if retirement_cutoff > 0
-            && self
-                .chat_deletions
-                .get(&state.target)
-                .is_none_or(|old| *old < retirement_cutoff)
-            && !self.apply_chat_deletion(&state.target, retirement_cutoff)
-        {
             return false;
         }
         if let Some(engine) = self.protocol_engine.as_mut() {
@@ -321,16 +310,6 @@ impl AppCore {
             self.private_block_event(target)
                 .map_or(0, |event| event.created_at.as_secs()),
         );
-        let deleted_at = previous
-            .as_ref()
-            .map_or(0, |state| state.deleted_at)
-            .max(if blocked {
-                self.threads
-                    .get(target)
-                    .map_or(now, |thread| now.max(thread.updated_at_secs))
-            } else {
-                0
-            });
         let state = BlockState {
             v: 1,
             owner: owner.to_hex(),
@@ -342,7 +321,8 @@ impl AppCore {
             } else {
                 previous.as_ref().and_then(|state| state.blocked_since)
             },
-            deleted_at,
+            // Keep the v1 field for older readers without issuing a deletion.
+            deleted_at: 0,
         };
         let event = EventBuilder::new(
             Kind::Custom(BLOCK_CONTROL_KIND as u16),

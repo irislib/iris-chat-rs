@@ -1,5 +1,5 @@
 #[test]
-fn private_block_event_is_durable_ordered_and_deletes_direct_history() {
+fn private_block_event_is_durable_ordered_and_preserves_direct_history() {
     let owner = Keys::generate();
     let device = Keys::generate();
     let target = Keys::generate().public_key().to_hex();
@@ -8,7 +8,8 @@ fn private_block_event_is_durable_ordered_and_deletes_direct_history() {
     core.set_user_blocked(&target, true);
     let blocked = core.private_block_event(&target).unwrap();
     assert!(blocked.verify().is_ok());
-    assert!(!core.threads.contains_key(&target));
+    assert_eq!(serde_json::from_str::<serde_json::Value>(&blocked.content).unwrap()["deletedAt"], 0);
+    assert_eq!(core.threads[&target].messages[0].id, "old");
     assert!(core.is_owner_blocked(&target));
     core.set_user_blocked(&target, false);
     let unblocked = core.private_block_event(&target).unwrap();
@@ -18,11 +19,11 @@ fn private_block_event_is_durable_ordered_and_deletes_direct_history() {
     assert!(!core.is_owner_blocked(&target));
     core.persist_best_effort_inner();
     drop(core);
-    let mut restored = logged_in_test_core_at_data_dir(&owner, &device, dir.path().to_string_lossy().into_owned());
+    let mut restored = restart_block_history_core(&owner, &device, dir.path().to_string_lossy().into_owned());
     restored.restore_device_sync_record_projection();
     assert!(!restored.is_owner_blocked(&target));
-    assert!(!restored.threads.contains_key(&target));
-    assert!(restored.chat_activity_is_deleted(&target, 20));
+    assert_eq!(restored.threads[&target].messages[0].id, "old");
+    assert!(!restored.chat_activity_is_deleted(&target, 20));
 }
 
 #[test]
@@ -79,7 +80,7 @@ fn private_block_history_preserves_old_group_context_but_stops_new_history() {
     assert_eq!(core.threads["group:shared"].messages.len(), 1);
     assert!(core.block_allows_history("group:shared", &target, 20));
     assert!(!core.block_allows_history("group:shared", &target, unix_now().get()));
-    assert!(!core.block_allows_history(&target, &target, 20));
+    assert!(core.block_allows_history(&target, &target, 20));
 }
 
 #[test]

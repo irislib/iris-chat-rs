@@ -145,6 +145,7 @@ include!("tests/handshake_owner_proof.rs");
 include!("tests/first_contact_receiver.rs");
 include!("tests/direct_messages_group_requests.rs");
 include!("tests/direct_messages_blocking.rs");
+include!("tests/block_preserves_history.rs");
 include!("tests/private_block_sync.rs");
 include!("tests/private_block_ingress.rs");
 include!("tests/private_block_outbox.rs");

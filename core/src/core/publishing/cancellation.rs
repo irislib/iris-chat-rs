@@ -51,7 +51,10 @@ impl AppCore {
         if let Some(thread) = self.threads.get_mut(target) {
             for message in &mut thread.messages {
                 if message.is_outgoing
-                    && matches!(message.delivery, DeliveryState::Queued)
+                    && matches!(
+                        message.delivery,
+                        DeliveryState::Queued | DeliveryState::Pending
+                    )
                     && through.is_none_or(|cutoff| message.created_at_secs <= cutoff)
                 {
                     message.delivery = DeliveryState::Failed;

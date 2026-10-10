@@ -252,7 +252,7 @@ pub(super) fn present_block_user_dialog(
     content.set_margin_end(18);
 
     let message = gtk::Label::new(Some(
-        "This deletes your direct chat on your devices. Their new messages will be blocked.",
+        "Their new messages and calls will be blocked. Your chat history will be kept.",
     ));
     message.add_css_class("dim-label");
     message.set_wrap(true);
@@ -409,7 +409,7 @@ fn present_block_and_report_user_dialog(
     content.set_margin_end(18);
 
     let message = gtk::Label::new(Some(
-        "This deletes your direct chat on your devices, blocks new messages, and prepares a report for support.",
+        "Their new messages and calls will be blocked, and a report prepared for support. Your chat history will be kept.",
     ));
     message.add_css_class("dim-label");
     message.set_wrap(true);

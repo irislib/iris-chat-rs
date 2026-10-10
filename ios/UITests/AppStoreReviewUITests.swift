@@ -29,7 +29,7 @@ final class AppStoreReviewUITests: XCTestCase {
             let app = launchReviewApp(runID: runID, reset: false)
             openIncomingMessageRequest(app, message: message)
             blockAndReportIncomingRequest(app)
-            assertBlockedRequestControlsAndRemove(app)
+            assertBlockedRequestKeepsHistoryUntilDeleted(app, message: message)
         default:
             XCTFail("Unknown \(phaseKey): \(phase)")
         }
@@ -139,15 +139,28 @@ final class AppStoreReviewUITests: XCTestCase {
         XCTAssertTrue(reportDialogButton(app, "messageRequestBlockButton", fallbackLabel: "Block").waitForExistence(timeout: 5))
     }
 
-    private func assertBlockedRequestControlsAndRemove(_ app: XCUIApplication) {
+    private func assertBlockedRequestKeepsHistoryUntilDeleted(_ app: XCUIApplication, message: String) {
         XCTAssertTrue(element(app, "blockedComposerBar").waitForExistence(timeout: 10))
         XCTAssertTrue(reportDialogButton(app, "blockedUnblockButton", fallbackLabel: "Unblock").waitForExistence(timeout: 5))
         XCTAssertTrue(reportDialogButton(app, "blockedDeleteChatButton", fallbackLabel: "Delete chat").waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts[message].firstMatch.waitForExistence(timeout: 5), "blocking removed the existing message")
+        XCTAssertFalse(element(app, "chatMessageInput").exists)
         let backButton = element(app, "navigationBackButton")
         XCTAssertTrue(backButton.waitForExistence(timeout: 5))
         backButton.tap()
         XCTAssertTrue(waitForChatList(app, timeout: 10))
-        XCTAssertTrue(waitForNoChatRows(app, timeout: 15), "blocked request stayed in the chat list")
+        let row = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH 'chatRow-'"))
+            .firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 10), "blocking removed the chat from the list")
+        row.tap()
+        XCTAssertTrue(element(app, "blockedComposerBar").waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts[message].firstMatch.waitForExistence(timeout: 5), "reopening the blocked chat lost its history")
+        let delete = reportDialogButton(app, "blockedDeleteChatButton", fallbackLabel: "Delete chat")
+        XCTAssertTrue(delete.waitForExistence(timeout: 5))
+        delete.tap()
+        XCTAssertTrue(waitForChatList(app, timeout: 10))
+        XCTAssertTrue(waitForNoChatRows(app, timeout: 15), "explicitly deleted chat stayed in the list")
     }
 
     private func blockAndReportIncomingRequest(_ app: XCUIApplication) {

@@ -42,7 +42,7 @@ impl AppStore {
         // the same transaction so an unblock cannot prepare it anew.
         tx.execute(
             "UPDATE messages SET delivery = 'failed', outgoing_event_json = NULL
-            WHERE chat_id = ?1 AND is_outgoing != 0 AND delivery = 'queued'
+            WHERE chat_id = ?1 AND is_outgoing != 0 AND delivery IN ('queued', 'pending')
                 AND (?2 IS NULL OR created_at_secs <= ?2)",
             params![chat, through.map(|at| at.min(i64::MAX as u64) as i64)],
         )?;

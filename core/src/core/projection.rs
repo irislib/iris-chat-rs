@@ -287,19 +287,8 @@ impl AppCore {
         };
 
         self.prune_expired_typing_indicators();
-        let mut threads: Vec<&ThreadRecord> = self
-            .threads
-            .values()
-            .filter(|thread| {
-                // Hide blocked peers' direct threads from the chat
-                // list entirely (matches Android's Signal client
-                // hiding behavior; Signal-iOS keeps them but their
-                // composer is replaced with a Blocked bar — we already
-                // drop the peer from subscriptions either way).
-                !matches!(chat_kind_for_id(&thread.chat_id), ChatKind::Direct)
-                    || !self.is_owner_blocked(&thread.chat_id)
-            })
-            .collect();
+        // Blocking keeps the conversation readable; sending is gated separately.
+        let mut threads: Vec<&ThreadRecord> = self.threads.values().collect();
         threads.sort_by(|left, right| {
             let left_pinned = self.is_chat_pinned(&left.chat_id);
             let right_pinned = self.is_chat_pinned(&right.chat_id);

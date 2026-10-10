@@ -1,5 +1,5 @@
 #[test]
-fn blocking_a_peer_removes_them_from_chat_list_and_subscribable_set() {
+fn blocking_a_peer_preserves_the_chat_but_removes_subscriptions() {
     let owner = Keys::generate();
     let device = Keys::generate();
     let sender = Keys::generate();
@@ -31,12 +31,11 @@ fn blocking_a_peer_removes_them_from_chat_list_and_subscribable_set() {
     assert!(core.user_discovery_revision > revision_before_block);
 
     assert!(
-        !core
-            .state
+        core.state
             .chat_list
             .iter()
             .any(|chat| chat.chat_id == peer_hex),
-        "blocked peer's thread must disappear from the chat list"
+        "blocking must retain the existing chat in the list"
     );
     assert!(
         !core.subscribable_message_author_hexes().contains(&peer_hex),
@@ -60,11 +59,13 @@ fn blocking_a_peer_removes_them_from_chat_list_and_subscribable_set() {
         blocked: false,
     });
     assert!(core.user_discovery_revision > blocked_revision);
-    assert!(!core
+    assert!(core
         .state
         .chat_list
         .iter()
-        .any(|chat| chat.chat_id == peer_hex), "unblock must not restore deleted direct history");
+        .any(|chat| chat.chat_id == peer_hex));
+    assert_eq!(core.threads[&peer_hex].messages.len(), 1);
+    assert!(!core.chat_deletions.contains_key(&peer_hex));
 }
 
 #[test]
