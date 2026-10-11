@@ -21,12 +21,18 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.SideEffect
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import to.iris.chat.account.AccountBootstrapState
 import to.iris.chat.core.AppContainer
 import to.iris.chat.rust.AppAction
+import to.iris.chat.rust.DeviceAuthorizationState
 import to.iris.chat.rust.OutgoingAttachment
 import to.iris.chat.ui.navigation.NdrApp
 import to.iris.chat.ui.screens.copySharedAttachmentToCache
@@ -77,6 +83,19 @@ class MainActivity : ComponentActivity() {
             container.appManager.call.collect { call ->
                 setShowWhenLocked(call?.phase in listOf("incoming", "connected"))
                 setTurnScreenOn(call?.phase == "incoming")
+            }
+        }
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.RESUMED) {
+                combine(container.appManager.bootstrapState, container.appManager.state) { bootstrap, state ->
+                    bootstrap is AccountBootstrapState.LoggedIn &&
+                        state.account?.authorizationState == DeviceAuthorizationState.AUTHORIZED &&
+                        (state.preferences.desktopNotificationsEnabled ||
+                            state.preferences.voiceCallsEnabled || state.preferences.videoCallsEnabled) &&
+                        (state.call == null || state.call?.phase == "ended")
+                }.distinctUntilChanged().collect { ready ->
+                    if (ready) requestNotificationPermissionIfNeeded()
+                }
             }
         }
         attachNip55Signer(container.appManager.signer)
@@ -140,7 +159,6 @@ class MainActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         IrisDebugLog.d(TAG, "onStart")
-        requestNotificationPermissionIfNeeded()
         container.nearbyIrisService.refreshPermissionState()
         container.appManager.appForegrounded()
         restoreNearbyVisibilityPreference()
@@ -163,6 +181,7 @@ class MainActivity : ComponentActivity() {
         const val ACTION_OPEN_CHAT_LIST = "to.iris.chat.OPEN_CHAT_LIST"
         const val NOTIFICATION_PERMISSION_REQUEST = 1001
         const val PERMISSION_PREFS = "iris_runtime_permissions"
+        const val NOTIFICATION_PERMISSION_KEY = "notifications"
         const val BLUETOOTH_PERMISSION_KEY = "nearby_bluetooth"
         const val LOCAL_NETWORK_PERMISSION_KEY = "nearby_local_network"
     }
@@ -283,8 +302,10 @@ class MainActivity : ComponentActivity() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) {
             return
         }
-        val preferences = container.appManager.state.value.preferences
-        if (!preferences.desktopNotificationsEnabled && !preferences.voiceCallsEnabled && !preferences.videoCallsEnabled) {
+        if (pendingPermissionRequest != null) {
+            return
+        }
+        if (permissionWasRequested(NOTIFICATION_PERMISSION_KEY)) {
             return
         }
         if (
@@ -293,6 +314,13 @@ class MainActivity : ComponentActivity() {
         ) {
             return
         }
+        // Respect a denial from older versions, which did not record this preference.
+        if (ActivityCompat.shouldShowRequestPermissionRationale(this, Manifest.permission.POST_NOTIFICATIONS)) {
+            markPermissionRequested(NOTIFICATION_PERMISSION_KEY)
+            return
+        }
+        // Persist before opening the dialog so activity restarts cannot prompt again.
+        markPermissionRequested(NOTIFICATION_PERMISSION_KEY)
         ActivityCompat.requestPermissions(
             this,
             arrayOf(Manifest.permission.POST_NOTIFICATIONS),
