@@ -20,6 +20,7 @@ pub(super) struct HistoryState {
     pub(super) agreed: BTreeMap<String, u64>,
     pub(super) typed: BTreeSet<String>,
     private_events: BTreeSet<String>,
+    read_states: BTreeSet<String>,
     state_ready: BTreeSet<String>,
     deferred_history: BTreeMap<String, u64>,
     partitions: BTreeMap<(String, RecordScope), HistoryPartition>,
@@ -47,13 +48,15 @@ struct HistorySession {
     batch_imported: u64,
     imported_original: bool,
     private_events: bool,
+    read_states: bool,
     deferred_mutation: bool,
 }
 
 #[derive(Clone, Copy)]
-struct HistoryMutationAccess {
+struct HistoryRecordAccess {
     supported: bool,
     private_events: bool,
+    read_states: bool,
     target_since: u64,
 }
 
@@ -128,7 +131,7 @@ impl HistorySession {
         capacity: usize,
         scope: RecordScope,
         prefix: &str,
-        mutation_access: HistoryMutationAccess,
+        record_access: HistoryRecordAccess,
     ) -> Option<Self> {
         let mut records = BTreeMap::new();
         let mut cursor = None;
@@ -164,15 +167,15 @@ impl HistorySession {
             }
         }
         let mut add = |record: DeviceSyncRecord| {
-            if (mutation_access.supported
+            if (record_access.supported
                 || !matches!(record, DeviceSyncRecord::MessageMutation { .. }))
-                && (mutation_access.private_events
+                && (record_access.private_events
                     || !matches!(record, DeviceSyncRecord::PrivateBlock { .. }))
                 && record.scope() == scope
                 && filter.contains(record.timestamp())
                 && hex(&record.id()).starts_with(prefix)
                 && core.sync_record_allowed(&record)
-                && core.history_mutation_target_allowed(&record, mutation_access.target_since)
+                && core.history_mutation_target_allowed(&record, record_access.target_since)
             {
                 if let Some(locator) = record.locator() {
                     records.insert(
@@ -188,6 +191,18 @@ impl HistorySession {
             records.len() <= core.device_history_record_limit().min(capacity)
         };
         if scope == RecordScope::State {
+            // Reuse the canonical, durably saved frontier; no per-read event log
+            // or receipt preference is needed for private device reconciliation.
+            if record_access.read_states {
+                for (chat_id, state) in &core.chat_read_states {
+                    if !add(DeviceSyncRecord::ChatRead {
+                        chat_id: chat_id.clone(),
+                        state: state.clone(),
+                    }) {
+                        return None;
+                    }
+                }
+            }
             for group in core.build_device_sync_snapshot(0, false).groups {
                 if !add(DeviceSyncRecord::Group { group }) {
                     return None;
@@ -239,7 +254,8 @@ impl HistorySession {
             withheld: false,
             batch_imported: 0,
             imported_original: false,
-            private_events: mutation_access.private_events,
+            private_events: record_access.private_events,
+            read_states: record_access.read_states,
             deferred_mutation: false,
         })
     }
@@ -307,6 +323,7 @@ impl AppCore {
             runtime.history.agreed.remove(peer);
             runtime.history.typed.remove(peer);
             runtime.history.private_events.remove(peer);
+            runtime.history.read_states.remove(peer);
             runtime.history.state_ready.remove(peer);
             runtime.history.deferred_history.remove(peer);
             runtime
@@ -385,6 +402,20 @@ impl AppCore {
             .as_ref()
             .is_some_and(|runtime| runtime.history.private_events.contains(peer))
     }
+    pub(super) fn negotiate_read_states(&mut self, peer: &str, capability: Option<u8>) {
+        if capability == Some(1) && self.device_sync_peer_is_authorized(peer) {
+            if let Some(runtime) = &mut self.device_sync {
+                if runtime.history.read_states.len() < MAX_SESSIONS {
+                    runtime.history.read_states.insert(peer.to_string());
+                }
+            }
+        }
+    }
+    pub(super) fn read_states_supported(&self, peer: &str) -> bool {
+        self.device_sync
+            .as_ref()
+            .is_some_and(|runtime| runtime.history.read_states.contains(peer))
+    }
     pub(super) fn start_device_state(&mut self, peer: &str) {
         if let Some(runtime) = &mut self.device_sync {
             runtime.history.state_ready.remove(peer);
@@ -398,7 +429,7 @@ impl AppCore {
         }
     }
     pub(super) fn start_device_history(&mut self, peer: &str, agreed_since: u64) {
-        if self.private_events_supported(peer) {
+        if self.private_events_supported(peer) || self.read_states_supported(peer) {
             if let Some(runtime) = &mut self.device_sync {
                 if !runtime.history.state_ready.contains(peer) {
                     runtime
@@ -551,6 +582,7 @@ impl AppCore {
         if let DeviceSyncPacket::HistoryOpen {
             message_mutations,
             private_events,
+            read_states,
             since,
             until,
             frame,
@@ -614,10 +646,11 @@ impl AppCore {
                 capacity,
                 scope,
                 &prefix,
-                HistoryMutationAccess {
+                HistoryRecordAccess {
                     supported: message_mutations == Some(1),
                     private_events: private_events == Some(1)
                         && self.private_events_supported(peer),
+                    read_states: read_states == Some(1) && self.read_states_supported(peer),
                     target_since: self.device_history_mutation_target_since(peer),
                 },
             ) else {

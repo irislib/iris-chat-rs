@@ -17,19 +17,39 @@ pub(super) enum RecordScope {
 #[derive(Clone)]
 pub(super) enum RecordLocator {
     Group(String),
+    ChatRead(String),
     Head(String),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub(super) enum DeviceSyncRecord {
-    Message { message: DeviceSyncMessage },
-    MessageMutation { mutation: MessageMutation },
-    Reaction { reaction: DeviceSyncReaction },
-    Group { group: DeviceSyncGroup },
-    GroupSettings { settings: DeviceSyncGroupSettings },
-    Profile { event: Event },
-    PrivateBlock { event: Event },
+    Message {
+        message: DeviceSyncMessage,
+    },
+    MessageMutation {
+        mutation: MessageMutation,
+    },
+    Reaction {
+        reaction: DeviceSyncReaction,
+    },
+    Group {
+        group: DeviceSyncGroup,
+    },
+    GroupSettings {
+        settings: DeviceSyncGroupSettings,
+    },
+    Profile {
+        event: Event,
+    },
+    PrivateBlock {
+        event: Event,
+    },
+    ChatRead {
+        #[serde(rename = "chatId")]
+        chat_id: String,
+        state: ChatReadState,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -60,6 +80,14 @@ pub(super) struct DeviceSyncGroupSettings {
 impl DeviceSyncRecord {
     pub(super) fn id(&self) -> [u8; 32] {
         let value = match self {
+            Self::ChatRead { chat_id, state } => serde_json::json!([
+                "chatRead",
+                chat_id,
+                state.updated_at_ms,
+                state.device_id,
+                state.seen_through_secs,
+                state.seen_at_boundary
+            ]),
             Self::PrivateBlock { event } => return event.id.to_bytes(),
             Self::Message { message } => serde_json::json!([message.chat_id, message.id]),
             Self::MessageMutation { mutation: m } => {
@@ -115,6 +143,9 @@ impl DeviceSyncRecord {
         }
     }
     pub(super) fn locator(&self) -> Option<RecordLocator> {
+        if let Self::ChatRead { chat_id, .. } = self {
+            return Some(RecordLocator::ChatRead(chat_id.clone()));
+        }
         if let Self::Group { group } = self {
             return Some(RecordLocator::Group(group.id.clone()));
         }
@@ -200,6 +231,9 @@ impl AppCore {
             return false;
         }
         match record {
+            DeviceSyncRecord::ChatRead { chat_id, state } => {
+                valid_device_sync_chat_id(chat_id) && self.chat_read_state_allowed(chat_id, state)
+            }
             DeviceSyncRecord::Message { message } => {
                 messages::history_message_allowed(self, message)
             }
@@ -382,6 +416,14 @@ impl AppCore {
             return false;
         }
         match record {
+            DeviceSyncRecord::ChatRead { chat_id, state } => {
+                self.apply_chat_read_state(&chat_id, state.clone());
+                // The read-state map advances only after its transaction commits.
+                // A durable merged frontier also resolves stale requested records.
+                self.chat_read_states
+                    .get(&chat_id)
+                    .is_some_and(|stored| stored.includes(&state))
+            }
             DeviceSyncRecord::Message { .. } => false,
             DeviceSyncRecord::Group { group } => {
                 let expected = group.clone();

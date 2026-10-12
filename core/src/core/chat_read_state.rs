@@ -1,6 +1,13 @@
 use super::*;
 
 impl ChatReadState {
+    pub(super) fn includes(&self, other: &Self) -> bool {
+        (self.updated_at_ms, &self.device_id) >= (other.updated_at_ms, &other.device_id)
+            && (self.seen_through_secs > other.seen_through_secs
+                || (self.seen_through_secs == other.seen_through_secs
+                    && self.seen_at_boundary.is_superset(&other.seen_at_boundary)))
+    }
+
     pub(super) fn covers(&self, created_at_secs: u64, id: &str) -> bool {
         self.seen_through_secs > 0
             && (created_at_secs < self.seen_through_secs
@@ -82,7 +89,7 @@ impl AppCore {
         self.apply_chat_read_state(chat_id, next)
     }
 
-    pub(super) fn apply_chat_read_state(&mut self, chat_id: &str, incoming: ChatReadState) -> bool {
+    pub(super) fn chat_read_state_allowed(&self, chat_id: &str, incoming: &ChatReadState) -> bool {
         let max_time = unix_now().get().saturating_add(300);
         if incoming.updated_at_ms == 0
             || incoming.updated_at_ms > max_time.saturating_mul(1000)
@@ -97,6 +104,13 @@ impl AppCore {
                 .get(chat_id)
                 .is_some_and(|deleted| incoming.updated_at_ms / 1000 <= *deleted)
         {
+            return false;
+        }
+        true
+    }
+
+    pub(super) fn apply_chat_read_state(&mut self, chat_id: &str, incoming: ChatReadState) -> bool {
+        if !self.chat_read_state_allowed(chat_id, &incoming) {
             return false;
         }
         let previous = self

@@ -72,6 +72,7 @@ impl AppCore {
                         private_events: self
                             .private_events_supported(source_pubkey_hex)
                             .then_some(1),
+                        read_states: self.read_states_supported(source_pubkey_hex).then_some(1),
                         history_since: agreed,
                     }) {
                         *packet = updated;
@@ -110,6 +111,7 @@ impl AppCore {
             page,
             record_reconcile: Some(1),
             private_events: Some(1),
+            read_states: Some(1),
             history_since: self.device_history_receive_since(source_pubkey_hex),
         }) else {
             return;
@@ -163,6 +165,7 @@ pub(super) fn metadata_page_packets(core: &AppCore, roster_at: u64, offset: usiz
         next,
         record_reconcile: Some(1),
         private_events: Some(1),
+        read_states: Some(1),
         history_since: None,
     }) {
         packets.push(page_end);

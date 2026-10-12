@@ -2,6 +2,66 @@ use super::*;
 use base64::Engine;
 
 #[test]
+fn chat_read_records_merge_durably_and_acknowledge_stale_progress() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let chat = Keys::generate().public_key().to_hex();
+    let (mut core, _, _dir) =
+        crate::core::tests::logged_in_test_core_with_updates("read-record-merge", &owner, &device);
+    let first = ChatReadState {
+        updated_at_ms: 200_000,
+        device_id: device.public_key().to_hex(),
+        seen_through_secs: 100,
+        seen_at_boundary: ["first".into()].into_iter().collect(),
+    };
+    let mut concurrent = first.clone();
+    concurrent.updated_at_ms += 1;
+    concurrent.seen_at_boundary = ["second".into()].into_iter().collect();
+    let record = |state: ChatReadState| DeviceSyncRecord::ChatRead {
+        chat_id: chat.clone(),
+        state,
+    };
+    let a = record(first.clone());
+    let b = record(concurrent.clone());
+    assert_eq!(a.scope(), RecordScope::State);
+    assert_eq!(
+        a.timestamp(),
+        0,
+        "read progress is independent of history sharing"
+    );
+    assert_ne!(a.id(), b.id());
+    for incoming in [a.clone(), b.clone(), a.clone(), b] {
+        assert!(
+            core.apply_sync_record(incoming),
+            "a merged durable frontier resolves either request"
+        );
+    }
+    let stored = core.app_store.load_chat_read_states().unwrap();
+    assert!(stored[&chat].includes(&first));
+    assert!(stored[&chat].includes(&concurrent));
+    let merged = core.load_sync_record(&a.locator().unwrap()).unwrap();
+    assert_ne!(
+        merged.id(),
+        a.id(),
+        "the next inventory advertises the merged frontier"
+    );
+
+    let mut invalid = first.clone();
+    invalid.seen_through_secs = unix_now().get() + 600;
+    assert!(!core.apply_sync_record(record(invalid)));
+    assert!(!core.apply_sync_record(DeviceSyncRecord::ChatRead {
+        chat_id: "invalid".into(),
+        state: first
+    }));
+    core.chat_deletions.insert(chat.clone(), 201);
+    assert!(
+        !core.sync_record_allowed(&merged),
+        "deleted chats must not export stale progress"
+    );
+    assert_eq!(core.app_store.load_chat_read_states().unwrap(), stored);
+}
+
+#[test]
 fn typed_record_ids_match_browser_fixture() {
     let fixtures: Vec<serde_json::Value> =
         serde_json::from_str(include_str!("fixtures/deviceSyncRecords.json")).unwrap();

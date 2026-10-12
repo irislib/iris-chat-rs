@@ -80,6 +80,8 @@ enum DeviceSyncPacket {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         private_events: Option<u8>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
+        read_states: Option<u8>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         history_since: Option<u64>,
     },
     ResyncRequired {
@@ -93,6 +95,8 @@ enum DeviceSyncPacket {
         record_reconcile: Option<u8>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         private_events: Option<u8>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        read_states: Option<u8>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         history_since: Option<u64>,
     },
@@ -113,6 +117,8 @@ enum DeviceSyncPacket {
         message_mutations: Option<u8>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         private_events: Option<u8>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        read_states: Option<u8>,
         scope: RecordScope,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         prefix: Option<String>,
@@ -392,6 +398,7 @@ impl AppCore {
                 page,
                 record_reconcile,
                 private_events,
+                read_states,
                 history_since,
             } if v == DEVICE_SYNC_VERSION => {
                 self.negotiate_device_history(
@@ -402,6 +409,7 @@ impl AppCore {
                     record_reconcile,
                 );
                 self.negotiate_private_events(source_pubkey_hex, private_events);
+                self.negotiate_read_states(source_pubkey_hex, read_states);
                 self.reply_device_sync_snapshot(source_pubkey_hex, roster_at, page);
             }
             DeviceSyncPacket::ResyncRequired { v } if v == DEVICE_SYNC_VERSION => {
@@ -414,10 +422,12 @@ impl AppCore {
                 next,
                 record_reconcile,
                 private_events,
+                read_states,
                 history_since,
             } if v == DEVICE_SYNC_VERSION => {
                 self.negotiate_device_records(source_pubkey_hex, record_reconcile);
                 self.negotiate_private_events(source_pubkey_hex, private_events);
+                self.negotiate_read_states(source_pubkey_hex, read_states);
                 if let Some(next) = next {
                     self.request_device_sync_snapshot(source_pubkey_hex, Some(next));
                 } else if record_reconcile == Some(1) {

@@ -16,6 +16,7 @@ impl AppCore {
             || requested.iter().any(|id| !state.requested.contains(id))
             || records.iter().any(|record| {
                 (matches!(record, DeviceSyncRecord::PrivateBlock { .. }) && !state.private_events)
+                    || (matches!(record, DeviceSyncRecord::ChatRead { .. }) && !state.read_states)
                     || record.scope() != state.scope
                     || !state.filter.contains(record.timestamp())
                     || !state.requested.contains(&hex(&record.id()))
