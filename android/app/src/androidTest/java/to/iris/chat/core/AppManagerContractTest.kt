@@ -821,6 +821,49 @@ class AppManagerContractTest {
         assertTrue(appManager.bootstrapState.value is AccountBootstrapState.NeedsLogin)
     }
 
+    @Test
+    fun signup_after_key_loss_preserves_legacy_data_and_uses_a_fresh_store() {
+        persistStoredSecret(StoredAccountBundle("old-owner", "old-owner-hex", "old-device").toJson())
+        secureSecretStore.decryptSucceeds = false
+        val stranded = File(appContext.filesDir, "iris.sqlite").apply { writeText("old chats") }
+        val appManager = createManager()
+        val oldRust = rustFactory.instances.single()
+        waitFor("missing key reaches signup") { appManager.bootstrapState.value is AccountBootstrapState.NeedsLogin }
+
+        appManager.createAccount(" New profile ")
+        appManager.createAccount("Second tap")
+        waitFor("create in fresh core") {
+            rustFactory.instances.last().dispatchedActions.any { it is AppAction.CreateAccount }
+        }
+
+        assertEquals(2, rustFactory.instances.size)
+        assertEquals(1, oldRust.shutdownCount)
+        assertEquals("old chats", stranded.readText())
+        assertEquals(appContext.filesDir.absolutePath, rustFactory.dataDirectories.first())
+        assertTrue(rustFactory.dataDirectories.last().startsWith(appContext.noBackupFilesDir.absolutePath + "/"))
+        val fresh = rustFactory.instances.last()
+        assertEquals(listOf(AppAction.CreateAccount("New profile")), fresh.dispatchedActions.filterIsInstance<AppAction.CreateAccount>())
+
+        // A late update from the closed core must not replace the new session.
+        oldRust.emit(AppUpdate.FullState(makeLoggedInState(rev = 999u)))
+        assertNull(appManager.state.value.account)
+        fresh.emit(AppUpdate.FullState(makeLoggedInState(rev = 1u)))
+        appManager.createAccount("Already signed in")
+        assertEquals(2, rustFactory.instances.size)
+        assertEquals(1, fresh.dispatchedActions.filterIsInstance<AppAction.CreateAccount>().size)
+    }
+
+    @Test
+    fun signup_waits_for_saved_account_restore() {
+        persistStoredSecret(StoredAccountBundle("owner", "owner-hex", "device").toJson())
+        val appManager = createManager()
+        val rust = rustFactory.instances.single()
+        waitFor("restore in flight") { rust.dispatchedActions.any { it is AppAction.RestoreAccountBundle } }
+        appManager.createAccount("Too soon")
+        assertEquals(1, rustFactory.instances.size)
+        assertFalse(rust.dispatchedActions.any { it is AppAction.CreateAccount })
+    }
+
     private fun createManager(): AppManager {
         val appManager =
             AppManager(
@@ -830,7 +873,10 @@ class AppManagerContractTest {
                 ioDispatcher = Dispatchers.IO,
                 dataStoreName = dataStoreName,
                 dataStore = sharedDataStore,
-                rustFactory = { _, _ -> rustFactory.create() },
+                rustFactory = { dataDir, _ ->
+                    rustFactory.dataDirectories += dataDir
+                    rustFactory.create()
+                },
                 clearDeliveredNotifications = { notificationClearCount += 1 },
             )
         manager = appManager

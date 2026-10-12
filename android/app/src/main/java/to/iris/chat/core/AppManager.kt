@@ -17,6 +17,7 @@ import java.io.IOException
 import java.io.File
 import java.util.Collections
 import java.util.Locale
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -37,6 +38,8 @@ import to.iris.chat.BuildConfig
 import to.iris.chat.IrisDebugLog
 import to.iris.chat.account.AccountBootstrapState
 import to.iris.chat.account.AccountState
+import to.iris.chat.account.AccountStorage
+import to.iris.chat.account.wipeAppStorage
 import to.iris.chat.account.AndroidKeystoreSecretStore
 import to.iris.chat.account.EncryptedSecret
 import to.iris.chat.account.SecureSecretStore
@@ -202,7 +205,6 @@ private data class PendingNavigationOverride(
     val expiresAtMs: Long,
 )
 
-
 private data class ClientDebugLogEntry(
     val timestampSecs: Long,
     val category: String,
@@ -226,7 +228,9 @@ class AppManager(
     private val clearDeliveredNotifications: (Context) -> Unit = to.iris.chat.push.MobilePushNotifier::dismissAll,
 ) {
     private val appContext = context.applicationContext
-    private val rustDataDir = appContext.filesDir.absolutePath
+    private val accountStorage = AccountStorage(appContext.filesDir, appContext.noBackupFilesDir)
+    private val rustDataDir: String get() = accountStorage.currentDirectory().absolutePath
+    private val creatingProfile = AtomicBoolean(false)
     private val dataStore =
         dataStore
             ?: PreferenceDataStoreFactory.create(
@@ -356,7 +360,30 @@ class AppManager(
     }
 
     fun createAccount(name: String) {
-        dispatchToRust(AppAction.CreateAccount(name.trim()))
+        if (!restoreCheckComplete || persistedRestoreInFlight || automaticRevocationLogoutInFlight || mutableState.value.account != null ||
+            !creatingProfile.compareAndSet(false, true)
+        ) return
+        publishState(mutableState.value.copy(busy = mutableState.value.busy.copy(creatingAccount = true), toast = null))
+        applicationScope.launch(ioDispatcher) {
+            try {
+                rustGeneration += 1
+                rust.shutdown()
+                accountStorage.prepareNewProfile()
+                AccountImageSession.clear()
+                lastSyncedDeviceLabelsKey = null
+                bindRust(createRustApp())
+                dispatchToRust(AppAction.PushScreen(Screen.CreateAccount))
+                if (!dispatchToRust(AppAction.CreateAccount(name.trim()))) creatingProfile.set(false)
+            } catch (error: Exception) {
+                creatingProfile.set(false)
+                Log.w(TAG, "failed to prepare new profile", error)
+                publishShellToast("Could not create profile. Try again.")
+            } finally {
+                if (!creatingProfile.get()) publishState(
+                    mutableState.value.copy(busy = mutableState.value.busy.copy(creatingAccount = false)),
+                )
+            }
+        }
     }
 
     fun updateProfileMetadata(
@@ -1222,6 +1249,9 @@ class AppManager(
                 if (update.v1.rev <= lastRevApplied) {
                     return
                 }
+                if (update.v1.account != null || (!update.v1.busy.creatingAccount && update.v1.toast != null)) {
+                    creatingProfile.set(false)
+                }
                 val reconciledState =
                     stateByPreservingVisibleChatPage(
                         oldState = mutableState.value,
@@ -1743,7 +1773,7 @@ class AppManager(
         previous.shutdown()
         clearDeliveredNotifications(appContext)
         AccountImageSession.clear()
-        wipeAppStorage()
+        wipeAppStorage(appContext)
         pendingNavigationOverride = null
         lastSyncedDeviceLabelsKey = null
         val initial = bindRust(createRustApp())
@@ -1756,30 +1786,6 @@ class AppManager(
             },
         )
         automaticRevocationLogoutInFlight = false
-    }
-
-    private fun wipeAppStorage() {
-        wipeDirectoryContents(appContext.filesDir)
-        wipeDirectoryContents(appContext.noBackupFilesDir)
-        wipeDirectoryContents(appContext.cacheDir)
-        appContext.externalCacheDirs.forEach(::wipeDirectoryContents)
-        appContext.getExternalFilesDirs(null).forEach { dir ->
-            if (dir != null) {
-                wipeDirectoryContents(dir)
-            }
-        }
-        appContext.filesDir.mkdirs()
-        appContext.noBackupFilesDir.mkdirs()
-    }
-
-    private fun wipeDirectoryContents(directory: File?) {
-        val dir = directory ?: return
-        if (!dir.exists()) {
-            return
-        }
-        dir.listFiles()?.forEach { child ->
-            runCatching { child.deleteRecursively() }
-        }
     }
 
     private fun downloadedAttachmentDirectory(): File =

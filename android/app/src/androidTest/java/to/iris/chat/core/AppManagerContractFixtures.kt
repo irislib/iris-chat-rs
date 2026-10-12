@@ -16,11 +16,15 @@ import to.iris.chat.rust.buildLargeTestSearchResult
 internal class RecordingSecureSecretStore : SecureSecretStore {
     var clearCount = 0
     var clearSucceeds = true
+    var decryptSucceeds = true
 
     override fun encrypt(secret: ByteArray): EncryptedSecret =
         EncryptedSecret(cipherText = secret, iv = byteArrayOf(1, 2, 3, 4))
 
-    override fun decrypt(encryptedSecret: EncryptedSecret): ByteArray = encryptedSecret.cipherText
+    override fun decrypt(encryptedSecret: EncryptedSecret): ByteArray {
+        check(decryptSucceeds) { "Installation key unavailable" }
+        return encryptedSecret.cipherText
+    }
 
     override fun clear(): Boolean {
         clearCount += 1
@@ -31,6 +35,7 @@ internal class RecordingSecureSecretStore : SecureSecretStore {
 internal class RecordingRustFactory {
     val initialStates = ArrayDeque<AppState>()
     val instances = mutableListOf<MockRustAppClient>()
+    val dataDirectories = mutableListOf<String>()
 
     fun create(): RustAppClient {
         val initialState = initialStates.removeFirstOrNull() ?: AppManagerContractDefaults.initialState()
