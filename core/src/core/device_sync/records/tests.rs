@@ -2,63 +2,111 @@ use super::*;
 use base64::Engine;
 
 #[test]
-fn chat_read_records_merge_durably_and_acknowledge_stale_progress() {
+fn chat_read_records_are_exact_idempotent_and_durable() {
     let owner = Keys::generate();
     let device = Keys::generate();
     let chat = Keys::generate().public_key().to_hex();
     let (mut core, _, _dir) =
-        crate::core::tests::logged_in_test_core_with_updates("read-record-merge", &owner, &device);
-    let first = ChatReadState {
-        updated_at_ms: 200_000,
-        device_id: device.public_key().to_hex(),
-        seen_through_secs: 100,
-        seen_at_boundary: ["first".into()].into_iter().collect(),
+        crate::core::tests::logged_in_test_core_with_updates("exact-read-record", &owner, &device);
+    let read = MessageReadState {
+        created_at_secs: 100,
+        expires_at_secs: None,
     };
-    let mut concurrent = first.clone();
-    concurrent.updated_at_ms += 1;
-    concurrent.seen_at_boundary = ["second".into()].into_iter().collect();
-    let record = |state: ChatReadState| DeviceSyncRecord::ChatRead {
+    let record = |id: &str| DeviceSyncRecord::MessageRead {
         chat_id: chat.clone(),
-        state,
+        message_id: id.into(),
+        read: read.clone(),
     };
-    let a = record(first.clone());
-    let b = record(concurrent.clone());
+    let a = record("first");
+    let b = record("second");
     assert_eq!(a.scope(), RecordScope::State);
-    assert_eq!(
-        a.timestamp(),
-        0,
-        "read progress is independent of history sharing"
-    );
+    assert_eq!(a.timestamp(), 0);
     assert_ne!(a.id(), b.id());
     for incoming in [a.clone(), b.clone(), a.clone(), b] {
-        assert!(
-            core.apply_sync_record(incoming),
-            "a merged durable frontier resolves either request"
-        );
+        assert!(core.apply_sync_record(incoming));
     }
-    let stored = core.app_store.load_chat_read_states().unwrap();
-    assert!(stored[&chat].includes(&first));
-    assert!(stored[&chat].includes(&concurrent));
-    let merged = core.load_sync_record(&a.locator().unwrap()).unwrap();
-    assert_ne!(
-        merged.id(),
-        a.id(),
-        "the next inventory advertises the merged frontier"
+    assert_eq!(core.app_store.message_read_page(None).unwrap().len(), 2);
+    assert_eq!(
+        core.load_sync_record(&a.locator().unwrap()),
+        Some(a.clone())
     );
-
-    let mut invalid = first.clone();
-    invalid.seen_through_secs = unix_now().get() + 600;
-    assert!(!core.apply_sync_record(record(invalid)));
-    assert!(!core.apply_sync_record(DeviceSyncRecord::ChatRead {
+    assert_eq!(
+        core.app_store
+            .message_read_state(&chat, "unlisted")
+            .unwrap(),
+        None
+    );
+    assert!(!core.apply_sync_record(DeviceSyncRecord::MessageRead {
+        chat_id: chat.clone(),
+        message_id: "future".into(),
+        read: MessageReadState {
+            created_at_secs: unix_now().get() + 600,
+            expires_at_secs: None
+        },
+    }));
+    assert!(!core.apply_sync_record(DeviceSyncRecord::MessageRead {
         chat_id: "invalid".into(),
-        state: first
+        message_id: "first".into(),
+        read
     }));
     core.chat_deletions.insert(chat.clone(), 201);
+    core.app_store
+        .apply_chat_deletion(&chat, 201, false, false)
+        .unwrap();
+    assert!(!core.sync_record_allowed(&a));
     assert!(
-        !core.sync_record_allowed(&merged),
-        "deleted chats must not export stale progress"
+        core.apply_sync_record(a),
+        "an intentionally deleted target resolves stale requests"
     );
-    assert_eq!(core.app_store.load_chat_read_states().unwrap(), stored);
+    assert!(core.app_store.message_read_page(None).unwrap().is_empty());
+}
+
+#[test]
+fn chat_read_records_fill_missing_pending_expiry() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let chat = Keys::generate().public_key().to_hex();
+    let (mut core, _, _dir) =
+        crate::core::tests::logged_in_test_core_with_updates("read-expiry", &owner, &device);
+    let legacy = DeviceSyncRecord::MessageRead {
+        chat_id: chat.clone(),
+        message_id: "pending".into(),
+        read: MessageReadState {
+            created_at_secs: 100,
+            expires_at_secs: None,
+        },
+    };
+    let expires_at = unix_now().get() + 60;
+    let mut complete = legacy.clone();
+    if let DeviceSyncRecord::MessageRead { read, .. } = &mut complete {
+        read.expires_at_secs = Some(expires_at);
+    }
+    assert!(core.apply_sync_record(legacy.clone()));
+    for i in 0..MAX_RECENT_READ_IDS {
+        assert!(core.apply_sync_record(DeviceSyncRecord::MessageRead {
+            chat_id: chat.clone(),
+            message_id: format!("newer-{i}"),
+            read: MessageReadState {
+                created_at_secs: 101 + i as u64,
+                expires_at_secs: None,
+            },
+        }));
+    }
+    assert!(!core.chat_read_states[&chat]
+        .seen_messages
+        .contains_key("pending"));
+    assert!(core.apply_sync_record(complete.clone()));
+    assert!(core.apply_sync_record(legacy));
+    assert_eq!(
+        core.load_sync_record(&complete.locator().unwrap()),
+        Some(complete)
+    );
+    core.app_store.delete_expired_messages(expires_at).unwrap();
+    assert!(core
+        .app_store
+        .message_read_state(&chat, "pending")
+        .unwrap()
+        .is_none());
 }
 
 #[test]

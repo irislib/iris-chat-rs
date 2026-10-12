@@ -17,7 +17,7 @@ pub(super) enum RecordScope {
 #[derive(Clone)]
 pub(super) enum RecordLocator {
     Group(String),
-    ChatRead(String),
+    MessageRead(String, String),
     Head(String),
 }
 
@@ -45,10 +45,12 @@ pub(super) enum DeviceSyncRecord {
     PrivateBlock {
         event: Event,
     },
-    ChatRead {
+    MessageRead {
         #[serde(rename = "chatId")]
         chat_id: String,
-        state: ChatReadState,
+        #[serde(rename = "messageId")]
+        message_id: String,
+        read: MessageReadState,
     },
 }
 
@@ -80,13 +82,16 @@ pub(super) struct DeviceSyncGroupSettings {
 impl DeviceSyncRecord {
     pub(super) fn id(&self) -> [u8; 32] {
         let value = match self {
-            Self::ChatRead { chat_id, state } => serde_json::json!([
-                "chatRead",
+            Self::MessageRead {
                 chat_id,
-                state.updated_at_ms,
-                state.device_id,
-                state.seen_through_secs,
-                state.seen_at_boundary
+                message_id,
+                read,
+            } => serde_json::json!([
+                "messageRead",
+                chat_id,
+                message_id,
+                read.created_at_secs,
+                read.expires_at_secs
             ]),
             Self::PrivateBlock { event } => return event.id.to_bytes(),
             Self::Message { message } => serde_json::json!([message.chat_id, message.id]),
@@ -143,8 +148,16 @@ impl DeviceSyncRecord {
         }
     }
     pub(super) fn locator(&self) -> Option<RecordLocator> {
-        if let Self::ChatRead { chat_id, .. } = self {
-            return Some(RecordLocator::ChatRead(chat_id.clone()));
+        if let Self::MessageRead {
+            chat_id,
+            message_id,
+            ..
+        } = self
+        {
+            return Some(RecordLocator::MessageRead(
+                chat_id.clone(),
+                message_id.clone(),
+            ));
         }
         if let Self::Group { group } = self {
             return Some(RecordLocator::Group(group.id.clone()));
@@ -231,8 +244,23 @@ impl AppCore {
             return false;
         }
         match record {
-            DeviceSyncRecord::ChatRead { chat_id, state } => {
-                valid_device_sync_chat_id(chat_id) && self.chat_read_state_allowed(chat_id, state)
+            DeviceSyncRecord::MessageRead {
+                chat_id,
+                message_id,
+                read,
+            } => {
+                valid_device_sync_chat_id(chat_id)
+                    && !message_id.is_empty()
+                    && message_id.len() <= 128
+                    && valid_time(read.created_at_secs, None)
+                    && read.expires_at_secs.is_none_or(|expiry| {
+                        expiry > unix_now().get() && expiry <= 9_007_199_254_740_991
+                    })
+                    && !self.chat_activity_is_deleted(chat_id, read.created_at_secs)
+                    && !self
+                        .app_store
+                        .message_was_locally_deleted(chat_id, Some(message_id), None)
+                        .unwrap_or(true)
             }
             DeviceSyncRecord::Message { message } => {
                 messages::history_message_allowed(self, message)
@@ -390,6 +418,24 @@ impl AppCore {
             })
     }
     pub(super) fn apply_sync_record(&mut self, record: DeviceSyncRecord) -> bool {
+        if let DeviceSyncRecord::MessageRead {
+            chat_id,
+            message_id,
+            read,
+        } = &record
+        {
+            if self.chat_activity_is_deleted(chat_id, read.created_at_secs)
+                || read
+                    .expires_at_secs
+                    .is_some_and(|expiry| expiry <= unix_now().get())
+                || self
+                    .app_store
+                    .message_was_locally_deleted(chat_id, Some(message_id), None)
+                    .unwrap_or(false)
+            {
+                return true;
+            }
+        }
         if let DeviceSyncRecord::Reaction { reaction } = &record {
             if self
                 .app_store
@@ -416,13 +462,34 @@ impl AppCore {
             return false;
         }
         match record {
-            DeviceSyncRecord::ChatRead { chat_id, state } => {
-                self.apply_chat_read_state(&chat_id, state.clone());
-                // The read-state map advances only after its transaction commits.
-                // A durable merged frontier also resolves stale requested records.
-                self.chat_read_states
-                    .get(&chat_id)
-                    .is_some_and(|stored| stored.includes(&state))
+            DeviceSyncRecord::MessageRead {
+                chat_id,
+                message_id,
+                read,
+            } => {
+                // A legacy marker can already be Seen while still lacking the
+                // expiry needed to clean it up before its original arrives.
+                if self
+                    .app_store
+                    .message_read_state(&chat_id, &message_id)
+                    .ok()
+                    .flatten()
+                    .as_ref()
+                    == Some(&read)
+                {
+                    return true;
+                }
+                let Some(login) = self.logged_in.as_ref() else {
+                    return false;
+                };
+                let state = ChatReadState {
+                    updated_at_ms: unix_now().get().saturating_mul(1000),
+                    device_id: login.device_keys.public_key().to_hex(),
+                    seen_messages: [(message_id.clone(), read.clone())].into_iter().collect(),
+                    ..Default::default()
+                };
+                self.apply_chat_read_state(&chat_id, state);
+                self.message_was_seen_on_own_device(&chat_id, read.created_at_secs, &message_id)
             }
             DeviceSyncRecord::Message { .. } => false,
             DeviceSyncRecord::Group { group } => {

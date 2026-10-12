@@ -44,6 +44,10 @@ impl AppStore {
             keep_thread,
         )?;
         tx.execute(
+            "DELETE FROM pending_message_reads WHERE chat_id = ?1 AND created_at_secs <= ?2",
+            params![chat_id, deleted_at as i64],
+        )?;
+        tx.execute(
             "DELETE FROM messages WHERE chat_id = ?1 AND created_at_secs <= ?2",
             params![chat_id, deleted_at as i64],
         )?;

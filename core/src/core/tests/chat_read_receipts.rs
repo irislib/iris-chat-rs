@@ -134,6 +134,7 @@ fn chat_read_receipt_from_remote_peer_cannot_apply_an_own_read_state_tag() {
         device_id: pair.a_device.public_key().to_hex(),
         seen_through_secs: 200,
         seen_at_boundary: [message_id.clone()].into_iter().collect(),
+        seen_messages: BTreeMap::new(),
     };
     let (content, _) = runtime_rumor_json(
         peer.public_key(),

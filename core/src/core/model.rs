@@ -69,8 +69,21 @@ pub(super) struct ChatReadState {
     pub(super) updated_at_ms: u64,
     pub(super) device_id: String,
     pub(super) seen_through_secs: u64,
-    // Messages sharing the boundary second may arrive in either order.
+    // Legacy wire fields: accept only their listed IDs and always emit zero/empty.
     pub(super) seen_at_boundary: std::collections::BTreeSet<String>,
+    // Bounded recent batch for live snapshots; durable truth is on message rows.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub(super) seen_messages: BTreeMap<String, MessageReadState>,
+}
+
+pub(super) const MAX_RECENT_READ_IDS: usize = 128;
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct MessageReadState {
+    pub(super) created_at_secs: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) expires_at_secs: Option<u64>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]

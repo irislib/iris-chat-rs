@@ -21,23 +21,40 @@ impl AppCore {
             self.emit_state();
             return;
         }
-        let message_ids = thread
-            .messages
-            .iter()
-            .filter(|message| !message.is_outgoing)
-            .map(|message| message.id.clone())
-            .collect::<Vec<_>>();
-        if !self.record_local_chat_read_state(&normalized_chat_id, &message_ids, true) {
-            return;
+        let mut message_ids = match self.app_store.incoming_message_ids(&normalized_chat_id) {
+            Ok(ids) => ids,
+            Err(error) => {
+                self.push_debug_log("storage.messages.receipt.error", error.to_string());
+                return;
+            }
+        };
+        message_ids.extend(
+            thread
+                .messages
+                .iter()
+                .filter(|m| !m.is_outgoing)
+                .map(|m| m.id.clone()),
+        );
+        message_ids.sort();
+        message_ids.dedup();
+        self.mark_messages_seen(&normalized_chat_id, &message_ids);
+        // "Mark as read" is an explicit bulk action over currently known IDs.
+        // It must also clear a manually added badge when every row was read.
+        if let Some(thread) = self.threads.get_mut(&normalized_chat_id) {
+            thread.unread_count = 0;
         }
-        self.send_seen_updates(&normalized_chat_id, message_ids);
         self.persist_best_effort();
         self.rebuild_state();
         self.emit_state();
-        self.broadcast_device_sync_snapshot();
     }
 
     pub(super) fn mark_messages_seen(&mut self, chat_id: &str, message_ids: &[String]) {
+        if message_ids.len() > MAX_RECENT_READ_IDS {
+            for ids in message_ids.chunks(MAX_RECENT_READ_IDS) {
+                self.mark_messages_seen(chat_id, ids);
+            }
+            return;
+        }
         if message_ids.is_empty() {
             return;
         }
@@ -129,14 +146,16 @@ impl AppCore {
     fn send_seen_updates(&mut self, chat_id: &str, mut receipt_ids: Vec<String>) {
         if receipt_ids.is_empty() {
             if let Some(state) = self.chat_read_states.get(chat_id) {
-                receipt_ids.extend(state.seen_at_boundary.iter().cloned());
+                receipt_ids.extend(state.exact_messages().into_keys());
             }
         }
         if receipt_ids.is_empty() {
             return;
         }
         self.cancel_pending_delivered_receipts(chat_id, &receipt_ids);
-        self.send_seen_receipt_to_local_siblings(chat_id, receipt_ids.clone());
+        for ids in receipt_ids.chunks(MAX_RECENT_READ_IDS) {
+            self.send_seen_receipt_to_local_siblings(chat_id, ids.to_vec());
+        }
         if self.preferences.send_read_receipts && !self.thread_is_message_request(chat_id) {
             self.send_receipt(chat_id, "seen", receipt_ids);
         }
@@ -157,13 +176,27 @@ impl AppCore {
         } else {
             return;
         };
-        let Some(mut unsigned) =
-            receipt_unsigned_event(owner_pubkey, "seen", message_ids, group_id.as_deref())
-        else {
+        let Some(mut unsigned) = receipt_unsigned_event(
+            owner_pubkey,
+            "seen",
+            message_ids.clone(),
+            group_id.as_deref(),
+        ) else {
             return;
         };
         if let Some(state) = self.chat_read_states.get(chat_id) {
-            if let Ok(encoded) = serde_json::to_string(state) {
+            let mut state = state.clone();
+            state.seen_messages = message_ids
+                .iter()
+                .filter_map(|id| {
+                    self.app_store
+                        .message_read_state(chat_id, id)
+                        .ok()
+                        .flatten()
+                        .map(|read| (id.clone(), read))
+                })
+                .collect();
+            if let Ok(encoded) = serde_json::to_string(&state) {
                 if let Ok(tag) = nostr::Tag::parse(["iris-read-state", &encoded]) {
                     unsigned.tags.push(tag);
                     unsigned.id = None;

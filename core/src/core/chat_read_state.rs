@@ -1,27 +1,60 @@
 use super::*;
 
 impl ChatReadState {
+    pub(super) fn exact_messages(&self) -> BTreeMap<String, MessageReadState> {
+        let mut reads = self.seen_messages.clone();
+        // Older clients only prove the explicitly listed boundary IDs, never
+        // every message preceding their timestamp.
+        if self.seen_through_secs != 0 {
+            for id in &self.seen_at_boundary {
+                reads.entry(id.clone()).or_insert(MessageReadState {
+                    created_at_secs: self.seen_through_secs,
+                    expires_at_secs: None,
+                });
+            }
+        }
+        reads
+    }
+
     pub(super) fn includes(&self, other: &Self) -> bool {
+        let ours = self.exact_messages();
         (self.updated_at_ms, &self.device_id) >= (other.updated_at_ms, &other.device_id)
-            && (self.seen_through_secs > other.seen_through_secs
-                || (self.seen_through_secs == other.seen_through_secs
-                    && self.seen_at_boundary.is_superset(&other.seen_at_boundary)))
+            && other
+                .exact_messages()
+                .iter()
+                .all(|(id, read)| ours.get(id) == Some(read))
     }
 
     pub(super) fn covers(&self, created_at_secs: u64, id: &str) -> bool {
-        self.seen_through_secs > 0
-            && (created_at_secs < self.seen_through_secs
-                || (created_at_secs == self.seen_through_secs
-                    && self.seen_at_boundary.contains(id)))
+        self.seen_messages
+            .get(id)
+            .is_some_and(|read| read.created_at_secs == created_at_secs)
+            || (self.seen_through_secs != 0
+                && created_at_secs == self.seen_through_secs
+                && self.seen_at_boundary.contains(id))
     }
 
     fn merge_seen(&mut self, other: &Self) {
-        if other.seen_through_secs > self.seen_through_secs {
-            self.seen_through_secs = other.seen_through_secs;
-            self.seen_at_boundary = other.seen_at_boundary.clone();
-        } else if other.seen_through_secs == self.seen_through_secs {
-            self.seen_at_boundary
-                .extend(other.seen_at_boundary.iter().cloned());
+        self.seen_messages.extend(self.exact_messages());
+        self.seen_messages.extend(other.exact_messages());
+        // Zero legacy fields so older clients cannot turn an exact batch into
+        // an implicit "everything before this time" acknowledgement.
+        self.seen_through_secs = 0;
+        self.seen_at_boundary.clear();
+    }
+
+    pub(super) fn bound_recent_batch(&mut self) {
+        let mut ids = self
+            .seen_messages
+            .iter()
+            .map(|(id, read)| (read.created_at_secs, id.clone()))
+            .collect::<Vec<_>>();
+        ids.sort();
+        for (_, id) in ids
+            .iter()
+            .take(ids.len().saturating_sub(MAX_RECENT_READ_IDS))
+        {
+            self.seen_messages.remove(id);
         }
     }
 }
@@ -33,6 +66,13 @@ impl AppCore {
         message_ids: &[String],
         force: bool,
     ) -> bool {
+        if message_ids.len() > MAX_RECENT_READ_IDS {
+            let mut changed = false;
+            for ids in message_ids.chunks(MAX_RECENT_READ_IDS) {
+                changed |= self.record_local_chat_read_state(chat_id, ids, force);
+            }
+            return changed;
+        }
         let Some(local_device) = self
             .logged_in
             .as_ref()
@@ -45,39 +85,26 @@ impl AppCore {
             .get(chat_id)
             .cloned()
             .unwrap_or_default();
-        let mut next = previous.clone();
+        let mut next = ChatReadState::default();
         if let Some(thread) = self.threads.get(chat_id) {
             for message in &thread.messages {
-                if message.is_outgoing || !message_ids.contains(&message.id) {
-                    continue;
-                }
-                if message.created_at_secs > next.seen_through_secs {
-                    next.seen_through_secs = message.created_at_secs;
-                    next.seen_at_boundary.clear();
-                }
-                if message.created_at_secs == next.seen_through_secs {
-                    next.seen_at_boundary.insert(message.id.clone());
-                }
-            }
-        }
-        if force {
-            match self.app_store.latest_incoming_read_boundary(chat_id) {
-                Ok(Some((created_at, ids))) => {
-                    if created_at > next.seen_through_secs {
-                        next.seen_through_secs = created_at;
-                        next.seen_at_boundary = ids;
-                    } else if created_at == next.seen_through_secs {
-                        next.seen_at_boundary.extend(ids);
-                    }
-                }
-                Ok(None) => {}
-                Err(error) => {
-                    self.push_debug_log("storage.chat_read_boundary.error", error.to_string());
-                    return false;
+                if !message.is_outgoing && message_ids.contains(&message.id) {
+                    next.seen_messages.insert(
+                        message.id.clone(),
+                        MessageReadState {
+                            created_at_secs: message.created_at_secs,
+                            expires_at_secs: message.expires_at_secs,
+                        },
+                    );
                 }
             }
         }
-        if !force && previous == next && previous.updated_at_ms != 0 {
+        if next.seen_messages.is_empty()
+            || (!force
+                && next.seen_messages.iter().all(|(id, read)| {
+                    self.message_was_seen_on_own_device(chat_id, read.created_at_secs, id)
+                }))
+        {
             return false;
         }
         let now_ms = std::time::SystemTime::now()
@@ -99,6 +126,15 @@ impl AppCore {
                 .seen_at_boundary
                 .iter()
                 .any(|id| id.is_empty() || id.len() > 128)
+            || incoming.seen_messages.len() > MAX_RECENT_READ_IDS
+            || incoming.seen_messages.iter().any(|(id, read)| {
+                id.is_empty()
+                    || id.len() > 128
+                    || read.created_at_secs > max_time
+                    || read
+                        .expires_at_secs
+                        .is_some_and(|expiry| expiry > 9_007_199_254_740_991)
+            })
             || self
                 .chat_deletions
                 .get(chat_id)
@@ -125,23 +161,50 @@ impl AppCore {
         } else {
             previous.clone()
         };
-        // Read progress only advances, even when devices reconnect out of order.
-        merged.merge_seen(&previous);
-        merged.merge_seen(&incoming);
-        if merged == previous {
+        let reads = incoming
+            .exact_messages()
+            .into_iter()
+            .filter(|(id, read)| {
+                read.expires_at_secs
+                    .is_none_or(|expiry| expiry > unix_now().get())
+                    && !self.chat_activity_is_deleted(chat_id, read.created_at_secs)
+                    && !self
+                        .app_store
+                        .message_was_locally_deleted(chat_id, Some(id), None)
+                        .unwrap_or(true)
+            })
+            .collect::<BTreeMap<_, _>>();
+        if reads.is_empty() {
             return false;
         }
-        let unread_count =
-            match self
-                .app_store
-                .save_chat_read_state(chat_id, &merged, self.threads.get(chat_id))
-            {
-                Ok(count) => count,
-                Err(error) => {
-                    self.push_debug_log("storage.chat_read_state.error", error.to_string());
-                    return false;
-                }
-            };
+        // The cache may evict IDs, but durable per-message status never does.
+        merged.merge_seen(&previous);
+        merged.merge_seen(&incoming);
+        merged.bound_recent_batch();
+        if merged == previous
+            && reads.iter().all(|(id, read)| {
+                self.app_store
+                    .message_read_state(chat_id, id)
+                    .ok()
+                    .flatten()
+                    .as_ref()
+                    == Some(read)
+            })
+        {
+            return false;
+        }
+        let unread_count = match self.app_store.save_chat_read_state_batch(
+            chat_id,
+            &merged,
+            &reads,
+            self.threads.get(chat_id),
+        ) {
+            Ok(count) => count,
+            Err(error) => {
+                self.push_debug_log("storage.chat_read_state.error", error.to_string());
+                return false;
+            }
+        };
         self.chat_read_states.insert(chat_id.to_string(), merged);
         self.apply_read_state_to_thread(chat_id);
         if let (Some(thread), Some(unread_count)) = (self.threads.get_mut(chat_id), unread_count) {
@@ -151,14 +214,18 @@ impl AppCore {
     }
 
     pub(super) fn apply_read_state_to_thread(&mut self, chat_id: &str) {
-        let Some(state) = self.chat_read_states.get(chat_id) else {
-            return;
-        };
         let Some(thread) = self.threads.get_mut(chat_id) else {
             return;
         };
         for message in &mut thread.messages {
-            if !message.is_outgoing && state.covers(message.created_at_secs, &message.id) {
+            if !message.is_outgoing
+                && self
+                    .app_store
+                    .message_read_state(chat_id, &message.id)
+                    .ok()
+                    .flatten()
+                    .is_some_and(|read| read.created_at_secs == message.created_at_secs)
+            {
                 message.delivery = DeliveryState::Seen;
             }
         }
@@ -180,8 +247,10 @@ impl AppCore {
         created_at: u64,
         id: &str,
     ) -> bool {
-        self.chat_read_states
-            .get(chat_id)
-            .is_some_and(|state| state.covers(created_at, id))
+        self.app_store
+            .message_read_state(chat_id, id)
+            .ok()
+            .flatten()
+            .is_some_and(|read| read.created_at_secs == created_at)
     }
 }

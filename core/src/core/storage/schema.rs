@@ -7,7 +7,7 @@ use rusqlite::{params, Connection, Transaction};
 // Bump when a non-additive change to the schema lands and migrate
 // inside `ensure_schema` below. Greenfield: version 1 is the initial
 // shape and there is no previous JSON layout to migrate from.
-const SCHEMA_VERSION: u32 = 43;
+const SCHEMA_VERSION: u32 = 44;
 
 const INITIAL_SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS direct_file_transfers (
@@ -122,6 +122,16 @@ CREATE TABLE IF NOT EXISTS chat_message_ttls (
     ttl_seconds INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS pending_message_reads (
+    chat_id TEXT NOT NULL,
+    id TEXT NOT NULL,
+    created_at_secs INTEGER NOT NULL,
+    expires_at_secs INTEGER,
+    PRIMARY KEY(chat_id, id)
+);
+CREATE INDEX IF NOT EXISTS pending_message_reads_expiry ON pending_message_reads(expires_at_secs)
+    WHERE expires_at_secs IS NOT NULL;
+
 CREATE TABLE IF NOT EXISTS threads (
     chat_id TEXT PRIMARY KEY,
     unread_count INTEGER NOT NULL DEFAULT 0,
@@ -151,6 +161,9 @@ CREATE TABLE IF NOT EXISTS messages (
     outgoing_event_json TEXT,
     PRIMARY KEY (chat_id, id)
 );
+
+CREATE INDEX IF NOT EXISTS messages_exact_read_idx ON messages(chat_id, id)
+    WHERE is_outgoing = 0 AND delivery = 'seen' AND kind = 'user';
 
 CREATE INDEX IF NOT EXISTS messages_chat_order_idx
     ON messages(chat_id, created_at_secs, id);
@@ -647,6 +660,17 @@ pub(super) fn ensure_schema(conn: &mut Connection) -> anyhow::Result<()> {
         json_extract(CASE WHEN json_valid(value) THEN value END, '$.mutation.messageId')
     );",
     )?;
+    if current < 44 {
+        // Preserve only explicit legacy IDs when a receipt preceded its original.
+        // Previously inferred Seen flags cannot be distinguished from real reads.
+        tx.execute_batch("INSERT OR IGNORE INTO pending_message_reads(chat_id, id, created_at_secs)
+            SELECT substr(m.key, length('chat_read_state:') + 1), j.value,
+                   json_extract(CASE WHEN json_valid(m.value) THEN m.value ELSE '{}' END, '$.seenThroughSecs')
+            FROM app_meta m, json_each(CASE WHEN json_valid(m.value) THEN m.value ELSE '{}' END, '$.seenAtBoundary') j
+            WHERE m.key LIKE 'chat_read_state:%' AND json_extract(CASE WHEN json_valid(m.value) THEN m.value ELSE '{}' END, '$.seenThroughSecs') > 0
+              AND j.type = 'text' AND NOT EXISTS (SELECT 1 FROM messages x
+                WHERE x.chat_id = substr(m.key, length('chat_read_state:') + 1) AND x.id = j.value);")?;
+    }
     tx.pragma_update(None, "user_version", SCHEMA_VERSION as i64)?;
     tx.commit()?;
     Ok(())

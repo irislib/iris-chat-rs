@@ -18,6 +18,25 @@ pub(super) fn rumor_is_read(data_dir: &str, chat_id: &str, inner_json: &str) -> 
     let Some(conn) = open_lookup_connection(data_dir) else {
         return false;
     };
+    let stored: bool = conn
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM messages WHERE chat_id = ?1 AND id = ?2
+            AND is_outgoing = 0 AND delivery = 'seen')",
+            rusqlite::params![chat_id, rumor.id],
+            |row| row.get(0),
+        )
+        .unwrap_or(false);
+    if stored {
+        return true;
+    }
+    let pending: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pending_message_reads WHERE chat_id = ?1 AND id = ?2 AND created_at_secs = ?3)",
+        rusqlite::params![chat_id, rumor.id, rumor.created_at_secs as i64], |row| row.get(0),
+    ).unwrap_or(false);
+    if pending {
+        return true;
+    }
+    // Read-only compatibility for databases that have not been upgraded yet.
     let state: Option<String> = conn
         .query_row(
             "SELECT value FROM app_meta WHERE key = ?1",

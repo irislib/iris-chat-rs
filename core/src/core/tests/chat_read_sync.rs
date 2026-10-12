@@ -8,6 +8,27 @@ struct ChatReadSyncPair {
     _b_dir: tempfile::TempDir,
 }
 
+#[test]
+fn chat_read_exact_ids_preserve_older_unseen_and_late_messages() {
+    let mut pair = chat_read_sync_pair("exact-read-gaps");
+    let peer = Keys::generate();
+    let chat = peer.public_key().to_hex();
+    for core in [&mut pair.a, &mut pair.b] {
+        chat_read_sync_incoming(core, &peer, "older-unseen", 100);
+        chat_read_sync_incoming(core, &peer, "actually-seen", 200);
+    }
+    pair.a.mark_messages_seen(&chat, &["actually-seen".into()]);
+    assert_chat_read_delivery(&pair.a, &chat, "older-unseen", false);
+    sync_chat_reads(&pair.a, &mut pair.b, &pair.a_device, false);
+    assert_chat_read_delivery(&pair.b, &chat, "older-unseen", false);
+    for core in [&mut pair.a, &mut pair.b] {
+        chat_read_sync_incoming(core, &peer, "late-older-unseen", 150);
+        assert_chat_read_delivery(core, &chat, "late-older-unseen", false);
+        assert_chat_read_delivery(core, &chat, "actually-seen", true);
+        assert_eq!(core.threads[&chat].unread_count, 2);
+    }
+}
+
 fn chat_read_sync_pair(label: &str) -> ChatReadSyncPair {
     let owner = Keys::generate();
     let a_device = Keys::generate();
@@ -290,12 +311,12 @@ fn chat_read_sync_before_message_prevents_delayed_history_becoming_unread() {
 
     chat_read_sync_incoming(&mut pair.b, &peer, "delayed-older", 199);
     chat_read_sync_incoming(&mut pair.b, &peer, "boundary-read", 200);
-    assert_eq!(pair.b.threads[&chat_id].unread_count, 0);
-    assert_chat_read_delivery(&pair.b, &chat_id, "delayed-older", true);
+    assert_eq!(pair.b.threads[&chat_id].unread_count, 1);
+    assert_chat_read_delivery(&pair.b, &chat_id, "delayed-older", false);
     assert_chat_read_delivery(&pair.b, &chat_id, "boundary-read", true);
 
     chat_read_sync_incoming(&mut pair.b, &peer, "unlisted-same-second", 200);
-    assert_eq!(pair.b.threads[&chat_id].unread_count, 1);
+    assert_eq!(pair.b.threads[&chat_id].unread_count, 2);
     assert_chat_read_delivery(&pair.b, &chat_id, "unlisted-same-second", false);
 }
 
@@ -369,7 +390,10 @@ fn chat_read_sync_merges_device_alias_progress_without_reviving_old_chat() {
     chat_read_sync_incoming(&mut pair.a, &peer, "owner-read", 201);
     pair.a
         .mark_messages_seen(&owner_id, &["owner-read".to_string()]);
-    let expected = pair.a.chat_read_states[&owner_id].clone();
+    let mut expected = pair.a.chat_read_states[&owner_id].clone();
+    expected
+        .seen_messages
+        .extend(pair.a.chat_read_states[&alias_id].exact_messages());
     let devices = AppKeys::new(vec![DeviceEntry::new(peer_device.public_key(), 1)]);
     pair.a
         .migrate_verified_device_owner_threads(peer.public_key(), &devices);
@@ -431,7 +455,11 @@ fn chat_read_explicit_seen_updates_stored_message_without_changing_visible_histo
                 ("same-second-unread", false),
                 ("still-unread", false),
             ] {
-                let message = stored.messages.iter().find(|message| message.id == id).unwrap();
+                let message = stored
+                    .messages
+                    .iter()
+                    .find(|message| message.id == id)
+                    .unwrap();
                 assert_eq!(
                     matches!(message.delivery, PersistedDeliveryState::Seen),
                     seen,

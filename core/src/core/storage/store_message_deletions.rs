@@ -217,6 +217,10 @@ impl AppStore {
             stored_source.as_deref(),
         )?;
         tx.execute(
+            "DELETE FROM pending_message_reads WHERE chat_id = ?1 AND id = ?2",
+            params![chat_id, message_id],
+        )?;
+        tx.execute(
             "DELETE FROM messages WHERE chat_id = ?1 AND id = ?2",
             params![chat_id, message_id],
         )?;

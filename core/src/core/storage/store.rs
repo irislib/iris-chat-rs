@@ -287,6 +287,10 @@ impl AppStore {
                 }
                 chat_ids
             };
+            tx.execute(
+                "DELETE FROM pending_message_reads WHERE expires_at_secs <= ?1",
+                [now_secs as i64],
+            )?;
             store_message_deletions::mark_expired(&tx, now_secs)?;
             store_message_deletions::purge_expired_controls(&tx, now_secs)?;
             let deleted = tx.execute(
@@ -524,6 +528,7 @@ impl AppStore {
 
 const TABLES_TO_CLEAR: &[&str] = &[
     "direct_file_transfers",
+    "pending_message_reads",
     "messages",
     "threads",
     "seen_events",
@@ -893,6 +898,10 @@ fn upsert_message_row(
     )? {
         return Ok(());
     }
+    let pending_seen: bool = !message.is_outgoing && tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pending_message_reads WHERE chat_id = ?1 AND id = ?2 AND created_at_secs = ?3)",
+        params![chat_id, message.id, message.created_at_secs as i64], |row| row.get(0),
+    )?;
     tx.execute(
         "INSERT INTO messages(
             chat_id, id, kind, author, author_owner_pubkey_hex, body, is_outgoing, created_at_secs,
@@ -907,7 +916,7 @@ fn upsert_message_row(
             is_outgoing = excluded.is_outgoing,
             created_at_secs = excluded.created_at_secs,
             expires_at_secs = excluded.expires_at_secs,
-            delivery = excluded.delivery,
+            delivery = CASE WHEN messages.is_outgoing = 0 AND messages.delivery = 'seen' THEN 'seen' ELSE excluded.delivery END,
             attachments_json = excluded.attachments_json,
             reactions_json = excluded.reactions_json,
             reactors_json = excluded.reactors_json,
@@ -928,7 +937,7 @@ fn upsert_message_row(
             message.is_outgoing as i64,
             message.created_at_secs as i64,
             message.expires_at_secs.map(|secs| secs as i64),
-            serialize_delivery(&message.delivery),
+            if pending_seen { "seen" } else { serialize_delivery(&message.delivery) },
             serde_json::to_string(&message.attachments)?,
             serde_json::to_string(&message.reactions)?,
             serde_json::to_string(&message.reactors)?,
@@ -945,6 +954,10 @@ fn upsert_message_row(
             message.deleted_for_everyone as i64,
         ],
     )?;
+    tx.execute(
+        "DELETE FROM pending_message_reads WHERE chat_id = ?1 AND id = ?2",
+        params![chat_id, message.id],
+    )?;
     Ok(())
 }
 
@@ -953,6 +966,10 @@ fn upsert_notification_preview_message_row(
     chat_id: &str,
     message: &ChatMessageSnapshot,
 ) -> anyhow::Result<()> {
+    let pending_seen: bool = !message.is_outgoing && tx.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pending_message_reads WHERE chat_id = ?1 AND id = ?2 AND created_at_secs = ?3)",
+        params![chat_id, message.id, message.created_at_secs as i64], |row| row.get(0),
+    )?;
     tx.execute(
         "INSERT INTO messages(
             chat_id, id, kind, author, author_owner_pubkey_hex, body, is_outgoing, created_at_secs,
@@ -973,7 +990,7 @@ fn upsert_notification_preview_message_row(
             message.is_outgoing as i64,
             message.created_at_secs as i64,
             message.expires_at_secs.map(|secs| secs as i64),
-            serialize_delivery(&message.delivery),
+            if pending_seen { "seen" } else { serialize_delivery(&message.delivery) },
             serde_json::to_string(&message.attachments)?,
             serde_json::to_string(&message.reactions)?,
             serde_json::to_string(&message.reactors)?,
@@ -985,6 +1002,10 @@ fn upsert_notification_preview_message_row(
             serde_json::to_string(&message.edit_history)?,
             message.deleted_for_everyone as i64,
         ],
+    )?;
+    tx.execute(
+        "DELETE FROM pending_message_reads WHERE chat_id = ?1 AND id = ?2",
+        params![chat_id, message.id],
     )?;
     Ok(())
 }

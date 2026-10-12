@@ -154,7 +154,7 @@ impl AppCore {
                 v: 1,
                 message_mutations: Some(1),
                 private_events: self.private_events_supported(peer).then_some(1),
-                read_states: self.read_states_supported(peer).then_some(1),
+                read_states: self.read_states_supported(peer).then_some(2),
                 session: session.clone(),
                 scope,
                 prefix: (!prefix.is_empty()).then_some(prefix),

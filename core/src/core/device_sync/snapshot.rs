@@ -29,9 +29,14 @@ impl AppCore {
                 Some(DeviceSyncChat {
                     updated_at: thread.map_or_else(
                         || {
-                            read_state
-                                .as_ref()
-                                .map_or(0, |state| state.seen_through_secs)
+                            read_state.as_ref().map_or(0, |state| {
+                                state
+                                    .seen_messages
+                                    .values()
+                                    .map(|read| read.created_at_secs)
+                                    .max()
+                                    .unwrap_or(0)
+                            })
                         },
                         |thread| thread.updated_at_secs,
                     ),

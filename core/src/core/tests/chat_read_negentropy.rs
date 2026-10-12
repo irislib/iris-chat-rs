@@ -31,6 +31,30 @@ fn run_chat_read_negentropy(include_history: bool, supports_read_states: bool) {
     );
     pair.a
         .mark_messages_seen(group_chat, &["group-read".into()]);
+    if supports_read_states && !include_history {
+        let ids = (0..MAX_RECENT_READ_IDS + 3)
+            .map(|i| format!("extra-read-{i:03}"))
+            .collect::<Vec<_>>();
+        pair.a.enter_batch();
+        for (i, id) in ids.iter().enumerate() {
+            chat_read_sync_incoming(&mut pair.a, &peer, id, 400 + i as u64);
+        }
+        pair.a.exit_batch();
+        pair.a.mark_messages_seen(&chat, &ids);
+        assert_eq!(
+            pair.a.chat_read_states[&chat].seen_messages.len(),
+            MAX_RECENT_READ_IDS
+        );
+        assert!(!pair.a.chat_read_states[&chat]
+            .seen_messages
+            .contains_key("recent-read"));
+        assert!(pair
+            .a
+            .app_store
+            .message_read_state(&chat, "recent-read")
+            .unwrap()
+            .is_some());
+    }
     let expected = pair.a.chat_read_states.clone();
     pair.a
         .create_device_history_transfer(
@@ -105,7 +129,7 @@ fn run_chat_read_negentropy(include_history: bool, supports_read_states: bool) {
     pair.b.set_device_history_record_limit_for_test(1);
     let request = serde_json::to_vec(&serde_json::json!({
         "type":"request", "v":1, "rosterAt":100, "recordReconcile":1,
-        "readStates": supports_read_states.then_some(1),
+        "readStates": supports_read_states.then_some(2),
     }))
     .unwrap();
     left.handle_device_sync_packet(
@@ -146,7 +170,7 @@ fn run_chat_read_negentropy(include_history: bool, supports_read_states: bool) {
     let read_records = trace
         .iter()
         .flat_map(|packet| packet["records"].as_array().into_iter().flatten())
-        .filter(|record| record["type"] == "chatRead")
+        .filter(|record| record["type"] == "messageRead")
         .count();
     if !supports_read_states {
         assert_eq!(
@@ -168,8 +192,14 @@ fn run_chat_read_negentropy(include_history: bool, supports_read_states: bool) {
         read_records > 0,
         "negentropy must repair dropped snapshot read progress: {trace:?}"
     );
-    assert_eq!(pair.b.chat_read_states, expected);
-    assert_eq!(pair.b.app_store.load_chat_read_states().unwrap(), expected);
+    for (chat_id, state) in &expected {
+        for (id, read) in state.exact_messages() {
+            assert_eq!(
+                pair.b.app_store.message_read_state(chat_id, &id).unwrap(),
+                Some(read)
+            );
+        }
+    }
     assert_eq!(pair.b.threads[&chat].unread_count, 0);
     assert_chat_read_delivery(&pair.b, &chat, "recent-read", true);
     assert_eq!(

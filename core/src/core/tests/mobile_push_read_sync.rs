@@ -41,7 +41,7 @@ fn mobile_push_read_sync_dismisses_only_authenticated_read_messages() {
     let mut payloads = Vec::new();
     let mut events = Vec::new();
     let mut ids = Vec::new();
-    for (text, timestamp) in [("read", 200), ("same second unread", 200), ("newer unread", 201)] {
+    for (text, timestamp) in [("read", 200), ("older unread", 150), ("same second unread", 200), ("newer unread", 201)] {
         let event = appcore_direct_message_event_for_test(
             pair.b.protocol_engine.as_mut().unwrap(), &peer, text, timestamp,
         );
@@ -78,7 +78,7 @@ fn mobile_push_read_sync_dismisses_only_authenticated_read_messages() {
     for event in events { pair.b.handle_relay_event(event); }
     pair.b.persist_best_effort();
     assert_eq!(resolve(payloads), vec![0]);
-    assert_eq!(pair.b.threads[&chat_id].unread_count, 2);
+    assert_eq!(pair.b.threads[&chat_id].unread_count, 3);
 }
 
 #[test]

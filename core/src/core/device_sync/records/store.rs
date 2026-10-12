@@ -151,10 +151,16 @@ impl AppCore {
         locator: &RecordLocator,
     ) -> Option<DeviceSyncRecord> {
         match locator {
-            RecordLocator::ChatRead(chat_id) => Some(DeviceSyncRecord::ChatRead {
-                chat_id: chat_id.clone(),
-                state: self.chat_read_states.get(chat_id)?.clone(),
-            }),
+            RecordLocator::MessageRead(chat_id, message_id) => {
+                Some(DeviceSyncRecord::MessageRead {
+                    chat_id: chat_id.clone(),
+                    message_id: message_id.clone(),
+                    read: self
+                        .app_store
+                        .message_read_state(chat_id, message_id)
+                        .ok()??,
+                })
+            }
             RecordLocator::Group(id) => Some(DeviceSyncRecord::Group {
                 group: DeviceSyncGroup::from_current(self, self.groups.get(id)?),
             }),

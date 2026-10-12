@@ -222,17 +222,18 @@ impl AppCore {
                 indicator,
             );
         }
+        if let Err(error) = self
+            .app_store
+            .migrate_pending_message_reads(from_chat_id, to_chat_id)
+        {
+            self.push_debug_log("storage.chat_read_alias.error", error.to_string());
+        }
         if let Some(read_state) = self.chat_read_states.get(from_chat_id).cloned() {
             let changed = self.apply_chat_read_state(to_chat_id, read_state.clone());
-            let already_merged = self.chat_read_states.get(to_chat_id).is_some_and(|target| {
-                (target.updated_at_ms, &target.device_id)
-                    >= (read_state.updated_at_ms, &read_state.device_id)
-                    && (target.seen_through_secs > read_state.seen_through_secs
-                        || (target.seen_through_secs == read_state.seen_through_secs
-                            && read_state
-                                .seen_at_boundary
-                                .is_subset(&target.seen_at_boundary)))
-            });
+            let already_merged = self
+                .chat_read_states
+                .get(to_chat_id)
+                .is_some_and(|target| target.includes(&read_state));
             if changed || already_merged {
                 match self.app_store.remove_chat_read_state(from_chat_id) {
                     Ok(()) => {

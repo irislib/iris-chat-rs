@@ -191,15 +191,31 @@ impl HistorySession {
             records.len() <= core.device_history_record_limit().min(capacity)
         };
         if scope == RecordScope::State {
-            // Reuse the canonical, durably saved frontier; no per-read event log
-            // or receipt preference is needed for private device reconciliation.
+            // Inventory exact status from message rows and pending originals.
+            // The recent live-sync batch is bounded and is not history storage.
             if record_access.read_states {
-                for (chat_id, state) in &core.chat_read_states {
-                    if !add(DeviceSyncRecord::ChatRead {
-                        chat_id: chat_id.clone(),
-                        state: state.clone(),
-                    }) {
-                        return None;
+                let mut after: Option<(String, String)> = None;
+                loop {
+                    let page = core
+                        .app_store
+                        .message_read_page(
+                            after
+                                .as_ref()
+                                .map(|(chat, id)| (chat.as_str(), id.as_str())),
+                        )
+                        .ok()?;
+                    if page.is_empty() {
+                        break;
+                    }
+                    for (chat_id, message_id, read) in page {
+                        after = Some((chat_id.clone(), message_id.clone()));
+                        if !add(DeviceSyncRecord::MessageRead {
+                            chat_id,
+                            message_id,
+                            read,
+                        }) {
+                            return None;
+                        }
                     }
                 }
             }
@@ -403,7 +419,7 @@ impl AppCore {
             .is_some_and(|runtime| runtime.history.private_events.contains(peer))
     }
     pub(super) fn negotiate_read_states(&mut self, peer: &str, capability: Option<u8>) {
-        if capability == Some(1) && self.device_sync_peer_is_authorized(peer) {
+        if capability == Some(2) && self.device_sync_peer_is_authorized(peer) {
             if let Some(runtime) = &mut self.device_sync {
                 if runtime.history.read_states.len() < MAX_SESSIONS {
                     runtime.history.read_states.insert(peer.to_string());
@@ -650,7 +666,7 @@ impl AppCore {
                     supported: message_mutations == Some(1),
                     private_events: private_events == Some(1)
                         && self.private_events_supported(peer),
-                    read_states: read_states == Some(1) && self.read_states_supported(peer),
+                    read_states: read_states == Some(2) && self.read_states_supported(peer),
                     target_since: self.device_history_mutation_target_since(peer),
                 },
             ) else {
