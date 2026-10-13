@@ -291,9 +291,15 @@ fn blocked_direct_chat_does_not_reappear_in_people() {
     });
     inbox.wait_until(Duration::from_secs(5), |state| {
         state.preferences.blocked_owner_pubkeys.contains(&bob_owner)
-            && state.chat_list.iter().all(|chat| chat.chat_id != bob_owner)
+            && state.chat_list.iter().any(|chat| {
+                chat.chat_id == bob_owner
+                    && chat.last_message_preview.as_deref() == Some("hello bob")
+            })
     });
 
+    let history = app.search("hello bob".to_string(), Some(bob_owner.clone()), 20);
+    assert_eq!(history.messages.len(), 1, "blocking preserves history");
+    assert_eq!(history.messages[0].body, "hello bob");
     assert!(app
         .search("blocked regression".to_string(), None, 20)
         .people
