@@ -69,7 +69,8 @@ fn open_chat_finalize_preserves_identity_without_rewriting_protocol_checkpoint()
         "opening an existing chat must not republish unchanged identity artifacts");
     assert_eq!(core.state.current_chat.as_ref().unwrap().chat_id, chat_id);
     assert_eq!(core.app_store.load_state().unwrap().unwrap().active_chat_id.as_deref(), Some(chat_id.as_str()));
-    assert!(core.chat_read_states.contains_key(&chat_id));
+    assert!(!core.chat_read_states.contains_key(&chat_id),
+        "opening an empty chat must not create a timestamp-based read cutoff");
     assert!(core.protocol_subscription_runtime.tracked_peer_catch_up_due_at.is_some());
 }
 
