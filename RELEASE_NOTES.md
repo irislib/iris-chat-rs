@@ -2,6 +2,29 @@
 
 Each release has channel-specific notes. The release tag must match the `##` heading exactly.
 
+## v2026.10.13
+
+### GitHub
+
+- Retain the iOS CoreBluetooth bridge in the background, restore central/peripheral state, and bound callback processing with storage flushes before releasing background time.
+- Sync signed contact-name approvals privately between authorized native devices, including offline recovery through Negentropy and deterministic resolution of concurrent approvals.
+- Sync exact seen-message IDs between linked devices without marking unseen messages as read through timestamp cutoffs.
+- Preserve direct conversations and history when blocking someone while stopping new messages and calls.
+- Request Android notification permission after account setup and allow account creation when restored app data has lost its secret key.
+
+### Apple
+
+- Keep nearby Bluetooth connections available when switching apps, within iOS background limits.
+- Keep approved contact names and seen messages in sync between linked native apps.
+- Keep your conversation history when blocking someone.
+
+### Zapstore
+
+- Keep approved contact names and seen messages in sync between linked native apps.
+- Keep your conversation history when blocking someone.
+- Ask for notification permission after account setup.
+- Recover account setup when restored app data no longer has its secret key.
+
 ## v2026.10.9.1
 
 ### GitHub
