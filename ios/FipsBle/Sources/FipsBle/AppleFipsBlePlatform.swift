@@ -1,5 +1,8 @@
 import CoreBluetooth
 import Foundation
+#if os(iOS)
+import UIKit
+#endif
 
 private let fipsServiceUuid = CBUUID(string: "9c90b792-2cc5-42c0-9f87-c9cc40648f4c")
 private let fipsBootstrapUuid = CBUUID(string: "9c90b793-2cc5-42c0-9f87-c9cc40648f4c")
@@ -31,12 +34,42 @@ public final class AppleFipsBlePlatform: NSObject, FipsBlePlatform {
     private var nextConnectionId: UInt64 = 1
     private var connections: [UInt64: AppleBleConnection] = [:]
     private var isClosed = false
+#if os(iOS)
+    private var backgrounded = false
+    private var lifecycleObservers: [NSObjectProtocol] = []
+    private var restoredPeers: [CBPeripheral] = []
+    private var restoredServices = false
+    private var recentPeers: [UUID: TimeInterval] = [:]
+#endif
 
-    public override init() {
+    public override convenience init() {
+        self.init(restorationIdentifier: nil)
+    }
+
+    public init(restorationIdentifier: String?) {
         super.init()
         onMainSync {
+#if os(iOS)
+            backgrounded = UIApplication.shared.applicationState == .background
+            central = CBCentralManager(delegate: self, queue: .main, options: restorationIdentifier.map {
+                [CBCentralManagerOptionRestoreIdentifierKey: "\($0).central.v1"]
+            })
+            peripheralManager = CBPeripheralManager(delegate: self, queue: .main, options: restorationIdentifier.map {
+                [CBPeripheralManagerOptionRestoreIdentifierKey: "\($0).peripheral.v1"]
+            })
+            for name in [UIApplication.didEnterBackgroundNotification, UIApplication.willEnterForegroundNotification] {
+                lifecycleObservers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) {
+                    [weak self] notification in
+                    guard let self, !self.isClosed else { return }
+                    self.backgrounded = notification.name == UIApplication.didEnterBackgroundNotification
+                    self.scheduleBootstrapRetry()
+                    if self.backgrounded { self.armBackgroundReconnects() }
+                })
+            }
+#else
             central = CBCentralManager(delegate: self, queue: .main)
             peripheralManager = CBPeripheralManager(delegate: self, queue: .main)
+#endif
             #if os(macOS)
             bluetoothAudio.onChange = { [weak self] in self?.bluetoothAudioActivityChanged() }
             bluetoothAudio.start()
@@ -176,6 +209,9 @@ public final class AppleFipsBlePlatform: NSObject, FipsBlePlatform {
             CBCentralManagerScanOptionAllowDuplicatesKey: false,
         ])
         emit(.scanningStarted(requestId: requestId))
+#if os(iOS)
+        resumeRestoredPeers()
+#endif
     }
 
     private func stopScanning() {
@@ -318,6 +354,11 @@ public final class AppleFipsBlePlatform: NSObject, FipsBlePlatform {
     private func scheduleBootstrapRetry() {
         bootstrapRetry?.cancel()
         bootstrapRetry = nil
+#if os(iOS)
+        // Pending connects are retained by CoreBluetooth and wake the app when
+        // the peer returns. Do not cancel them on a foreground-only deadline.
+        guard !backgrounded else { return }
+#endif
         guard scanRequest != nil, central.state == .poweredOn,
               let retryAt = bootstrapDiscovery.nextWakeupAt(allowing: canDiscoverBootstrap) else { return }
         // CoreBluetooth can coalesce unchanged advertisements. Retry transient
@@ -386,6 +427,12 @@ public final class AppleFipsBlePlatform: NSObject, FipsBlePlatform {
     private func closeOnMain() {
         guard !isClosed else { return }
         isClosed = true
+#if os(iOS)
+        lifecycleObservers.forEach(NotificationCenter.default.removeObserver)
+        lifecycleObservers.removeAll()
+        restoredPeers.removeAll()
+        recentPeers.removeAll()
+#endif
         #if os(macOS)
         bluetoothAudio.stop()
         #endif
@@ -429,12 +476,59 @@ public final class AppleFipsBlePlatform: NSObject, FipsBlePlatform {
         default: return "Bluetooth is not ready"
         }
     }
+
+#if os(iOS)
+    private func rememberPeer(_ peripheral: CBPeripheral) {
+        let now = ProcessInfo.processInfo.systemUptime
+        recentPeers[peripheral.identifier] = now
+        recentPeers = recentPeers.filter { now - $0.value < 15 * 60 }
+        for (id, _) in recentPeers.sorted(by: { $0.value > $1.value }).dropFirst(16) {
+            recentPeers.removeValue(forKey: id)
+        }
+    }
+
+    private func armBackgroundReconnects() {
+        guard !isClosed, scanRequest != nil, central.state == .poweredOn else { return }
+        let now = ProcessInfo.processInfo.systemUptime
+        for (identifier, seen) in recentPeers where now - seen < 15 * 60 {
+            guard let peripheral = peripherals[identifier], peripheral.state == .disconnected,
+                  canDiscoverBootstrap(identifier), connectRequests[identifier] == nil else { continue }
+            bootstrapDiscovery.disconnected(identifier)
+            discoverBootstrap(peripheral)
+        }
+    }
+
+    private func resumeRestoredPeers() {
+        guard !isClosed, scanRequest != nil, central.state == .poweredOn else { return }
+        let peers = restoredPeers
+        restoredPeers.removeAll()
+        for peer in peers {
+            rememberPeer(peer)
+            discoverBootstrap(peer, refresh: true)
+        }
+    }
+#endif
 }
 
 extension AppleFipsBlePlatform: CBPeripheralManagerDelegate {
     public func peripheralManagerDidUpdateState(_ peripheral: CBPeripheralManager) {
+#if os(iOS)
+        if peripheral.state == .poweredOn, restoredServices {
+            // A restored bootstrap contains the previous process's L2CAP PSM.
+            // Publish a fresh channel and service through the new Rust bridge.
+            peripheral.stopAdvertising()
+            peripheral.removeAllServices()
+            restoredServices = false
+        }
+#endif
         replayDeferredCommands()
     }
+
+#if os(iOS)
+    public func peripheralManager(_ peripheral: CBPeripheralManager, willRestoreState dict: [String: Any]) {
+        restoredServices = true
+    }
+#endif
 
     public func peripheralManager(
         _ peripheral: CBPeripheralManager,
@@ -504,7 +598,22 @@ extension AppleFipsBlePlatform: CBCentralManagerDelegate {
     public func centralManagerDidUpdateState(_ central: CBCentralManager) {
         replayDeferredCommands()
         scheduleBootstrapRetry()
+#if os(iOS)
+        resumeRestoredPeers()
+        if backgrounded { armBackgroundReconnects() }
+#endif
     }
+
+#if os(iOS)
+    public func centralManager(_ central: CBCentralManager, willRestoreState dict: [String: Any]) {
+        guard !isClosed else { return }
+        restoredPeers = Array((dict[CBCentralManagerRestoredStatePeripheralsKey] as? [CBPeripheral] ?? []).prefix(maxPlatformConnections))
+        for peer in restoredPeers {
+            peripherals[peer.identifier] = peer
+            peer.delegate = self
+        }
+    }
+#endif
 
     public func centralManager(
         _ central: CBCentralManager,
@@ -560,6 +669,9 @@ extension AppleFipsBlePlatform: CBCentralManagerDelegate {
                 message: "BLE disconnected before L2CAP opened: \(error?.localizedDescription ?? "peer closed")"
             ))
         }
+#if os(iOS)
+        if backgrounded { armBackgroundReconnects() }
+#endif
     }
 }
 
@@ -609,6 +721,9 @@ extension AppleFipsBlePlatform: CBPeripheralDelegate {
         }
         guard bootstrapDiscovery.complete(peripheral.identifier) else { return }
         identifiedServicePeers.insert(peripheral.identifier)
+#if os(iOS)
+        rememberPeer(peripheral)
+#endif
         scheduleBootstrapRetry()
         emit(.peerDiscovered(peerToken: peripheral.identifier.uuidString, bootstrap: value))
     }

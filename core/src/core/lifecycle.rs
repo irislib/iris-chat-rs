@@ -183,6 +183,7 @@ impl AppCore {
             // First rebuild populates the cache.
             mobile_push_dirty: true,
             suspended: false,
+            ble_background: Default::default(),
             app_in_foreground: true,
         })
     }
@@ -299,6 +300,7 @@ impl AppCore {
             CoreMsg::AcceptDirectFiles { .. } => "AcceptDirectFiles",
             CoreMsg::AttachHostBle { .. } => "AttachHostBle",
             CoreMsg::DetachHostBle { .. } => "DetachHostBle",
+            CoreMsg::HostBleActivity { .. } => "HostBleActivity",
             CoreMsg::CorePerfCounters(_) => "CorePerfCounters",
             CoreMsg::PrepareForSuspend(_) => "PrepareForSuspend",
             CoreMsg::Shutdown(_) => "Shutdown",
@@ -370,6 +372,15 @@ impl AppCore {
                 self.prepare_for_suspend();
                 let _ = reply_tx.send(());
             }
+            CoreMsg::HostBleActivity {
+                ownership,
+                generation,
+                active,
+                reply_tx,
+            } => {
+                let accepted = self.set_host_ble_activity(&ownership, generation, active);
+                let _ = reply_tx.send(accepted);
+            }
             CoreMsg::CorePerfCounters(reply_tx) => {
                 let _ = reply_tx.send(crate::updates::CorePerfCountersSnapshot {
                     debug_snapshot_builds: self.debug_snapshot_build_count(),
@@ -413,7 +424,10 @@ impl AppCore {
             // Suspension is a storage barrier. Its acknowledgement lets iOS
             // release background time, so neither earlier batched writes nor
             // prepare_for_suspend's own persistence may wait for exit_batch.
-            let suspending = matches!(&msg, CoreMsg::PrepareForSuspend(_));
+            let suspending = matches!(
+                &msg,
+                CoreMsg::PrepareForSuspend(_) | CoreMsg::HostBleActivity { active: false, .. }
+            );
             if suspending {
                 self.exit_batch();
             }
@@ -470,7 +484,11 @@ impl AppCore {
         self.private_contacts.stop_network();
         self.push_debug_log("app.suspend", "pausing network and flushing storage");
         self.pause_pending_linked_device();
-        self.stop_device_sync();
+        // The iOS bridge retains the OS-managed radio while the core is asleep.
+        // Only an acknowledged, bounded native wake may process its packets.
+        if !self.keep_background_ble() {
+            self.stop_device_sync();
+        }
         self.device_invite_poll_token = self.device_invite_poll_token.saturating_add(1);
         self.message_expiry_token = self.message_expiry_token.saturating_add(1);
         self.chat_mute_expiry_token = self.chat_mute_expiry_token.wrapping_add(1);
@@ -511,12 +529,8 @@ impl AppCore {
         self.emit_state();
     }
     pub(super) fn handle_internal(&mut self, event: InternalEvent) {
-        if self.suspended {
-            self.defer_remote_signer_event(event);
-            // Drop queued background work while iOS is taking us down. We
-            // don't want any further SQLite writes once the suspend
-            // checkpoint has run. Foregrounding clears the gate and
-            // re-establishes subscriptions so dropped events are re-fetched.
+        if self.suspended && !self.admit_background_ble_event(&event) {
+            self.defer_background_ble_event(event);
             return;
         }
         match event {

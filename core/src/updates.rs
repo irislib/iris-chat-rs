@@ -93,6 +93,12 @@ pub(crate) enum CoreMsg {
         ownership: crate::core::HostBleOwnership,
         reply_tx: Sender<()>,
     },
+    HostBleActivity {
+        ownership: crate::core::HostBleOwnership,
+        generation: u64,
+        active: bool,
+        reply_tx: Sender<bool>,
+    },
     PrepareForSuspend(Sender<()>),
     /// Snapshot of core-internal perf counters (debug-snapshot
     /// rebuild count etc.) — read by `FfiApp::core_perf_counters()`

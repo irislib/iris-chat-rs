@@ -41,3 +41,19 @@ before cancellation. The retry backoff alone never authorizes reusing the
 peripheral. If that terminal callback is missing, the peripheral stays unavailable
 until the adapter restarts; commands are rejected immediately, not queued, and no
 retry timer spins for that peripheral. A scan restart does not clear this boundary.
+
+On iOS, the host can opt into CoreBluetooth state restoration with a stable
+`restorationIdentifier`. Restored peripherals are rediscovered; the new process
+publishes a fresh L2CAP channel and bootstrap instead of reusing the old PSM.
+Background scans keep the service filter and disable duplicate advertisements.
+Foreground discovery timers stop in the background, preserving pending connects;
+up to 16 peers seen within the last 15 minutes can have a pending reconnect.
+CoreBluetooth decides when to deliver callbacks. Force-quitting the app normally
+prevents relaunch, and background discovery may take longer than foreground scans.
+
+Iris retains this bridge while backgrounded. Inbound Bluetooth activity grants
+five seconds of core processing, with storage flushed before its background task
+ends. Polling and write completions cannot renew the allowance. The physical gate
+`scripts/physical_ble_idle.py --background` additionally requires an Android peer
+with no IP route to receive a delivery receipt before the iPhone returns to the
+foreground; unit tests do not establish that L2CAP wakes a suspended phone.

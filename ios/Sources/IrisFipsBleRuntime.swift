@@ -1,6 +1,9 @@
 #if os(iOS) || os(macOS)
 import Foundation
 import FipsBle
+#if os(iOS)
+import UIKit
+#endif
 
 struct IrisFipsBleDebugSnapshot {
     let connectionCount: Int
@@ -183,6 +186,9 @@ final class IrisFipsBleRuntime: IrisFipsBleSession, @unchecked Sendable {
     private var connectionCount = 0
     private var bytesReceivedCount = 0
     private var writeCompletedCount = 0
+#if os(iOS)
+    @MainActor private var backgroundActivity: IrisBleBackgroundActivity?
+#endif
     // Explicit diagnostics for signed development/release builds; no payloads.
     private let traceEnabled: Bool = {
 #if DEBUG
@@ -199,17 +205,35 @@ final class IrisFipsBleRuntime: IrisFipsBleSession, @unchecked Sendable {
             NSLog("Iris FIPS BLE could not start: %@", "\(error)")
             return nil
         }
-        platform = AppleFipsBlePlatform()
+        platform = AppleFipsBlePlatform(restorationIdentifier: "fi.siriusbusiness.irischat.fips")
         runner = FipsBleCommandRunner(platform: platform)
         platform.eventSink = { [weak self] event in
-            self?.eventQueue.async { [weak self] in
+            let deliver = { [weak self] in self?.eventQueue.async { [weak self] in
                 guard let self, !isStopped else { return }
                 recordDebugEvent(event)
                 let accepted = bridge.emit(event: event.rustEvent)
                 if traceEnabled {
                     NSLog("Iris FIPS BLE: %@ accepted=%@", event.debugSummary, String(accepted))
                 }
+            } }
+#if os(iOS)
+            DispatchQueue.main.async { [weak self] in
+                guard let self, !self.isStopped else { return }
+                if self.backgroundActivity == nil {
+                    let bridge = self.bridge
+                    let queue = self.eventQueue
+                    self.backgroundActivity = IrisBleBackgroundActivity { generation, active, done in
+                        queue.async {
+                            _ = bridge.backgroundActivity(generation: generation, active: active)
+                            done()
+                        }
+                    }
+                }
+                self.backgroundActivity?.receive(wakesApp: event.wakesApp, deliver: { _ = deliver() })
             }
+#else
+            _ = deliver()
+#endif
         }
         commandQueue.async { [weak self] in self?.pumpCommands() }
     }
@@ -238,7 +262,12 @@ final class IrisFipsBleRuntime: IrisFipsBleSession, @unchecked Sendable {
             stopped = true
             return previous
         }
-        if !wasStopped { runner.close() }
+        if !wasStopped {
+            runner.close()
+#if os(iOS)
+            Task { @MainActor in self.backgroundActivity?.close() }
+#endif
+        }
     }
 
     private var isStopped: Bool {
@@ -330,6 +359,15 @@ private extension FipsBle.HostBleCommand {
 }
 
 private extension FipsBle.HostBleEvent {
+    var wakesApp: Bool {
+        switch self {
+        case .peerDiscovered, .connected, .incomingConnection, .bytesReceived, .disconnected:
+            return true
+        default:
+            return false
+        }
+    }
+
     var debugSummary: String {
         switch self {
         case let .listening(_, psm):

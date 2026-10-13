@@ -751,7 +751,7 @@ final class IrisChatTests: XCTestCase {
         manager.appBackgrounded()
         await fulfillment(of: [secondPreparation], timeout: 2)
         XCTAssertEqual(rust.prepareForSuspendCallCount, 2)
-        XCTAssertEqual(rust.dispatchedActions.last, .appForegrounded)
+        XCTAssertEqual(rust.dispatchedActions.last, .appBackgrounded)
     }
 
     @MainActor

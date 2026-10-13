@@ -58,6 +58,20 @@ impl FfiFipsBle {
     pub fn detach(&self) -> Result<(), FipsBleBridgeError> {
         self.detach_with_timeout(Duration::from_secs(2))
     }
+
+    /// Called off the UI thread. Completion is a storage barrier when ending.
+    pub fn background_activity(&self, generation: u64, active: bool) -> bool {
+        let (reply_tx, reply_rx) = flume::bounded(1);
+        self.core_tx
+            .send(CoreMsg::HostBleActivity {
+                ownership: self.ownership.clone(),
+                generation,
+                active,
+                reply_tx,
+            })
+            .is_ok()
+            && reply_rx.recv().unwrap_or(false)
+    }
 }
 
 impl FfiFipsBle {
@@ -90,7 +104,11 @@ impl FfiFipsBle {
                     "Could not create the FIPS BLE bridge: {error}"
                 ))
             })?;
-        let attachment = crate::core::HostBleAttachment::new(io);
+        // The iOS shell owns bounded OS wake tasks. Negotiate this with the
+        // attachment: another synchronous core request here would deadlock
+        // against bind waiting for the native Listen command pump to start.
+        let attachment =
+            crate::core::HostBleAttachment::new(io).with_background(cfg!(target_os = "ios"));
         let ownership = attachment.ownership();
         // Construct the owner before queueing attachment. Any error below drops
         // it, cancelling this exact attachment even if the core replies late.

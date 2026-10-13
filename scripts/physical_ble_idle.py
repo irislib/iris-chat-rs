@@ -128,7 +128,25 @@ def require_isolated_instrumentation(output):
         raise ValueError("The test runner must target only the isolated .blegate app")
 
 
-def evaluate_capture(directory, probe, seconds, max_cpu, max_writes):
+def evaluate_background_reply(directory, reply):
+    status = require_android_success((directory / "receiver.log").read_text(),
+        {"background_reply_received": "true", "background_reply": reply})
+    log = (directory / "ios-test.log").read_text()
+    def timestamp(marker):
+        values = re.findall(marker + r"=(\d+)", log)
+        if len(values) != 1:
+            raise ValueError("Missing or repeated iPhone background interval")
+        return int(values[0])
+    entered = timestamp("IRIS_FIPS_BACKGROUND_ENTERED")
+    leaving = timestamp("IRIS_FIPS_BACKGROUND_LEAVING")
+    sent, received = int(status["background_sent_ms"]), int(status["background_received_ms"])
+    if not (entered + 30_000 < sent <= received < leaving - 3_000 and leaving - entered >= 74_000):
+        raise ValueError("Receipt must arrive after suspension time and before iPhone foregrounding")
+    return {"backgroundReplyReceivedWhileHidden": True,
+            "backgroundDeliveryMs": received - sent}
+
+
+def evaluate_capture(directory, probe, seconds, max_cpu, max_writes, background_reply=None):
     summary = json.loads((directory / "test-summary.log").read_text())
     if (summary.get("result") != "Passed" or summary.get("totalTestCount") != 1
             or summary.get("passedTests") != 1 or summary.get("failedTests") != 0
@@ -152,6 +170,8 @@ def evaluate_capture(directory, probe, seconds, max_cpu, max_writes):
     metrics = json.loads((directory / "metrics.log").read_text())
     result = evaluate_metrics(metrics, seconds, max_cpu, max_writes)
     result.update(physicalTestPassed=True, exactMessageSeen=True, androidOfflineChecks=len(checks))
+    if background_reply:
+        result.update(evaluate_background_reply(directory, background_reply))
     return result
 
 
@@ -175,7 +195,8 @@ def evaluate_saved_run(directory, max_cpu, max_writes):
     seconds = float(env["IRIS_FIPS_IDLE_SECONDS"])
     if not 10 <= seconds <= 120:
         raise ValueError("Invalid saved measurement interval")
-    result = evaluate_capture(directory, env["IRIS_FIPS_PHYSICAL_MESSAGE"], seconds, max_cpu, max_writes)
+    result = evaluate_capture(directory, env["IRIS_FIPS_PHYSICAL_MESSAGE"], seconds, max_cpu, max_writes,
+                              env.get("IRIS_FIPS_BACKGROUND_REPLY"))
     evidence = ("result.json", "physical-idle.xctestrun", "test-summary.log", "metrics.log",
                 "receiver.log", "network-checks.jsonl")
     result.update(evaluationMode="saved-capture", restoration=restored,
@@ -323,6 +344,8 @@ class Gate:
                        "IRIS_FIPS_PHYSICAL_MESSAGE": self.probe,
                        "IRIS_FIPS_IDLE_METRICS": "1",
                        "IRIS_FIPS_IDLE_SECONDS": str(self.args.sample_seconds)}
+        if getattr(self.args, "background", False):
+            environment["IRIS_FIPS_BACKGROUND_REPLY"] = self.probe + "-reply"
         target.setdefault("EnvironmentVariables", {}).update(environment)
         target["OnlyTestIdentifiers"] = [TEST]
         target["TestExecutionOrdering"] = "lexical"
@@ -364,10 +387,11 @@ class Gate:
                 raise RuntimeError("Android still has an IP path; Bluetooth proof would be invalid")
             time.sleep(1)
         with (self.out / "receiver.log").open("w") as log:
+            extra = (["-e", "background_reply", self.probe + "-reply"] if self.args.background else [])
             self.android = subprocess.Popen(self.action_command(
                 "accept_and_mark_incoming_message_seen_from_args",
                 ["-e", "message", self.probe, "-e", "timeout_ms", "240000",
-                 "-e", "idle_hold_ms", str(int(self.args.sample_seconds * 3 + 50) * 1000)]),
+                 "-e", "idle_hold_ms", str(int(self.args.sample_seconds * 3 + 50) * 1000)] + extra),
                 stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
         deadline = time.monotonic() + 90
         while "fips_ble_ready=true" not in (self.out / "receiver.log").read_text():
@@ -403,7 +427,8 @@ class Gate:
         self.command(["xcrun", "xcresulttool", "get", "test-results", "metrics",
                       "--path", str(result_path)], "metrics")
         self.result.update(evaluate_capture(self.out, self.probe, self.args.sample_seconds,
-                                           self.args.max_cpu_percent, self.args.max_write_mib_per_minute))
+                                           self.args.max_cpu_percent, self.args.max_write_mib_per_minute,
+                                           self.probe + "-reply" if self.args.background else None))
 
     def restore(self):
         for label, child in (("ios_controller_stopped", self.ios), ("android_controller_stopped", self.android)):
@@ -459,6 +484,7 @@ def main():
     p.add_argument("--evaluate", type=Path, help="Recheck a saved run without accessing either phone")
     p.add_argument("--output", type=Path, help="New JSON result file for --evaluate; never overwrite evidence")
     p.add_argument("--sample-seconds", type=float, default=60)
+    p.add_argument("--background", action="store_true", help="Also require delivery and a receipt while iPhone is backgrounded")
     p.add_argument("--max-cpu-percent", type=float, default=5)
     p.add_argument("--max-write-mib-per-minute", type=float, default=5)
     args = p.parse_args()

@@ -30,6 +30,7 @@ impl HostBleOwnership {
 pub(crate) struct HostBleAttachment {
     io: Option<HostBleIo>,
     ownership: HostBleOwnership,
+    background_capable: bool,
 }
 
 impl HostBleAttachment {
@@ -37,7 +38,13 @@ impl HostBleAttachment {
         Self {
             io: Some(io),
             ownership: HostBleOwnership(Arc::new(std::sync::atomic::AtomicBool::new(false))),
+            background_capable: false,
         }
+    }
+
+    pub(crate) fn with_background(mut self, enabled: bool) -> Self {
+        self.background_capable = enabled;
+        self
     }
 
     pub(crate) fn ownership(&self) -> HostBleOwnership {
@@ -280,6 +287,8 @@ impl AppCore {
             return Err("FIPS BLE is already attached".to_string());
         }
         self.host_ble_ownership = Some(attachment.ownership());
+        self.reset_background_ble();
+        self.set_host_ble_background(&attachment.ownership(), attachment.background_capable);
         self.pending_host_ble = Some(attachment);
         Ok(())
     }
@@ -293,6 +302,7 @@ impl AppCore {
             return;
         }
         self.host_ble_ownership = None;
+        self.reset_background_ble();
         if self.host_ble_attached {
             self.detach_host_ble();
         } else {
@@ -303,6 +313,7 @@ impl AppCore {
     }
 
     pub(super) fn detach_host_ble(&mut self) {
+        self.reset_background_ble();
         self.host_ble_ownership = None;
         self.pending_host_ble = None;
         self.stop_device_sync_now();

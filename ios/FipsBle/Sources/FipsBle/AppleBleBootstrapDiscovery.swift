@@ -83,4 +83,12 @@ struct AppleBleBootstrapDiscovery {
         resolved.removeAll()
         failures.removeAll()
     }
+
+    // A terminal CoreBluetooth disconnect permits a fresh GATT read. The
+    // advertised L2CAP PSM may have changed while either app was suspended.
+    mutating func disconnected(_ identifier: UUID) {
+        pending.removeValue(forKey: identifier)
+        resolved.remove(identifier)
+        failures.removeValue(forKey: identifier)
+    }
 }

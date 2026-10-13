@@ -13,6 +13,10 @@ final class IrisPushAppDelegate: NSObject, UIApplicationDelegate, UNUserNotifica
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
+        if application.applicationState == .background,
+           launchOptions?[.bluetoothCentrals] != nil || launchOptions?[.bluetoothPeripherals] != nil {
+            manager.resumeBluetoothRestoration()
+        }
         guard !AppPaths.notificationsDisabledForAutomation(
             environment: ProcessInfo.processInfo.environment
         ) else {

@@ -3,6 +3,17 @@ import Foundation
 import XCTest
 
 final class AppleBleBootstrapDiscoveryTests: XCTestCase {
+    func testTerminalDisconnectAllowsFreshBootstrapWithChangedPSM() {
+        var discovery = AppleBleBootstrapDiscovery()
+        let peer = UUID()
+        XCTAssertTrue(discovery.begin(peer, now: 10))
+        XCTAssertTrue(discovery.complete(peer))
+        XCTAssertFalse(discovery.begin(peer, now: 20))
+        discovery.disconnected(peer)
+        XCTAssertTrue(discovery.begin(peer, now: 20))
+        XCTAssertTrue(discovery.complete(peer))
+    }
+
     func testMissingDiscoveryCallbackTimesOutAndRetriesWithoutAnotherAdvertisement() {
         var discovery = AppleBleBootstrapDiscovery()
         let peer = UUID()

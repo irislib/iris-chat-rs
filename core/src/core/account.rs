@@ -41,6 +41,7 @@ impl AppCore {
         // Lift the suspend gate even when not logged in so a re-foregrounded
         // unauthenticated app can process events again.
         self.suspended = false;
+        self.foreground_background_ble();
         self.resume_remote_signer_events();
         self.expire_pending_signer_login();
         if self.pending_linked_device.is_some() {

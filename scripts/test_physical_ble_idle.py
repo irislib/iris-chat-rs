@@ -16,6 +16,7 @@ from types import SimpleNamespace
 from physical_ble_idle import (
     Gate, evaluate_metrics, internet_addresses, require_android_success, require_isolated_instrumentation,
     reserve_phone, evaluate_saved_run,
+    evaluate_background_reply,
 )
 
 
@@ -60,6 +61,28 @@ def save_capture(directory):
 
 
 class PhysicalIdleGateTests(unittest.TestCase):
+    def test_background_proof_rejects_receipt_after_foreground_and_missing_evidence(self):
+        with TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "ios-test.log").write_text(
+                "IRIS_FIPS_BACKGROUND_ENTERED=100000\nIRIS_FIPS_BACKGROUND_LEAVING=175000\n")
+            def receiver(sent=145000, received=150000):
+                (root / "receiver.log").write_text(
+                    "INSTRUMENTATION_CODE: -1\nINSTRUMENTATION_STATUS: background_reply_received=true\n"
+                    "INSTRUMENTATION_STATUS: background_reply=reply\n"
+                    f"INSTRUMENTATION_STATUS: background_sent_ms={sent}\n"
+                    f"INSTRUMENTATION_STATUS: background_received_ms={received}\n")
+            receiver()
+            self.assertTrue(evaluate_background_reply(root, "reply")["backgroundReplyReceivedWhileHidden"])
+            for sent, received in [(110000, 120000), (145000, 176000), (150000, 145000)]:
+                receiver(sent, received)
+                with self.assertRaises(ValueError):
+                    evaluate_background_reply(root, "reply")
+            receiver()
+            (root / "ios-test.log").write_text("")
+            with self.assertRaises(ValueError):
+                evaluate_background_reply(root, "reply")
+
     def test_configure_requires_current_device_from_saved_roster(self):
         with TemporaryDirectory() as temp:
             root = Path(temp)

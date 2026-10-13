@@ -142,7 +142,8 @@ fn host_ble_starts_without_configured_relays() {
         .runtime
         .block_on(async { HostBleIo::channel("mobile", "offline", 8) })
         .unwrap();
-    core.attach_host_ble(HostBleAttachment::new(io)).unwrap();
+    core.attach_host_ble(HostBleAttachment::new(io).with_background(true))
+        .unwrap();
 
     core.reconcile_device_sync();
 
@@ -161,6 +162,18 @@ fn host_ble_starts_without_configured_relays() {
         core.debug_log
     );
     assert!(core.host_ble_attached);
+    core.preferences.nearby_enabled = true;
+    core.preferences.nearby_bluetooth_enabled = true;
+    assert!(core.keep_background_ble());
+    let endpoint = core.device_sync_endpoint_for_test().unwrap();
+    core.handle_action(AppAction::AppBackgrounded);
+    core.prepare_for_suspend();
+    assert!(core.suspended);
+    assert!(core.host_ble_attached);
+    assert!(
+        Arc::ptr_eq(&endpoint, &core.device_sync_endpoint_for_test().unwrap()),
+        "suspension must retain the OS Bluetooth bridge and endpoint"
+    );
     let retained_pubsub = core
         .device_sync
         .as_ref()

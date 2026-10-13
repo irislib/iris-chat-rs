@@ -74,6 +74,7 @@ mod account_pending_link;
 mod account_signer;
 mod account_signer_relay;
 mod attachment_upload;
+mod ble_background;
 pub(crate) mod device_link_signer;
 mod device_link_signer_transport;
 mod registration_recovery;
@@ -801,6 +802,7 @@ pub struct AppCore {
     /// RUNNINGBOARD 0xdead10cc, and the FFI message queue can hold relay
     /// events that arrived just before the scene phase change.
     suspended: bool,
+    ble_background: ble_background::BleBackground,
     app_in_foreground: bool,
 }
 

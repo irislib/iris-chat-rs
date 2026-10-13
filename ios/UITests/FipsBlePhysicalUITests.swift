@@ -33,6 +33,9 @@ final class FipsBlePhysicalUITests: XCTestCase {
         dismissBlockingSystemAlertIfPresent()
 
         createTestAccount(in: app)
+        if environment["IRIS_FIPS_BACKGROUND_REPLY"] != nil {
+            enableReadReceipts(in: app)
+        }
         enableFipsBluetooth(in: app)
         openChat(with: peerNpub, in: app)
 
@@ -48,6 +51,26 @@ final class FipsBlePhysicalUITests: XCTestCase {
             receiptTimeout: receiptTimeout,
             verifyTransportTrace: true
         ) else { return }
+        if let reply = environment["IRIS_FIPS_BACKGROUND_REPLY"] {
+            element(app, "messageInfoCloseButton").tap()
+            // Activating another app also works on devices where XCTest's
+            // synthetic Home press is ignored. Verify the state explicitly.
+            let settings = XCUIApplication(bundleIdentifier: "com.apple.Preferences")
+            settings.activate()
+            let enteredBackground = app.wait(for: .runningBackground, timeout: 5)
+                || app.state == .runningBackgroundSuspended
+            guard enteredBackground else {
+                XCTFail("Iris did not enter the background; state=\(app.state.rawValue)")
+                return
+            }
+            print("IRIS_FIPS_BACKGROUND_ENTERED=\(Int64(Date().timeIntervalSince1970 * 1000))")
+            Thread.sleep(forTimeInterval: 75)
+            XCTAssertTrue(app.state == .runningBackground || app.state == .runningBackgroundSuspended,
+                          "Iris left the background; state=\(app.state.rawValue)")
+            print("IRIS_FIPS_BACKGROUND_LEAVING=\(Int64(Date().timeIntervalSince1970 * 1000))")
+            app.activate()
+            XCTAssertTrue(app.staticTexts[reply].waitForExistence(timeout: 10), "Background Bluetooth reply is missing")
+        }
         if environment["IRIS_FIPS_IDLE_METRICS"] == "1" {
             try measureIdleAfterBluetoothReceipt(app, environment: environment)
         }
@@ -69,11 +92,11 @@ final class FipsBlePhysicalUITests: XCTestCase {
             return
         }
         let close = element(app, "messageInfoCloseButton")
-        guard close.waitForExistence(timeout: 5) else {
+        guard close.waitForExistence(timeout: 5) || environment["IRIS_FIPS_BACKGROUND_REPLY"] != nil else {
             XCTFail("could not close the verified BLE probe before idle measurement")
             return
         }
-        close.tap()
+        if close.exists { close.tap() }
         let options = XCTMeasureOptions()
         options.iterationCount = 2
         options.invocationOptions = [.manuallyStart, .manuallyStop]
@@ -241,6 +264,19 @@ final class FipsBlePhysicalUITests: XCTestCase {
         XCTAssertTrue(element(app, "chatListNewChatButton").waitForExistence(timeout: 30))
     }
 
+    private func enableReadReceipts(in app: XCUIApplication) {
+        element(app, "chatListProfileButton").tap()
+        let messaging = app.buttons["Messaging"]
+        XCTAssertTrue(messaging.waitForExistence(timeout: 10))
+        messaging.tap()
+        let receipts = element(app, "myProfileReadReceiptsToggle")
+        for _ in 0..<8 where !receipts.isHittable { app.swipeUp() }
+        XCTAssertTrue(receipts.isHittable)
+        if (receipts.value as? String) != "1" { receipts.tap() }
+        element(app, "settingsCloseButton").tap()
+        XCTAssertTrue(element(app, "chatListNewChatButton").waitForExistence(timeout: 10))
+    }
+
     private func enableFipsBluetooth(in app: XCUIApplication) {
         let nearby = element(app, "nearbyChatRow")
         XCTAssertTrue(nearby.waitForExistence(timeout: 10))
@@ -345,7 +381,22 @@ final class FipsBlePhysicalUITests: XCTestCase {
     ) -> Bool {
         let composer = element(app, "chatMessageInput")
         composer.tap()
-        composer.typeText(message)
+        // Long synthetic key bursts can lose a character on a busy physical
+        // phone. Verify each chunk before sending any fixture to the peer.
+        var entered = ""
+        let characters = Array(message)
+        for offset in stride(from: 0, to: characters.count, by: 8) {
+            let chunk = String(characters[offset..<min(offset + 8, characters.count)])
+            composer.typeText(chunk)
+            entered += chunk
+            let exact = XCTNSPredicateExpectation(
+                predicate: NSPredicate(format: "value == %@", entered), object: composer
+            )
+            guard XCTWaiter.wait(for: [exact], timeout: 3) == .completed else {
+                XCTFail("BLE probe text was not entered exactly; nothing sent")
+                return false
+            }
+        }
         let send = element(app, "chatSendButton")
         guard send.waitForExistence(timeout: 5) else {
             XCTFail("BLE probe send button did not appear")

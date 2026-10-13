@@ -1014,7 +1014,7 @@ final class AppManager: ObservableObject {
 #endif
 
 #if os(iOS) || os(macOS)
-        if initialState.preferences.nearbyBluetoothEnabled {
+        if initialState.preferences.nearbyEnabled && initialState.preferences.nearbyBluetoothEnabled {
             resolvedRust.setFipsBleEnabled(
                 initialState.account != nil,
                 nearbyLanEnabled: initialState.preferences.nearbyLanEnabled
@@ -2205,12 +2205,32 @@ final class AppManager: ObservableObject {
     func appBackgrounded() {
         appSceneIsActive = false
         appIsBackgrounded = true
+        dispatchToRust(.appBackgrounded)
 #if os(iOS)
         prepareForBackground()
 #endif
     }
 
 #if os(iOS)
+    func resumeBluetoothRestoration() {
+        appSceneIsActive = false
+        appIsBackgrounded = true
+        dispatchToRust(.appBackgrounded)
+        let allowance = IrisSuspendBackgroundTask()
+        Task { [weak self] in
+            // Secure-input restore runs asynchronously. Give it a bounded launch
+            // window, then flush even when iOS never creates a visible scene.
+            for _ in 0..<50 {
+                guard let self, self.appIsBackgrounded, self.bootstrapInFlight else { break }
+                try? await Task.sleep(nanoseconds: 100_000_000)
+            }
+            if let self, self.appIsBackgrounded {
+                await self.prepareForBackground()?.value
+            }
+            allowance.finish()
+        }
+    }
+
     @discardableResult
     private func prepareForBackground() -> Task<Void, Never>? {
         // CallKit + background audio keep the active local connection alive.
@@ -2220,7 +2240,8 @@ final class AppManager: ObservableObject {
         backgroundSuspendPrepared = true
         let backgroundTask = IrisSuspendBackgroundTask()
 
-        setNearbyBluetoothTransportVisible(false)
+        // CoreBluetooth owns background scanning and retained connections.
+        // Each delivered callback grants a bounded core/storage wake.
         if nearbyIris.isLanVisible {
             nearbyIris.setFipsLanVisible(false)
         }
