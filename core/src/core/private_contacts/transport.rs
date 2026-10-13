@@ -16,6 +16,9 @@ impl AppCore {
             block_sync::BLOCK_CONTROL_KIND => {
                 Some(self.receive_block_control(owner, device, &rumor.content))
             }
+            contact_name_sync::NAME_APPROVAL_KIND => {
+                Some(self.receive_name_approval_control(owner, device, &rumor.content))
+            }
             PRIVATE_CONTACT_CONTROL_KIND => {
                 Some(self.receive_private_contact_control(owner, device, &rumor.content))
             }

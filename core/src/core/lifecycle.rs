@@ -100,6 +100,7 @@ impl AppCore {
             chat_mute_states: BTreeMap::new(),
             chat_pin_states: BTreeMap::new(),
             private_blocks: BTreeMap::new(),
+            name_approvals: BTreeMap::new(),
             private_block_revision: 0,
             active_chat_id: None,
             screen_stack: Vec::new(),

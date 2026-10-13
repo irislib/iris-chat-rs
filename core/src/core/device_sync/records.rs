@@ -45,6 +45,9 @@ pub(super) enum DeviceSyncRecord {
     PrivateBlock {
         event: Event,
     },
+    PrivateNameApproval {
+        event: Event,
+    },
     MessageRead {
         #[serde(rename = "chatId")]
         chat_id: String,
@@ -93,7 +96,9 @@ impl DeviceSyncRecord {
                 read.created_at_secs,
                 read.expires_at_secs
             ]),
-            Self::PrivateBlock { event } => return event.id.to_bytes(),
+            Self::PrivateBlock { event } | Self::PrivateNameApproval { event } => {
+                return event.id.to_bytes()
+            }
             Self::Message { message } => serde_json::json!([message.chat_id, message.id]),
             Self::MessageMutation { mutation: m } => {
                 serde_json::json!(["messageMutation", m.chat_id, m.id])
@@ -166,6 +171,11 @@ impl DeviceSyncRecord {
     }
     fn storage_key(&self) -> Option<String> {
         Some(match self {
+            Self::PrivateNameApproval { event } => {
+                let state = super::super::contact_name_sync::name_approval(event)?;
+                serde_json::json!(["privateNameApproval", state.contact, event.id.to_hex()])
+                    .to_string()
+            }
             Self::PrivateBlock { event } => {
                 let state = super::super::block_sync::block_event_state(event)?;
                 serde_json::json!(["privateBlock", state.target, event.id.to_hex()]).to_string()
@@ -216,6 +226,9 @@ fn valid_time(seconds: u64, millis: Option<u64>) -> bool {
 }
 
 impl AppCore {
+    pub(in crate::core) fn apply_name_approval_event(&mut self, event: Event) -> bool {
+        self.apply_sync_record(DeviceSyncRecord::PrivateNameApproval { event })
+    }
     pub(in crate::core) fn apply_private_block_event(&mut self, event: Event) -> bool {
         self.apply_sync_record(DeviceSyncRecord::PrivateBlock { event })
     }
@@ -298,6 +311,7 @@ impl AppCore {
                     )
             }
             DeviceSyncRecord::PrivateBlock { event } => self.private_block_event_allowed(event),
+            DeviceSyncRecord::PrivateNameApproval { event } => self.name_approval_allowed(event),
             DeviceSyncRecord::Profile { event } => {
                 event.kind == Kind::Metadata
                     && event.verify().is_ok()
@@ -515,6 +529,9 @@ impl AppCore {
                 };
                 if accepted {
                     match &record {
+                        DeviceSyncRecord::PrivateNameApproval { event } => {
+                            self.project_name_approval(event)
+                        }
                         DeviceSyncRecord::PrivateBlock { event } => {
                             if !self.project_private_block(event) {
                                 return false;

@@ -54,12 +54,29 @@ impl AppCore {
             return;
         }
         let now = unix_now().get();
-        let Some(change) = self.owner_profiles.get_mut(owner).and_then(|profile| {
-            let latest = profile.profile_label()?;
-            profile.contact_memory.approve_name(name, &latest, now)
-        }) else {
+        let Some(mut memory) = self
+            .owner_profiles
+            .get(owner)
+            .map(|profile| profile.contact_memory.clone())
+        else {
             return;
         };
+        let Some(change) = memory.approve_name(name, name, now) else {
+            return;
+        };
+        if let Err(error) = self.write_name_approval(
+            owner,
+            memory
+                .first_seen_name
+                .unwrap_or_else(|| change.previous_name.clone()),
+            change.clone(),
+            false,
+        ) {
+            self.push_debug_log("name_approval.save_failed", error.to_string());
+            self.state.toast = Some("Could not save name change. Try again.".into());
+            self.emit_state();
+            return;
+        }
         self.push_system_notice(
             owner,
             format!(

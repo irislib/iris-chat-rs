@@ -18,6 +18,9 @@ impl AppCore {
                     continue;
                 }
                 match record {
+                    DeviceSyncRecord::PrivateNameApproval { event } => {
+                        self.project_name_approval(&event)
+                    }
                     DeviceSyncRecord::PrivateBlock { event } => {
                         self.project_private_block(&event);
                     }

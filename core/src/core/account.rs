@@ -737,6 +737,7 @@ impl AppCore {
         });
         self.restore_device_sync_record_projection();
         self.migrate_legacy_blocks();
+        self.migrate_name_approvals();
         self.reset_direct_chat_capability_runtime();
         self.prune_orphaned_pending_private_invite_responses();
         self.refresh_local_authorization_state();

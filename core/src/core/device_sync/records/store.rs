@@ -14,7 +14,10 @@ impl AppCore {
     // record projections retain their existing device/history ownership rules.
     fn record_storage_path(&self, key: &str) -> Option<String> {
         let parts: Vec<String> = serde_json::from_str(key).ok()?;
-        if parts.first().is_some_and(|kind| kind == "privateBlock") {
+        if parts
+            .first()
+            .is_some_and(|kind| matches!(kind.as_str(), "privateBlock" | "privateNameApproval"))
+        {
             return Some(format!(
                 "iris-chat-sync-record-v1:{}:private-state:{key}",
                 self.logged_in.as_ref()?.owner_pubkey.to_hex()
@@ -115,7 +118,7 @@ impl AppCore {
              WHERE key>=?1 AND key<?2 AND key>?3
                AND ((key>=?4 AND key<?5)
                     OR CASE WHEN json_valid(value)
-                        THEN json_extract(value, '$.type') IN ('messageMutation', 'privateBlock') END)
+                        THEN json_extract(value, '$.type') IN ('messageMutation', 'privateBlock', 'privateNameApproval') END)
              ORDER BY key LIMIT 256",
         )?;
         let rows = query.query_map(

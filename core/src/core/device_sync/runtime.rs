@@ -288,6 +288,7 @@ impl AppCore {
                 record_reconcile: Some(1),
                 private_events: Some(1),
                 read_states: Some(2),
+                name_approvals: Some(1),
                 history_since: None,
             });
             let resync_required = serde_json::to_vec(&DeviceSyncPacket::ResyncRequired {

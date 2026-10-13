@@ -118,6 +118,7 @@ impl AppCore {
                     supported: true,
                     private_events: self.private_events_supported(peer),
                     read_states: self.read_states_supported(peer),
+                    name_approvals: self.name_approvals_supported(peer),
                     target_since: self.device_history_mutation_target_since(peer),
                 },
             ) else {
@@ -155,6 +156,7 @@ impl AppCore {
                 message_mutations: Some(1),
                 private_events: self.private_events_supported(peer).then_some(1),
                 read_states: self.read_states_supported(peer).then_some(2),
+                name_approvals: self.name_approvals_supported(peer).then_some(1),
                 session: session.clone(),
                 scope,
                 prefix: (!prefix.is_empty()).then_some(prefix),

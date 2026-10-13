@@ -16,7 +16,10 @@ fn run_mutation_import_privacy(tamper: Option<bool>, partitioned: bool) {
     let owner = Keys::generate();
     let a = Keys::generate();
     let b = Keys::generate();
-    let contact = Keys::generate();
+    // A random chat can give the original an extremely small hash, leaving no
+    // smaller control among the bounded candidates below. Keep the ordering
+    // fixture deterministic; owner/device identities may still be random.
+    let contact = Keys::parse(&format!("{:064x}", 3)).unwrap();
     let chat = contact.public_key().to_hex();
     let (mut left, _, _left_dir) =
         logged_in_test_core_with_updates("mutation-privacy-left", &owner, &a);

@@ -97,6 +97,7 @@ mod chat_reactions;
 mod chat_read_state;
 mod chat_receipts;
 mod chat_settings;
+mod contact_name_sync;
 use chat_mute_sync::ChatMuteState;
 use chat_pin_sync::ChatPinState;
 mod chat_typing;
@@ -664,6 +665,7 @@ pub struct AppCore {
     chat_pin_states: BTreeMap<String, ChatPinState>,
     private_blocks: BTreeMap<String, block_sync::PrivateBlockPolicy>,
     private_block_revision: u64,
+    name_approvals: BTreeMap<String, contact_name_sync::NameApprovalPolicy>,
     active_chat_id: Option<String>,
     screen_stack: Vec<Screen>,
     next_message_id: u64,
