@@ -273,6 +273,55 @@ final class CallControllerTests: XCTestCase {
 
 #if os(iOS)
     @MainActor
+    func testRealOutgoingTonesUseSilentSwitchIndependentCallSessionWithoutCapture() async throws {
+        let session = AVAudioSession.sharedInstance()
+        let oldCategory = session.category
+        let oldMode = session.mode
+        let oldOptions = session.categoryOptions
+        defer {
+            try? session.setActive(false, options: .notifyOthersOnDeactivation)
+            try? session.setCategory(oldCategory, mode: oldMode, options: oldOptions)
+        }
+        let media = CallMediaProbe()
+        var players: [AVAudioPlayer] = []
+        let tones = IrisCallTones(makePlayer: { url in
+            let player = try AVAudioPlayer(contentsOf: url)
+            players.append(player)
+            return player
+        })
+        let controller = IrisCallController(dispatch: { _ in }, showError: { XCTFail($0) },
+            mediaForTesting: media, tonesForTesting: tones)
+        let provider = CXProvider(configuration: CXProviderConfiguration())
+        controller.provider(provider, didDeactivate: session)
+        for video in [false, true] {
+            // Begin from the iOS default that would be silenced by the switch.
+            try session.setCategory(.soloAmbient, mode: .default)
+            var call = connectedCall(id: "real-tone-\(video)")
+            call.outgoing = true
+            call.videoCapable = video
+            call.phase = "outgoing"
+            controller.update(call)
+            try controller.configureAudioSession(video: video)
+            controller.outgoingAudioSessionConfigured()
+            XCTAssertEqual(session.category, .playAndRecord)
+            XCTAssertEqual(session.mode, video ? .videoChat : .voiceChat)
+            for phase in ["outgoing", "ringing"] {
+                call.phase = phase
+                controller.update(call)
+                let player = try XCTUnwrap(players.last)
+                XCTAssertTrue(player.isPlaying, "Bundled \(phase) tone must reach the real audio player")
+                XCTAssertGreaterThan(player.volume, 0)
+                try await Task.sleep(nanoseconds: 150_000_000)
+                XCTAssertGreaterThan(player.currentTime, 0, "The real output clock must advance")
+                XCTAssertTrue(media.configurations.allSatisfy { $0.callID == nil })
+            }
+            controller.end()
+            XCTAssertFalse(try XCTUnwrap(players.last).isPlaying)
+        }
+        XCTAssertTrue(media.started.isEmpty, "Progress tones must not open the microphone")
+    }
+
+    @MainActor
     func testOutgoingTonePlaysBeforeCallKitActivationWithoutStartingCapture() {
         let media = CallMediaProbe()
         let player = CallToneProbe()

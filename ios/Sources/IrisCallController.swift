@@ -454,7 +454,9 @@ final class IrisCallController: NSObject, ObservableObject {
         updateHardware()
     }
 
-    private func configureAudioSession(video: Bool) throws {
+    func configureAudioSession(video: Bool) throws {
+        // Unlike ambient audio, call audio remains audible with the Ring/Silent
+        // switch set to silent. Use the same session for progress tones and media.
         try AVAudioSession.sharedInstance().setCategory(.playAndRecord,
             mode: video ? .videoChat : .voiceChat, options: [.allowBluetooth])
         try AVAudioSession.sharedInstance().setPreferredSampleRate(48_000)
