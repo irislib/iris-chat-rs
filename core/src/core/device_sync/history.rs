@@ -22,6 +22,7 @@ pub(super) struct HistoryState {
     private_events: BTreeSet<String>,
     read_states: BTreeSet<String>,
     name_approvals: BTreeSet<String>,
+    private_facts: BTreeSet<String>,
     state_ready: BTreeSet<String>,
     deferred_history: BTreeMap<String, u64>,
     partitions: BTreeMap<(String, RecordScope), HistoryPartition>,
@@ -51,6 +52,7 @@ struct HistorySession {
     private_events: bool,
     read_states: bool,
     name_approvals: bool,
+    private_facts: bool,
     deferred_mutation: bool,
 }
 
@@ -60,6 +62,7 @@ struct HistoryRecordAccess {
     private_events: bool,
     read_states: bool,
     name_approvals: bool,
+    private_facts: bool,
     target_since: u64,
 }
 
@@ -176,6 +179,8 @@ impl HistorySession {
                     || !matches!(record, DeviceSyncRecord::PrivateBlock { .. }))
                 && (record_access.name_approvals
                     || !matches!(record, DeviceSyncRecord::PrivateNameApproval { .. }))
+                && (record_access.private_facts
+                    || !matches!(record, DeviceSyncRecord::PrivateContactFact { .. }))
                 && record.scope() == scope
                 && filter.contains(record.timestamp())
                 && hex(&record.id()).starts_with(prefix)
@@ -196,6 +201,13 @@ impl HistorySession {
             records.len() <= core.device_history_record_limit().min(capacity)
         };
         if scope == RecordScope::State {
+            if record_access.private_facts {
+                for fact in core.private_contact_facts() {
+                    if !add(DeviceSyncRecord::PrivateContactFact { fact }) {
+                        return None;
+                    }
+                }
+            }
             // Inventory exact status from message rows and pending originals.
             // The recent live-sync batch is bounded and is not history storage.
             if record_access.read_states {
@@ -278,6 +290,7 @@ impl HistorySession {
             private_events: record_access.private_events,
             read_states: record_access.read_states,
             name_approvals: record_access.name_approvals,
+            private_facts: record_access.private_facts,
             deferred_mutation: false,
         })
     }
@@ -347,6 +360,7 @@ impl AppCore {
             runtime.history.private_events.remove(peer);
             runtime.history.read_states.remove(peer);
             runtime.history.name_approvals.remove(peer);
+            runtime.history.private_facts.remove(peer);
             runtime.history.state_ready.remove(peer);
             runtime.history.deferred_history.remove(peer);
             runtime
@@ -453,6 +467,20 @@ impl AppCore {
             .as_ref()
             .is_some_and(|runtime| runtime.history.name_approvals.contains(peer))
     }
+    pub(super) fn negotiate_private_facts(&mut self, peer: &str, capability: Option<u8>) {
+        if capability == Some(1) && self.device_sync_peer_is_authorized(peer) {
+            if let Some(runtime) = &mut self.device_sync {
+                if runtime.history.private_facts.len() < MAX_SESSIONS {
+                    runtime.history.private_facts.insert(peer.to_string());
+                }
+            }
+        }
+    }
+    pub(super) fn private_facts_supported(&self, peer: &str) -> bool {
+        self.device_sync
+            .as_ref()
+            .is_some_and(|runtime| runtime.history.private_facts.contains(peer))
+    }
     pub(super) fn start_device_state(&mut self, peer: &str) {
         if let Some(runtime) = &mut self.device_sync {
             runtime.history.state_ready.remove(peer);
@@ -469,6 +497,7 @@ impl AppCore {
         if self.private_events_supported(peer)
             || self.read_states_supported(peer)
             || self.name_approvals_supported(peer)
+            || self.private_facts_supported(peer)
         {
             if let Some(runtime) = &mut self.device_sync {
                 if !runtime.history.state_ready.contains(peer) {
@@ -624,6 +653,7 @@ impl AppCore {
             private_events,
             read_states,
             name_approvals,
+            private_facts,
             since,
             until,
             frame,
@@ -694,6 +724,7 @@ impl AppCore {
                     read_states: read_states == Some(2) && self.read_states_supported(peer),
                     name_approvals: name_approvals == Some(1)
                         && self.name_approvals_supported(peer),
+                    private_facts: private_facts == Some(1) && self.private_facts_supported(peer),
                     target_since: self.device_history_mutation_target_since(peer),
                 },
             ) else {

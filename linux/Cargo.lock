@@ -3022,7 +3022,7 @@ dependencies = [
  "nostr",
  "nostr-double-ratchet",
  "nostr-double-ratchet-pairwise-codec",
- "nostr-identity 0.4.0",
+ "nostr-identity 0.5.1",
  "nostr-pubsub",
  "nostr-pubsub-fips",
  "nostr-pubsub-reconcile",
@@ -3827,9 +3827,9 @@ dependencies = [
 
 [[package]]
 name = "nostr-identity"
-version = "0.4.0"
+version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "95fd048871579a175d1c38d1ea947f1034206d93696ea7ac74d140979e8022bb"
+checksum = "fcb96d5abdc41bdb40f54e24ca31e4e98250f44c13ce68993db622966dd4b5c0"
 dependencies = [
  "anyhow",
  "nostr-sdk",

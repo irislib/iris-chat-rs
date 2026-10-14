@@ -76,6 +76,7 @@ impl AppCore {
                         name_approvals: self
                             .name_approvals_supported(source_pubkey_hex)
                             .then_some(1),
+                        private_facts: self.private_facts_supported(source_pubkey_hex).then_some(1),
                         history_since: agreed,
                     }) {
                         *packet = updated;
@@ -116,6 +117,7 @@ impl AppCore {
             private_events: Some(1),
             read_states: Some(2),
             name_approvals: Some(1),
+            private_facts: Some(1),
             history_since: self.device_history_receive_since(source_pubkey_hex),
         }) else {
             return;
@@ -171,6 +173,7 @@ pub(super) fn metadata_page_packets(core: &AppCore, roster_at: u64, offset: usiz
         private_events: Some(1),
         read_states: Some(2),
         name_approvals: Some(1),
+        private_facts: Some(1),
         history_since: None,
     }) {
         packets.push(page_end);

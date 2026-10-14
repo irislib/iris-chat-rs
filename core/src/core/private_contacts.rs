@@ -59,7 +59,13 @@ impl AppCore {
         owner: &str,
     ) -> anyhow::Result<PrivateContactSyncStateV2> {
         let mut state = match self.app_store.load_private_contact_sync(owner)? {
-            Some(json) => migrate_private_contact_sync_v2(&serde_json::from_str(&json)?, owner)?,
+            Some(json) => migrate_private_contact_sync_v2(
+                &nostr_identity::restore_private_contact_facts(
+                    serde_json::from_str(&json)?,
+                    owner,
+                )?,
+                owner,
+            )?,
             None => create_private_contact_sync_v2(owner, &opaque_id())?,
         };
         // Absence is not a deletion. Counter-zero migration cannot overwrite a
@@ -80,8 +86,12 @@ impl AppCore {
     }
 
     fn commit_private_contacts(&mut self, state: PrivateContactSyncStateV2) -> anyhow::Result<()> {
-        self.app_store
-            .save_private_contact_sync(&state.owner, &serde_json::to_string(&state)?)?;
+        self.app_store.save_private_contact_sync(
+            &state.owner,
+            &serde_json::to_string(&nostr_identity::store_private_contact_facts(
+                &serde_json::to_value(&state)?,
+            )?)?,
+        )?;
         self.private_contacts.state = Some(state);
         self.project_private_contacts();
         Ok(())
@@ -165,5 +175,80 @@ impl AppCore {
                 false
             }
         }
+    }
+}
+
+impl AppCore {
+    pub(super) fn private_contact_fact(
+        &self,
+        contact: &str,
+        field: &str,
+    ) -> Option<nostr_identity::PrivateContactFact> {
+        let state = self.private_contacts.state.as_ref()?;
+        let register = state.contacts.get(contact)?.get(field)?;
+        nostr_identity::build_private_contact_fact(
+            &state.owner,
+            contact,
+            field,
+            &nostr_identity::PrivateFactRegister {
+                counter: register.counter,
+                writer: register.writer.clone(),
+                value: register.value.clone(),
+            },
+        )
+        .ok()
+    }
+    pub(super) fn private_contact_facts(&self) -> Vec<nostr_identity::PrivateContactFact> {
+        let Some(state) = self.private_contacts.state.as_ref() else {
+            return Vec::new();
+        };
+        state
+            .contacts
+            .iter()
+            .flat_map(|(contact, fields)| {
+                fields
+                    .keys()
+                    .filter_map(|field| self.private_contact_fact(contact, field))
+            })
+            .collect()
+    }
+    pub(super) fn merge_private_contact_fact(
+        &mut self,
+        fact: &nostr_identity::PrivateContactFact,
+    ) -> bool {
+        let Some(owner) = self
+            .logged_in
+            .as_ref()
+            .map(|login| login.owner_pubkey.to_hex())
+        else {
+            return false;
+        };
+        let Ok(value) = nostr_identity::parse_private_contact_fact(fact, &owner) else {
+            return false;
+        };
+        let document = PrivateContactDocumentV2 {
+            version: 2,
+            owner,
+            contact: value.contact,
+            fields: BTreeMap::from([(
+                value.field,
+                PrivateContactRegisterV2 {
+                    counter: value.register.counter,
+                    writer: value.register.writer,
+                    value: value.register.value,
+                },
+            )]),
+        };
+        let Ok(state) = self.private_contact_state() else {
+            return false;
+        };
+        let Ok(next) = merge_private_contact_document_v2(&state, &document) else {
+            return false;
+        };
+        // A newer durable field also resolves an older requested fact.
+        if next == state {
+            return true;
+        }
+        self.commit_private_contacts(next).is_ok()
     }
 }

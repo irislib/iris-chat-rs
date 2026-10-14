@@ -154,6 +154,9 @@ impl AppCore {
         locator: &RecordLocator,
     ) -> Option<DeviceSyncRecord> {
         match locator {
+            RecordLocator::PrivateContactFact(contact, field) => self
+                .private_contact_fact(contact, field)
+                .map(|fact| DeviceSyncRecord::PrivateContactFact { fact }),
             RecordLocator::MessageRead(chat_id, message_id) => {
                 Some(DeviceSyncRecord::MessageRead {
                     chat_id: chat_id.clone(),

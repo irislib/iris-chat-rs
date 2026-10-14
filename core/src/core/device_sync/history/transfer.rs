@@ -16,6 +16,8 @@ impl AppCore {
             || requested.iter().any(|id| !state.requested.contains(id))
             || records.iter().any(|record| {
                 (matches!(record, DeviceSyncRecord::PrivateBlock { .. }) && !state.private_events)
+                    || (matches!(record, DeviceSyncRecord::PrivateContactFact { .. })
+                        && !state.private_facts)
                     || (matches!(record, DeviceSyncRecord::PrivateNameApproval { .. })
                         && !state.name_approvals)
                     || (matches!(record, DeviceSyncRecord::MessageRead { .. })

@@ -120,7 +120,11 @@ fn private_contact_upgrade_retires_plaintext_intents_only_after_durable_migratio
             .unwrap()
             .unwrap();
         let migrated = restore_private_contact_sync_v2(
-            &serde_json::from_str(&saved).unwrap(),
+            &nostr_identity::restore_private_contact_facts(
+                serde_json::from_str(&saved).unwrap(),
+                &owner.public_key().to_hex(),
+            )
+            .unwrap(),
             &owner.public_key().to_hex(),
         )
         .unwrap();
@@ -350,7 +354,11 @@ fn private_contact_decrypted_journal_waits_for_both_devices_after_restart() {
         .unwrap()
         .unwrap();
     assert!(restore_private_contact_sync_v2(
-        &serde_json::from_str(&saved).unwrap(),
+        &nostr_identity::restore_private_contact_facts(
+            serde_json::from_str(&saved).unwrap(),
+            &pair.owner.public_key().to_hex(),
+        )
+        .unwrap(),
         &pair.owner.public_key().to_hex()
     )
     .unwrap()

@@ -20,6 +20,22 @@ fn native_private_control_interop_fixture() {
         pinned: true,
     });
 
+    pair.a
+        .write_name_approval(
+            &contact,
+            "Old name".into(),
+            crate::contact_memory::AcceptedNameChange {
+                previous_name: "Old name".into(),
+                accepted_name: "New name".into(),
+                accepted_at_secs: unix_now().get(),
+            },
+            false,
+        )
+        .unwrap();
+    pair.a.handle_action(AppAction::SetUserBlocked {
+        owner_pubkey_hex: contact.clone(),
+        blocked: true,
+    });
     let mut cases = BTreeMap::new();
     for event in pending_events_with_kind(&pair.a, MESSAGE_EVENT_KIND) {
         let delivery = pair
@@ -33,7 +49,7 @@ fn native_private_control_interop_fixture() {
         let rumor: UnsignedEvent = serde_json::from_str(&delivery.content).unwrap();
         rumor.verify_id().unwrap();
         let kind = rumor.kind.as_u16();
-        if !matches!(kind, 10449 | 10450 | 10452 | 10453) {
+        if !matches!(kind, 10449 | 10450 | 10452 | 10453 | 10454 | 10455) {
             continue;
         }
         assert_eq!(delivery.sender, owner);
@@ -81,7 +97,7 @@ fn native_private_control_interop_fixture() {
     }
     assert_eq!(
         cases.keys().copied().collect::<Vec<_>>(),
-        vec![10449, 10450, 10452, 10453]
+        vec![10449, 10450, 10452, 10453, 10454, 10455]
     );
     let fixture = serde_json::json!({
         "version":1, "owner":owner.to_hex(), "senderDevice":pair.a_device.public_key().to_hex(),

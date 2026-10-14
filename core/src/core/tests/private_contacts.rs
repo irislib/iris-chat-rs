@@ -21,7 +21,8 @@ fn private_contact_recovery_ignores_secondary_relay_reconnects() {
     }
     assert_eq!(core.relay_connected_count, 1);
     assert_eq!(
-        pending_publish_changes(core), before,
+        pending_publish_changes(core),
+        before,
         "a secondary relay reconnect must not mutate ratchets or write new recovery messages"
     );
     assert!(pending_events_with_kind(core, MESSAGE_EVENT_KIND).is_empty());
@@ -43,7 +44,8 @@ fn private_contact_recovery_coalesces_rapid_requests_and_still_converges() {
         pair.a.recover_private_contact_history();
     }
     assert_eq!(
-        pending_publish_changes(&pair.a), before,
+        pending_publish_changes(&pair.a),
+        before,
         "rapid foreground/reconnect recovery must reuse the durable request"
     );
     deliver_pending_relay_events_for_test(&pair.a, &mut pair.b);
@@ -64,22 +66,33 @@ fn private_contact_recovery_retries_failed_admission_and_later_outages() {
     core.protocol_engine = engine;
     core.preferences.nostr_relay_urls = vec!["wss://relay.example".into()];
     core.handle_relay_status_changed("wss://relay.example".into(), RelayStatus::Connected);
-    assert_eq!(protocol_send_log_count(core, "private_contacts.self_sync_v2"), 1);
+    assert_eq!(
+        protocol_send_log_count(core, "private_contacts.self_sync_v2"),
+        1
+    );
     for _ in 0..3 {
         core.handle_relay_status_changed("wss://relay.example".into(), RelayStatus::Disconnected);
         core.handle_relay_status_changed("wss://relay.example".into(), RelayStatus::Connected);
     }
-    assert_eq!(protocol_send_log_count(core, "private_contacts.self_sync_v2"), 1);
+    assert_eq!(
+        protocol_send_log_count(core, "private_contacts.self_sync_v2"),
+        1
+    );
 
-    core.private_contacts.last_recovery_request_at =
-        Some(Instant::now() - Duration::from_secs(61));
+    core.private_contacts.last_recovery_request_at = Some(Instant::now() - Duration::from_secs(61));
     core.handle_relay_status_changed("wss://relay.example".into(), RelayStatus::Disconnected);
     core.handle_relay_status_changed("wss://relay.example".into(), RelayStatus::Connected);
-    assert_eq!(protocol_send_log_count(core, "private_contacts.self_sync_v2"), 2);
+    assert_eq!(
+        protocol_send_log_count(core, "private_contacts.self_sync_v2"),
+        2
+    );
 
     core.private_contacts.reset();
     core.recover_private_contact_history();
-    assert_eq!(protocol_send_log_count(core, "private_contacts.self_sync_v2"), 3);
+    assert_eq!(
+        protocol_send_log_count(core, "private_contacts.self_sync_v2"),
+        3
+    );
 }
 
 fn private_contact_patch(value: serde_json::Value) -> PrivateContactPatchV2 {
@@ -286,6 +299,20 @@ fn private_contacts_migrate_saved_registers_but_never_read_or_publish_legacy_cip
 }
 
 #[test]
+fn private_contact_facts_and_inner_controls_never_enter_public_outboxes() {
+    let mut pair = chat_read_sync_pair("private-fact-publication-guard");
+    let before = pair.a.pending_relay_publishes.len();
+    for kind in [7368, 37368, 10454, 10455, 10456] {
+        let event = EventBuilder::new(Kind::from(kind as u16), "private data")
+            .tags([nostr::Tag::parse(["type", "private_contact"]).unwrap()])
+            .sign_with_keys(&pair.owner)
+            .unwrap();
+        assert!(!pair.a.publish_runtime_event(event, "private-fact", None));
+    }
+    assert_eq!(pair.a.pending_relay_publishes.len(), before);
+}
+
+#[test]
 fn private_contacts_failed_durable_write_does_not_mutate_visible_favorite() {
     let mut pair = chat_read_sync_pair("private-v2-failed-write");
     let id = Keys::generate().public_key().to_hex();
@@ -293,7 +320,7 @@ fn private_contacts_failed_durable_write_does_not_mutate_visible_favorite() {
         peer_input: id.clone(),
     });
     pair.a.private_contact_state().unwrap();
-    pair.a.app_store.shared().lock().unwrap().execute_batch("CREATE TRIGGER reject_private_contact BEFORE UPDATE ON app_meta WHEN NEW.key = 'private_contact_sync_v2' BEGIN SELECT RAISE(ABORT, 'test write failure'); END;").unwrap();
+    pair.a.app_store.shared().lock().unwrap().execute_batch("CREATE TRIGGER reject_private_contact BEFORE UPDATE ON app_meta WHEN NEW.key = 'private_contact_sync_v3' BEGIN SELECT RAISE(ABORT, 'test write failure'); END;").unwrap();
     pair.a.handle_action(AppAction::SetContactFavorite {
         owner_pubkey_hex: id.clone(),
         favorite: true,
@@ -377,6 +404,221 @@ fn device_labels_v2_authenticate_membership_preserve_tombstones_and_hide_legacy_
                 assert!(entry.get("clientLabel").is_none());
                 assert!(entry.get("labelUpdatedAt").is_none());
             }
+        }
+    }
+}
+
+#[test]
+fn private_contacts_fact_storage_migrates_clears_and_pending_without_reclocking() {
+    let mut pair = chat_read_sync_pair("private-fact-migration");
+    let owner = pair.owner.public_key().to_hex();
+    let contact = Keys::generate().public_key().to_hex();
+    let state = create_private_contact_sync_v2(&owner, &"1".repeat(32)).unwrap();
+    let state = edit_private_contact_v2(
+        &state,
+        &contact,
+        &BTreeMap::from([
+            ("nickname".into(), serde_json::json!("old")),
+            ("note".into(), serde_json::json!("note")),
+        ]),
+    )
+    .unwrap();
+    let state = edit_private_contact_v2(
+        &state,
+        &contact,
+        &BTreeMap::from([("nickname".into(), serde_json::Value::Null)]),
+    )
+    .unwrap();
+    pair.a
+        .app_store
+        .shared()
+        .lock()
+        .unwrap()
+        .execute(
+            "INSERT OR REPLACE INTO app_meta(key,value) VALUES ('private_contact_sync_v2',?1)",
+            [serde_json::to_string(&state).unwrap()],
+        )
+        .unwrap();
+    pair.a.private_contacts.state = None;
+    let migrated = pair.a.restore_private_contact_state(&owner).unwrap();
+    assert_eq!(migrated, state);
+    let saved: serde_json::Value = serde_json::from_str(
+        &pair
+            .a
+            .app_store
+            .load_private_contact_sync(&owner)
+            .unwrap()
+            .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(saved["version"], 3);
+    assert!(saved["facts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|fact| fact.get("sig").is_none()));
+    pair.a.private_contacts.state = None;
+    assert_eq!(pair.a.restore_private_contact_state(&owner).unwrap(), state);
+    for fact in pair.a.private_contact_facts() {
+        assert!(pair.b.merge_private_contact_fact(&fact));
+    }
+    let right = pair.b.private_contact_state().unwrap();
+    assert_eq!(right.contacts, state.contacts);
+    let mut forged = pair.a.private_contact_facts()[0].clone();
+    forged.owner = "f".repeat(64);
+    assert!(!pair.b.merge_private_contact_fact(&forged));
+}
+
+#[test]
+fn private_contacts_negentropy_repairs_dropped_snapshots_and_exports_interop() {
+    for capable in [false, true] {
+        let mut pair = chat_read_sync_pair("private-facts-negentropy");
+        for known in pair.a.app_keys.values_mut() {
+            known
+                .devices
+                .sort_by(|a, b| a.identity_pubkey_hex.cmp(&b.identity_pubkey_hex));
+        }
+        pair.b.app_keys = pair.a.app_keys.clone();
+        let owner = pair.owner.public_key().to_hex();
+        let contact = Keys::generate().public_key().to_hex();
+        pair.a.edit_private_contact_fields(
+            &contact,
+            BTreeMap::from([
+                ("nickname".into(), serde_json::json!("Original")),
+                ("note".into(), serde_json::json!("Only my devices")),
+            ]),
+        );
+        pair.a.edit_private_contact_fields(
+            &contact,
+            BTreeMap::from([("nickname".into(), serde_json::Value::Null)]),
+        );
+        pair.b.edit_private_contact_fields(
+            &contact,
+            BTreeMap::from([("favorite".into(), serde_json::json!(true))]),
+        );
+        let endpoint = Arc::new(
+            pair.a
+                .runtime
+                .block_on(
+                    fips_core::FipsEndpoint::builder()
+                        .without_system_tun()
+                        .bind(),
+                )
+                .unwrap(),
+        );
+        let (left_tx, left_rx) = DeviceSyncTcpSender::test_channel(256, 64 * 1024);
+        let (right_tx, right_rx) = DeviceSyncTcpSender::test_channel(256, 64 * 1024);
+        pair.a.install_device_sync_sender_for_test(
+            endpoint.clone(),
+            left_tx,
+            vec![test_fips_peer(&pair.b_device)],
+        );
+        pair.b.install_device_sync_sender_for_test(
+            endpoint,
+            right_tx,
+            vec![test_fips_peer(&pair.a_device)],
+        );
+        pair.a.set_device_history_record_limit_for_test(1);
+        pair.b.set_device_history_record_limit_for_test(1);
+        let request = serde_json::to_vec(&serde_json::json!({"type":"request","v":1,"rosterAt":100,"recordReconcile":1,"privateFacts":capable.then_some(1)})).unwrap();
+        pair.a.handle_device_sync_packet(
+            &pair.b_device.public_key().to_hex(),
+            DEVICE_SYNC_PORT,
+            &request,
+        );
+        pair.b.handle_device_sync_packet(
+            &pair.a_device.public_key().to_hex(),
+            DEVICE_SYNC_PORT,
+            &request,
+        );
+        let mut facts_sent = 0;
+        let mut trace = Vec::new();
+        for round in 0..2048 {
+            let mut progress = false;
+            for direction in [false, true] {
+                let (source, key, target, target_key, receiver) = if direction {
+                    (
+                        &mut pair.b,
+                        &pair.b_device,
+                        &mut pair.a,
+                        &pair.a_device,
+                        &right_rx,
+                    )
+                } else {
+                    (
+                        &mut pair.a,
+                        &pair.a_device,
+                        &mut pair.b,
+                        &pair.b_device,
+                        &left_rx,
+                    )
+                };
+                let mut packets = Vec::new();
+                while let Ok(batch) = receiver.try_recv() {
+                    packets.extend(batch.records);
+                }
+                if let Some(packet) =
+                    source.take_device_sync_control_for_test(test_fips_peer(target_key))
+                {
+                    packets.push(packet);
+                }
+                progress |= !packets.is_empty();
+                for packet in packets {
+                    let mut value: serde_json::Value = serde_json::from_slice(&packet).unwrap();
+                    if value["type"] == "snapshot" {
+                        value.as_object_mut().unwrap().remove("privateContactsV2");
+                    }
+                    facts_sent += value["records"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter(|record| record["type"] == "privateContactFact")
+                        .count();
+                    trace.push(value.clone());
+                    target.handle_device_sync_packet(
+                        &key.public_key().to_hex(),
+                        DEVICE_SYNC_PORT,
+                        &serde_json::to_vec(&value).unwrap(),
+                    );
+                }
+            }
+            if !progress {
+                break;
+            }
+            assert!(round < 2047);
+        }
+        if !capable {
+            assert_eq!(facts_sent, 0);
+            continue;
+        }
+        assert!(facts_sent > 0, "no private records: {trace:?}");
+        assert_eq!(
+            pair.a.private_contact_state().unwrap().contacts,
+            pair.b.private_contact_state().unwrap().contacts
+        );
+        assert_eq!(pair.b.owner_profiles[&contact].nickname, None);
+        assert_eq!(
+            pair.b.owner_profiles[&contact].contact_note.as_deref(),
+            Some("Only my devices")
+        );
+        pair.a
+            .write_name_approval(
+                &contact,
+                "Old name".into(),
+                crate::contact_memory::AcceptedNameChange {
+                    previous_name: "Old name".into(),
+                    accepted_name: "New name".into(),
+                    accepted_at_secs: unix_now().get(),
+                },
+                false,
+            )
+            .unwrap();
+        pair.a.handle_action(AppAction::SetUserBlocked {
+            owner_pubkey_hex: contact.clone(),
+            blocked: true,
+        });
+        if let Ok(path) = std::env::var("IRIS_PRIVATE_STATE_FIXTURE_OUTPUT") {
+            std::fs::write(path, serde_json::to_vec_pretty(&serde_json::json!({"owner":owner,"contact":contact,"records":pair.a.private_state_fixture_for_test()})).unwrap()).unwrap();
         }
     }
 }

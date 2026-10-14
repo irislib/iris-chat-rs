@@ -142,7 +142,13 @@ impl AppCore {
         {
             return false;
         }
-        if private_contacts::obsolete_private_contact_event(&event)
+        if (matches!(event.kind.as_u16(), 7368 | 37368)
+            && event
+                .tags
+                .iter()
+                .any(|tag| tag.as_slice() == ["type", "private_contact"]))
+            || matches!(event.kind.as_u16(), 10454..=10456)
+            || private_contacts::obsolete_private_contact_event(&event)
             || private_device_labels::obsolete_private_app_keys_event(&event)
         {
             return false;
