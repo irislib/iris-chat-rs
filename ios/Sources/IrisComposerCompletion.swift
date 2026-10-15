@@ -11,27 +11,28 @@ struct IrisComposerCompletionToken: Equatable {
         guard selection.length == 0, selection.location != NSNotFound,
               let caret = Range(selection, in: text)?.lowerBound else { return nil }
         let prefix = text[..<caret]
-        guard let start = prefix.lastIndex(of: trigger),
-              start == text.startIndex || text[text.index(before: start)].isWhitespace else {
-            // A closing colon is handled below by finding the opening colon.
-            if prefix.last == trigger, prefix.count > 1 {
-                let beforeClosing = String(prefix.dropLast())
-                guard let open = find(in: beforeClosing, selection: NSRange(location: beforeClosing.utf16.count, length: 0), trigger: trigger),
-                      !open.query.isEmpty else { return nil }
-                return Self(range: NSRange(location: open.range.location, length: open.range.length + 1), query: open.query, isClosed: true)
-            }
-            return nil
-        }
-        let query = String(text[text.index(after: start)..<caret])
-        guard query.count <= 64, query.unicodeScalars.allSatisfy(isTokenScalar) else { return nil }
+        let start = prefix.lastIndex(where: \.isWhitespace).map { text.index(after: $0) } ?? text.startIndex
+        guard start < caret, text[start] == trigger else { return nil }
+        let queryStart = text.index(after: start)
+        let isClosed = queryStart < caret && text[text.index(before: caret)] == trigger
+        let queryEnd = isClosed ? text.index(before: caret) : caret
+        let querySlice = text[queryStart..<queryEnd]
+        // Never recursively peel delimiters: :smile:: is ordinary text, and a
+        // long pasted run of colons must not consume stack or remove punctuation.
+        guard querySlice.prefix(65).count <= 64,
+              (!isClosed || !querySlice.isEmpty),
+              querySlice.unicodeScalars.allSatisfy(isTokenScalar) else { return nil }
         var end = caret
-        // Replacing a suggestion while the caret is inside :shortcode: must not
-        // leave the remaining shortcode or its final colon in the message.
-        while end < text.endIndex, text[end].unicodeScalars.allSatisfy(isTokenScalar) {
-            end = text.index(after: end)
+        if !isClosed {
+            var count = querySlice.count
+            while end < text.endIndex, text[end].unicodeScalars.allSatisfy(isTokenScalar) {
+                count += 1
+                guard count <= 64 else { return nil }
+                end = text.index(after: end)
+            }
+            if end < text.endIndex, text[end] == trigger { end = text.index(after: end) }
         }
-        if end < text.endIndex, text[end] == trigger { end = text.index(after: end) }
-        return Self(range: NSRange(start..<end, in: text), query: query, isClosed: false)
+        return Self(range: NSRange(start..<end, in: text), query: String(querySlice), isClosed: isClosed)
     }
 
     private static func isTokenScalar(_ scalar: Unicode.Scalar) -> Bool {

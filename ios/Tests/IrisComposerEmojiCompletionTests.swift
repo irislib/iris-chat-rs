@@ -24,6 +24,14 @@ final class IrisComposerEmojiCompletionTests: XCTestCase {
         }
     }
 
+    func testRepeatedDelimitersAndOversizedTokensRemainLiteral() {
+        for text in [":smile::", "::smile:", String(repeating: ":", count: 100_000), ":" + String(repeating: "s", count: 65)] {
+            XCTAssertNil(IrisComposerCompletionToken.find(in: text, selection: NSRange(location: text.utf16.count, length: 0)))
+        }
+        let text = ":sm" + String(repeating: "i", count: 100_000)
+        XCTAssertNil(IrisComposerCompletionToken.find(in: text, selection: NSRange(location: 3, length: 0)))
+    }
+
     func testUTF16ReplacementPreservesEmojiPrefixAndSuffix() {
         let text = "👩🏽‍💻 :smile: after"
         let selection = NSRange(location: ("👩🏽‍💻 :sm" as NSString).length, length: 0)
