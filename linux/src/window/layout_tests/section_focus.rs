@@ -76,7 +76,15 @@ pub(super) fn check_narrow_section_shortcuts(
         .find_map(|controller| controller.downcast::<gtk::EventControllerKey>().ok())
         .expect("production section keyboard shortcuts");
     let press = |modifiers: gtk::gdk::ModifierType| {
+        eprintln!(
+            "SECTION_KEY {modifiers:?} before: {}",
+            focus_state(slot, manager, window, chat_id)
+        );
         assert!(keys.emit_by_name::<bool>("key-pressed", &[&gtk::gdk::Key::t, &0u32, &modifiers]));
+        eprintln!(
+            "SECTION_KEY {modifiers:?} after: {}",
+            focus_state(slot, manager, window, chat_id)
+        );
     };
     press(gtk::gdk::ModifierType::CONTROL_MASK);
     wait(
