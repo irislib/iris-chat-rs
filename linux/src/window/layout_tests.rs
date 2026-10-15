@@ -196,13 +196,27 @@ fn check_narrow_section_shortcuts(
         })
     });
     apply_state(slot, header, manager, &manager.current_state());
+    eprintln!("EMPTY_SEARCH before Ctrl+T: {}", slot.section_focus_debug());
     press(gtk::gdk::ModifierType::CONTROL_MASK);
+    let mut last_state = String::new();
     pump_until(|| {
         drain();
         let search = named(slot.root.upcast_ref(), "iris-keyboard-search");
-        current_screen(&manager.current_state()) == Screen::ChatList
-            && search.is_mapped()
-            && owns_focus(window, &search)
+        let list_route = current_screen(&manager.current_state()) == Screen::ChatList;
+        let search_focused = owns_focus(window, &search);
+        let focused = gtk::prelude::GtkWindowExt::focus(window);
+        let state = format!(
+            "list_route={list_route} search_mapped={} search_focused={search_focused} focused_type={:?} composer_focused={} {}",
+            search.is_mapped(),
+            focused.as_ref().map(|widget| widget.type_().name()),
+            text_view(slot.root.upcast_ref()).is_some_and(|input| input.has_focus()),
+            slot.section_focus_debug(),
+        );
+        if state != last_state {
+            eprintln!("EMPTY_SEARCH {state}");
+            last_state = state;
+        }
+        list_route && search.is_mapped() && search_focused
     });
     let list = named(slot.root.upcast_ref(), "iris-keyboard-chat-list");
     assert!(
@@ -424,7 +438,15 @@ pub(super) fn run(manager: Rc<AppManager>) {
     eprintln!("Checking persistent new-chat form");
     check_new_chat_form(&slot, &header, &manager, &window, &state);
     eprintln!("Checking narrow keyboard navigation");
-    check_narrow_section_shortcuts(&slot, &header, &manager, &window, &chat_id);
+    let repetitions = std::env::var("IRIS_LAYOUT_FOCUS_REPETITIONS")
+        .ok()
+        .map(|value| value.parse::<usize>().expect("integer focus repetitions"))
+        .unwrap_or(1);
+    assert!((1..=100).contains(&repetitions));
+    for repetition in 1..=repetitions {
+        eprintln!("Narrow keyboard navigation {repetition}/{repetitions}");
+        check_narrow_section_shortcuts(&slot, &header, &manager, &window, &chat_id);
+    }
     let mut settings_state = manager.current_state();
     settings_state.router.screen_stack.push(Screen::Settings);
     apply_state(&slot, &header, &manager, &settings_state);

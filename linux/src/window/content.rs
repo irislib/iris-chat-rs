@@ -227,6 +227,20 @@ impl Content {
         window.add_controller(keys);
     }
 
+    #[cfg(feature = "ui-tests")]
+    pub(super) fn section_focus_debug(&self) -> String {
+        let section = self.section.borrow();
+        format!(
+            "collapsed={} show_content={} sidebar_mapped={} detail_mapped={} pending_composer={:?} pending_tick={}",
+            self.split.is_collapsed(),
+            self.split.shows_content(),
+            self.sidebar_page.is_mapped(),
+            self.detail_page.is_mapped(),
+            section.pending_composer,
+            section.pending_tick,
+        )
+    }
+
     fn focus_pending_section(&self) {
         if focus_section(self.root.upcast_ref(), &self.section) {
             return;
