@@ -12,30 +12,6 @@ import UIKit
 import PhotosUI
 #endif
 
-/// Shows a pointing-hand cursor while hovered. No-op outside macOS.
-struct IrisHoverPointerModifier: ViewModifier {
-    func body(content: Content) -> some View {
-#if canImport(AppKit)
-        content.onHover { hovering in
-            if hovering {
-                NSCursor.pointingHand.push()
-            } else {
-                NSCursor.pop()
-            }
-        }
-#else
-        content
-#endif
-    }
-}
-
-extension View {
-    /// Shows a pointing-hand cursor while hovered. Inert on iOS.
-    func irisHoverPointer() -> some View {
-        modifier(IrisHoverPointerModifier())
-    }
-}
-
 /// `.plain` look-alike that adds a pointing-hand cursor on macOS hover.
 /// Use everywhere instead of the system `.plain` style.
 struct IrisPlainButtonVisualStyle: ButtonStyle {

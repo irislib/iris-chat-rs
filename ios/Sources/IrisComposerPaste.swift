@@ -4,11 +4,33 @@ import UIKit
 final class IrisComposerUITextView: UITextView {
     let composerMeasurement = IrisComposerTextMeasurement()
     var onPasteAttachments: ((IrisClipboardAttachments) -> Void)?
+    var onCompletionCommand: ((IrisComposerCompletionCommand) -> Bool)?
+    var hasCompletions: (() -> Bool)?
     private var pendingSelectionReveal: NSRange?
     private var selectionRevealScheduled = false
     #if DEBUG
     var onLayoutTiming: ((String, Double) -> Void)?
     #endif
+
+    override var keyCommands: [UIKeyCommand]? {
+        guard markedTextRange == nil, hasCompletions?() == true else { return super.keyCommands }
+        return [UIKeyCommand.inputUpArrow, UIKeyCommand.inputDownArrow, "\r", "\t", UIKeyCommand.inputEscape].map {
+            let command = UIKeyCommand(input: $0, modifierFlags: [], action: #selector(completionKey(_:)))
+            command.wantsPriorityOverSystemBehavior = true
+            return command
+        } + (super.keyCommands ?? [])
+    }
+
+    @objc private func completionKey(_ command: UIKeyCommand) {
+        let action: IrisComposerCompletionCommand
+        switch command.input {
+        case UIKeyCommand.inputUpArrow: action = .previous
+        case UIKeyCommand.inputDownArrow: action = .next
+        case UIKeyCommand.inputEscape: action = .dismiss
+        default: action = .accept
+        }
+        _ = onCompletionCommand?(action)
+    }
 
     func revealSelectionAfterNextLayout() {
         guard isFirstResponder, markedTextRange == nil else { return }
@@ -99,6 +121,7 @@ final class IrisComposerNSTextView: NSTextView {
     let composerMeasurement = IrisComposerTextMeasurement()
     weak var composerCommandDelegate: IrisComposerNSTextViewCommandDelegate?
     var onPasteAttachments: ((IrisClipboardAttachments) -> Void)?
+    var onCompletionCommand: ((IrisComposerCompletionCommand) -> Bool)?
 
     override func paste(_ sender: Any?) {
         if pasteAttachments(from: .general) { return }
@@ -121,6 +144,17 @@ final class IrisComposerNSTextView: NSTextView {
     }
 
     override func doCommand(by selector: Selector) {
+        if !hasMarkedText(), !shouldInsertLineBreakForCurrentEvent {
+            let command: IrisComposerCompletionCommand?
+            switch selector {
+            case #selector(NSResponder.moveUp(_:)): command = .previous
+            case #selector(NSResponder.moveDown(_:)): command = .next
+            case #selector(NSResponder.insertNewline(_:)), #selector(NSResponder.insertTab(_:)): command = .accept
+            case #selector(NSResponder.cancelOperation(_:)): command = .dismiss
+            default: command = nil
+            }
+            if let command, onCompletionCommand?(command) == true { return }
+        }
         if selector == #selector(NSResponder.insertNewline(_:)),
            !hasMarkedText(), !shouldInsertLineBreakForCurrentEvent {
             composerCommandDelegate?.composerTextViewDidSubmit(self)
