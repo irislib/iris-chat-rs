@@ -156,3 +156,67 @@ fn attachment_upload_group_completion_preserves_draft_and_navigation() {
         }]
     );
 }
+
+#[test]
+fn direct_files_preparation_preserves_the_next_draft_and_navigation() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let chat_id = Keys::generate().public_key().to_hex();
+    let (mut core, _updates, directory) =
+        logged_in_test_core_with_updates("direct-file-draft", &owner, &device);
+    core.preferences.nostr_relay_urls.clear();
+    core.preferences.nearby_enabled = false;
+    let (sender, pending) = flume::unbounded();
+    core.core_sender = sender.clone();
+    core.priority_sender = sender;
+    let socket = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+    let std::net::SocketAddr::V4(rendezvous) = socket.local_addr().unwrap() else {
+        unreachable!()
+    };
+    core.reconcile_device_sync_at_rendezvous_for_test(rendezvous);
+    let source = directory.path().join("draft.txt");
+    std::fs::write(&source, b"Private direct-file draft test").unwrap();
+    core.set_chat_draft(&chat_id, "The submitted file caption");
+    core.handle_action(AppAction::SendDirectFiles {
+        chat_id: chat_id.clone(),
+        attachments: vec![OutgoingAttachment {
+            file_path: source.to_string_lossy().into_owned(),
+            filename: "draft.txt".into(),
+        }],
+        caption: "The submitted file caption".into(),
+    });
+    assert!(core.state.busy.sending_message);
+    // The composer consumes its submitted draft immediately. Hold the actual
+    // worker result in the core queue while the user edits and navigates away.
+    core.handle_action(AppAction::SetChatDraft {
+        chat_id: chat_id.clone(),
+        text: String::new(),
+    });
+    assert!(core.threads[&chat_id].draft.is_empty());
+    core.set_chat_draft(&chat_id, "A later draft while the file is prepared");
+    core.active_chat_id = None;
+    core.screen_stack = vec![Screen::Settings];
+
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while core.state.busy.sending_message {
+        for message in pending.try_iter().take(128) {
+            core.handle_message(message);
+        }
+        assert!(std::time::Instant::now() < deadline, "file preparation timed out");
+        std::thread::sleep(Duration::from_millis(2));
+    }
+
+    assert_eq!(core.threads[&chat_id].draft, "A later draft while the file is prepared");
+    assert_eq!(core.active_chat_id, None);
+    assert_eq!(core.screen_stack, vec![Screen::Settings]);
+    let records = direct_files_test_records(&core);
+    assert_eq!(records.len(), 1);
+    let message = direct_files_test_message(&core, &chat_id, &records[0].offer.id);
+    assert_eq!(message.body, "The submitted file caption");
+    assert_eq!(message.direct_transfer.unwrap().files[0].filename, "draft.txt");
+    let persisted = core.load_persisted().unwrap().unwrap();
+    assert_eq!(
+        persisted.threads.iter().find(|thread| thread.chat_id == chat_id).unwrap().draft,
+        "A later draft while the file is prepared"
+    );
+}

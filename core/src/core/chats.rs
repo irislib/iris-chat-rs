@@ -17,7 +17,7 @@ const MAX_CHAT_MESSAGE_BODY_BYTES: usize = 32 * 1024;
 
 enum MessageSendSource {
     Composer,
-    AttachmentUpload,
+    PreparedAttachment,
 }
 
 impl AppCore {
@@ -478,8 +478,8 @@ impl AppCore {
         self.send_message_from(chat_id, text, expires_at_secs, MessageSendSource::Composer);
     }
 
-    pub(super) fn send_uploaded_attachment_message(&mut self, chat_id: &str, text: &str) {
-        self.send_message_from(chat_id, text, None, MessageSendSource::AttachmentUpload);
+    pub(super) fn send_prepared_attachment_message(&mut self, chat_id: &str, text: &str) {
+        self.send_message_from(chat_id, text, None, MessageSendSource::PreparedAttachment);
     }
 
     fn send_message_from(
@@ -531,9 +531,9 @@ impl AppCore {
             self.screen_stack = vec![Screen::Chat {
                 chat_id: normalized_chat_id.clone(),
             }];
-            // A direct composer send consumes its draft. An upload already
-            // captured its caption at submission; when it finishes, the user
-            // may be writing the next message or viewing a different screen.
+            // A direct composer send consumes its draft. Attachment work
+            // captured its caption at submission; preparation or upload can
+            // finish after the user has started another draft or left the chat.
             self.ensure_thread_record(&normalized_chat_id, now.get())
                 .draft
                 .clear();

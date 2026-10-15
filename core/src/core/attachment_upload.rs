@@ -328,7 +328,7 @@ impl AppCore {
                     "attachment.upload.finish",
                     format!("chat_id={} success=true", chat_id),
                 );
-                self.send_uploaded_attachment_message(&chat_id, &message_text);
+                self.send_prepared_attachment_message(&chat_id, &message_text);
             }
             Err(error) => {
                 self.push_debug_log(

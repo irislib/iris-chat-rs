@@ -247,6 +247,9 @@ public partial class ChatView : UserControl
         {
             if (Composer.SendDirectly) App.CurrentManager.SendDirectFiles(chatId, stagedAttachments, text);
             else App.CurrentManager.SendAttachments(chatId, stagedAttachments, text);
+            // ComposerBar clears locally without DraftChanged. Consume this
+            // submitted draft now; completion must preserve any later typing.
+            App.CurrentManager.SetChatDraft(chatId, string.Empty);
             return;
         }
         if (!string.IsNullOrEmpty(text))
