@@ -156,7 +156,7 @@ impl AppCore {
                 record.offer.transport_files(&record.paths),
             )?;
         }
-        self.send_message(&record.chat_id, &record.wire, None);
+        self.send_prepared_attachment_message(&record.chat_id, &record.wire);
         if !self.threads.get(&record.chat_id).is_some_and(|t| {
             t.messages
                 .iter()

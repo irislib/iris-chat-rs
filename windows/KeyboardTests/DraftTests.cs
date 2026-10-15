@@ -102,6 +102,58 @@ internal static class DraftTests
         manager.DeleteLocalMessage(own, sentId);
         Until(() => manager.CurrentChat?.messages.Any(message => message.id == sentId) == false);
 
+        using (var upload = new DelayedAttachmentUpload())
+        {
+            const string caption = "Caption submitted with the file";
+            const string nextDraft = "The next message, written during upload";
+            input.Text = caption;
+            Until(() => Draft(own) == caption);
+            composer.AddAttachments(new[] { upload.SourcePath });
+            Until(() => composer.SendAllowed);
+            ((Button)composer.FindName("SendButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            Until(() => upload.RequestReceived && manager.Busy.uploadingAttachment);
+            _ = ffi.ExportSupportBundleJson();
+            Check(input.Text.Length == 0 && ffi.State().chatList.First(chat => chat.chatId == own).draft.Length == 0,
+                "Attachment submission clears the submitted persisted draft before upload completion");
+
+            input.Text = nextDraft;
+            Until(() => Draft(own) == nextDraft);
+            upload.Complete();
+            Until(() => !manager.Busy.uploadingAttachment && manager.CurrentChat?.messages.Any(message =>
+                message.body == caption && message.attachments.Any(file => file.filename == "upload-draft.txt")) == true);
+            Check(input.Text == nextDraft && Draft(own) == nextDraft,
+                "Finishing the upload preserves the next draft instead of clearing it");
+            manager.OpenChat(other);
+            Until(() => manager.CurrentChat?.chatId == other);
+            manager.OpenChat(own);
+            Until(() => manager.CurrentChat?.chatId == own && input.Text == nextDraft);
+            var attachmentId = manager.CurrentChat!.messages.Single(message => message.body == caption).id;
+            manager.DeleteLocalMessage(own, attachmentId);
+            input.Clear();
+            Until(() => Draft(own).Length == 0 && manager.CurrentChat?.messages.Any(message => message.id == attachmentId) == false);
+
+            const string directCaption = "Caption submitted with a direct file";
+            const string afterDirectDraft = "The next draft after direct-file submission";
+            input.Text = directCaption;
+            Until(() => Draft(own) == directCaption);
+            composer.AddAttachments(new[] { upload.SourcePath });
+            ((CheckBox)composer.FindName("DirectMode")).IsChecked = true;
+            Check(composer.SendDirectly, "The direct-file submission path is selected");
+            Until(() => composer.SendAllowed);
+            ((Button)composer.FindName("SendButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            _ = ffi.ExportSupportBundleJson();
+            Check(ffi.State().chatList.First(chat => chat.chatId == own).draft.Length == 0,
+                "Direct-file submission consumes its original persisted caption draft too");
+            input.Text = afterDirectDraft;
+            Until(() => Draft(own) == afterDirectDraft && !manager.Busy.sendingMessage &&
+                manager.CurrentChat?.messages.Any(message => message.body == directCaption && message.directTransfer != null) == true);
+            Check(input.Text == afterDirectDraft, "Direct-file preparation leaves later composer text intact");
+            var directId = manager.CurrentChat!.messages.Single(message => message.body == directCaption).id;
+            manager.DeleteLocalMessage(own, directId);
+            input.Clear();
+            Until(() => Draft(own).Length == 0 && manager.CurrentChat?.messages.Any(message => message.id == directId) == false);
+        }
+
         const string unloadDraft = "  Keep this on leaving\n ";
         input.Text = unloadDraft;
         window.Content = new TextBlock { Text = "Chats" };
@@ -140,7 +192,7 @@ internal static class DraftTests
         Until(() => Draft(own) == closingDraft);
         manager.SetChatDraft(own, "");
         Until(() => Draft(own).Length == 0);
-        Console.WriteLine("PASS: real Core drafts, pending chat switch, edit isolation, clear/send, unload/close/restore and list precedence");
+        Console.WriteLine("PASS: real Core drafts, pending chat switch, edit isolation, clear/send, delayed attachment upload, unload/close/restore and list precedence");
     }
 
     private static void DrainDraftTimer()

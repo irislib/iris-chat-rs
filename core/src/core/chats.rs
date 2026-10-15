@@ -15,6 +15,11 @@ use self::helpers::{
 const OPEN_CHAT_MESSAGES_PER_PAGE: usize = 80;
 const MAX_CHAT_MESSAGE_BODY_BYTES: usize = 32 * 1024;
 
+enum MessageSendSource {
+    Composer,
+    PreparedAttachment,
+}
+
 impl AppCore {
     pub(super) fn create_chat(&mut self, peer_input: &str) {
         if self.logged_in.is_none() {
@@ -470,6 +475,20 @@ impl AppCore {
     }
 
     pub(super) fn send_message(&mut self, chat_id: &str, text: &str, expires_at_secs: Option<u64>) {
+        self.send_message_from(chat_id, text, expires_at_secs, MessageSendSource::Composer);
+    }
+
+    pub(super) fn send_prepared_attachment_message(&mut self, chat_id: &str, text: &str) {
+        self.send_message_from(chat_id, text, None, MessageSendSource::PreparedAttachment);
+    }
+
+    fn send_message_from(
+        &mut self,
+        chat_id: &str,
+        text: &str,
+        expires_at_secs: Option<u64>,
+        source: MessageSendSource,
+    ) {
         let trimmed = text.trim();
         if trimmed.is_empty() {
             return;
@@ -507,17 +526,17 @@ impl AppCore {
 
         let now =
             UnixSeconds(self.chat_activity_after_deletion(&normalized_chat_id, unix_now().get()));
-        self.active_chat_id = Some(normalized_chat_id.clone());
-        self.screen_stack = vec![Screen::Chat {
-            chat_id: normalized_chat_id.clone(),
-        }];
-        let thread = self.ensure_thread_record(&normalized_chat_id, now.get());
-        // The draft is what the user typed and just sent — clear it
-        // from the persisted thread so a relaunch doesn't re-fill the
-        // composer with text we've already shipped. Matches Signal's
-        // `clearTextMessage` + `updateWithDraft(nil)` flow.
-        if !thread.draft.is_empty() {
-            thread.draft.clear();
+        if matches!(source, MessageSendSource::Composer) {
+            self.active_chat_id = Some(normalized_chat_id.clone());
+            self.screen_stack = vec![Screen::Chat {
+                chat_id: normalized_chat_id.clone(),
+            }];
+            // A direct composer send consumes its draft. Attachment work
+            // captured its caption at submission; preparation or upload can
+            // finish after the user has started another draft or left the chat.
+            self.ensure_thread_record(&normalized_chat_id, now.get())
+                .draft
+                .clear();
         }
         let expires_at_secs = expires_at_secs.or_else(|| {
             self.chat_message_ttl_seconds
