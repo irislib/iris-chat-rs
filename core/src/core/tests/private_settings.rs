@@ -112,6 +112,15 @@ fn authorization_records_keep_signatures_and_reject_forged_proofs() {
 
 #[test]
 fn private_state_reconciliation_allows_approved_pre_link_history() {
+    check_private_state_link_history(false);
+}
+
+#[test]
+fn legacy_request_acceptance_reconciles_before_linked_device_history() {
+    check_private_state_link_history(true);
+}
+
+fn check_private_state_link_history(legacy_acceptance: bool) {
     for include_history in [false, true] {
         let mut pair = chat_read_sync_pair("private-state-link-history");
         pair.b.app_keys = pair.a.app_keys.clone();
@@ -131,6 +140,9 @@ fn private_state_reconciliation_allows_approved_pre_link_history() {
         assert!(pair.a.apply_app_keys_event(&current).unwrap());
         assert!(pair.b.apply_app_keys_event(&current).unwrap());
         let chat = owner.to_hex();
+        if legacy_acceptance {
+            pair.a.preferences.accepted_owner_pubkeys.push(chat.clone());
+        }
         pair.a.push_incoming_message_from(
             &chat,
             Some("before-link".into()),
@@ -207,6 +219,9 @@ fn private_state_reconciliation_allows_approved_pre_link_history() {
             "wire: {}",
             serde_json::to_string(&trace).unwrap()
         );
+        if legacy_acceptance {
+            assert_eq!(pair.b.request_decision(&chat).unwrap().decision, "accepted");
+        }
         if include_history {
             assert!(
                 pair.b

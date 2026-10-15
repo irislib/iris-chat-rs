@@ -177,13 +177,10 @@ impl DeviceSyncRecord {
         if let Self::PrivateEvent { event } = self {
             let (setting, target, _) =
                 nostr_identity::parse_private_setting(event, event.pubkey).ok()?;
-            return Some(if setting == "requestDecision" {
-                RecordLocator::Head(
-                    serde_json::json!(["privateEvent", setting, target]).to_string(),
-                )
-            } else {
-                RecordLocator::PrivateSetting(setting, target)
-            });
+            // Legacy accepted-chat preferences also appear as private events,
+            // before a durable request-decision head exists. Resolve every
+            // setting from the same projection used to build the inventory.
+            return Some(RecordLocator::PrivateSetting(setting, target));
         }
         if let Self::PrivateContactFact { fact } = self {
             let value = nostr_identity::parse_private_contact_fact(fact, &fact.pubkey).ok()?;
