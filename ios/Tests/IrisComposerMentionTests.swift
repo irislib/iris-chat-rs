@@ -1,9 +1,10 @@
 import XCTest
+import SwiftUI
 #if os(macOS)
 import AppKit
-import SwiftUI
 @testable import IrisChatMac
 #else
+import UIKit
 @testable import IrisChat
 #endif
 
@@ -73,6 +74,66 @@ final class IrisComposerMentionTests: XCTestCase {
         draft.replace(range: NSRange(location: 5, length: 5), replacementLength: 0)
         XCTAssertEqual(draft.wireText(from: "@Alex"), "@Alex")
     }
+
+    #if os(iOS)
+    @MainActor
+    func testUIKitNativeMentionEditsPreserveExactIdentityThroughUndo() {
+        let state = IrisComposerState()
+        let model = IrisComposerMentionCompletion()
+        let parent = IrisUIKitComposerTextView(
+            text: Binding(get: { state.text }, set: { state.text = $0 }), isFocused: .constant(true),
+            onNativeEdit: state.prepareNativeEdit,
+            onCompletionUpdate: { model.update($0, candidates: self.people) },
+            onCompletionSelectionChange: model.selectionDidChange,
+            onCompletionCommand: model.handle
+        )
+        model.onInsert = { person, label, location in
+            state.insertMention(label: label, token: person.token, owner: person.id, at: location)
+        }
+        let coordinator = parent.makeCoordinator()
+        let storage = NSTextStorage()
+        let layout = NSLayoutManager()
+        let container = NSTextContainer()
+        storage.addLayoutManager(layout); layout.addTextContainer(container)
+        let editor = IrisComposerUITextView(frame: CGRect(x: 0, y: 0, width: 400, height: 100), textContainer: container)
+        editor.delegate = coordinator; storage.delegate = coordinator; coordinator.nativeTextView = editor
+        let controller = UIViewController(); controller.view.addSubview(editor)
+        let window = UIWindow(frame: editor.bounds); window.rootViewController = controller
+        window.makeKeyAndVisible(); editor.becomeFirstResponder()
+        defer { editor.resignFirstResponder(); window.isHidden = true }
+        guard let undo = editor.undoManager else { return XCTFail("Native undo manager is required") }
+        undo.groupsByEvent = false
+        func change(_ action: () -> Void) {
+            undo.beginUndoGrouping(); action(); coordinator.textViewDidChange(editor); undo.endUndoGrouping()
+        }
+        change { editor.insertText("@") }
+        XCTAssertEqual(model.results.count, 3)
+        change { XCTAssertTrue(model.handle(.accept)) }
+        XCTAssertEqual(state.wireText, people[0].token + " ")
+        undo.undo(); XCTAssertEqual(state.wireText, "@")
+        undo.redo(); XCTAssertEqual(state.wireText, people[0].token + " ")
+        change { editor.insertText("@") }
+        change { XCTAssertTrue(model.handle(.next)); XCTAssertTrue(model.handle(.accept)) }
+        let both = people[0].token + " " + people[1].token + " "
+        XCTAssertEqual(state.wireText, both)
+        change { editor.selectedRange = NSRange(location: 0, length: 6); editor.insertText("") }
+        XCTAssertEqual(state.wireText, people[1].token + " ")
+        undo.undo(); XCTAssertEqual(state.wireText, both)
+        undo.redo(); XCTAssertEqual(state.wireText, people[1].token + " ")
+        undo.undo()
+        change { editor.selectedRange = NSRange(location: 6, length: 6); editor.insertText("") }
+        XCTAssertEqual(state.wireText, people[0].token + " ")
+        undo.undo(); XCTAssertEqual(state.wireText, both)
+        change { editor.selectedRange = NSRange(location: 0, length: 5); editor.insertText("@Alex") }
+        XCTAssertEqual(state.wireText, "@Alex " + people[1].token + " ")
+        undo.undo(); XCTAssertEqual(state.wireText, both)
+        undo.redo(); XCTAssertEqual(state.wireText, "@Alex " + people[1].token + " ")
+        undo.undo()
+        change { editor.selectedRange = NSRange(location: 1, length: 1); editor.insertText("Z") }
+        XCTAssertEqual(state.wireText, "@Zlex " + people[1].token + " ")
+        undo.undo(); XCTAssertEqual(state.wireText, both)
+    }
+    #endif
 
     #if os(macOS)
     @MainActor

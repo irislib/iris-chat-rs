@@ -1,9 +1,13 @@
 package to.iris.chat.ui.screens
 
 import androidx.compose.material3.Text
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.material3.TextButton
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.assertIsOn
+import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.performClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
@@ -28,6 +32,7 @@ class ChatMuteOptionsTest {
         } }
         compose.onNodeWithText("Mute").performClick()
         compose.onNodeWithText("1 week").assertExists()
+        compose.onNodeWithTag("chatMuteMentions").assertDoesNotExist()
         compose.waitForIdle()
         Thread.sleep(350) // Allow the platform dialog window enter animation to settle before capture.
         val instrumentation = InstrumentationRegistry.getInstrumentation()
@@ -42,6 +47,29 @@ class ChatMuteOptionsTest {
             val action = actions.single() as AppAction.SetChatMuteUntil
             assertEquals("test-chat", action.chatId)
             assertTrue(action.untilSecs in (before + 3600uL)..((System.currentTimeMillis() / 1000).toULong() + 3600uL))
+        }
+    }
+
+    @Test fun mentionChoiceUpdatesWithoutChangingTheMuteOrAnotherChat() {
+        val actions = mutableListOf<AppAction>()
+        val enabled = mutableStateOf(true)
+        compose.setContent { IrisChatTheme(darkTheme = false) {
+            TextButton(onClick = rememberChatMuteAction("group:test", true, {
+                actions.add(it)
+                if (it is AppAction.SetChatMentionNotifications) enabled.value = it.enabled
+            }, notifyMentions = enabled.value)) { Text("Options") }
+        } }
+        compose.onNodeWithText("Options").performClick()
+        compose.onNodeWithTag("chatMuteMentions").assertIsOn().performClick()
+        compose.onNodeWithTag("chatMuteMentions").assertIsOff()
+        compose.runOnIdle {
+            assertEquals(AppAction.SetChatMentionNotifications("group:test", false), actions.single())
+        }
+        compose.onNodeWithText("Notify for mentions while muted").performClick()
+        compose.onNodeWithTag("chatMuteMentions").assertIsOn()
+        compose.runOnIdle {
+            assertEquals(AppAction.SetChatMentionNotifications("group:test", true), actions.last())
+            assertEquals(2, actions.size)
         }
     }
 

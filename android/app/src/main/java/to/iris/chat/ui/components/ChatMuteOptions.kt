@@ -1,5 +1,6 @@
 package to.iris.chat.ui.components
 
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Column
@@ -17,6 +18,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
 import to.iris.chat.rust.AppAction
 
 internal val chatMuteDurations = listOf("1 hour" to 3600uL, "8 hours" to 28800uL, "1 day" to 86400uL, "1 week" to 604800uL)
@@ -50,10 +52,12 @@ fun rememberChatMuteAction(chatId: String, muted: Boolean, dispatch: (AppAction)
                         dispatch(AppAction.SetChatMuted(chatId, true))
                     }, modifier = Modifier.fillMaxWidth().testTag("chatMuteAlways")) { Text("Always") }
                     if (chatId.startsWith("group:")) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Checkbox(checked = notifyMentions, onCheckedChange = {
-                                dispatch(AppAction.SetChatMentionNotifications(chatId, it))
-                            }, modifier = Modifier.testTag("chatMuteMentions"))
+                        Row(verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth().testTag("chatMuteMentions")
+                                .toggleable(value = notifyMentions, role = Role.Checkbox) {
+                                    dispatch(AppAction.SetChatMentionNotifications(chatId, it))
+                                }) {
+                            Checkbox(checked = notifyMentions, onCheckedChange = null)
                             Text("Notify for mentions while muted")
                         }
                     }

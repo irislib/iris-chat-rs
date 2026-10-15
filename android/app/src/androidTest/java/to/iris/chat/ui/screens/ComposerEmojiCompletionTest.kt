@@ -49,10 +49,12 @@ class ComposerEmojiCompletionTest {
         val field = compose.onNodeWithTag("chatMessageInput")
         field.performClick()
         compose.onNodeWithTag("chatEmojiCompletion-smile").assertDoesNotExist()
-        field.performTextClearance().performTextInput(":fire")
+        field.performTextClearance()
+        field.performTextInput(":fire")
         field.performTextInput(":")
         compose.runOnIdle { assertEquals("🔥", draft.text.toString()) }
-        field.performTextClearance().performTextInput("https://iris.to/:sm 12:30")
+        field.performTextClearance()
+        field.performTextInput("https://iris.to/:sm 12:30")
         compose.runOnIdle { assertEquals("https://iris.to/:sm 12:30", draft.text.toString()) }
         compose.onNodeWithTag("chatEmojiCompletion-smile").assertDoesNotExist()
     }

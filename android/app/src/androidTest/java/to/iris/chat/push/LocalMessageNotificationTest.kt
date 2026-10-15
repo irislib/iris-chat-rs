@@ -23,7 +23,7 @@ class LocalMessageNotificationTest {
         val manager = context.getSystemService(NotificationManager::class.java)
         val owner = "notification-test-${UUID.randomUUID()}"
         val chat = buildLargeTestAppState(1u, 1u, 0u).chatList.first().copy(unreadCount = 1u)
-        val candidate = NotificationCandidate(chat.chatId, "Background sender", "New background message")
+        val candidate = NotificationCandidate(chatId = chat.chatId, title = "Background sender", body = "New background message")
         val tag = "local-message:$owner:${chat.chatId}"
         try {
             MobilePushNotifier.showLocal(context, candidate, owner)
