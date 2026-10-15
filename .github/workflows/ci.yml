@@ -21,6 +21,11 @@ on:
         type: choice
         default: all
         options: [all, core, android, windows, apple, macos, ios-history, macos-notary]
+      notary_code_hashes:
+        description: Optional JSON code-hash list for the read-only ticket diagnostic
+        type: string
+        required: false
+        default: "[]"
 
 permissions:
   contents: read

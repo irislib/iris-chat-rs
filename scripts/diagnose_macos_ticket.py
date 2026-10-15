@@ -6,6 +6,7 @@ it. Keep signing identifiers and raw tool output out of the diagnostic receipt.
 """
 import datetime
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -86,6 +87,33 @@ receipt = {
     "lookup": lookup,
     "stapler": attempts,
 }
+event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text()) if os.environ.get("GITHUB_EVENT_PATH") else {}
+extra_hashes = json.loads(event.get("inputs", {}).get("notary_code_hashes", "[]"))
+assert isinstance(extra_hashes, list) and len(extra_hashes) <= 4
+extra_results = []
+for extra_hash in extra_hashes:
+    assert isinstance(extra_hash, str) and re.fullmatch(r"[0-9a-f]{40}", extra_hash)
+    print("::add-mask::" + extra_hash, flush=True)
+    request = json.dumps({"records": [{"recordName": "2/2/" + extra_hash}]})
+    code, stdout, stderr, seconds = run(
+        ["curl", "--silent", "--show-error", "--connect-timeout", "10", "--max-time", "45",
+         "--header", "Content-Type: application/json", "--data-binary", "@-",
+         "--write-out", "\n%{http_code}", endpoint], input=request,
+    )
+    body, _, status = stdout.rpartition("\n")
+    lookup = {"exitCode": code, "httpStatus": int(status) if status.isdigit() else None, "seconds": seconds}
+    if code == 0 and status == "200":
+        records = json.loads(body).get("records", [])
+        lookup["signedTicketAvailable"] = any(row.get("fields", {}).get("signedTicket", {}).get("value") for row in records)
+        lookup["serverErrorCodes"] = [row.get("serverErrorCode") for row in records if row.get("serverErrorCode")]
+    swift_code, swift_stdout, swift_stderr, swift_seconds = run(
+        ["swift", str(Path(__file__).with_suffix(".swift"))], input=request,
+    )
+    foundation = {"exitCode": swift_code, "seconds": swift_seconds}
+    if swift_code == 0:
+        foundation["response"] = json.loads(swift_stdout)
+    extra_results.append({"curl": lookup, "foundation": foundation})
+receipt["additionalTicketLookups"] = extra_results
 destination.write_text(json.dumps(receipt, indent=2) + "\n")
 print(json.dumps(receipt))
-raise SystemExit(0 if attempts[-1]["exitCode"] == 0 else 1)
+raise SystemExit(0 if attempts[-1]["exitCode"] == 0 and all(x["foundation"]["exitCode"] == 0 for x in extra_results) else 1)
