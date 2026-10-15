@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using Microsoft.Toolkit.Uwp.Notifications;
 
 namespace IrisChat;
@@ -29,9 +31,34 @@ public sealed class SystemDesktopNotificationPoster : IDesktopNotificationPoster
                 .AddArgument("target", DesktopNotificationNavigation.Encode(target))
                 .AddText(title)
                 .AddText(body)
-                .Show();
+                .Show(toast => {
+                    toast.Tag = Guid.NewGuid().ToString("N")[..16];
+                    toast.Group = target.Kind == "message" ? "iris-messages" : "iris-calls";
+                });
         }
         catch { /* Notifications are best-effort; never interrupt message ingest. */ }
+    }
+
+    public void ClearRead(string dataDir, string owner, IReadOnlySet<string> fullyReadChats)
+    {
+        try
+        {
+            var records = new List<DesktopReadNotification>();
+            foreach (var toast in ToastNotificationManagerCompat.History.GetHistory())
+            {
+                try
+                {
+                    var args = ToastArguments.Parse(toast.Content.DocumentElement.GetAttribute("launch"));
+                    if (!args.TryGetValue("target", out var payload)) continue;
+                    var target = DesktopNotificationNavigation.Decode(payload);
+                    if (target != null) records.Add(new(toast.Tag, toast.Group, target));
+                }
+                catch { /* Old or unrelated toast metadata is not read proof. */ }
+            }
+            foreach (var item in DesktopReadNotification.Read(records, dataDir, owner, fullyReadChats))
+                ToastNotificationManagerCompat.History.Remove(item.Tag, item.Group);
+        }
+        catch { /* Preserve notifications when OS history or storage is unavailable. */ }
     }
 
     public void Clear()

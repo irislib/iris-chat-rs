@@ -123,6 +123,7 @@ use message_mutations::{MessageMutation, MESSAGE_DELETE_KIND, MESSAGE_EDIT_KIND}
 mod mobile_push;
 mod model;
 pub(crate) mod notifications;
+pub(crate) mod desktop_read_notifications;
 mod payloads;
 mod persistence;
 mod private_contacts;

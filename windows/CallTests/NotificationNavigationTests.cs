@@ -10,6 +10,7 @@ internal static class NotificationNavigationTests
 {
     internal static void Run(AppManager manager, string output)
     {
+        DesktopReadNotificationTests.Run();
         var directory = Path.Combine(output, "notification-routing");
         Directory.CreateDirectory(directory);
         var owner = new string('a', 64);

@@ -654,6 +654,7 @@ fn post_notifications_from_core(
     window_active: bool,
     manager: &AppManager,
 ) {
+    manager.clear_read_notifications(state);
     let open_chat_id = router_open_chat_id(state.router.clone());
     let candidates = decide_pending_notifications(
         prev.to_vec(),
@@ -663,9 +664,11 @@ fn post_notifications_from_core(
         open_chat_id,
     );
     for candidate in candidates {
-        if let Some(target) = manager.notification_target(&candidate.chat_id) {
+        if let Some((id, target)) =
+            manager.notification_message_target(&candidate.chat_id, candidate.message_id)
+        {
             notifications::notify(
-                &format!("chat-{}", candidate.chat_id),
+                &id,
                 &candidate.title,
                 &candidate.body,
                 &target,

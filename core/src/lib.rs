@@ -1686,6 +1686,20 @@ pub fn read_mobile_push_notification_indexes(
 }
 
 pub use crate::core::notifications::NotificationCandidate;
+pub use crate::core::desktop_read_notifications::DesktopNotificationMessage;
+
+#[uniffi::export]
+pub fn read_desktop_notification_indexes(
+    data_dir: String,
+    owner_pubkey_hex: String,
+    messages: Vec<DesktopNotificationMessage>,
+) -> Vec<u64> {
+    ffi_or("read_desktop_notification_indexes", Vec::new(), || {
+        crate::core::desktop_read_notifications::read_desktop_notification_indexes(
+            data_dir, owner_pubkey_hex, messages,
+        )
+    })
+}
 
 /// Compute the list of chats that should raise a notification given two
 /// successive `AppState` chat-list snapshots. Single source of truth for
