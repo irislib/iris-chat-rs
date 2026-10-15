@@ -80,6 +80,12 @@ pub(super) fn install_link_actions(label: &gtk::Label, urls: Vec<String>) {
 
     let popover = build_link_popover(urls);
     popover.set_parent(label);
+    let cleanup = popover.downgrade();
+    label.connect_destroy(move |_| {
+        if let Some(popover) = cleanup.upgrade() {
+            popover.unparent();
+        }
+    });
 
     let popover_for_click = popover.clone();
     let gesture = gtk::GestureClick::new();
