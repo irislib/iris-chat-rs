@@ -242,8 +242,8 @@ impl DeviceSyncRecord {
     fn wins(&self, previous: &Self) -> bool {
         match (self, previous) {
             (Self::PrivateEvent { event: a }, Self::PrivateEvent { event: b }) => {
-                super::private_settings::request_decision_version(a)
-                    > super::private_settings::request_decision_version(b)
+                super::private_settings::private_setting_version(a)
+                    > super::private_settings::private_setting_version(b)
             }
             (Self::PrivateBlock { event: a }, Self::PrivateBlock { event: b }) => {
                 super::super::block_sync::block_event_version(a)

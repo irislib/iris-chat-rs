@@ -135,6 +135,9 @@ impl AppCore {
                 chat_id,
                 until_secs,
             } => self.set_chat_mute_until(&chat_id, until_secs),
+            AppAction::SetChatMentionNotifications { chat_id, enabled } => {
+                self.set_chat_mention_notifications(&chat_id, enabled)
+            }
             AppAction::SetChatPinned { chat_id, pinned } => self.set_chat_pinned(&chat_id, pinned),
             AppAction::SetChatUnread { chat_id, unread } => self.set_chat_unread(&chat_id, unread),
             AppAction::SendAttachment {

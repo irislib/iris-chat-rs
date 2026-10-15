@@ -165,6 +165,7 @@ use account_app_keys::{
     preserve_known_app_key_labels,
 };
 use attachment_upload::upload_profile_picture_to_hashtree;
+pub(crate) use attachments::strip_reply_quote;
 use attachments::*;
 use config::*;
 pub(crate) use config::{

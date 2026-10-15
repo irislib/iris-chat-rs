@@ -1,4 +1,5 @@
 use super::*;
+pub(in crate::core) mod mention_notifications;
 use nostr_identity::{build_private_setting, parse_private_setting};
 
 impl AppCore {
@@ -133,6 +134,9 @@ impl AppCore {
                 }
                 snapshot.deleted_chats.push(state);
             }
+            "mentionNotifications" => {
+                mention_notifications::state(event)?;
+            }
             "requestDecision" => {
                 request_decision_state(event)?;
             }
@@ -152,6 +156,15 @@ impl AppCore {
                 Err(_) => return false,
                 Ok(false) => return true,
                 Ok(true) => self.project_request_decision(&state),
+            }
+        }
+        if let Some(state) = mention_notifications::state(event) {
+            match self.store_sync_record(&DeviceSyncRecord::PrivateEvent {
+                event: event.clone(),
+            }) {
+                Err(_) => return false,
+                Ok(false) => return true,
+                Ok(true) => self.project_mention_notifications(&state),
             }
         }
         for state in snapshot.chat_pins.drain(..) {
@@ -251,4 +264,9 @@ impl AppCore {
         self.broadcast_device_sync_snapshot();
         true
     }
+}
+
+/// Private settings use their own logical clock, never relay arrival order.
+pub(super) fn private_setting_version(event: &PrivateEvent) -> Option<(u64, u8)> {
+    request_decision_version(event).or_else(|| mention_notifications::version(event))
 }

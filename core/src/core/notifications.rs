@@ -26,7 +26,8 @@ pub struct NotificationCandidate {
 /// next snapshots of the chat list. Suppression rules — all must pass:
 ///
 /// 1. `preferences.desktop_notifications_enabled` is true.
-/// 2. The chat is not muted (`chat.is_muted`).
+/// 2. The chat is not muted, or it is a group mentioning this account and the
+///    user permits mention notifications while muted.
 /// 3. The last message is known-incoming (`last_message_is_outgoing == Some(false)`).
 ///    Unknown direction (`None`) is treated as suppressed: we'd rather miss
 ///    a banner than show one for our own outgoing message.
@@ -53,7 +54,11 @@ pub fn decide_notifications(
 
     let mut out = Vec::new();
     for chat in next_chats {
-        if chat.is_muted {
+        if chat.is_muted
+            && !(chat.kind == crate::state::ChatKind::Group
+                && chat.last_message_mentions_you
+                && !preferences.silent_mention_chat_ids.contains(&chat.chat_id))
+        {
             continue;
         }
         if chat.last_message_is_outgoing != Some(false) {
@@ -129,6 +134,7 @@ mod tests {
             last_message_preview: preview.map(str::to_string),
             last_message_at_secs: Some(100),
             last_message_is_outgoing: last_is_outgoing,
+            last_message_mentions_you: false,
             last_message_delivery: None,
             unread_count: unread,
             is_typing: false,
@@ -170,6 +176,35 @@ mod tests {
         let next = vec![chat("a", 1, Some(false), true, Some("hi"))];
         let out = decide_notifications(&prev, &next, &prefs(true), false, None);
         assert!(out.is_empty());
+    }
+
+    #[test]
+    fn mentions_only_override_muted_groups_with_notifications_enabled() {
+        let mut next = chat("group:friends", 1, Some(false), true, Some("Hi @Alex"));
+        next.last_message_mentions_you = true;
+        assert!(
+            decide_notifications(&[], &[next.clone()], &prefs(true), false, None).is_empty(),
+            "direct chats stay muted"
+        );
+        next.kind = crate::state::ChatKind::Group;
+        assert_eq!(
+            decide_notifications(&[], &[next.clone()], &prefs(true), false, None).len(),
+            1
+        );
+        let mut opted_out = prefs(true);
+        opted_out.silent_mention_chat_ids.push(next.chat_id.clone());
+        assert!(decide_notifications(&[], &[next.clone()], &opted_out, false, None).is_empty());
+        assert!(decide_notifications(&[], &[next.clone()], &prefs(false), false, None).is_empty());
+        assert!(decide_notifications(
+            &[],
+            &[next.clone()],
+            &prefs(true),
+            true,
+            Some(&next.chat_id)
+        )
+        .is_empty());
+        next.last_message_is_outgoing = Some(true);
+        assert!(decide_notifications(&[], &[next], &prefs(true), false, None).is_empty());
     }
 
     #[test]

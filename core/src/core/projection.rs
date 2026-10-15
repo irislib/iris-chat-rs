@@ -379,6 +379,17 @@ impl AppCore {
                     last_message_preview: last_message.map(message_preview),
                     last_message_at_secs: last_message.map(|message| message.created_at_secs),
                     last_message_is_outgoing: last_message.map(|message| message.is_outgoing),
+                    last_message_mentions_you: last_message.is_some_and(|message| {
+                        !message.deleted_for_everyone
+                            && !message.is_outgoing
+                            && message.kind == ChatMessageKind::User
+                            && self.logged_in.as_ref().is_some_and(|account| {
+                                crate::mentions::mentions_owner(
+                                    &message.body,
+                                    &account.owner_pubkey.to_hex(),
+                                )
+                            })
+                    }),
                     last_message_delivery: last_message
                         .filter(|message| message.call.is_none())
                         .map(|message| message.delivery.clone()),
@@ -749,6 +760,17 @@ impl AppCore {
                     last_message_preview: last_message.map(message_preview),
                     last_message_at_secs: last_message.map(|message| message.created_at_secs),
                     last_message_is_outgoing: last_message.map(|message| message.is_outgoing),
+                    last_message_mentions_you: last_message.is_some_and(|message| {
+                        !message.deleted_for_everyone
+                            && !message.is_outgoing
+                            && message.kind == ChatMessageKind::User
+                            && self.logged_in.as_ref().is_some_and(|account| {
+                                crate::mentions::mentions_owner(
+                                    &message.body,
+                                    &account.owner_pubkey.to_hex(),
+                                )
+                            })
+                    }),
                     last_message_delivery: last_message
                         .filter(|message| message.call.is_none())
                         .map(|message| message.delivery.clone()),

@@ -37,6 +37,11 @@ impl AppCore {
                         {
                             self.project_request_decision(&state);
                         }
+                        if let Some(state) =
+                            super::super::private_settings::mention_notifications::state(&event)
+                        {
+                            self.project_mention_notifications(&state);
+                        }
                     }
                     DeviceSyncRecord::PrivateNameApproval { event } => {
                         self.project_name_approval(&event)

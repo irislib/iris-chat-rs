@@ -459,6 +459,14 @@ impl AppCore {
     }
 
     pub(super) fn apply_group_decrypted_event(&mut self, event: GroupIncomingEvent) -> bool {
+        self.apply_group_decrypted_event_from_outer(event, None)
+    }
+
+    pub(super) fn apply_group_decrypted_event_from_outer(
+        &mut self,
+        event: GroupIncomingEvent,
+        source_event_id: Option<String>,
+    ) -> bool {
         self.mark_mobile_push_dirty();
         match event {
             GroupIncomingEvent::MetadataUpdated(group) => {
@@ -493,6 +501,7 @@ impl AppCore {
                         sender_owner,
                         sender_device,
                         runtime_rumor,
+                        source_event_id,
                     );
                 }
                 let reason = if looks_like_runtime_rumor(&body) {
@@ -520,6 +529,7 @@ impl AppCore {
         sender_owner: PublicKey,
         sender_device: Option<PublicKey>,
         runtime_rumor: RuntimeRumor,
+        source_event_id: Option<String>,
     ) -> bool {
         if !self.runtime_rumor_pubkey_matches_authenticated_sender(
             sender_owner,
@@ -587,7 +597,7 @@ impl AppCore {
                     created_at_secs,
                     expires_at_secs,
                     Some(inner_event_id.clone()),
-                    Some(inner_event_id),
+                    source_event_id.or(Some(inner_event_id)),
                 );
                 if !is_outgoing
                     && self.preferences.send_read_receipts

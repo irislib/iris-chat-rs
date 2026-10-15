@@ -150,6 +150,10 @@ pub enum AppAction {
         chat_id: String,
         until_secs: u64,
     },
+    SetChatMentionNotifications {
+        chat_id: String,
+        enabled: bool,
+    },
     SetChatPinned {
         chat_id: String,
         pinned: bool,

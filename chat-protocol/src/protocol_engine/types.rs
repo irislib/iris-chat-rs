@@ -206,6 +206,9 @@ pub struct ProtocolGroupSendResult {
 
 #[derive(Clone, Debug, Default)]
 pub struct ProtocolGroupIncomingResult {
+    /// Prefix of `events` decrypted from this exact outer event. Later entries
+    /// can be recovered queued messages and must not inherit its source ID.
+    pub source_event_count: usize,
     pub events: Vec<GroupIncomingEvent>,
     pub effects: Vec<ProtocolEffect>,
     pub consumed: bool,
