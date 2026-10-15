@@ -250,3 +250,64 @@ fn mentions_coalesced_state_keeps_new_identity_without_renotifying_old_unread_me
     )
     .is_empty());
 }
+
+#[test]
+fn mentions_coalesced_synced_reads_cannot_hide_a_new_mention() {
+    for read_count in [1, 2] {
+        let owner = Keys::generate();
+        let device = Keys::generate();
+        let sender = Keys::generate();
+        let mut core = logged_in_test_core("mentions-read-batch", &owner, &device);
+        let chat = "group:read-batch";
+        core.ensure_thread_record(chat, 10);
+        core.set_chat_muted(chat, true);
+        core.active_chat_id = None;
+        let mention = crate::format_message_mention(owner.public_key().to_hex(), "You".into());
+        for id in ["old-one", "old-two"] {
+            core.push_incoming_message_from(chat, Some(id.into()), mention.clone(), 100, None,
+                None, Some(sender.public_key().to_hex()), None);
+        }
+        core.rebuild_persist_and_emit_state();
+        let before = core.state.chat_list.clone();
+        core.enter_batch();
+        assert!(core.apply_chat_read_state(chat, ChatReadState {
+            updated_at_ms: unix_now().get() * 1000,
+            device_id: Keys::generate().public_key().to_hex(),
+            seen_messages: ["old-one", "old-two"].into_iter().take(read_count)
+                .map(|id| (id.into(), MessageReadState { created_at_secs: 100, expires_at_secs: None }))
+                .collect(),
+            ..Default::default()
+        }));
+        core.rebuild_persist_and_emit_state();
+        core.push_incoming_message_from(chat, Some("new-mention".into()), mention, 101, None,
+            None, Some(sender.public_key().to_hex()), None);
+        core.rebuild_persist_and_emit_state();
+        core.exit_batch();
+        let after = core.state.chat_list.clone();
+        assert_eq!(after[0].unread_count, before[0].unread_count + 1 - read_count as u64);
+        let candidates = notifications::decide_notifications(&before, &after, &core.preferences, false, None);
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].message_id.as_deref(), Some("new-mention"));
+        core.push_incoming_message_from(chat, Some("ordinary".into()), "Later ordinary".into(), 102,
+            None, None, Some(sender.public_key().to_hex()), None);
+        core.rebuild_persist_and_emit_state();
+        assert!(notifications::decide_notifications(&after, &core.state.chat_list, &core.preferences, false, None).is_empty());
+    }
+}
+
+#[test]
+fn mentions_private_setting_matches_shared_wire_fixture() {
+    let event = nostr_identity::build_private_setting(
+        PublicKey::from_hex(&"a".repeat(64)).unwrap(),
+        "mentionNotifications",
+        "group:friends",
+        &serde_json::json!({"chatId":"group:friends","enabled":false,"updatedAtMs":100}),
+    )
+    .unwrap();
+    let expected: serde_json::Value = serde_json::from_str(include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/fixtures/mention-notifications.json"
+    )))
+    .unwrap();
+    assert_eq!(serde_json::to_value(event).unwrap(), expected);
+}

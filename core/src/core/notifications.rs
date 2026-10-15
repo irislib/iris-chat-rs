@@ -30,8 +30,8 @@ pub struct NotificationCandidate {
 ///    unread incoming mention ID. A later ordinary/outgoing message in the
 ///    same coalesced snapshot cannot hide that mention.
 /// 4. The chat is not currently open with the app foregrounded.
-/// 5. `unread_count` strictly increased relative to the previous snapshot
-///    (chats absent from the previous snapshot count as previous = 0).
+/// 5. For ordinary chats, `unread_count` strictly increased. Muted group
+///    mentions compare exact unread IDs, so concurrent reads cannot hide them.
 pub fn decide_notifications(
     previous_chats: &[ChatThreadSnapshot],
     next_chats: &[ChatThreadSnapshot],
@@ -56,9 +56,6 @@ pub fn decide_notifications(
             continue;
         }
         let previous = previous_by_id.get(chat.chat_id.as_str()).copied();
-        if chat.unread_count <= previous.map_or(0, |chat| chat.unread_count) {
-            continue;
-        }
         let mention = if chat.is_muted {
             if chat.kind != crate::state::ChatKind::Group
                 || preferences.silent_mention_chat_ids.contains(&chat.chat_id)
@@ -77,6 +74,9 @@ pub fn decide_notifications(
             };
             Some(mention)
         } else {
+            if chat.unread_count <= previous.map_or(0, |chat| chat.unread_count) {
+                continue;
+            }
             None
         };
         if mention.is_none() && chat.last_message_is_outgoing != Some(false) {

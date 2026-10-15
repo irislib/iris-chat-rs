@@ -1,0 +1,30 @@
+{
+  "id": "22d008e761842325621971056bf74830903da752ac5041af1b76db8b181a6e3d",
+  "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "created_at": 0,
+  "kind": 7368,
+  "tags": [
+    [
+      "i",
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "subject"
+    ],
+    [
+      "setting",
+      "mentionNotifications"
+    ],
+    [
+      "target",
+      "group:friends"
+    ],
+    [
+      "type",
+      "private_setting"
+    ],
+    [
+      "value",
+      "{\"chatId\":\"group:friends\",\"enabled\":false,\"updatedAtMs\":100}"
+    ]
+  ],
+  "content": ""
+}
