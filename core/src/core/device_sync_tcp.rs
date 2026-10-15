@@ -387,13 +387,15 @@ async fn accept_connections(
             let _ = tcp.abort(id).await;
             continue;
         }
+        // Only the lower-key sibling initiates application streams. A passive
+        // sibling's recovery handshake wakes that dialer after a reload; it
+        // never becomes an application stream. Retire stale Established state
+        // so normal reconciliation redials, but keep a SYN already in flight.
+        // This also converges crossing handshakes regardless of final-ACK order.
+        let canonical_dialer = comparison_key(local) < comparison_key(&identity);
         if let Some(previous) = connections.get(&peer).copied() {
-            // A reloaded sibling can complete a fresh authenticated handshake
-            // while our old stream still appears Established through a seed.
-            // Prefer that fresh stream, retaining only the simultaneous-dial
-            // tie-break for an in-flight canonical outbound connection.
-            let keep_previous = comparison_key(local) < comparison_key(&identity)
-                && matches!(tcp.state(previous), Some(State::SynSent));
+            let keep_previous =
+                canonical_dialer && matches!(tcp.state(previous), Some(State::SynSent));
             if keep_previous {
                 let _ = tcp.abort(id).await;
                 continue;
@@ -409,6 +411,10 @@ async fn accept_connections(
                 tcp,
             )
             .await;
+        }
+        if canonical_dialer {
+            let _ = tcp.abort(id).await;
+            continue;
         }
         connections.insert(peer, id);
         readers.insert(id, RecordReader::new(max_record_bytes));
