@@ -215,3 +215,5 @@ include!("tests/message_mutation_cleanup.rs");
 include!("tests/private_settings.rs");
 
 include!("tests/mentions.rs");
+
+include!("tests/nhash_previews.rs");

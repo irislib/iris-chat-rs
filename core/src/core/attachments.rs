@@ -1,4 +1,5 @@
 use super::*;
+mod preview;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct FileLinkMatch {
@@ -38,7 +39,11 @@ pub(super) fn message_preview(message: &ChatMessageSnapshot) -> String {
     if !body.is_empty() {
         return body;
     }
-    match message.attachments.as_slice() {
+    attachment_list_preview(&message.attachments)
+}
+
+pub(super) fn attachment_list_preview(attachments: &[MessageAttachmentSnapshot]) -> String {
+    match attachments {
         [] => String::new(),
         [attachment] => attachment_preview_label(attachment).to_string(),
         attachments => {
@@ -52,9 +57,9 @@ pub(super) fn message_preview(message: &ChatMessageSnapshot) -> String {
 }
 
 pub(super) fn chat_message_body_preview(body: &str) -> String {
-    direct_files::preview(body).unwrap_or_else(|| {
-        crate::display_message_mentions(strip_reply_quote(body).trim().to_string())
-    })
+    let text =
+        direct_files::preview(body).unwrap_or_else(|| strip_reply_quote(body).trim().to_string());
+    preview::without_hash_references(&crate::display_message_mentions(text))
 }
 
 pub(crate) fn strip_reply_quote(body: &str) -> &str {

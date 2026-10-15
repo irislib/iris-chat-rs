@@ -622,14 +622,14 @@ fn lookup_mobile_push_preview(
     {
         return Some(control);
     }
-    let (chat_id, body, author_hex, dismiss, author_owner, created): (String, String, String, bool, Option<String>, u64) = conn
+    let (chat_id, body, author_hex, dismiss, author_owner, created, attachments): (String, String, String, bool, Option<String>, u64, String) = conn
         .query_row(
-            "SELECT chat_id, body, author, is_outgoing = 1 OR delivery = 'seen' OR deleted_for_everyone = 1, author_owner_pubkey_hex, created_at_secs
+            "SELECT chat_id, body, author, is_outgoing = 1 OR delivery = 'seen' OR deleted_for_everyone = 1, author_owner_pubkey_hex, created_at_secs, attachments_json
              FROM messages
              WHERE source_event_id = ?1
              LIMIT 1",
             [outer_event_id],
-            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?)),
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?)),
         )
         .ok()?;
 
@@ -670,11 +670,7 @@ fn lookup_mobile_push_preview(
         });
     let group_title = group_id.and_then(|id| lookup_group_name_in(&conn, id));
 
-    // Persisted body has the attachment markup stripped already; if
-    // it's empty (e.g. an attachment-only message) fall back to the
-    // chat-message placeholder so the user sees something rather than
-    // a blank notification.
-    let body_preview = chat_message_body_preview(&body);
+    let body_preview = persisted_message_body_preview(&body, &attachments);
     let body_text = if body_preview.is_empty() {
         decrypted_mobile_push_body(MOBILE_PUSH_CHAT_MESSAGE_KIND, "")
     } else {
@@ -730,15 +726,16 @@ fn lookup_recent_group_mobile_push_preview(
 ) -> Option<MobilePushNotificationResolution> {
     let conn = open_lookup_connection(data_dir)?;
     let min_created_at_secs = i64::try_from(min_created_at_secs).ok()?;
-    let (chat_id, body, author_owner_hex, author, created): (
+    let (chat_id, body, author_owner_hex, author, created, attachments): (
         String,
         String,
         Option<String>,
         String,
         u64,
+        String,
     ) = conn
         .query_row(
-            "SELECT chat_id, body, author_owner_pubkey_hex, author, created_at_secs
+            "SELECT chat_id, body, author_owner_pubkey_hex, author, created_at_secs, attachments_json
              FROM messages
              WHERE chat_id LIKE 'group:%'
                AND is_outgoing = 0
@@ -753,6 +750,7 @@ fn lookup_recent_group_mobile_push_preview(
                     row.get(2)?,
                     row.get(3)?,
                     row.get(4)?,
+                    row.get(5)?,
                 ))
             },
         )
@@ -779,7 +777,7 @@ fn lookup_recent_group_mobile_push_preview(
             (!fallback.is_empty() && !is_generic_sender_title(&fallback)).then_some(fallback)
         })
         .unwrap_or_else(|| "Iris Chat".to_string());
-    let body_preview = chat_message_body_preview(&body);
+    let body_preview = persisted_message_body_preview(&body, &attachments);
     let body_text = if body_preview.is_empty() {
         decrypted_mobile_push_body(MOBILE_PUSH_CHAT_MESSAGE_KIND, "")
     } else {
@@ -1333,6 +1331,17 @@ fn invite_acceptance_push_resolution(
         payload_json: serde_json::to_string(&serde_json::Value::Object(resolved_payload))
             .unwrap_or_else(|_| "{}".to_string()),
     }
+}
+
+fn persisted_message_body_preview(body: &str, attachments: &str) -> String {
+    let preview = chat_message_body_preview(body);
+    if !preview.is_empty() {
+        return preview;
+    }
+    serde_json::from_str::<Vec<MessageAttachmentSnapshot>>(attachments)
+        .ok()
+        .map(|attachments| attachments::attachment_list_preview(&attachments))
+        .unwrap_or_default()
 }
 
 fn decrypted_mobile_push_body(kind: u64, content: &str) -> String {

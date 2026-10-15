@@ -221,3 +221,17 @@ fn direct_file_storage_upgrades_the_existing_contact_memory_schema() {
         .unwrap();
     assert_eq!(value, "keep");
 }
+
+#[test]
+fn nhash_preview_sanitizes_signed_direct_file_captions() {
+    let keys = Keys::generate();
+    let hash = hashtree_core::nhash_encode(&[1; 32]).unwrap();
+    let mut original = offer(&keys);
+    original.caption = format!("Caption {hash}");
+    let wire = original.wire(&keys).unwrap();
+    assert_eq!(
+        super::super::attachments::chat_message_body_preview(&wire),
+        "Caption Attachment"
+    );
+    assert_eq!(parse(&wire).unwrap().caption, format!("Caption {hash}"));
+}
