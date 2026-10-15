@@ -20,6 +20,7 @@ pub use mentions::*;
 mod fips_ble_ffi;
 mod forwarding;
 pub mod image_proxy;
+pub mod invite_record;
 pub mod local_relay;
 pub mod perflog;
 mod person_name;

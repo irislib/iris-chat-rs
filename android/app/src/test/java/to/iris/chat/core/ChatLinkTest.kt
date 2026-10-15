@@ -26,6 +26,7 @@ class ChatLinkTest {
         for (suffix in listOf(
             "/invite/token%2Fpart?source=web#secret%2Bvalue+tail",
             "/#/invite/token%2Fpart",
+            "/#/nhash1qqszmy69qm5qaj8hynac4r2tlczdqmtscv3y59qlpvgjl6kq5jtfgws9yzkv26y93cdc4j00ql9nmfzzazwq4sf35ymflpw6glgxp677lzqcu56ywqa",
             "/#%7B%22ephemeralKey%22%3A%22public%22%2C%22sharedSecret%22%3A%22fixture%2B%22%7D",
         )) {
             val expected = AppAction.AcceptInvite("https://chat.iris.to$suffix")

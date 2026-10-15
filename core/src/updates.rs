@@ -118,6 +118,11 @@ pub(crate) struct CorePerfCountersSnapshot {
 
 #[derive(Debug)]
 pub(crate) enum InternalEvent {
+    PrivateInviteResolved {
+        request_id: String,
+        owner: String,
+        result: Result<crate::invite_record::InviteRecord, String>,
+    },
     DeviceLinkSignerRepair {
         token: String,
         heads: Vec<Event>,

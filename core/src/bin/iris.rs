@@ -894,11 +894,18 @@ fn handle_invite_device_command(cli: &CliApp, command: InviteDeviceTopCommands) 
                 AppAction::AcceptInvite {
                     invite_input: invite,
                 },
-                Duration::from_secs(4),
+                Duration::from_secs(30),
             )?;
             let state = cli.app.state();
-            fail_on_toast(&state)?;
+            let pending_group = matches!(
+                state.toast.as_deref(),
+                Some("Waiting for the group admin to connect…" | "Joining group…")
+            );
+            if !pending_group {
+                fail_on_toast(&state)?;
+            }
             Ok(json!({
+                "pending_group_join": pending_group,
                 "chats": chat_list_json(&state),
                 "current_chat": state.current_chat.as_ref().map(chat_summary_json),
             }))
