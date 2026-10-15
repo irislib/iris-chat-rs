@@ -18,6 +18,7 @@ final class IrisComposerState: ObservableObject {
     private var restoringMentions = false
     private var pendingNativeText: String?
     @Published private(set) var mentionRevision = 0
+    private var mentionRevisionPending = false
 
     func prepareNativeEdit(_ edit: IrisComposerNativeEdit) {
         pendingNativeText = edit.text
@@ -29,7 +30,7 @@ final class IrisComposerState: ObservableObject {
         let inserted = (edit.text as NSString).substring(with: NSRange(location: edit.range.location, length: edit.replacementLength))
         mentions.replace(range: edit.range, replacementLength: edit.replacementLength,
             insertingWord: inserted.first.map { $0.isLetter || $0.isNumber } ?? false)
-        mentionRevision &+= 1
+        publishMentionRevisionAfterNativeEdit()
     }
 
     private func restoreMentionMetadata(_ value: IrisMentionDraft, undo: UndoManager?) {
@@ -38,7 +39,20 @@ final class IrisComposerState: ObservableObject {
             target.restoreMentionMetadata(previous, undo: undo)
         }
         mentions = value
-        mentionRevision &+= 1
+        publishMentionRevisionAfterNativeEdit()
+    }
+
+    private func publishMentionRevisionAfterNativeEdit() {
+        // Storage callbacks run before the native editor publishes its new
+        // text/selection. Invalidating SwiftUI here can restore the old draft
+        // into that in-flight edit, erasing the character just typed.
+        guard !mentionRevisionPending else { return }
+        mentionRevisionPending = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.mentionRevisionPending = false
+            self.mentionRevision &+= 1
+        }
     }
     var wireText: String { mentions.wireText(from: text) }
 
