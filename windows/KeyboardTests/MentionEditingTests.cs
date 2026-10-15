@@ -54,6 +54,10 @@ internal static class MentionEditingTests
         // TextChange offsets describe the final buffer. Applying them in
         // ascending order must preserve the middle span through a batched edit.
         composer.RestoreDraft(one + " / " + two);
+        TextChangedEventHandler traceBatch = (_, e) => Console.WriteLine(
+            "Batched mention edit: " + e.UndoAction + " " + string.Join(", ", e.Changes.Select(change =>
+                $"at {change.Offset}: remove {change.RemovedLength}, add {change.AddedLength}")));
+        input.TextChanged += traceBatch;
         input.BeginChange();
         try
         {
@@ -61,7 +65,7 @@ internal static class MentionEditingTests
             input.Select(input.Text.Length - "@Alex".Length, "@Alex".Length);
             input.SelectedText = "there";
         }
-        finally { input.EndChange(); }
+        finally { input.EndChange(); input.TextChanged -= traceBatch; }
         pump();
         Identities(saved(), first);
         input.Undo(); pump();
@@ -106,9 +110,13 @@ internal static class MentionEditingTests
         RoutedEvent = TextCompositionManager.TextInputEvent,
     });
 
-    internal static void Identities(string wire, params string[] expected) =>
-        Check(Native.MessageMentions(wire).Select(mention => mention.ownerPubkeyHex).SequenceEqual(expected),
-            "Mention identities follow the actual editor operation");
+    internal static void Identities(string wire, params string[] expected)
+    {
+        var actual = Native.MessageMentions(wire).Select(mention => mention.ownerPubkeyHex).ToArray();
+        Check(actual.SequenceEqual(expected),
+            "Mention identities follow the actual editor operation; expected " + string.Join(",", expected)
+                + "; got " + string.Join(",", actual) + "; wire: " + wire);
+    }
 
     private static void Check(bool passed, string message) { if (!passed) throw new Exception(message); }
 }
