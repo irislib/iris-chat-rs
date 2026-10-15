@@ -29,6 +29,20 @@ fn label_is_valid(label: &Option<String>) -> bool {
         .is_none_or(|label| label.chars().count() <= 128 && !label.chars().any(char::is_control))
 }
 
+impl PrivateDeviceLabel {
+    pub(in crate::core) fn valid_for(&self, owner: &str) -> bool {
+        let label = self;
+        !(label.kind != "device-labels"
+            || label.v != 2
+            || label.owner != owner
+            || PublicKey::from_hex(&label.device).is_err()
+            || label.updated_at_secs == 0
+            || label.updated_at_secs > unix_now().get().saturating_add(300)
+            || !label_is_valid(&label.device_label)
+            || !label_is_valid(&label.client_label))
+    }
+}
+
 impl AppCore {
     pub(super) fn private_device_label_snapshot(&self) -> Vec<PrivateDeviceLabel> {
         let Some(owner) = self
@@ -103,15 +117,7 @@ impl AppCore {
         else {
             return false;
         };
-        if label.kind != "device-labels"
-            || label.v != 2
-            || label.owner != owner
-            || PublicKey::from_hex(&label.device).is_err()
-            || label.updated_at_secs == 0
-            || label.updated_at_secs > unix_now().get().saturating_add(300)
-            || !label_is_valid(&label.device_label)
-            || !label_is_valid(&label.client_label)
-        {
+        if !label.valid_for(&owner) {
             return false;
         }
         let Some(device) = self.app_keys.get_mut(&owner).and_then(|roster| {

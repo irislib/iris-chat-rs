@@ -312,7 +312,9 @@ fn late_blocked_intervals_invalidate_and_filter_all_visible_history_reads() {
     .allow_self_tagging()
     .sign_with_keys(&device)
     .unwrap();
-    assert!(core.apply_private_block_event(event));
+    assert!(core.apply_private_block_event(
+        serde_json::from_value(serde_json::to_value(event).unwrap()).unwrap()
+    ));
     core.rebuild_persist_and_emit_state();
     assert_ne!(core.state.message_visibility_revision, revision);
     assert!(!core.preferences.hide_blocked_group_messages);

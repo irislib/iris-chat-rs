@@ -191,6 +191,9 @@ impl AppCore {
                     .transpose()
                 {
                     Ok(Some(Some(result))) => {
+                        if let Err(error) = self.capture_authorization_event(&event) {
+                            self.push_debug_log("device_sync.authorization", error.to_string());
+                        }
                         if let Some(snapshot) = result.snapshot {
                             let previous = self.groups.get(&snapshot.group_id).cloned();
                             self.apply_group_roster_snapshot(
@@ -663,6 +666,7 @@ impl AppCore {
             return Ok(false);
         };
 
+        self.capture_authorization_event(event)?;
         let owner_hex = event.pubkey.to_hex();
         let current = self.app_keys.get(&owner_hex).cloned();
         let current_app_keys = current.as_ref().map(known_app_keys_to_ndr);

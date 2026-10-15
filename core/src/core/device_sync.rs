@@ -1,3 +1,5 @@
+mod authorization;
+mod private_settings;
 use super::*;
 use fips_core::{FipsEndpoint, PeerIdentity as FipsPeerIdentity};
 use nostr_double_ratchet::{GroupProtocol, GroupStrategy};
@@ -823,6 +825,11 @@ impl AppCore {
             .into_iter()
             .map(|fact| DeviceSyncRecord::PrivateContactFact { fact })
             .collect::<Vec<_>>();
+        records.extend(
+            self.private_setting_events()
+                .into_iter()
+                .map(|event| DeviceSyncRecord::PrivateEvent { event }),
+        );
         self.visit_sync_records(|record| {
             records.push(record);
             true

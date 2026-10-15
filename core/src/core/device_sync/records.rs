@@ -17,6 +17,8 @@ pub(super) enum RecordScope {
 #[derive(Clone)]
 pub(super) enum RecordLocator {
     PrivateContactFact(String, String),
+    PrivateSetting(String, String),
+    Authorization(String),
     Group(String),
     MessageRead(String, String),
     Head(String),
@@ -25,6 +27,12 @@ pub(super) enum RecordLocator {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub(super) enum DeviceSyncRecord {
+    Authorization {
+        event: Event,
+    },
+    PrivateEvent {
+        event: PrivateEvent,
+    },
     PrivateContactFact {
         fact: nostr_identity::PrivateContactFact,
     },
@@ -47,10 +55,10 @@ pub(super) enum DeviceSyncRecord {
         event: Event,
     },
     PrivateBlock {
-        event: Event,
+        event: PrivateEvent,
     },
     PrivateNameApproval {
-        event: Event,
+        event: PrivateEvent,
     },
     MessageRead {
         #[serde(rename = "chatId")]
@@ -89,6 +97,7 @@ pub(super) struct DeviceSyncGroupSettings {
 impl DeviceSyncRecord {
     pub(super) fn id(&self) -> [u8; 32] {
         let value = match self {
+            Self::Authorization { event } => return event.id.to_bytes(),
             Self::PrivateContactFact { fact } => {
                 return nostr::EventId::from_hex(&fact.id)
                     .map(|id| id.to_bytes())
@@ -105,9 +114,9 @@ impl DeviceSyncRecord {
                 read.created_at_secs,
                 read.expires_at_secs
             ]),
-            Self::PrivateBlock { event } | Self::PrivateNameApproval { event } => {
-                return event.id.to_bytes()
-            }
+            Self::PrivateEvent { event }
+            | Self::PrivateBlock { event }
+            | Self::PrivateNameApproval { event } => return event.id.to_bytes(),
             Self::Message { message } => serde_json::json!([message.chat_id, message.id]),
             Self::MessageMutation { mutation: m } => {
                 serde_json::json!(["messageMutation", m.chat_id, m.id])
@@ -162,8 +171,22 @@ impl DeviceSyncRecord {
         }
     }
     pub(super) fn locator(&self) -> Option<RecordLocator> {
+        if let Self::Authorization { event } = self {
+            return Some(RecordLocator::Authorization(event.id.to_hex()));
+        }
+        if let Self::PrivateEvent { event } = self {
+            let (setting, target, _) =
+                nostr_identity::parse_private_setting(event, event.pubkey).ok()?;
+            return Some(if setting == "requestDecision" {
+                RecordLocator::Head(
+                    serde_json::json!(["privateEvent", setting, target]).to_string(),
+                )
+            } else {
+                RecordLocator::PrivateSetting(setting, target)
+            });
+        }
         if let Self::PrivateContactFact { fact } = self {
-            let value = nostr_identity::parse_private_contact_fact(fact, &fact.owner).ok()?;
+            let value = nostr_identity::parse_private_contact_fact(fact, &fact.pubkey).ok()?;
             return Some(RecordLocator::PrivateContactFact(
                 value.contact,
                 value.field,
@@ -187,6 +210,14 @@ impl DeviceSyncRecord {
     }
     fn storage_key(&self) -> Option<String> {
         Some(match self {
+            Self::Authorization { event } => {
+                serde_json::json!(["authorization", event.id.to_hex()]).to_string()
+            }
+            Self::PrivateEvent { event } => {
+                let (setting, target, _) =
+                    nostr_identity::parse_private_setting(event, event.pubkey).ok()?;
+                serde_json::json!(["privateEvent", setting, target]).to_string()
+            }
             Self::PrivateNameApproval { event } => {
                 let state = super::super::contact_name_sync::name_approval(event)?;
                 serde_json::json!(["privateNameApproval", state.contact, event.id.to_hex()])
@@ -213,6 +244,10 @@ impl DeviceSyncRecord {
     }
     fn wins(&self, previous: &Self) -> bool {
         match (self, previous) {
+            (Self::PrivateEvent { event: a }, Self::PrivateEvent { event: b }) => {
+                super::private_settings::request_decision_version(a)
+                    > super::private_settings::request_decision_version(b)
+            }
             (Self::PrivateBlock { event: a }, Self::PrivateBlock { event: b }) => {
                 super::super::block_sync::block_event_version(a)
                     > super::super::block_sync::block_event_version(b)
@@ -242,10 +277,10 @@ fn valid_time(seconds: u64, millis: Option<u64>) -> bool {
 }
 
 impl AppCore {
-    pub(in crate::core) fn apply_name_approval_event(&mut self, event: Event) -> bool {
+    pub(in crate::core) fn apply_name_approval_event(&mut self, event: PrivateEvent) -> bool {
         self.apply_sync_record(DeviceSyncRecord::PrivateNameApproval { event })
     }
-    pub(in crate::core) fn apply_private_block_event(&mut self, event: Event) -> bool {
+    pub(in crate::core) fn apply_private_block_event(&mut self, event: PrivateEvent) -> bool {
         self.apply_sync_record(DeviceSyncRecord::PrivateBlock { event })
     }
 
@@ -331,6 +366,10 @@ impl AppCore {
                     nostr_identity::parse_private_contact_fact(fact, &login.owner_pubkey.to_hex())
                         .is_ok()
                 })
+            }
+            DeviceSyncRecord::Authorization { event } => self.authorization_record_allowed(event),
+            DeviceSyncRecord::PrivateEvent { event } => {
+                self.private_setting_snapshot(event).is_some()
             }
             DeviceSyncRecord::PrivateBlock { event } => self.private_block_event_allowed(event),
             DeviceSyncRecord::PrivateNameApproval { event } => self.name_approval_allowed(event),
@@ -498,6 +537,8 @@ impl AppCore {
             return false;
         }
         match record {
+            DeviceSyncRecord::Authorization { event } => self.merge_authorization_event(&event),
+            DeviceSyncRecord::PrivateEvent { event } => self.merge_private_setting(&event),
             DeviceSyncRecord::PrivateContactFact { fact } => self.merge_private_contact_fact(&fact),
             DeviceSyncRecord::MessageRead {
                 chat_id,

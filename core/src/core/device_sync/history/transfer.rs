@@ -15,7 +15,12 @@ impl AppCore {
                     || requested.iter().collect::<BTreeSet<_>>().len() != requested.len()))
             || requested.iter().any(|id| !state.requested.contains(id))
             || records.iter().any(|record| {
-                (matches!(record, DeviceSyncRecord::PrivateBlock { .. }) && !state.private_events)
+                (matches!(
+                    record,
+                    DeviceSyncRecord::PrivateBlock { .. }
+                        | DeviceSyncRecord::PrivateEvent { .. }
+                        | DeviceSyncRecord::Authorization { .. }
+                ) && !state.private_events)
                     || (matches!(record, DeviceSyncRecord::PrivateContactFact { .. })
                         && !state.private_facts)
                     || (matches!(record, DeviceSyncRecord::PrivateNameApproval { .. })

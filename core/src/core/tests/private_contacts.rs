@@ -451,7 +451,7 @@ fn private_contacts_fact_storage_migrates_clears_and_pending_without_reclocking(
             .unwrap(),
     )
     .unwrap();
-    assert_eq!(saved["version"], 3);
+    assert_eq!(saved["version"], 4);
     assert!(saved["facts"]
         .as_array()
         .unwrap()
@@ -465,7 +465,7 @@ fn private_contacts_fact_storage_migrates_clears_and_pending_without_reclocking(
     let right = pair.b.private_contact_state().unwrap();
     assert_eq!(right.contacts, state.contacts);
     let mut forged = pair.a.private_contact_facts()[0].clone();
-    forged.owner = "f".repeat(64);
+    forged.pubkey = "f".repeat(64);
     assert!(!pair.b.merge_private_contact_fact(&forged));
 }
 
@@ -496,6 +496,30 @@ fn private_contacts_negentropy_repairs_dropped_snapshots_and_exports_interop() {
             &contact,
             BTreeMap::from([("favorite".into(), serde_json::json!(true))]),
         );
+        let proof_owner = Keys::generate();
+        let proof = AppKeys::new(vec![DeviceEntry::new(Keys::generate().public_key(), 100)])
+            .get_event_at(proof_owner.public_key(), 100)
+            .sign_with_keys(&proof_owner)
+            .unwrap();
+        assert!(pair.a.apply_app_keys_event(&proof).unwrap());
+        let other = Keys::generate().public_key().to_hex();
+        pair.a
+            .merge_chat_pin(ChatPinState {
+                chat_id: contact.clone(),
+                pinned: false,
+                updated_at_ms: 200,
+            })
+            .unwrap();
+        pair.b
+            .merge_chat_mute(ChatMuteState {
+                chat_id: contact.clone(),
+                until_secs: None,
+                updated_at_ms: 300,
+            })
+            .unwrap();
+        pair.a.apply_chat_deletion(&contact, 100);
+        pair.b.apply_chat_deletion(&other, 100);
+
         let endpoint = Arc::new(
             pair.a
                 .runtime
@@ -520,7 +544,7 @@ fn private_contacts_negentropy_repairs_dropped_snapshots_and_exports_interop() {
         );
         pair.a.set_device_history_record_limit_for_test(1);
         pair.b.set_device_history_record_limit_for_test(1);
-        let request = serde_json::to_vec(&serde_json::json!({"type":"request","v":1,"rosterAt":100,"recordReconcile":1,"privateFacts":capable.then_some(1)})).unwrap();
+        let request = serde_json::to_vec(&serde_json::json!({"type":"request","v":1,"rosterAt":100,"recordReconcile":1,"privateFacts":capable.then_some(2),"privateEvents":capable.then_some(2)})).unwrap();
         pair.a.handle_device_sync_packet(
             &pair.b_device.public_key().to_hex(),
             DEVICE_SYNC_PORT,
@@ -566,7 +590,17 @@ fn private_contacts_negentropy_repairs_dropped_snapshots_and_exports_interop() {
                 for packet in packets {
                     let mut value: serde_json::Value = serde_json::from_slice(&packet).unwrap();
                     if value["type"] == "snapshot" {
-                        value.as_object_mut().unwrap().remove("privateContactsV2");
+                        for field in [
+                            "appKeys",
+                            "privateContactsV2",
+                            "chatPins",
+                            "chatMutes",
+                            "deletedChats",
+                            "privateDeviceLabelsV2",
+                            "chats",
+                        ] {
+                            value.as_object_mut().unwrap().remove(field);
+                        }
                     }
                     facts_sent += value["records"]
                         .as_array()
@@ -592,6 +626,23 @@ fn private_contacts_negentropy_repairs_dropped_snapshots_and_exports_interop() {
             continue;
         }
         assert!(facts_sent > 0, "no private records: {trace:?}");
+        assert!(pair
+            .b
+            .private_state_fixture_for_test()
+            .iter()
+            .any(|entry| entry["record"]["type"] == "authorization"
+                && entry["id"] == proof.id.to_hex()));
+        assert!(pair
+            .b
+            .app_keys
+            .contains_key(&proof_owner.public_key().to_hex()));
+        for core in [&pair.a, &pair.b] {
+            assert_eq!(core.chat_deletions.get(&contact), Some(&100));
+            assert_eq!(core.chat_deletions.get(&other), Some(&100));
+            assert!(!core.chat_pin_states[&contact].pinned);
+            assert_eq!(core.chat_mute_states[&contact].until_secs, None);
+        }
+
         assert_eq!(
             pair.a.private_contact_state().unwrap().contacts,
             pair.b.private_contact_state().unwrap().contacts

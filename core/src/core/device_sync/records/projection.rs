@@ -17,7 +17,27 @@ impl AppCore {
                 if !self.sync_record_allowed(&record) {
                     continue;
                 }
+                if matches!(
+                    record,
+                    DeviceSyncRecord::PrivateBlock { .. }
+                        | DeviceSyncRecord::PrivateNameApproval { .. }
+                ) {
+                    // Verify legacy signatures on read, then retire them durably.
+                    if self.store_sync_record(&record).is_err() {
+                        continue;
+                    }
+                }
                 match record {
+                    DeviceSyncRecord::Authorization { event } => {
+                        self.merge_authorization_event(&event);
+                    }
+                    DeviceSyncRecord::PrivateEvent { event } => {
+                        if let Some(state) =
+                            super::super::private_settings::request_decision_state(&event)
+                        {
+                            self.project_request_decision(&state);
+                        }
+                    }
                     DeviceSyncRecord::PrivateNameApproval { event } => {
                         self.project_name_approval(&event)
                     }

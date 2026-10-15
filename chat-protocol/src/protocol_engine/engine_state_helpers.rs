@@ -49,8 +49,8 @@ fn quarantine_unverified_owner_rosters(
         for device in &mut user.devices {
             // O = D is authenticated by possession of D's key even when an
             // older persisted session has no synthetic singleton roster.
-            device.authorized = provisional_owner_from_sender_pubkey(device.device_pubkey)
-                == user.owner_pubkey;
+            device.authorized =
+                provisional_owner_from_sender_pubkey(device.device_pubkey) == user.owner_pubkey;
             if !device.authorized {
                 device.is_stale = false;
                 device.stale_since = None;
@@ -88,7 +88,10 @@ fn user_record_snapshot(
     snapshot: &SessionManagerSnapshot,
     owner: NdrOwnerPubkey,
 ) -> Option<&UserRecordSnapshot> {
-    snapshot.users.iter().find(|user| user.owner_pubkey == owner)
+    snapshot
+        .users
+        .iter()
+        .find(|user| user.owner_pubkey == owner)
 }
 
 fn roster_device_pubkeys(user: &UserRecordSnapshot) -> Option<Vec<NdrDevicePubkey>> {
@@ -114,4 +117,22 @@ fn device_record_can_send(record: &DeviceRecordSnapshot) -> bool {
         && (record.active_session.is_some()
             || !record.inactive_sessions.is_empty()
             || record.public_invite.is_some())
+}
+
+impl ProtocolEngine {
+    /// Original signed evidence for authenticated own-device reconciliation.
+    pub fn authorization_events(&self) -> Vec<Event> {
+        let mut events: BTreeMap<nostr::EventId, Event> = BTreeMap::new();
+        for evidence in self.invite_owner_app_keys_evidence.values() {
+            if let ProtocolAppKeysEvidence::Verified(event) = evidence {
+                events.insert(event.id, event.as_ref().clone());
+            }
+        }
+        for history in self.group_roster_fact_histories.values() {
+            for event in &history.events {
+                events.insert(event.id, event.clone());
+            }
+        }
+        events.into_values().collect()
+    }
 }

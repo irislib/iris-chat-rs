@@ -38,7 +38,7 @@ use nostr_identity::{
     nostr_identity_device_approval_bootstrap, parse_nostr_identity_device_approval_bootstrap,
     ApproveNostrIdentityDeviceApprovalBootstrapOptions,
     CreateNostrIdentityDeviceApprovalRequestOptions, NostrIdentityDeviceApprovalBootstrap,
-    NostrIdentityDeviceApprovalReceipt, NostrIdentityId, NostrIdentityRosterOp,
+    NostrIdentityDeviceApprovalReceipt, NostrIdentityId, NostrIdentityRosterOp, PrivateEvent,
     NOSTR_IDENTITY_DEVICE_APPROVAL_LABEL_MAX_BYTES, NOSTR_IDENTITY_DEVICE_APPROVAL_RECEIPT_SCHEMA,
 };
 use nostr_sdk::prelude::{

@@ -39,6 +39,13 @@ impl AppCore {
             return;
         }
 
+        if let Err(error) = self.persist_app_state() {
+            self.push_debug_log("storage.save_failed", error.to_string());
+        }
+        self.persist_debug_snapshot_best_effort();
+    }
+
+    pub(super) fn persist_app_state(&mut self) -> anyhow::Result<()> {
         let authorization_state = self
             .logged_in
             .as_ref()
@@ -56,16 +63,9 @@ impl AppCore {
             threads: &self.threads,
             seen_event_order: &self.seen_event_order,
         };
-        match self.app_store.save_state(&snapshot) {
-            Ok(()) => {
-                self.ack_pending_decrypted_deliveries_after_app_persist();
-            }
-            Err(error) => {
-                self.push_debug_log("storage.save_failed", error.to_string());
-            }
-        }
-
-        self.persist_debug_snapshot_best_effort();
+        self.app_store.save_state(&snapshot)?;
+        self.ack_pending_decrypted_deliveries_after_app_persist();
+        Ok(())
     }
 
     pub(super) fn clear_persistence_best_effort(&mut self) {

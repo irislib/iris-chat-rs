@@ -15,7 +15,7 @@ pub(super) struct NameApproval {
     change: AcceptedNameChange,
 }
 
-pub(super) fn name_approval(event: &Event) -> Option<NameApproval> {
+pub(super) fn name_approval(event: &PrivateEvent) -> Option<NameApproval> {
     if event.kind.as_u16() != NAME_APPROVAL_KIND as u16
         || event.content.len() > 4096
         || event.tags.len() != 2
@@ -52,7 +52,7 @@ pub(super) fn name_approval(event: &Event) -> Option<NameApproval> {
     Some(state)
 }
 
-fn version(event: &Event) -> Option<(u64, u64, String, String)> {
+fn version(event: &PrivateEvent) -> Option<(u64, u64, String, String)> {
     let state = name_approval(event)?;
     Some((
         state.revision,
@@ -64,17 +64,17 @@ fn version(event: &Event) -> Option<(u64, u64, String, String)> {
 
 #[derive(Default)]
 pub(super) struct NameApprovalPolicy {
-    events: BTreeMap<String, Event>,
+    events: BTreeMap<String, PrivateEvent>,
 }
 
 impl NameApprovalPolicy {
-    fn head(&self) -> Option<&Event> {
+    fn head(&self) -> Option<&PrivateEvent> {
         self.events.values().max_by_key(|event| version(event))
     }
 }
 
 impl AppCore {
-    pub(super) fn name_approval_allowed(&self, event: &Event) -> bool {
+    pub(super) fn name_approval_allowed(&self, event: &PrivateEvent) -> bool {
         name_approval(event).is_some_and(|state| {
             self.logged_in
                 .as_ref()
@@ -82,7 +82,7 @@ impl AppCore {
         }) && event.created_at.as_secs() <= unix_now().get().saturating_add(300)
     }
 
-    pub(super) fn project_name_approval(&mut self, event: &Event) {
+    pub(super) fn project_name_approval(&mut self, event: &PrivateEvent) {
         let Some(state) = name_approval(event) else {
             return;
         };
@@ -149,16 +149,18 @@ impl AppCore {
             first_seen_name,
             change,
         };
-        let event = EventBuilder::new(
-            Kind::Custom(NAME_APPROVAL_KIND as u16),
-            serde_json::to_string(&state)?,
-        )
-        .tag(nostr::Tag::public_key(owner))
-        .tag(nostr::Tag::identifier(format!(
-            "iris:name-approval:{contact}"
-        )))
-        .allow_self_tagging()
-        .sign_with_keys(&login.device_keys)?;
+        let event = PrivateEvent::from_unsigned(
+            EventBuilder::new(
+                Kind::Custom(NAME_APPROVAL_KIND as u16),
+                serde_json::to_string(&state)?,
+            )
+            .tag(nostr::Tag::public_key(owner))
+            .tag(nostr::Tag::identifier(format!(
+                "iris:name-approval:{contact}"
+            )))
+            .allow_self_tagging()
+            .build(login.device_keys.public_key()),
+        );
         anyhow::ensure!(
             self.apply_name_approval_event(event.clone()),
             "Name approval not persisted"
@@ -225,7 +227,7 @@ impl AppCore {
             #[serde(rename = "type")]
             kind: String,
             v: u8,
-            event: Event,
+            event: PrivateEvent,
         }
         let Ok(control) = serde_json::from_str::<Control>(content) else {
             return true;

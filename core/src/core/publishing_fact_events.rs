@@ -32,6 +32,9 @@ impl AppCore {
                 return false;
             }
         };
+        if self.capture_authorization_event(&event).is_err() {
+            return false;
+        }
         self.publish_runtime_event(event, GROUP_ROSTER_PUBLISH_LABEL, None)
     }
 
@@ -61,6 +64,9 @@ impl AppCore {
             }
         };
 
+        if self.capture_authorization_event(&event).is_err() {
+            return false;
+        }
         let published = self.publish_runtime_event(event, "app-keys", None);
         self.sync_local_app_keys_to_protocol_engine(label);
         published

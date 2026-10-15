@@ -14,10 +14,12 @@ impl AppCore {
     // record projections retain their existing device/history ownership rules.
     fn record_storage_path(&self, key: &str) -> Option<String> {
         let parts: Vec<String> = serde_json::from_str(key).ok()?;
-        if parts
-            .first()
-            .is_some_and(|kind| matches!(kind.as_str(), "privateBlock" | "privateNameApproval"))
-        {
+        if parts.first().is_some_and(|kind| {
+            matches!(
+                kind.as_str(),
+                "privateBlock" | "privateNameApproval" | "privateEvent" | "authorization"
+            )
+        }) {
             return Some(format!(
                 "iris-chat-sync-record-v1:{}:private-state:{key}",
                 self.logged_in.as_ref()?.owner_pubkey.to_hex()
@@ -25,7 +27,10 @@ impl AppCore {
         }
         Some(format!("{}{key}", self.sync_record_prefix()?))
     }
-    pub(super) fn store_sync_record(&self, record: &DeviceSyncRecord) -> anyhow::Result<bool> {
+    pub(in crate::core::device_sync) fn store_sync_record(
+        &self,
+        record: &DeviceSyncRecord,
+    ) -> anyhow::Result<bool> {
         let key = self
             .record_storage_path(
                 &record
@@ -45,10 +50,20 @@ impl AppCore {
                 row.get(0)
             })
             .optional()?;
-        if let Some(previous) = previous {
-            let previous: DeviceSyncRecord = serde_json::from_str(&previous)?;
+        if let Some(previous_json) = previous {
+            let previous: DeviceSyncRecord = serde_json::from_str(&previous_json)?;
             if previous.id() == record.id() {
-                return Ok(previous == *record);
+                if previous != *record {
+                    return Ok(false);
+                }
+                let normalized = serde_json::to_string(record)?;
+                if previous_json != normalized {
+                    conn.execute(
+                        "UPDATE app_meta SET value=?2 WHERE key=?1",
+                        rusqlite::params![key, normalized],
+                    )?;
+                }
+                return Ok(true);
             }
             if !record.wins(&previous) {
                 return Ok(false);
@@ -118,7 +133,7 @@ impl AppCore {
              WHERE key>=?1 AND key<?2 AND key>?3
                AND ((key>=?4 AND key<?5)
                     OR CASE WHEN json_valid(value)
-                        THEN json_extract(value, '$.type') IN ('messageMutation', 'privateBlock', 'privateNameApproval') END)
+                        THEN json_extract(value, '$.type') IN ('messageMutation', 'privateBlock', 'privateNameApproval', 'privateEvent', 'authorization') END)
              ORDER BY key LIMIT 256",
         )?;
         let rows = query.query_map(
@@ -154,6 +169,26 @@ impl AppCore {
         locator: &RecordLocator,
     ) -> Option<DeviceSyncRecord> {
         match locator {
+            RecordLocator::Authorization(id) => self
+                .load_sync_record(&RecordLocator::Head(
+                    serde_json::json!(["authorization", id]).to_string(),
+                ))
+                .or_else(|| {
+                    self.protocol_engine
+                        .as_ref()?
+                        .authorization_events()
+                        .into_iter()
+                        .find(|event| event.id.to_hex() == *id)
+                        .map(|event| DeviceSyncRecord::Authorization { event })
+                }),
+            RecordLocator::PrivateSetting(setting, target) => self
+                .private_setting_events()
+                .into_iter()
+                .find(|event| {
+                    nostr_identity::parse_private_setting(event, event.pubkey)
+                        .is_ok_and(|(name, key, _)| &name == setting && &key == target)
+                })
+                .map(|event| DeviceSyncRecord::PrivateEvent { event }),
             RecordLocator::PrivateContactFact(contact, field) => self
                 .private_contact_fact(contact, field)
                 .map(|fact| DeviceSyncRecord::PrivateContactFact { fact }),

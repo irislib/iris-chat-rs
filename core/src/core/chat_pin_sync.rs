@@ -3,7 +3,7 @@ use super::*;
 pub(super) const CHAT_PIN_KIND: u32 = 10450;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct ChatPinState {
     pub chat_id: String,
     pub pinned: bool,

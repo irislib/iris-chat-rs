@@ -252,7 +252,7 @@ fn contact_name_approval_offline_negentropy_recovers_without_public_profile() {
         let mut request =
             serde_json::json!({"type":"request","v":1,"rosterAt":100,"recordReconcile":1});
         if supported {
-            request["nameApprovals"] = 1.into();
+            request["nameApprovals"] = 2.into();
         }
         let request = serde_json::to_vec(&request).unwrap();
         for _ in 0..2 {
@@ -313,7 +313,7 @@ fn contact_name_approval_offline_negentropy_recovers_without_public_profile() {
     }
 }
 
-fn name_approval_test_event(core: &AppCore) -> Event {
+fn name_approval_test_event(core: &AppCore) -> PrivateEvent {
     let record = core
         .export_sync_record_values_for_test()
         .unwrap()
@@ -400,13 +400,13 @@ fn contact_name_approval_concurrent_order_replay_restart_and_authorization() {
         .unwrap();
     pair.a.apply_profile_metadata_event(&profile);
     pair.a.approve_contact_name(&target, "Carol");
-    let latest: Event = pair
+    let latest: PrivateEvent = pair
         .a
         .export_sync_record_values_for_test()
         .unwrap()
         .into_iter()
         .filter(|r| r["type"] == "privateNameApproval")
-        .filter_map(|r| serde_json::from_value::<Event>(r["event"].clone()).ok())
+        .filter_map(|r| serde_json::from_value::<PrivateEvent>(r["event"].clone()).ok())
         .find(|e| serde_json::from_str::<serde_json::Value>(&e.content).unwrap()["revision"] == 2)
         .unwrap();
     assert!(pair.b.apply_name_approval_event(latest));

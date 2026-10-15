@@ -292,9 +292,9 @@ impl AppCore {
         {
             return;
         }
-        self.preferences
-            .accepted_owner_pubkeys
-            .push(target_owner_hex);
+        if !self.sync_request_acceptance(&target_owner_hex) {
+            return;
+        }
         self.preferences.accepted_owner_pubkeys.sort();
         self.preferences.accepted_owner_pubkeys.dedup();
         if self.preferences.send_read_receipts {

@@ -4,7 +4,7 @@ use super::*;
 pub(super) const CHAT_MUTE_KIND: u32 = 10449;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct ChatMuteState {
     pub chat_id: String,
     // None is an explicit unmute, zero means forever, otherwise Unix seconds.

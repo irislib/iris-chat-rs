@@ -16,7 +16,7 @@ pub(super) struct BlockState {
     deleted_at: u64,
 }
 
-pub(super) fn block_event_state(event: &Event) -> Option<BlockState> {
+pub(super) fn block_event_state(event: &PrivateEvent) -> Option<BlockState> {
     if event.kind.as_u16() != BLOCK_CONTROL_KIND as u16
         || event.content.len() > 2048
         || event.tags.len() != 2
@@ -49,7 +49,7 @@ pub(super) fn block_event_state(event: &Event) -> Option<BlockState> {
     Some(state)
 }
 
-pub(super) fn block_event_version(event: &Event) -> Option<(u64, bool, String, String)> {
+pub(super) fn block_event_version(event: &PrivateEvent) -> Option<(u64, bool, String, String)> {
     let state = block_event_state(event)?;
     // A concurrent block wins an unblock at the same revision. A subsequent
     // explicit unblock increments the observed revision and always wins.
@@ -61,16 +61,16 @@ pub(super) fn block_event_version(event: &Event) -> Option<(u64, bool, String, S
     ))
 }
 
-// Every transition remains a signed State record. Unlike a last-value head,
+// Every transition remains an unsigned State record. Unlike a last-value head,
 // this log can repair multiple offline block/unblock intervals without widening
 // them across the allowed gaps. The in-memory projection keeps reads cheap.
 #[derive(Default)]
 pub(super) struct PrivateBlockPolicy {
-    events: BTreeMap<String, Event>,
+    events: BTreeMap<String, PrivateEvent>,
     intervals: Vec<(u64, Option<u64>)>,
 }
 impl PrivateBlockPolicy {
-    fn head(&self) -> Option<&Event> {
+    fn head(&self) -> Option<&PrivateEvent> {
         self.events
             .values()
             .max_by_key(|event| block_event_version(event))
@@ -140,7 +140,10 @@ impl AppCore {
         self.private_block_revision
     }
 
-    pub(super) fn block_intervals_with_event(&self, event: &Event) -> anyhow::Result<String> {
+    pub(super) fn block_intervals_with_event(
+        &self,
+        event: &PrivateEvent,
+    ) -> anyhow::Result<String> {
         let owner = self
             .logged_in
             .as_ref()
@@ -156,7 +159,7 @@ impl AppCore {
         blocked_intervals_json(events, &owner)
     }
 
-    pub(super) fn private_block_event_allowed(&self, event: &Event) -> bool {
+    pub(super) fn private_block_event_allowed(&self, event: &PrivateEvent) -> bool {
         block_event_state(event).is_some_and(|state| {
             self.logged_in
                 .as_ref()
@@ -164,7 +167,7 @@ impl AppCore {
         }) && event.created_at.as_secs() <= unix_now().get().saturating_add(300)
     }
 
-    pub(super) fn private_block_event(&self, target: &str) -> Option<Event> {
+    pub(super) fn private_block_event(&self, target: &str) -> Option<PrivateEvent> {
         self.private_blocks
             .get(target)
             .and_then(|policy| policy.head())
@@ -177,7 +180,7 @@ impl AppCore {
             .is_none_or(|policy| !policy.suppresses(created))
     }
 
-    pub(super) fn project_private_block(&mut self, event: &Event) -> bool {
+    pub(super) fn project_private_block(&mut self, event: &PrivateEvent) -> bool {
         let Some(incoming) = block_event_state(event) else {
             return false;
         };
@@ -324,15 +327,17 @@ impl AppCore {
             // Keep the v1 field for older readers without issuing a deletion.
             deleted_at: 0,
         };
-        let event = EventBuilder::new(
-            Kind::Custom(BLOCK_CONTROL_KIND as u16),
-            serde_json::to_string(&state)?,
-        )
-        .tag(nostr::Tag::public_key(owner))
-        .tag(nostr::Tag::identifier(format!("iris:block:{target}")))
-        .allow_self_tagging()
-        .custom_created_at(Timestamp::from_secs(now))
-        .sign_with_keys(&login.device_keys)?;
+        let event = PrivateEvent::from_unsigned(
+            EventBuilder::new(
+                Kind::Custom(BLOCK_CONTROL_KIND as u16),
+                serde_json::to_string(&state)?,
+            )
+            .tag(nostr::Tag::public_key(owner))
+            .tag(nostr::Tag::identifier(format!("iris:block:{target}")))
+            .allow_self_tagging()
+            .custom_created_at(Timestamp::from_secs(now))
+            .build(login.device_keys.public_key()),
+        );
         anyhow::ensure!(
             self.apply_private_block_event(event.clone()),
             "Block not persisted"
@@ -387,7 +392,7 @@ impl AppCore {
             #[serde(rename = "type")]
             kind: String,
             v: u8,
-            event: Event,
+            event: PrivateEvent,
         }
         let Ok(control) = serde_json::from_str::<Control>(content) else {
             return true;
@@ -409,7 +414,10 @@ impl AppCore {
 
 // Shared by actor projection and the read-only pagination/search connection.
 // Invalid stored signed state is an error, never silently treated as no blocks.
-pub(super) fn blocked_intervals_json(events: Vec<Event>, owner: &str) -> anyhow::Result<String> {
+pub(super) fn blocked_intervals_json(
+    events: Vec<PrivateEvent>,
+    owner: &str,
+) -> anyhow::Result<String> {
     let mut policies: BTreeMap<String, PrivateBlockPolicy> = BTreeMap::new();
     for event in events {
         let state = block_event_state(&event)

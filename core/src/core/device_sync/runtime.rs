@@ -53,6 +53,16 @@ impl AppCore {
             self.persist_best_effort();
         }
         #[cfg(test)]
+        if self
+            .device_sync
+            .as_ref()
+            .is_some_and(|runtime| runtime.key == "test")
+        {
+            // The in-memory wire harness owns this transport. A peer roster
+            // import must not replace it with real networking halfway through sync.
+            return;
+        }
+        #[cfg(test)]
         if let Some((local, peer, identity)) = self.test_fips_udp.clone() {
             // History can now reach a sibling through the caller. Reconciliation
             // must retain this fixture's transport, just like configured production peers.
@@ -286,10 +296,10 @@ impl AppCore {
                 roster_at: config.roster_at,
                 page: None,
                 record_reconcile: Some(1),
-                private_events: Some(1),
+                private_events: Some(2),
                 read_states: Some(2),
-                name_approvals: Some(1),
-                private_facts: Some(1),
+                name_approvals: Some(2),
+                private_facts: Some(2),
                 history_since: None,
             });
             let resync_required = serde_json::to_vec(&DeviceSyncPacket::ResyncRequired {

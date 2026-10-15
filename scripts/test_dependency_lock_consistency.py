@@ -131,7 +131,7 @@ class DependencyLockConsistencyTests(unittest.TestCase):
                 for package, expected in EXPECTED.items():
                     self.assertEqual(versions.get(package), {expected}, f"{package} in {lock_path}")
                 self.assertIn(
-                    "0.4.0",
+                    "0.6.0",
                     versions.get("nostr-identity", set()),
                     f"direct nostr-identity release in {lock_path}",
                 )
@@ -146,7 +146,7 @@ class DependencyLockConsistencyTests(unittest.TestCase):
         self.assertRegex(manifest, r'(?m)^hashtree-core = "=0\.2\.91"$', "Hashtree core must stay on the gated release")
         self.assertRegex(manifest, r'(?m)^hashtree-fips-transport = "=0\.4\.28"$', "Hashtree/FIPS transport must stay on the gated release")
         self.assertRegex(manifest, r'(?m)^hashtree-network = "=0\.2\.88"$', "Hashtree network must stay on the gated release")
-        self.assertRegex(manifest, r'(?m)^nostr-identity = "=0\.4\.0"$', "nostr-identity must stay on the gated release")
+        self.assertRegex(manifest, r'(?m)^nostr-identity = "=0\.6\.0"$', "nostr-identity must stay on the gated release")
         self.assertRegex(manifest, r'(?m)^nostr-pubsub = "=0\.1\.16"$', "nostr-pubsub must stay on the gated release")
         self.assertRegex(manifest, r'(?m)^nostr-pubsub-fips = "=0\.5\.22"$', "nostr-pubsub-fips must stay on the gated release")
         self.assertRegex(manifest, r'(?m)^nostr-pubsub-relay = "=0\.1\.13"$', "nostr-pubsub-relay must stay on the gated release")

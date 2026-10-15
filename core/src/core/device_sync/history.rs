@@ -176,7 +176,12 @@ impl HistorySession {
             if (record_access.supported
                 || !matches!(record, DeviceSyncRecord::MessageMutation { .. }))
                 && (record_access.private_events
-                    || !matches!(record, DeviceSyncRecord::PrivateBlock { .. }))
+                    || !matches!(
+                        record,
+                        DeviceSyncRecord::PrivateBlock { .. }
+                            | DeviceSyncRecord::PrivateEvent { .. }
+                            | DeviceSyncRecord::Authorization { .. }
+                    ))
                 && (record_access.name_approvals
                     || !matches!(record, DeviceSyncRecord::PrivateNameApproval { .. }))
                 && (record_access.private_facts
@@ -201,6 +206,20 @@ impl HistorySession {
             records.len() <= core.device_history_record_limit().min(capacity)
         };
         if scope == RecordScope::State {
+            if record_access.private_events {
+                if let Some(engine) = &core.protocol_engine {
+                    for event in engine.authorization_events() {
+                        if !add(DeviceSyncRecord::Authorization { event }) {
+                            return None;
+                        }
+                    }
+                }
+                for event in core.private_setting_events() {
+                    if !add(DeviceSyncRecord::PrivateEvent { event }) {
+                        return None;
+                    }
+                }
+            }
             if record_access.private_facts {
                 for fact in core.private_contact_facts() {
                     if !add(DeviceSyncRecord::PrivateContactFact { fact }) {
@@ -426,7 +445,7 @@ impl AppCore {
         }
     }
     pub(super) fn negotiate_private_events(&mut self, peer: &str, capability: Option<u8>) {
-        if capability == Some(1) && self.device_sync_peer_is_authorized(peer) {
+        if capability == Some(2) && self.device_sync_peer_is_authorized(peer) {
             if let Some(runtime) = &mut self.device_sync {
                 if runtime.history.private_events.len() < MAX_SESSIONS {
                     runtime.history.private_events.insert(peer.to_string());
@@ -454,7 +473,7 @@ impl AppCore {
             .is_some_and(|runtime| runtime.history.read_states.contains(peer))
     }
     pub(super) fn negotiate_name_approvals(&mut self, peer: &str, capability: Option<u8>) {
-        if capability == Some(1) && self.device_sync_peer_is_authorized(peer) {
+        if capability == Some(2) && self.device_sync_peer_is_authorized(peer) {
             if let Some(runtime) = &mut self.device_sync {
                 if runtime.history.name_approvals.len() < MAX_SESSIONS {
                     runtime.history.name_approvals.insert(peer.to_string());
@@ -468,7 +487,7 @@ impl AppCore {
             .is_some_and(|runtime| runtime.history.name_approvals.contains(peer))
     }
     pub(super) fn negotiate_private_facts(&mut self, peer: &str, capability: Option<u8>) {
-        if capability == Some(1) && self.device_sync_peer_is_authorized(peer) {
+        if capability == Some(2) && self.device_sync_peer_is_authorized(peer) {
             if let Some(runtime) = &mut self.device_sync {
                 if runtime.history.private_facts.len() < MAX_SESSIONS {
                     runtime.history.private_facts.insert(peer.to_string());
@@ -719,12 +738,12 @@ impl AppCore {
                 &prefix,
                 HistoryRecordAccess {
                     supported: message_mutations == Some(1),
-                    private_events: private_events == Some(1)
+                    private_events: private_events == Some(2)
                         && self.private_events_supported(peer),
                     read_states: read_states == Some(2) && self.read_states_supported(peer),
-                    name_approvals: name_approvals == Some(1)
+                    name_approvals: name_approvals == Some(2)
                         && self.name_approvals_supported(peer),
-                    private_facts: private_facts == Some(1) && self.private_facts_supported(peer),
+                    private_facts: private_facts == Some(2) && self.private_facts_supported(peer),
                     target_since: self.device_history_mutation_target_since(peer),
                 },
             ) else {
