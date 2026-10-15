@@ -7,6 +7,7 @@ const FORWARDED_HEADING: &str = "Forwarded:\n\n";
 /// Keep the heading in the encrypted body so every renderer can display it.
 #[uniffi::export]
 pub fn format_forwarded_message(text: String) -> String {
+    let text = crate::display_message_mentions(text);
     let text = text.trim();
     // Attachment extraction trims an attachment-only forward to "Forwarded:";
     // native forward pickers append its attachment links on the next line.

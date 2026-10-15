@@ -31,6 +31,8 @@ pub(crate) fn include_note_to_self(chats: &mut Vec<ChatThreadSnapshot>, account:
         last_message_preview: None,
         last_message_at_secs: None,
         last_message_is_outgoing: None,
+        last_message_id: None,
+        unread_mention_messages: Vec::new(),
         last_message_delivery: None,
         unread_count: 0,
         is_typing: false,

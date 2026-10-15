@@ -3,13 +3,9 @@
 //! Windows WPF, Android in-app) compare two consecutive AppState snapshots
 //! and call [`decide_notifications`] to get the resulting candidate list.
 //!
-//! iOS APNS keeps its own minimal suppression path
-//! (`mobile_push::decrypt_mobile_push_notification`) because background
-//! Notification Service Extensions cannot reach the live AppState and,
-//! more importantly, until we ship the
-//! `com.apple.developer.usernotifications.filtering` entitlement, Apple
-//! requires every delivered push to surface to the user. Do not route
-//! iOS APNS through this module.
+//! iOS APNS resolves encrypted events against persisted state in its service
+//! extension. Its notification-filtering entitlement permits suppression; the
+//! background resolver applies the same mention exception after decryption.
 
 use std::collections::HashMap;
 
@@ -18,6 +14,8 @@ use crate::state::{ChatThreadSnapshot, PreferencesSnapshot, Router, Screen};
 #[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
 pub struct NotificationCandidate {
     pub chat_id: String,
+    #[uniffi(default = None)]
+    pub message_id: Option<String>,
     pub title: String,
     pub body: String,
 }
@@ -26,10 +24,11 @@ pub struct NotificationCandidate {
 /// next snapshots of the chat list. Suppression rules — all must pass:
 ///
 /// 1. `preferences.desktop_notifications_enabled` is true.
-/// 2. The chat is not muted (`chat.is_muted`).
-/// 3. The last message is known-incoming (`last_message_is_outgoing == Some(false)`).
-///    Unknown direction (`None`) is treated as suppressed: we'd rather miss
-///    a banner than show one for our own outgoing message.
+/// 2. The chat is not muted, or it is a group mentioning this account and the
+///    user permits mention notifications while muted.
+/// 3. The ordinary candidate is known-incoming, or a muted group has a new
+///    unread incoming mention ID. A later ordinary/outgoing message in the
+///    same coalesced snapshot cannot hide that mention.
 /// 4. The chat is not currently open with the app foregrounded.
 /// 5. `unread_count` strictly increased relative to the previous snapshot
 ///    (chats absent from the previous snapshot count as previous = 0).
@@ -44,40 +43,57 @@ pub fn decide_notifications(
         return Vec::new();
     }
 
-    let previous_unread: HashMap<&str, u64> = previous_chats
+    let previous_by_id: HashMap<&str, &ChatThreadSnapshot> = previous_chats
         .iter()
-        .map(|c| (c.chat_id.as_str(), c.unread_count))
+        .map(|c| (c.chat_id.as_str(), c))
         .collect();
 
     let suppressing_open_chat = if app_foreground { open_chat_id } else { None };
 
     let mut out = Vec::new();
     for chat in next_chats {
-        if chat.is_muted {
-            continue;
-        }
-        if chat.last_message_is_outgoing != Some(false) {
-            continue;
-        }
         if suppressing_open_chat == Some(chat.chat_id.as_str()) {
             continue;
         }
-        let previous = previous_unread
-            .get(chat.chat_id.as_str())
-            .copied()
-            .unwrap_or(0);
-        if chat.unread_count <= previous {
+        let previous = previous_by_id.get(chat.chat_id.as_str()).copied();
+        if chat.unread_count <= previous.map_or(0, |chat| chat.unread_count) {
             continue;
         }
-        let body = chat
-            .last_message_preview
-            .as_deref()
+        let mention = if chat.is_muted {
+            if chat.kind != crate::state::ChatKind::Group
+                || preferences.silent_mention_chat_ids.contains(&chat.chat_id)
+            {
+                continue;
+            }
+            let mention = chat.unread_mention_messages.iter().rev().find(|mention| {
+                !previous.is_some_and(|old| {
+                    old.unread_mention_messages
+                        .iter()
+                        .any(|item| item.message_id == mention.message_id)
+                })
+            });
+            let Some(mention) = mention else {
+                continue;
+            };
+            Some(mention)
+        } else {
+            None
+        };
+        if mention.is_none() && chat.last_message_is_outgoing != Some(false) {
+            continue;
+        }
+        let body = mention
+            .map(|mention| mention.preview.as_str())
+            .or(chat.last_message_preview.as_deref())
             .map(str::trim)
             .filter(|s| !s.is_empty())
             .map(str::to_owned)
             .unwrap_or_else(|| "New message".to_string());
         out.push(NotificationCandidate {
             chat_id: chat.chat_id.clone(),
+            message_id: mention
+                .map(|mention| mention.message_id.clone())
+                .or_else(|| chat.last_message_id.clone()),
             title: chat.display_name.clone(),
             body,
         });
@@ -129,6 +145,8 @@ mod tests {
             last_message_preview: preview.map(str::to_string),
             last_message_at_secs: Some(100),
             last_message_is_outgoing: last_is_outgoing,
+            last_message_id: None,
+            unread_mention_messages: Vec::new(),
             last_message_delivery: None,
             unread_count: unread,
             is_typing: false,
@@ -170,6 +188,45 @@ mod tests {
         let next = vec![chat("a", 1, Some(false), true, Some("hi"))];
         let out = decide_notifications(&prev, &next, &prefs(true), false, None);
         assert!(out.is_empty());
+    }
+
+    #[test]
+    fn mentions_only_override_muted_groups_with_notifications_enabled() {
+        let mut next = chat("group:friends", 1, Some(false), true, Some("Hi @Alex"));
+        next.unread_mention_messages
+            .push(crate::state::MentionNotificationSnapshot {
+                message_id: "mention".into(),
+                preview: "Hi @Alex".into(),
+            });
+        assert!(
+            decide_notifications(&[], &[next.clone()], &prefs(true), false, None).is_empty(),
+            "direct chats stay muted"
+        );
+        next.kind = crate::state::ChatKind::Group;
+        assert_eq!(
+            decide_notifications(&[], &[next.clone()], &prefs(true), false, None).len(),
+            1
+        );
+        let mut opted_out = prefs(true);
+        opted_out.silent_mention_chat_ids.push(next.chat_id.clone());
+        assert!(decide_notifications(&[], &[next.clone()], &opted_out, false, None).is_empty());
+        assert!(decide_notifications(&[], &[next.clone()], &prefs(false), false, None).is_empty());
+        assert!(decide_notifications(
+            &[],
+            &[next.clone()],
+            &prefs(true),
+            true,
+            Some(&next.chat_id)
+        )
+        .is_empty());
+        next.last_message_is_outgoing = Some(true);
+        assert_eq!(
+            decide_notifications(&[], &[next.clone()], &prefs(true), false, None).len(),
+            1,
+            "a later outgoing message cannot hide a new incoming mention"
+        );
+        next.unread_mention_messages.clear();
+        assert!(decide_notifications(&[], &[next], &prefs(true), false, None).is_empty());
     }
 
     #[test]

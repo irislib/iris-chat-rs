@@ -320,9 +320,13 @@ impl AppCore {
                         let should_remember_group_event = group_result.consumed
                             || !group_result.events.is_empty()
                             || !group_result.effects.is_empty();
-                        for group_event in group_result.events {
-                            self.cache_group_mobile_push_control(&event_id, &group_event);
-                            self.apply_group_decrypted_event(group_event);
+                        for (index, group_event) in group_result.events.into_iter().enumerate() {
+                            let source =
+                                (index < group_result.source_event_count).then(|| event_id.clone());
+                            if source.is_some() {
+                                self.cache_group_mobile_push_control(&event_id, &group_event);
+                            }
+                            self.apply_group_decrypted_event_from_outer(group_event, source);
                         }
                         if !group_result.effects.is_empty() {
                             self.process_protocol_engine_effects(group_result.effects);

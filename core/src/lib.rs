@@ -15,6 +15,8 @@ mod core;
 mod desktop_nearby;
 mod desktop_update;
 mod emoji;
+mod mentions;
+pub use mentions::*;
 mod fips_ble_ffi;
 mod forwarding;
 pub mod image_proxy;

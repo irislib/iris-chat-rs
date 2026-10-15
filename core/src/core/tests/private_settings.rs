@@ -140,6 +140,8 @@ fn check_private_state_link_history(legacy_acceptance: bool) {
         assert!(pair.a.apply_app_keys_event(&current).unwrap());
         assert!(pair.b.apply_app_keys_event(&current).unwrap());
         let chat = owner.to_hex();
+        pair.a
+            .set_chat_mention_notifications("group:mention-settings", false);
         if legacy_acceptance {
             pair.a.preferences.accepted_owner_pubkeys.push(chat.clone());
         }
@@ -222,6 +224,11 @@ fn check_private_state_link_history(legacy_acceptance: bool) {
         if legacy_acceptance {
             assert_eq!(pair.b.request_decision(&chat).unwrap().decision, "accepted");
         }
+        assert_eq!(
+            pair.b.preferences.silent_mention_chat_ids,
+            vec!["group:mention-settings"],
+            "private mention choice must reconcile without sharing chat history"
+        );
         if include_history {
             assert!(
                 pair.b

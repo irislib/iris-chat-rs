@@ -10,6 +10,7 @@ mod block_policy;
 mod control_preview;
 mod diagnostics;
 mod invite_owner;
+pub(super) mod mention_policy;
 mod read_state;
 pub(super) mod subscriptions;
 use invite_owner::pending_invite_response_owner;
@@ -83,12 +84,17 @@ impl AppCore {
             };
             // Map chat owners to their rotating event keys, not the owner's public key.
             for chat_id in &self.preferences.muted_chat_ids {
+                if mention_policy::keep_group_subscription(&self.preferences, chat_id) {
+                    continue;
+                }
                 for key in muted_authors(chat_id) {
                     message_author_pubkeys.remove(&key.to_hex());
                 }
             }
             for mute in &self.preferences.timed_chat_mutes {
-                if mute.until_secs <= now || self.preferences.muted_chat_ids.contains(&mute.chat_id)
+                if mute.until_secs <= now
+                    || self.preferences.muted_chat_ids.contains(&mute.chat_id)
+                    || mention_policy::keep_group_subscription(&self.preferences, &mute.chat_id)
                 {
                     continue;
                 }
@@ -354,6 +360,7 @@ fn decrypt_mobile_push_notification_inner(
                     lookup_recent_group_mobile_push_preview_after_short_wait(
                         &data_dir,
                         outer_event.created_at.as_secs().saturating_sub(5),
+                        &owner_pubkey_hex,
                     )
                     .unwrap_or_else(suppressed_resolution)
                 } else {
@@ -518,7 +525,13 @@ fn decrypted_mobile_push_resolution(
     {
         return read_state::dismissed_resolution();
     }
-    if is_chat_muted_in_data_dir(data_dir, &resolved_chat_id) {
+    if mention_policy::suppresses_in_data_dir(
+        data_dir,
+        &resolved_chat_id,
+        &local_owner.to_hex(),
+        &inner_content,
+        inner_kind == MOBILE_PUSH_CHAT_MESSAGE_KIND,
+    ) {
         return suppressed_resolution();
     }
 
@@ -631,7 +644,7 @@ fn lookup_mobile_push_preview(
         return Some(read_state::dismissed_resolution());
     }
     let group_id = chat_id.strip_prefix(GROUP_CHAT_PREFIX);
-    if is_chat_muted_in(&conn, &chat_id) {
+    if mention_policy::suppresses(&conn, &chat_id, owner_pubkey_hex, &body, true) {
         return Some(suppressed_resolution());
     }
     let sender_pubkey = nostr::PublicKey::parse(&author_hex).ok();
@@ -713,6 +726,7 @@ fn lookup_mobile_push_preview(
 fn lookup_recent_group_mobile_push_preview(
     data_dir: &str,
     min_created_at_secs: u64,
+    owner_pubkey_hex: &str,
 ) -> Option<MobilePushNotificationResolution> {
     let conn = open_lookup_connection(data_dir)?;
     let min_created_at_secs = i64::try_from(min_created_at_secs).ok()?;
@@ -751,7 +765,7 @@ fn lookup_recent_group_mobile_push_preview(
         return Some(suppressed_resolution());
     }
     let group_id = chat_id.strip_prefix(GROUP_CHAT_PREFIX)?.to_string();
-    if is_chat_muted_in(&conn, &chat_id) {
+    if mention_policy::suppresses(&conn, &chat_id, owner_pubkey_hex, &body, true) {
         return Some(suppressed_resolution());
     }
 
@@ -809,13 +823,14 @@ fn lookup_recent_group_mobile_push_preview(
 fn lookup_recent_group_mobile_push_preview_after_short_wait(
     data_dir: &str,
     min_created_at_secs: u64,
+    owner_pubkey_hex: &str,
 ) -> Option<MobilePushNotificationResolution> {
     for delay_ms in [0_u64, 25, 75, 150, 300, 600, 1_200, 2_400] {
         if delay_ms > 0 {
             std::thread::sleep(Duration::from_millis(delay_ms));
         }
         if let Some(resolution) =
-            lookup_recent_group_mobile_push_preview(data_dir, min_created_at_secs)
+            lookup_recent_group_mobile_push_preview(data_dir, min_created_at_secs, owner_pubkey_hex)
         {
             return Some(resolution);
         }
@@ -872,12 +887,6 @@ fn lookup_group_name_in(conn: &rusqlite::Connection, group_id: &str) -> Option<S
         .ok()?;
     let trimmed = name.trim().to_string();
     (!trimmed.is_empty()).then_some(trimmed)
-}
-
-fn is_chat_muted_in_data_dir(data_dir: &str, chat_id: &str) -> bool {
-    open_lookup_connection(data_dir)
-        .as_ref()
-        .is_some_and(|conn| is_chat_muted_in(conn, chat_id))
 }
 
 pub(super) fn is_chat_muted_in(conn: &rusqlite::Connection, chat_id: &str) -> bool {

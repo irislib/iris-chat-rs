@@ -68,6 +68,7 @@ pub(super) fn hash_preferences(preferences: &PreferencesSnapshot) -> u64 {
     preferences.mobile_push_server_url.hash(&mut hasher);
     preferences.muted_chat_ids.hash(&mut hasher);
     preferences.timed_chat_mutes.hash(&mut hasher);
+    preferences.silent_mention_chat_ids.hash(&mut hasher);
     preferences.pinned_chat_ids.hash(&mut hasher);
     preferences.debug_logging_enabled.hash(&mut hasher);
     preferences.accept_unknown_direct_messages.hash(&mut hasher);
@@ -92,7 +93,7 @@ pub(super) fn load_preferences(
                     debug_logging_enabled, accept_unknown_direct_messages,
                     nearby_enabled,
                     blocked_owner_pubkeys_json, accepted_owner_pubkeys_json,
-                    nearby_mailbag_enabled, nearby_show_in_chat_list, image_proxy_fallback_enabled, voice_calls_enabled, video_calls_enabled, call_quality, call_max_bitrate_bps, timed_chat_mutes_json, allow_message_deletion_by_others, hide_blocked_group_messages
+                    nearby_mailbag_enabled, nearby_show_in_chat_list, image_proxy_fallback_enabled, voice_calls_enabled, video_calls_enabled, call_quality, call_max_bitrate_bps, timed_chat_mutes_json, allow_message_deletion_by_others, hide_blocked_group_messages, silent_mention_chat_ids_json
              FROM preferences WHERE id = 1",
             [],
             |row| {
@@ -101,6 +102,7 @@ pub(super) fn load_preferences(
                     send_read_receipts: row.get::<_, i64>(1)? != 0,
                     allow_message_deletion_by_others: row.get::<_, i64>(28)? != 0,
                     hide_blocked_group_messages: row.get::<_, i64>(29)? != 0,
+                    silent_mention_chat_ids: serde_json::from_str(&row.get::<_, String>(30)?).unwrap_or_default(),
                     desktop_notifications_enabled: row.get::<_, i64>(2)? != 0,
                     invite_acceptance_notifications_enabled: row.get::<_, i64>(3)? != 0,
                     startup_at_login_enabled: row.get::<_, i64>(4)? != 0,
@@ -153,8 +155,8 @@ pub(super) fn write_preferences(
             mobile_push_server_url, muted_chat_ids_json, pinned_chat_ids_json,
             debug_logging_enabled, accept_unknown_direct_messages, nearby_enabled,
             blocked_owner_pubkeys_json, accepted_owner_pubkeys_json,
-            nearby_mailbag_enabled, nearby_show_in_chat_list, image_proxy_fallback_enabled, voice_calls_enabled, video_calls_enabled, call_quality, call_max_bitrate_bps, timed_chat_mutes_json, allow_message_deletion_by_others, hide_blocked_group_messages
-         ) VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30)
+            nearby_mailbag_enabled, nearby_show_in_chat_list, image_proxy_fallback_enabled, voice_calls_enabled, video_calls_enabled, call_quality, call_max_bitrate_bps, timed_chat_mutes_json, allow_message_deletion_by_others, hide_blocked_group_messages, silent_mention_chat_ids_json
+         ) VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31)
          ON CONFLICT(id) DO UPDATE SET
             voice_calls_enabled = excluded.voice_calls_enabled,
             video_calls_enabled = excluded.video_calls_enabled,
@@ -178,6 +180,7 @@ pub(super) fn write_preferences(
             mobile_push_server_url = excluded.mobile_push_server_url,
             muted_chat_ids_json = excluded.muted_chat_ids_json,
             timed_chat_mutes_json = excluded.timed_chat_mutes_json,
+            silent_mention_chat_ids_json = excluded.silent_mention_chat_ids_json,
             pinned_chat_ids_json = excluded.pinned_chat_ids_json,
             debug_logging_enabled = excluded.debug_logging_enabled,
             accept_unknown_direct_messages = excluded.accept_unknown_direct_messages,
@@ -217,6 +220,7 @@ pub(super) fn write_preferences(
             serde_json::to_string(&preferences.timed_chat_mutes)?,
             preferences.allow_message_deletion_by_others as i64,
             preferences.hide_blocked_group_messages as i64,
+            serde_json::to_string(&preferences.silent_mention_chat_ids)?,
         ],
     )?;
     Ok(())

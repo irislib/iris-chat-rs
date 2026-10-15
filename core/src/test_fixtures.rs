@@ -213,6 +213,8 @@ fn fixture_thread(kind: ChatKind, index: u32) -> ChatThreadSnapshot {
         )),
         last_message_at_secs: Some(BASE_TIME_SECS.saturating_sub(u64::from(index) * 60)),
         last_message_is_outgoing: Some(index.is_multiple_of(3)),
+        last_message_id: None,
+        unread_mention_messages: Vec::new(),
         last_message_delivery: Some(match index % 5 {
             0 => DeliveryState::Seen,
             1 => DeliveryState::Sent,

@@ -52,10 +52,12 @@ pub(super) fn message_preview(message: &ChatMessageSnapshot) -> String {
 }
 
 pub(super) fn chat_message_body_preview(body: &str) -> String {
-    direct_files::preview(body).unwrap_or_else(|| strip_reply_quote(body).trim().to_string())
+    direct_files::preview(body).unwrap_or_else(|| {
+        crate::display_message_mentions(strip_reply_quote(body).trim().to_string())
+    })
 }
 
-fn strip_reply_quote(body: &str) -> &str {
+pub(crate) fn strip_reply_quote(body: &str) -> &str {
     let Some(remaining) = body.strip_prefix(REPLY_MESSAGE_PREFIX) else {
         return body;
     };

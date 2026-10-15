@@ -7,7 +7,7 @@ use rusqlite::{params, Connection, Transaction};
 // Bump when a non-additive change to the schema lands and migrate
 // inside `ensure_schema` below. Greenfield: version 1 is the initial
 // shape and there is no previous JSON layout to migrate from.
-const SCHEMA_VERSION: u32 = 44;
+const SCHEMA_VERSION: u32 = 45;
 
 const INITIAL_SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS direct_file_transfers (
@@ -38,6 +38,7 @@ CREATE TABLE IF NOT EXISTS preferences (
     mobile_push_server_url TEXT NOT NULL,
     muted_chat_ids_json TEXT NOT NULL DEFAULT '[]',
     timed_chat_mutes_json TEXT NOT NULL DEFAULT '[]',
+    silent_mention_chat_ids_json TEXT NOT NULL DEFAULT '[]',
     pinned_chat_ids_json TEXT NOT NULL DEFAULT '[]',
     debug_logging_enabled INTEGER NOT NULL DEFAULT 0,
     accept_unknown_direct_messages INTEGER NOT NULL DEFAULT 1,
@@ -670,6 +671,9 @@ pub(super) fn ensure_schema(conn: &mut Connection) -> anyhow::Result<()> {
             WHERE m.key LIKE 'chat_read_state:%' AND json_extract(CASE WHEN json_valid(m.value) THEN m.value ELSE '{}' END, '$.seenThroughSecs') > 0
               AND j.type = 'text' AND NOT EXISTS (SELECT 1 FROM messages x
                 WHERE x.chat_id = substr(m.key, length('chat_read_state:') + 1) AND x.id = j.value);")?;
+    }
+    if !column_exists(&tx, "preferences", "silent_mention_chat_ids_json")? {
+        tx.execute_batch("ALTER TABLE preferences ADD COLUMN silent_mention_chat_ids_json TEXT NOT NULL DEFAULT '[]';")?;
     }
     tx.pragma_update(None, "user_version", SCHEMA_VERSION as i64)?;
     tx.commit()?;

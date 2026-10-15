@@ -91,6 +91,9 @@ pub struct PreferencesSnapshot {
     pub image_proxy_salt_hex: String,
     pub muted_chat_ids: Vec<String>,
     pub timed_chat_mutes: Vec<ChatMuteDeadline>,
+    /// Muted groups where even identity-bearing @mentions stay silent.
+    #[uniffi(default = [])]
+    pub silent_mention_chat_ids: Vec<String>,
     pub pinned_chat_ids: Vec<String>,
     /// Owner pubkeys (hex) the local user has blocked. Blocking drops
     /// the peer from the nostr relay subscription, the mobile push
@@ -139,6 +142,7 @@ impl Default for PreferencesSnapshot {
             image_proxy_salt_hex: crate::image_proxy::DEFAULT_IMAGE_PROXY_SALT_HEX.to_string(),
             muted_chat_ids: Vec::new(),
             timed_chat_mutes: Vec::new(),
+            silent_mention_chat_ids: Vec::new(),
             pinned_chat_ids: Vec::new(),
             blocked_owner_pubkeys: Vec::new(),
             accepted_owner_pubkeys: Vec::new(),
@@ -370,6 +374,12 @@ pub struct SocialConnectionSnapshot {
 }
 
 #[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
+pub struct MentionNotificationSnapshot {
+    pub message_id: String,
+    pub preview: String,
+}
+
+#[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
 pub struct ChatThreadSnapshot {
     pub social_connection: Option<SocialConnectionSnapshot>,
     pub chat_id: String,
@@ -385,6 +395,10 @@ pub struct ChatThreadSnapshot {
     pub last_message_preview: Option<String>,
     pub last_message_at_secs: Option<u64>,
     pub last_message_is_outgoing: Option<bool>,
+    #[uniffi(default = None)]
+    pub last_message_id: Option<String>,
+    #[uniffi(default = [])]
+    pub unread_mention_messages: Vec<MentionNotificationSnapshot>,
     pub last_message_delivery: Option<DeliveryState>,
     pub unread_count: u64,
     pub is_typing: bool,

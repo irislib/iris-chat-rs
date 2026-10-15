@@ -207,6 +207,7 @@ pub(super) fn apply_persisted_preferences(
     preferences.muted_chat_ids.sort();
     preferences.muted_chat_ids.dedup();
     preferences.timed_chat_mutes = persisted.timed_chat_mutes.clone();
+    preferences.silent_mention_chat_ids = persisted.silent_mention_chat_ids.clone();
     preferences
         .timed_chat_mutes
         .retain(|mute| mute.until_secs > unix_now().get());

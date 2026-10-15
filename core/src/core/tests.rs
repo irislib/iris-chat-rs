@@ -213,3 +213,5 @@ include!("tests/message_mutation_live_privacy.rs");
 include!("tests/message_mutation_cleanup.rs");
 
 include!("tests/private_settings.rs");
+
+include!("tests/mentions.rs");
