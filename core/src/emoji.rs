@@ -252,7 +252,7 @@ pub fn iris_emoji_catalog() -> Vec<EmojiCategorySnapshot> {
 
 #[uniffi::export]
 pub fn iris_emoji_search_aliases() -> Vec<EmojiAliasSnapshot> {
-    vec![
+    let search_aliases = vec![
         alias("😂", "laugh laughing lol haha"),
         alias("🤣", "laugh laughing lol haha rolling"),
         alias("😊", "smile smiling happy"),
@@ -299,7 +299,24 @@ pub fn iris_emoji_search_aliases() -> Vec<EmojiAliasSnapshot> {
         alias("👍", "thumbs up like yes"),
         alias("👎", "thumbs down dislike no"),
         alias("🥺", "pleading puppy eyes"),
-    ]
+    ];
+    // Shortcode names come first so native composers can show one stable label.
+    // Keep natural-language search words after them for the existing pickers.
+    include_str!("../assets/emoji-shortcodes.tsv")
+        .lines()
+        .filter_map(|line| line.split_once('\t'))
+        .map(|(emoji, shortcodes)| {
+            let extra = search_aliases.iter().find(|entry| entry.emoji == emoji);
+            let keywords = match extra {
+                Some(entry) => format!("{shortcodes} {}", entry.keywords),
+                None => shortcodes.to_string(),
+            };
+            EmojiAliasSnapshot {
+                emoji: emoji.to_string(),
+                keywords,
+            }
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -327,5 +344,42 @@ mod tests {
             .find(|a| a.emoji == "😮")
             .expect("alias entry for open-mouth emoji");
         assert!(hit.keywords.contains("wow"));
+    }
+
+    #[test]
+    fn every_picker_emoji_has_a_unique_completion_label() {
+        let aliases = iris_emoji_search_aliases();
+        let mut labels = std::collections::HashSet::new();
+        for emoji in iris_emoji_catalog().into_iter().flat_map(|c| c.emojis) {
+            let entry = aliases.iter().find(|entry| entry.emoji == emoji).unwrap();
+            let label = entry.keywords.split_whitespace().next().unwrap();
+            assert!(labels.insert(label), "duplicate shortcode: {label}");
+            assert!(label
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || "_+-".contains(c)));
+        }
+        assert_eq!(labels.len(), aliases.len());
+    }
+
+    #[test]
+    fn familiar_shortcodes_keep_the_same_emoji_on_every_platform() {
+        let aliases = iris_emoji_search_aliases();
+        for (emoji, expected) in [
+            ("😄", "smile"),
+            ("😂", "joy"),
+            ("❤️", "heart"),
+            ("👍", "thumbsup"),
+            ("🔥", "fire"),
+        ] {
+            let entry = aliases.iter().find(|entry| entry.emoji == emoji).unwrap();
+            assert_eq!(entry.keywords.split_whitespace().next(), Some(expected));
+        }
+        assert!(aliases
+            .iter()
+            .find(|entry| entry.emoji == "👍")
+            .unwrap()
+            .keywords
+            .split_whitespace()
+            .any(|word| word == "+1"));
     }
 }
