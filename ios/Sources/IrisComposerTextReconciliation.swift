@@ -14,6 +14,7 @@ func irisReconcileComposerText(
     guard !textView.hasMarkedText(), lastPublishedNativeText != nativeText else {
         return
     }
+    textView.undoManager?.removeAllActions()
     textView.string = bindingText
     textView.setSelectedRange(
         NSRange(location: (bindingText as NSString).length, length: 0)

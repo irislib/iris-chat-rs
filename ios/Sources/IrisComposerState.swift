@@ -8,18 +8,43 @@ final class IrisComposerState: ObservableObject {
     @Published var text = "" {
         didSet {
             if text != oldValue {
-                if !restoringMentions { mentions.textDidChange(from: oldValue, to: text) }
+                if !restoringMentions, pendingNativeText != text { mentions.discard() }
+                pendingNativeText = nil
                 hasLocalEdits = true
             }
         }
     }
     private var mentions = IrisMentionDraft()
     private var restoringMentions = false
+    private var pendingNativeText: String?
+    @Published private(set) var mentionRevision = 0
+
+    func prepareNativeEdit(_ edit: IrisComposerNativeEdit) {
+        pendingNativeText = edit.text
+        guard edit.undoManager?.isUndoing != true, edit.undoManager?.isRedoing != true else { return }
+        let previous = mentions
+        edit.undoManager?.registerUndo(withTarget: self) { [weak undo = edit.undoManager] target in
+            target.restoreMentionMetadata(previous, undo: undo)
+        }
+        let inserted = (edit.text as NSString).substring(with: NSRange(location: edit.range.location, length: edit.replacementLength))
+        mentions.replace(range: edit.range, replacementLength: edit.replacementLength,
+            insertingWord: inserted.first.map { $0.isLetter || $0.isNumber } ?? false)
+        mentionRevision &+= 1
+    }
+
+    private func restoreMentionMetadata(_ value: IrisMentionDraft, undo: UndoManager?) {
+        let previous = mentions
+        undo?.registerUndo(withTarget: self) { [weak undo] target in
+            target.restoreMentionMetadata(previous, undo: undo)
+        }
+        mentions = value
+        mentionRevision &+= 1
+    }
     var wireText: String { mentions.wireText(from: text) }
 
     func insertMention(label: String, token: String, owner: String, at location: Int) {
-        objectWillChange.send()
         mentions.insert(label: label, token: token, owner: owner, at: location)
+        mentionRevision &+= 1
     }
 
     var lastTypingSentAt: Date?

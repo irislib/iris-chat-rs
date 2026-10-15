@@ -28,6 +28,7 @@ struct State {
     applying: Cell<bool>,
     undoing: Cell<bool>,
     generation: Cell<u64>,
+    pending: Cell<bool>,
 }
 
 impl MentionCompletion {
@@ -48,6 +49,7 @@ impl MentionCompletion {
             applying: Cell::new(false),
             undoing: Cell::new(false),
             generation: Cell::new(0),
+            pending: Cell::new(false),
         });
         let buffer = input.buffer();
         let changed = state.clone();
@@ -63,8 +65,9 @@ impl MentionCompletion {
             }
             let state = edited.clone();
             let generation = state.generation.get();
+            state.pending.set(true);
             glib::idle_add_local_once(move || {
-                if state.generation.get() == generation {
+                if state.generation.get() == generation && state.pending.replace(false) {
                     state.update();
                 }
             });
@@ -102,6 +105,9 @@ impl MentionCompletion {
     }
 
     pub fn handle_key(&self, key: gtk::gdk::Key, modifiers: gtk::gdk::ModifierType) -> bool {
+        if self.state.pending.replace(false) {
+            self.state.update();
+        }
         if self.state.preedit.get()
             || !modifiers
                 .intersection(
@@ -164,6 +170,7 @@ impl State {
     }
 
     fn dismiss(&self) {
+        self.pending.set(false);
         self.generation.set(self.generation.get().wrapping_add(1));
         self.context.borrow_mut().take();
         self.results.borrow_mut().clear();

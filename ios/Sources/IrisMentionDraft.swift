@@ -28,23 +28,13 @@ struct IrisMentionDraft {
         return text as String
     }
 
-    mutating func textDidChange(from old: String, to new: String) {
-        guard old != new else { return }
-        let before = Array(old.utf16), after = Array(new.utf16)
-        var prefix = 0
-        while prefix < min(before.count, after.count), before[prefix] == after[prefix] { prefix += 1 }
-        var suffix = 0
-        while suffix < min(before.count, after.count) - prefix,
-              before[before.count - suffix - 1] == after[after.count - suffix - 1] { suffix += 1 }
-        let oldEnd = before.count - suffix
-        let delta = after.count - before.count
+    mutating func replace(range: NSRange, replacementLength: Int, insertingWord: Bool = false) {
+        let end = NSMaxRange(range)
+        let delta = replacementLength - range.length
         spans = spans.compactMap { span in
-            // Appending a word character changes the visible name, so the old
-            // identity must not silently survive that edit.
-            if NSMaxRange(span.range) == prefix, prefix < after.count,
-               let scalar = Unicode.Scalar(after[prefix]), CharacterSet.alphanumerics.contains(scalar) { return nil }
-            if NSMaxRange(span.range) <= prefix { return span }
-            if span.range.location >= oldEnd {
+            if NSMaxRange(span.range) == range.location, insertingWord { return nil }
+            if NSMaxRange(span.range) <= range.location { return span }
+            if span.range.location >= end {
                 var moved = span
                 moved.range.location += delta
                 return moved
@@ -52,6 +42,8 @@ struct IrisMentionDraft {
             return nil
         }
     }
+
+    mutating func discard() { spans = [] }
 
     mutating func insert(label: String, token: String, owner: String, at location: Int) {
         let range = NSRange(location: location, length: label.utf16.count)

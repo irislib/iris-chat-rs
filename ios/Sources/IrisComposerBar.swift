@@ -162,6 +162,7 @@ struct IrisComposerBar: View {
             mentionCompletion.draftDidChange($0)
             onDraftChange()
         }
+        .irisOnChange(of: composerState.mentionRevision) { _ in onDraftChange() }
         .irisOnChange(of: isFocused) { if !$0 { emojiCompletion.dismiss(); mentionCompletion.dismiss() } }
         .irisOnChange(of: showingEmojiPicker) { if $0 { emojiCompletion.dismiss(); mentionCompletion.dismiss() } }
         .frame(maxWidth: .infinity)
@@ -377,6 +378,7 @@ struct IrisComposerBar: View {
                 text: userEditingDraft,
                 isFocused: $isFocused,
                 onPasteAttachments: canPrepareAttachments ? pasteAttachments : nil,
+                onNativeEdit: composerState.prepareNativeEdit,
                 onCompletionUpdate: updateCompletions,
                 onCompletionSelectionChange: selectionDidChange,
                 onCompletionCommand: handleCompletion,
@@ -408,6 +410,7 @@ struct IrisComposerBar: View {
                 isFocused: $isFocused,
                 onSubmit: submitDraft,
                 onPasteAttachments: canPrepareAttachments ? pasteAttachments : nil,
+                onNativeEdit: composerState.prepareNativeEdit,
                 onCompletionUpdate: updateCompletions,
                 onCompletionSelectionChange: selectionDidChange,
                 onCompletionCommand: handleCompletion
@@ -613,6 +616,12 @@ struct IrisComposerBar: View {
             return
         }
         #endif
+        #if os(iOS)
+        if IrisUIKitComposerTextView.insertTextAtSelection(emoji) { return }
+        #endif
+        composerState.prepareNativeEdit(IrisComposerNativeEdit(text: draft + emoji,
+            range: NSRange(location: draft.utf16.count, length: 0), replacementLength: emoji.utf16.count,
+            undoManager: nil))
         userEditingDraft.wrappedValue = draft + emoji
     }
 

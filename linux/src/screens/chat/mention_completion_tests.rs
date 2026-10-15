@@ -34,6 +34,7 @@ pub fn verify_ui(manager: Rc<crate::app_manager::AppManager>) {
     let buffer = input.buffer();
     buffer.set_enable_undo(true);
     let draft = Rc::new(RefCell::new(MentionDraft::default()));
+    super::mention_editor::install(&buffer, draft.clone(), |_| {});
     let changed = draft.clone();
     buffer.connect_changed(move |buffer| changed.borrow_mut().changed(&text(buffer)));
     let selected = draft.clone();
@@ -70,7 +71,7 @@ pub fn verify_ui(manager: Rc<crate::app_manager::AppManager>) {
     buffer.begin_user_action();
     buffer.insert_at_cursor("👋 @");
     buffer.end_user_action();
-    pump_until(|| completion.root.is_visible());
+    // Accept immediately, before the scheduled completion update runs.
     assert!(completion.handle_key(gdk::Key::Down, gdk::ModifierType::empty()));
     assert!(completion.handle_key(gdk::Key::Return, gdk::ModifierType::empty()));
     assert_eq!(text(&buffer), "👋 @Alex ");
@@ -82,6 +83,45 @@ pub fn verify_ui(manager: Rc<crate::app_manager::AppManager>) {
     pump_until(|| text(&buffer) == "👋 @");
     assert!(!completion.root.is_visible());
     assert!(!completion.handle_key(gdk::Key::Down, gdk::ModifierType::empty()));
+    buffer.redo();
+    pump_until(|| text(&buffer) == "👋 @Alex ");
+    assert_eq!(
+        iris_chat_core::message_mentions(draft.borrow().wire_text())[0].owner_pubkey_hex,
+        second
+    );
+    buffer.begin_user_action();
+    buffer.insert_at_cursor("@");
+    buffer.end_user_action();
+    pump_until(|| completion.root.is_visible());
+    assert!(completion.handle_key(gdk::Key::Return, gdk::ModifierType::empty()));
+    assert_eq!(text(&buffer), "👋 @Alex @Alex ");
+    let both = draft.borrow().wire_text();
+    buffer.begin_user_action();
+    buffer.delete(&mut buffer.iter_at_offset(2), &mut buffer.iter_at_offset(8));
+    buffer.end_user_action();
+    assert_eq!(
+        iris_chat_core::message_mentions(draft.borrow().wire_text())[0].owner_pubkey_hex,
+        first
+    );
+    buffer.undo();
+    pump_until(|| text(&buffer) == "👋 @Alex @Alex ");
+    assert_eq!(draft.borrow().wire_text(), both);
+    buffer.redo();
+    pump_until(|| text(&buffer) == "👋 @Alex ");
+    assert_eq!(
+        iris_chat_core::message_mentions(draft.borrow().wire_text())[0].owner_pubkey_hex,
+        first
+    );
+    buffer.begin_user_action();
+    buffer.delete(&mut buffer.iter_at_offset(3), &mut buffer.iter_at_offset(4));
+    buffer.end_user_action();
+    assert!(iris_chat_core::message_mentions(draft.borrow().wire_text()).is_empty());
+    buffer.undo();
+    pump_until(|| text(&buffer) == "👋 @Alex ");
+    assert_eq!(
+        iris_chat_core::message_mentions(draft.borrow().wire_text())[0].owner_pubkey_hex,
+        first
+    );
     buffer.set_text("@");
     pump_until(|| !completion.root.is_visible());
     buffer.begin_user_action();

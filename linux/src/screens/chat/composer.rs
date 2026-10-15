@@ -280,6 +280,17 @@ impl Composer {
 
         let buffer = gtk::TextBuffer::new(None);
         let mentions = Rc::new(RefCell::new(MentionDraft::default()));
+        let manager_for_replay = manager.clone();
+        let chat_for_replay = chat.chat_id.clone();
+        let editing_for_replay = editing.clone();
+        super::mention_editor::install(&buffer, mentions.clone(), move |text| {
+            if editing_for_replay.borrow().is_none() {
+                manager_for_replay.dispatch(AppAction::SetChatDraft {
+                    chat_id: chat_for_replay.clone(),
+                    text,
+                });
+            }
+        });
         let input = gtk::TextView::with_buffer(&buffer);
         input.add_css_class("composer-input");
         input.set_accepts_tab(true);
@@ -371,7 +382,7 @@ impl Composer {
                         chat_id: chat_id_for_typing.clone(),
                     });
                 }
-                if editing.borrow().is_none() {
+                if editing.borrow().is_none() && !mentions.borrow().is_replaying() {
                     manager_for_typing.dispatch(AppAction::SetChatDraft {
                         chat_id: chat_id_for_typing.clone(),
                         text: mentions.borrow().wire_text(),
@@ -681,7 +692,11 @@ fn restore_mention_draft(buffer: &gtk::TextBuffer, draft: &Rc<RefCell<MentionDra
         })
         .collect();
     let text = draft.borrow_mut().restore(wire, spans);
+    draft.borrow_mut().restoring = true;
+    buffer.begin_irreversible_action();
     buffer.set_text(&text);
+    buffer.end_irreversible_action();
+    draft.borrow_mut().restoring = false;
 }
 
 fn composer_buffer_text(buffer: &gtk::TextBuffer) -> String {

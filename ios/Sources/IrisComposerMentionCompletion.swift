@@ -101,7 +101,8 @@ struct IrisComposerMentionSuggestions: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.irisUnpressed)
-                .accessibilityLabel("Mention \(person.name)")
+                .accessibilityLabel(completion.results.filter { $0.name == person.name }.count > 1
+                    ? "Mention \(person.name), \(String(person.id.prefix(8)))" : "Mention \(person.name)")
                 .accessibilityIdentifier("chatMentionCompletion-\(person.id)")
                 #if os(macOS)
                 .environment(\.irisKeyboardButtonIsTabStop, false)

@@ -25,6 +25,7 @@ mod mention_completion_tests;
 #[cfg(feature = "ui-tests")]
 pub use mention_completion_tests::verify_ui as verify_mention_completion_ui;
 mod mention_draft;
+mod mention_editor;
 mod mention_text;
 #[cfg(feature = "ui-tests")]
 pub use image_clipboard::verify_ui as verify_image_clipboard_ui;

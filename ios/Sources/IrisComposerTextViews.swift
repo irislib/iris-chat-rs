@@ -7,6 +7,13 @@ import AppKit
 import UIKit
 #endif
 
+struct IrisComposerNativeEdit {
+    let text: String
+    let range: NSRange
+    let replacementLength: Int
+    weak var undoManager: UndoManager?
+}
+
 #if os(iOS)
 struct IrisUIKitComposerTextView: UIViewRepresentable {
     private static weak var activeTextView: UITextView?
@@ -15,9 +22,18 @@ struct IrisUIKitComposerTextView: UIViewRepresentable {
         activeTextView?.text
     }
 
+    @discardableResult
+    static func insertTextAtSelection(_ replacement: String) -> Bool {
+        guard let textView = activeTextView, textView.markedTextRange == nil else { return false }
+        textView.insertText(replacement)
+        (textView.delegate as? Coordinator)?.textViewDidChange(textView)
+        return true
+    }
+
     @Binding var text: String
     @Binding var isFocused: Bool
     var onPasteAttachments: ((IrisClipboardAttachments) -> Void)? = nil
+    var onNativeEdit: ((IrisComposerNativeEdit) -> Void)? = nil
     var onCompletionUpdate: ((IrisComposerCompletionContext) -> Void)? = nil
     var onCompletionSelectionChange: ((String, NSRange) -> Void)? = nil
     var onCompletionCommand: ((IrisComposerCompletionCommand) -> Bool)? = nil
@@ -39,6 +55,8 @@ struct IrisUIKitComposerTextView: UIViewRepresentable {
         textView.hasCompletions = hasCompletions
         Self.activeTextView = textView
         textView.delegate = context.coordinator
+        textView.textStorage.delegate = context.coordinator
+        context.coordinator.nativeTextView = textView
         textView.backgroundColor = .clear
         textView.font = UIFont.preferredFont(forTextStyle: .body)
         textView.adjustsFontForContentSizeCategory = true
@@ -71,7 +89,10 @@ struct IrisUIKitComposerTextView: UIViewRepresentable {
         if uiView.markedTextRange == nil, uiView.text != text {
             needsSelectionReveal = true
             let selectedRange = uiView.selectedRange
+            uiView.undoManager?.removeAllActions()
+            context.coordinator.applyingModelText = true
             uiView.text = text
+            context.coordinator.applyingModelText = false
             let textLength = (text as NSString).length
             if uiView.isFirstResponder, selectedRange.location <= textLength {
                 uiView.selectedRange = NSRange(
@@ -115,7 +136,9 @@ struct IrisUIKitComposerTextView: UIViewRepresentable {
         ceil((textView.font ?? UIFont.preferredFont(forTextStyle: .body)).lineHeight * 5)
     }
 
-    final class Coordinator: NSObject, UITextViewDelegate {
+    final class Coordinator: NSObject, UITextViewDelegate, NSTextStorageDelegate {
+        weak var nativeTextView: UITextView?
+        var applyingModelText = false
         var parent: IrisUIKitComposerTextView
 
         init(parent: IrisUIKitComposerTextView) {
@@ -140,6 +163,19 @@ struct IrisUIKitComposerTextView: UIViewRepresentable {
 
         func textViewDidChangeSelection(_ textView: UITextView) {
             parent.onCompletionSelectionChange?(textView.text ?? "", textView.selectedRange)
+        }
+
+        func textStorage(_ textStorage: NSTextStorage, didProcessEditing editedMask: NSTextStorage.EditActions,
+                         range editedRange: NSRange, changeInLength delta: Int) {
+            guard editedMask.contains(.editedCharacters), !applyingModelText else { return }
+            parent.onNativeEdit?(IrisComposerNativeEdit(text: textStorage.string,
+                range: NSRange(location: editedRange.location, length: editedRange.length - delta),
+                replacementLength: editedRange.length, undoManager: nativeTextView?.undoManager))
+            // Native undo can update storage without a separate did-change
+            // callback. Keep the binding aligned with the replayed text.
+            if nativeTextView?.undoManager?.isUndoing == true || nativeTextView?.undoManager?.isRedoing == true {
+                parent.text = textStorage.string
+            }
         }
 
         private func publishCompletion(_ textView: UITextView) {
@@ -199,6 +235,7 @@ struct IrisAppKitComposerTextView: NSViewRepresentable {
     @Binding var isFocused: Bool
     let onSubmit: (String) -> IrisComposerSubmitResult
     var onPasteAttachments: ((IrisClipboardAttachments) -> Void)? = nil
+    var onNativeEdit: ((IrisComposerNativeEdit) -> Void)? = nil
     var onCompletionUpdate: ((IrisComposerCompletionContext) -> Void)? = nil
     var onCompletionSelectionChange: ((String, NSRange) -> Void)? = nil
     var onCompletionCommand: ((IrisComposerCompletionCommand) -> Bool)? = nil
@@ -243,6 +280,8 @@ struct IrisAppKitComposerTextView: NSViewRepresentable {
         textView.setSelectedRange(NSRange(location: (text as NSString).length, length: 0))
         textView.composerCommandDelegate = context.coordinator
         textView.delegate = context.coordinator
+        textView.textStorage?.delegate = context.coordinator
+        context.coordinator.nativeTextView = textView
 
         scrollView.documentView = textView
         textView.composerFocusRequested = isFocused
@@ -289,7 +328,9 @@ struct IrisAppKitComposerTextView: NSViewRepresentable {
         Coordinator(parent: self)
     }
 
-    final class Coordinator: NSObject, NSTextViewDelegate, IrisComposerNSTextViewCommandDelegate {
+    final class Coordinator: NSObject, NSTextViewDelegate, NSTextStorageDelegate, IrisComposerNSTextViewCommandDelegate {
+        weak var nativeTextView: NSTextView?
+        var applyingModelText = false
         var parent: IrisAppKitComposerTextView
         var lastPublishedNativeText: String?
 
@@ -322,6 +363,19 @@ struct IrisAppKitComposerTextView: NSViewRepresentable {
             parent.onCompletionSelectionChange?(textView.string, textView.selectedRange())
         }
 
+        func textStorage(_ textStorage: NSTextStorage, didProcessEditing editedMask: NSTextStorageEditActions,
+                         range editedRange: NSRange, changeInLength delta: Int) {
+            guard editedMask.contains(.editedCharacters), !applyingModelText else { return }
+            parent.onNativeEdit?(IrisComposerNativeEdit(text: textStorage.string,
+                range: NSRange(location: editedRange.location, length: editedRange.length - delta),
+                replacementLength: editedRange.length, undoManager: nativeTextView?.undoManager))
+            // Native undo can update storage without a separate did-change
+            // callback. Keep the binding aligned with the replayed text.
+            if nativeTextView?.undoManager?.isUndoing == true || nativeTextView?.undoManager?.isRedoing == true {
+                parent.text = textStorage.string
+            }
+        }
+
         private func publishCompletion(_ textView: NSTextView) {
             let text = textView.string
             let selection = textView.selectedRange()
@@ -339,6 +393,8 @@ struct IrisAppKitComposerTextView: NSViewRepresentable {
         }
 
         func reconcile(_ textView: NSTextView) {
+            applyingModelText = true
+            defer { applyingModelText = false }
             irisReconcileComposerText(
                 textView,
                 bindingText: parent.text,
@@ -364,7 +420,10 @@ struct IrisAppKitComposerTextView: NSViewRepresentable {
             }
 
             lastPublishedNativeText = nil
+            textView.undoManager?.removeAllActions()
+            applyingModelText = true
             textView.string = ""
+            applyingModelText = false
             textView.setSelectedRange(NSRange(location: 0, length: 0))
             textView.enclosingScrollView?.needsLayout = true
         }
