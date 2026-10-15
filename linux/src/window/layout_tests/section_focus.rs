@@ -86,6 +86,14 @@ pub(super) fn check_narrow_section_shortcuts(
             focus_state(slot, manager, window, chat_id)
         );
     };
+    // A route action changes the manager immediately; its queued render has
+    // not necessarily hidden the previous pane when the next key arrives.
+    manager.dispatch(AppAction::UpdateScreenStack { stack: vec![] });
+    press(gtk::gdk::ModifierType::CONTROL_MASK | gtk::gdk::ModifierType::SHIFT_MASK);
+    assert!(
+        matches!(current_screen(&manager.current_state()), Screen::Chat { chat_id: id } if id == chat_id),
+        "Ctrl+Shift+T must restore the logical chat route even while its old pane is still mapped"
+    );
     press(gtk::gdk::ModifierType::CONTROL_MASK);
     wait(
         "chat-list",
@@ -100,6 +108,15 @@ pub(super) fn check_narrow_section_shortcuts(
             );
             row.is_mapped() && owns_focus(window, &row)
         }),
+    );
+    manager.dispatch(AppAction::OpenChat {
+        chat_id: chat_id.into(),
+    });
+    press(gtk::gdk::ModifierType::CONTROL_MASK);
+    assert_eq!(
+        current_screen(&manager.current_state()),
+        Screen::ChatList,
+        "Ctrl+T must restore the logical list route even while its old pane is still mapped"
     );
     press(gtk::gdk::ModifierType::CONTROL_MASK | gtk::gdk::ModifierType::SHIFT_MASK);
     wait(
