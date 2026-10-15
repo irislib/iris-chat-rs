@@ -1,4 +1,6 @@
 use super::*;
+#[path = "tests/reconnect.rs"]
+mod reconnect;
 
 fn reserve_local_rendezvous_addr() -> std::net::SocketAddrV4 {
     let socket = std::net::UdpSocket::bind((std::net::Ipv4Addr::LOCALHOST, 0))

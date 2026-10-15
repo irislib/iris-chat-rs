@@ -388,9 +388,12 @@ async fn accept_connections(
             continue;
         }
         if let Some(previous) = connections.get(&peer).copied() {
-            let keep_previous = matches!(tcp.state(previous), Some(State::Established))
-                || (comparison_key(local) < comparison_key(&identity)
-                    && matches!(tcp.state(previous), Some(State::SynSent)));
+            // A reloaded sibling can complete a fresh authenticated handshake
+            // while our old stream still appears Established through a seed.
+            // Prefer that fresh stream, retaining only the simultaneous-dial
+            // tie-break for an in-flight canonical outbound connection.
+            let keep_previous = comparison_key(local) < comparison_key(&identity)
+                && matches!(tcp.state(previous), Some(State::SynSent));
             if keep_previous {
                 let _ = tcp.abort(id).await;
                 continue;
