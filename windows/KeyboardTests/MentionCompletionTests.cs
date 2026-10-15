@@ -39,8 +39,11 @@ internal static class MentionCompletionTests
             var sent = 0; string saved = "";
             composer.Submitted += (_, _) => sent++;
             composer.DraftChanged += text => saved = text;
+            Pump();
+            window.Activate();
             composer.FocusInput(); Pump();
             var input = (TextBox)composer.FindName("Input");
+            Check(input.IsKeyboardFocused, "Loaded mention composer receives keyboard focus");
             input.AppendText("Hi @"); input.CaretIndex = input.Text.Length; Pump();
             Check(Press(input, Key.Down).Handled, "Keyboard chooses between same-name people");
             Check(Press(input, Key.Enter).Handled && sent == 0, "Accepting mention does not send");

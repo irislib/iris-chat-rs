@@ -19,9 +19,12 @@ internal static class EmojiCompletionTests
         window.Content = composer;
         try
         {
+            Pump();
+            window.Activate();
             composer.FocusInput();
             Pump();
             var input = (TextBox)composer.FindName("Input");
+            Check(input.IsKeyboardFocused, "Loaded emoji composer receives keyboard focus");
             var sent = 0;
             composer.Submitted += (_, _) => sent++;
             input.AppendText("hi :sm"); input.CaretIndex = input.Text.Length; Pump();
