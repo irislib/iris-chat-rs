@@ -1,7 +1,6 @@
-//! Shared emoji catalog and search aliases used by the picker on
-//! every platform that ships its own grid (iOS/macOS, Android,
-//! Windows). Linux uses the native GTK EmojiChooser and ignores
-//! this catalog.
+//! Shared emoji catalog and search aliases for native pickers and typed
+//! shortcode completion. Linux keeps its native GTK EmojiChooser and uses
+//! these aliases for completion in the message composer.
 
 #[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
 pub struct EmojiCategorySnapshot {

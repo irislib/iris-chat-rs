@@ -23,6 +23,7 @@ public partial class ComposerBar : UserControl
     public Func<AttachmentPasteDestination?>? AttachmentPasteScope { get; set; }
     private readonly ClipboardAttachmentFiles _clipboardFiles = new();
     private long _draftGeneration;
+    private readonly ComposerEmojiCompletion _emojiCompletion;
 
     private bool _wasTyping;
     private bool _restoringDraft;
@@ -38,6 +39,7 @@ public partial class ComposerBar : UserControl
     public ComposerBar()
     {
         InitializeComponent();
+        _emojiCompletion = new ComposerEmojiCompletion(Input, () => !_restoringDraft);
         StagedAttachmentsList.ItemsSource = _staged;
         _ = new AttachmentPasteTarget(Input, () => EditingMessageId == null && AttachmentPasteScope?.Invoke() is {} destination
                 ? new AttachmentPasteContext(destination, _draftGeneration, SendDirectly) : null,
@@ -69,6 +71,7 @@ public partial class ComposerBar : UserControl
 
     public void RestoreDraft(string text)
     {
+        _emojiCompletion?.Dismiss();
         _restoringDraft = true;
         try
         {
@@ -130,6 +133,7 @@ public partial class ComposerBar : UserControl
 
     private void OnInputKeyDown(object sender, KeyEventArgs e)
     {
+        if (_emojiCompletion.HandleKey(e)) { e.Handled = true; return; }
         if (e.Key == Key.Escape && EditingMessageId != null)
         {
             e.Handled = true;
@@ -193,6 +197,7 @@ public partial class ComposerBar : UserControl
 
     private void OnEmoji(object sender, RoutedEventArgs e)
     {
+        _emojiCompletion.Dismiss();
         if (_emojiPopup != null && _emojiPopup.IsOpen)
         {
             _emojiPopup.IsOpen = false;

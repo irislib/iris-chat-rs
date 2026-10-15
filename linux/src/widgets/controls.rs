@@ -1,3 +1,4 @@
+use super::clickable::PointerCursorExt;
 use gtk::prelude::*;
 
 /// Keep icon controls square when the composer grows to several lines.
@@ -5,6 +6,7 @@ pub fn composer_control(control: &impl IsA<gtk::Widget>) {
     control.add_css_class("composer-control");
     control.add_css_class("circular");
     control.set_valign(gtk::Align::Center);
+    control.show_pointer_cursor();
 }
 
 pub const CSS: &str = r#"

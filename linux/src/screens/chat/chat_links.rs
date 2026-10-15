@@ -1,3 +1,4 @@
+use crate::widgets::clickable::PointerCursorExt;
 use adw::prelude::*;
 use gtk::gio;
 
@@ -70,7 +71,8 @@ pub(super) fn install_link_actions(label: &gtk::Label, urls: Vec<String>) {
         return;
     }
 
-    label.set_cursor_from_name(Some("pointer"));
+    // GtkLabel tracks actual link spans itself, preserving the text-selection
+    // cursor elsewhere in a message and the ordinary cursor when disabled.
     label.connect_activate_link(move |_, uri| {
         open_url(uri);
         gtk::glib::Propagation::Stop
@@ -111,6 +113,7 @@ fn build_link_popover(urls: Vec<String>) -> gtk::Popover {
             "Open link".to_string()
         };
         let open = gtk::Button::with_label(&open_label);
+        open.show_pointer_cursor();
         open.add_css_class("flat");
         open.set_halign(gtk::Align::Fill);
         let url_for_open = url.clone();
@@ -127,6 +130,7 @@ fn build_link_popover(urls: Vec<String>) -> gtk::Popover {
             "Copy link".to_string()
         };
         let copy = gtk::Button::with_label(&copy_label);
+        copy.show_pointer_cursor();
         copy.add_css_class("flat");
         copy.set_halign(gtk::Align::Fill);
         let url_for_copy = url.clone();
