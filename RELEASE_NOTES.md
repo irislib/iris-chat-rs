@@ -2,6 +2,29 @@
 
 Each release has channel-specific notes. The release tag must match the `##` heading exactly.
 
+## v2026.10.15.1
+
+### GitHub
+
+- Use ordinary unsigned Nostr events for private contact facts, blocks, and name approvals, admitted only through authenticated own-device channels.
+- Reconcile pins, timed mutes, device names, chat deletions, and message-request decisions through Negentropy. Preserve original signatures on device and group authorization proofs.
+- Merge chat deletions independently, keep the latest deletion cutoff for each chat, and retain newer messages after offline reconciliation.
+- Align web and native private sync with negotiated capabilities, durable restart recovery, and protection against stale device lists removing an authorized device.
+- Use the approver's history window during device linking so chosen older messages are transferred.
+- Retry temporary Apple ticket-service failures while stapling and validating the signed Mac app and installer.
+
+### Apple
+
+- Keep contact names, notes, favorites, blocks, and chat settings in sync across your devices.
+- Recover changes made while a device was offline, including pinned chats, muted chats, and deleted conversations.
+- Improve message-history transfer when linking a device and reliability after restarting the app.
+
+### Zapstore
+
+- Keep contact names, notes, favorites, blocks, and chat settings in sync across your devices.
+- Recover changes made while a device was offline, including pinned chats, muted chats, and deleted conversations.
+- Improve message-history transfer when linking a device and reliability after restarting the app.
+
 ## v2026.10.15
 
 ### GitHub

@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+if [[ $# -ne 2 ]] || [[ "$1" != "staple" && "$1" != "validate" ]]; then
+  echo "usage: ./scripts/macos-stapler <staple|validate> <artifact>" >&2
+  exit 64
+fi
+
+# EX_NOHOST includes an unavailable or unexpected ticket-service response.
+# Retry only that result, against the same artifact, without notarizing again.
+delays=(5 15 30)
+retry=0
+while true; do
+  # Packaging captures stdout, so retain the tool's diagnostics on stderr.
+  if xcrun stapler "$1" "$2" >&2; then
+    exit 0
+  else
+    status=$?
+  fi
+  if [[ "$status" -ne 68 || "$retry" -ge "${#delays[@]}" ]]; then
+    exit "$status"
+  fi
+  delay="${delays[$retry]}"
+  printf 'Apple ticket service returned 68; retrying %s in %ss (attempt %s/%s).\n' \
+    "$1" "$delay" "$((retry + 2))" "$((${#delays[@]} + 1))" >&2
+  sleep "$delay"
+  retry=$((retry + 1))
+done

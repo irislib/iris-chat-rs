@@ -510,8 +510,8 @@ jobs:
 
           if [[ "$SIGN_MACOS" == "true" ]]; then
             codesign --verify --deep --strict --verbose=2 "$app"
-            xcrun stapler validate "$app"
-            xcrun stapler validate "$dmg"
+            ./scripts/macos-stapler validate "$app"
+            ./scripts/macos-stapler validate "$dmg"
             spctl --assess --type execute --verbose=2 "$app"
           fi
           IRIS_MACOS_APP_SMOKE_PATH="$app" ./scripts/macos-app-launch-smoke.sh

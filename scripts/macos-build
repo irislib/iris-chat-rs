@@ -639,8 +639,8 @@ run_macos_notarize() {
   submit_notarization "$zip" "macos-notarize"
   rm -f "$zip"
 
-  xcrun stapler staple "$app"
-  xcrun stapler validate "$app"
+  "$ROOT/scripts/macos-stapler" staple "$app"
+  "$ROOT/scripts/macos-stapler" validate "$app"
   printf '%s\n' "$app"
 }
 
@@ -649,7 +649,7 @@ run_macos_dmg() {
   run_macos_app >/dev/null
 
   if [[ -n "${MACOS_SIGNING_IDENTITY:-}" ]] && has_macos_notary_credentials; then
-    if ! xcrun stapler validate "$app" >/dev/null 2>&1; then
+    if ! "$ROOT/scripts/macos-stapler" validate "$app" >/dev/null 2>&1; then
       run_macos_notarize >/dev/null
     fi
   fi
@@ -677,8 +677,8 @@ run_macos_dmg() {
 
   if [[ -n "${MACOS_SIGNING_IDENTITY:-}" ]] && has_macos_notary_credentials; then
     submit_notarization "$dmg" "macos-dmg"
-    xcrun stapler staple "$dmg"
-    xcrun stapler validate "$dmg"
+    "$ROOT/scripts/macos-stapler" staple "$dmg"
+    "$ROOT/scripts/macos-stapler" validate "$dmg"
   fi
 
   printf '%s\n' "$dmg"
@@ -691,7 +691,7 @@ run_macos_updater_archive() {
   fi
 
   if [[ -n "${MACOS_SIGNING_IDENTITY:-}" ]] && has_macos_notary_credentials; then
-    if ! xcrun stapler validate "$app" >/dev/null 2>&1; then
+    if ! "$ROOT/scripts/macos-stapler" validate "$app" >/dev/null 2>&1; then
       run_macos_notarize >/dev/null
     fi
   fi
