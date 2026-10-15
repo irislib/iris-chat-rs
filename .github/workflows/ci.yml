@@ -20,7 +20,7 @@ on:
         description: Checks to run (releases require all)
         type: choice
         default: all
-        options: [all, core, android, windows, apple, macos, ios-history]
+        options: [all, core, android, windows, apple, macos, ios-history, macos-notary]
 
 permissions:
   contents: read
@@ -34,6 +34,35 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  macos-notary-diagnostic:
+    if: ${{ inputs.scope == 'macos-notary' }}
+    name: Read-only Apple ticket transport diagnostic
+    runs-on: macos-15
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify and inspect an already released app
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+          probe_dir="$RUNNER_TEMP/notary-probe"
+          mkdir -p "$probe_dir"
+          archive="iris-chat-v2026.10.13-macos-arm64.app.tar.gz"
+          gh release download v2026.10.13 --repo irislib/iris-chat-rs --pattern "$archive" --dir "$probe_dir"
+          gh attestation verify "$probe_dir/$archive" --repo irislib/iris-chat-rs --source-ref refs/tags/v2026.10.13
+          gh release verify-asset v2026.10.13 "$probe_dir/$archive" --repo irislib/iris-chat-rs
+          tar -xzf "$probe_dir/$archive" -C "$probe_dir"
+          python3 scripts/diagnose_macos_ticket.py "$probe_dir/Iris Chat.app" work/notary-transport/receipt.json
+      - name: Preserve sanitized diagnostic results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-notary-transport
+          path: work/notary-transport/receipt.json
+          if-no-files-found: error
+          retention-days: 14
+
   rust:
     if: ${{ inputs.scope == '' || inputs.scope == 'all' || inputs.scope == 'core' }}
     name: Rust and repo checks
