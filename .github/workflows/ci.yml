@@ -20,7 +20,7 @@ on:
         description: Checks to run (releases require all)
         type: choice
         default: all
-        options: [all, core, android, windows, apple, macos]
+        options: [all, core, android, windows, apple, macos, ios-history]
 
 permissions:
   contents: read
@@ -329,7 +329,7 @@ jobs:
           retention-days: 14
 
   ios:
-    if: ${{ inputs.scope == '' || inputs.scope == 'all' || inputs.scope == 'apple' }}
+    if: ${{ inputs.scope == '' || inputs.scope == 'all' || inputs.scope == 'apple' || inputs.scope == 'ios-history' }}
     name: iOS simulator build and composer tests
     runs-on: macos-15
     timeout-minutes: 75
@@ -377,6 +377,7 @@ jobs:
           key: ${{ steps.ios_cargo_cache.outputs.cache-primary-key }}
 
       - name: iOS device linking progress test
+        if: inputs.scope != 'ios-history'
         run: |
           mkdir -p work/clipboard
           xcodebuild -project ios/IrisChat.xcodeproj -scheme IrisChat \
@@ -386,7 +387,18 @@ jobs:
             -resultBundlePath work/clipboard/ios-device-link.xcresult test
 
       - name: iOS native composer, clipboard, and timeline tests
+        env:
+          IRIS_CI_TEST_SCOPE: ${{ inputs.scope }}
         run: |
+          mkdir -p work/clipboard
+          if [[ "$IRIS_CI_TEST_SCOPE" == "ios-history" ]]; then
+            xcodebuild -project ios/IrisChat.xcodeproj -scheme IrisChat \
+              -destination "$(./scripts/ios-simulator-destination)" \
+              -parallel-testing-enabled NO \
+              -only-testing:IrisChatUITests/ChatPaginationUITests/testMixedHeightHistoryPrependPreservesVisibleMessage \
+              -resultBundlePath work/clipboard/ios.xcresult test
+            exit 0
+          fi
           xcodebuild -project ios/IrisChat.xcodeproj -scheme IrisChat \
             -destination "$(./scripts/ios-simulator-destination)" \
             -parallel-testing-enabled NO \
@@ -396,6 +408,14 @@ jobs:
             -only-testing:IrisChatUITests/IrisChatTimelineUITests/testSearchHitInSeededLongChatOpensInTimeline \
             -only-testing:IrisChatUITests/ChatPaginationUITests \
             -resultBundlePath work/clipboard/ios.xcresult test
+
+      - name: Capture anonymous history diagnostic
+        if: always() && inputs.scope == 'ios-history'
+        run: |
+          mkdir -p work/clipboard
+          xcrun simctl spawn booted log show --style compact --last 15m \
+            --predicate 'eventMessage BEGINSWITH "iris.timeline_anchor_memory"' \
+            > work/clipboard/history-diagnostic.log
 
       - name: Upload iOS test results
         if: always()
