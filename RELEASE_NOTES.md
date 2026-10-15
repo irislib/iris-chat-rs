@@ -13,6 +13,7 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 - Preserve new drafts and navigation when an earlier attachment upload finishes. Improve link cursors and link contrast in message bubbles.
 - Accept encrypted private personal and group invitations stored in Hashtree.
 - Expose mention-notification settings in the CLI and deliver complete service errors even when they exceed one socket write.
+- Recover device sync when a linked browser reloads by accepting a fresh authenticated stream, preserving queued records and the simultaneous-connection tie-break.
 
 ### Apple
 
@@ -22,6 +23,7 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 - Show readable attachment labels in notifications and the chat list.
 - Open private invitations to people and groups.
 - Improve message editing and notification cleanup across linked devices.
+- Keep chat settings in sync when linked browsers reconnect.
 
 ### Zapstore
 
@@ -31,6 +33,7 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 - Show readable attachment labels in notifications and the chat list.
 - Open private invitations to people and groups.
 - Improve message editing and notification cleanup across linked devices.
+- Keep chat settings in sync when linked browsers reconnect.
 
 ## v2026.10.15.1
 
