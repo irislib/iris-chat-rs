@@ -40,7 +40,7 @@ internal sealed class ComposerMentionCompletion
             _dismissed = null;
             ScheduleUpdate();
         };
-        input.SelectionChanged += (_, _) => { if (!_pending && !_inserting && _snapshot == input.Text && _token is {} token && input.CaretIndex != token.start + 1 + token.query.Length) Dismiss(); };
+        input.SelectionChanged += (_, _) => { if (!_pending && !_inserting && _snapshot == input.Text && _token is {} token && (input.CaretIndex != token.start + 1 + token.query.Length || input.SelectionLength != 0)) Dismiss(); };
         input.LostKeyboardFocus += (_, _) => Dismiss();
         input.Unloaded += (_, _) => Dismiss();
         input.PreviewMouseDown += (_, _) => Dismiss();
@@ -97,10 +97,12 @@ internal sealed class ComposerMentionCompletion
     }
     internal bool Handle(KeyEventArgs e)
     {
-        if (!_popup.IsOpen || _results.Count == 0 || _composing) return false;
+        if (_composing || Keyboard.Modifiers != ModifierKeys.None) return false;
+        if (_pending) Update();
+        if (!_popup.IsOpen || _results.Count == 0) return false;
         if (e.Key == Key.Escape) Dismiss();
         else if (e.Key == Key.Up || e.Key == Key.Down) { _selection = (_selection + (e.Key == Key.Up ? _results.Count - 1 : 1)) % _results.Count; Draw(); }
-        else if ((e.Key == Key.Enter || e.Key == Key.Tab) && Keyboard.Modifiers == ModifierKeys.None) Insert(_selection);
+        else if (e.Key == Key.Enter || e.Key == Key.Tab) Insert(_selection);
         else if (e.Key == Key.Left || e.Key == Key.Right || e.Key == Key.Home || e.Key == Key.End) { Dismiss(); return false; }
         else return false;
         e.Handled = true; return true;
@@ -115,12 +117,17 @@ internal sealed class ComposerMentionCompletion
         _inserting = true;
         try
         {
+            _input.LockCurrentUndoUnit();
             _input.BeginChange();
-            _input.Select(token.start, token.end - token.start);
-            _input.SelectedText = label + space;
-            _input.CaretIndex = token.start + label.Length + space.Length;
-            _input.EndChange();
+            try
+            {
+                _input.Select(token.start, token.end - token.start);
+                _input.SelectedText = label + space;
+                _input.CaretIndex = token.start + label.Length + space.Length;
+            }
+            finally { _input.EndChange(); }
             _inserted(token.start, label, wire);
+            _input.LockCurrentUndoUnit();
         }
         finally { _inserting = false; Dismiss(); }
     }

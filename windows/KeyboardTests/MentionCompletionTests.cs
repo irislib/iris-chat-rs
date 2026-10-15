@@ -20,9 +20,12 @@ internal static class MentionCompletionTests
         var token = Native.FormatMessageMention(first, "Old name");
         var model = new MentionDraft();
         var visible = model.Restore("👋 " + token);
-        model.Changed("Hello " + visible);
-        Check(model.WireText("Hello " + visible) == "Hello 👋 " + token, "Unicode edits preserve exact identity");
-        model.Changed("Hello 👋 @Someone else");
+        var modelInput = new TextBox { Text = visible };
+        modelInput.TextChanged += (_, e) => model.Changed(modelInput.Text, e.Changes, e.UndoAction, modelInput.UndoLimit);
+        modelInput.Select(0, 0); modelInput.SelectedText = "Hello ";
+        Check(model.WireText(modelInput.Text) == "Hello 👋 " + token, "Unicode edits preserve exact identity");
+        modelInput.Select("Hello 👋 ".Length, modelInput.Text.Length - "Hello 👋 ".Length);
+        modelInput.SelectedText = "@Someone else";
         Check(Native.MessageMentions(model.WireText("Hello 👋 @Someone else")).Count == 0, "Edited labels never guess identity");
         var previous = window.Content;
         var composer = new ComposerBar();
@@ -46,12 +49,22 @@ internal static class MentionCompletionTests
             var savedMention = saved;
             input.Undo(); Pump();
             Check(input.Text == "Hi @" && !Press(input, Key.Down).Handled, "Undo restores text without reopening menu");
+            input.Redo(); Pump();
+            Check(input.Text == "Hi @Alex ", "Redo restores the visible mention");
+            MentionEditingTests.Identities(saved, second);
             composer.RestoreDraft(savedMention); Pump();
             Check(input.Text == "Hi @Alex ", "Saved wire restores readable identity");
             Check(!Press(input, Key.Down).Handled, "Restored draft does not open menu");
             composer.RestoreDraft("");
             input.AppendText("@"); input.CaretIndex = 1; Pump();
             Check(Press(input, Key.Escape).Handled && input.Text == "@", "Dismissal preserves typing");
+            composer.RestoreDraft("");
+            input.AppendText("@"); input.CaretIndex = 1;
+            Check(Press(input, Key.Enter, pump: false).Handled && sent == 0,
+                "Enter resolves pending mention completion before sending, without a dispatcher drain");
+            MentionEditingTests.Identities(saved, first);
+            Pump();
+            MentionEditingTests.Run(composer, input, first, second, () => saved, Pump);
 
             var body = new RichTextBox { IsReadOnly = true, IsDocumentEnabled = true };
             window.Content = body;
@@ -68,10 +81,10 @@ internal static class MentionCompletionTests
         finally { window.Content = previous; }
         Console.WriteLine("PASS: mention identity, keyboard selection, dismissal, selectable links and copy");
     }
-    private static KeyEventArgs Press(TextBox input, Key key)
+    private static KeyEventArgs Press(TextBox input, Key key, bool pump = true)
     {
         var args = new KeyEventArgs(Keyboard.PrimaryDevice, PresentationSource.FromVisual(input), 0, key) { RoutedEvent = Keyboard.PreviewKeyDownEvent };
-        input.RaiseEvent(args); Pump(); return args;
+        input.RaiseEvent(args); if (pump) Pump(); return args;
     }
     private static void Pump()
     {
