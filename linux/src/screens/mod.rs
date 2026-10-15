@@ -245,6 +245,26 @@ pub(crate) fn show_chat_mute_options(
         });
         content.append(&button);
     }
+    if chat_id.starts_with("group:") {
+        let mentions = gtk::CheckButton::with_label("Notify for mentions while muted");
+        mentions.set_active(
+            !manager
+                .current_state()
+                .preferences
+                .silent_mention_chat_ids
+                .iter()
+                .any(|id| id == chat_id),
+        );
+        let manager = manager.clone();
+        let chat_id = chat_id.to_string();
+        mentions.connect_toggled(move |button| {
+            manager.dispatch(AppAction::SetChatMentionNotifications {
+                chat_id: chat_id.clone(),
+                enabled: button.is_active(),
+            })
+        });
+        content.append(&mentions);
+    }
     let cancel = gtk::Button::with_label("Cancel");
     let closing = dialog.clone();
     cancel.connect_clicked(move |_| {

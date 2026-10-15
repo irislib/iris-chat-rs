@@ -22,6 +22,8 @@ struct IrisComposerBar: View {
     @State private var attachmentContentTypes: [UTType] = [.item]
     @State private var showingEmojiPicker = false
     @StateObject private var emojiCompletion = IrisComposerEmojiCompletion()
+    @StateObject private var mentionCompletion = IrisComposerMentionCompletion()
+    var mentionParticipants: [ChatParticipantSnapshot] = []
     @State private var isPreparingAttachments = false
     @State private var attachmentTask: Task<Void, Never>?
     #if os(iOS)
@@ -133,6 +135,10 @@ struct IrisComposerBar: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
 
+            if !mentionCompletion.results.isEmpty && !showingEmojiPicker {
+                IrisComposerMentionSuggestions(completion: mentionCompletion)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
             if !emojiCompletion.results.isEmpty && !showingEmojiPicker {
                 IrisComposerEmojiSuggestions(completion: emojiCompletion)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -153,10 +159,11 @@ struct IrisComposerBar: View {
         .accessibilityIdentifier("chatComposerBar")
         .irisOnChange(of: draft) {
             emojiCompletion.draftDidChange($0)
+            mentionCompletion.draftDidChange($0)
             onDraftChange()
         }
-        .irisOnChange(of: isFocused) { if !$0 { emojiCompletion.dismiss() } }
-        .irisOnChange(of: showingEmojiPicker) { if $0 { emojiCompletion.dismiss() } }
+        .irisOnChange(of: isFocused) { if !$0 { emojiCompletion.dismiss(); mentionCompletion.dismiss() } }
+        .irisOnChange(of: showingEmojiPicker) { if $0 { emojiCompletion.dismiss(); mentionCompletion.dismiss() } }
         .frame(maxWidth: .infinity)
         .onAppear { onFileDropAvailabilityChange(canPrepareAttachments) }
         #if os(macOS)
@@ -175,7 +182,7 @@ struct IrisComposerBar: View {
             prepareAttachments { urls }
         }
         .onDisappear {
-            emojiCompletion.dismiss()
+            emojiCompletion.dismiss(); mentionCompletion.dismiss()
             attachmentTask?.cancel()
             attachmentTask = nil
             isPreparingAttachments = false
@@ -370,10 +377,10 @@ struct IrisComposerBar: View {
                 text: userEditingDraft,
                 isFocused: $isFocused,
                 onPasteAttachments: canPrepareAttachments ? pasteAttachments : nil,
-                onCompletionUpdate: emojiCompletion.update,
-                onCompletionSelectionChange: emojiCompletion.selectionDidChange,
-                onCompletionCommand: emojiCompletion.handle,
-                hasCompletions: { !emojiCompletion.results.isEmpty }
+                onCompletionUpdate: updateCompletions,
+                onCompletionSelectionChange: selectionDidChange,
+                onCompletionCommand: handleCompletion,
+                hasCompletions: { !emojiCompletion.results.isEmpty || !mentionCompletion.results.isEmpty }
             )
         }
         .padding(.horizontal, 16)
@@ -401,9 +408,9 @@ struct IrisComposerBar: View {
                 isFocused: $isFocused,
                 onSubmit: submitDraft,
                 onPasteAttachments: canPrepareAttachments ? pasteAttachments : nil,
-                onCompletionUpdate: emojiCompletion.update,
-                onCompletionSelectionChange: emojiCompletion.selectionDidChange,
-                onCompletionCommand: emojiCompletion.handle
+                onCompletionUpdate: updateCompletions,
+                onCompletionSelectionChange: selectionDidChange,
+                onCompletionCommand: handleCompletion
             )
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -558,6 +565,28 @@ struct IrisComposerBar: View {
     }
     #endif
 
+    private func updateCompletions(_ context: IrisComposerCompletionContext) {
+        emojiCompletion.update(context)
+        mentionCompletion.onInsert = { person, label, location in
+            composerState.insertMention(label: label, token: person.token, owner: person.id, at: location)
+            onDraftChange()
+        }
+        let candidates = mentionParticipants.map { person in
+            IrisMentionCandidate(id: person.ownerPubkeyHex, name: person.displayName,
+                token: formatMessageMention(ownerPubkeyHex: person.ownerPubkeyHex, name: person.displayName))
+        }
+        mentionCompletion.update(context, candidates: candidates)
+    }
+
+    private func selectionDidChange(text: String, selection: NSRange) {
+        emojiCompletion.selectionDidChange(text: text, selection: selection)
+        mentionCompletion.selectionDidChange(text: text, selection: selection)
+    }
+
+    private func handleCompletion(_ command: IrisComposerCompletionCommand) -> Bool {
+        mentionCompletion.handle(command) || emojiCompletion.handle(command)
+    }
+
     private func submitDraft() {
         #if os(iOS)
         let text = IrisUIKitComposerTextView.currentText ?? draft
@@ -573,7 +602,8 @@ struct IrisComposerBar: View {
         guard canSend(text: text) else {
             return .rejected
         }
-        onSend(text)
+        composerState.text = text
+        onSend(composerState.wireText)
         return .acceptedAndClear
     }
 

@@ -850,7 +850,7 @@ private fun ChatListConversationRow(
                     AppAction.SetChatPinned(chat.chatId, !chat.isPinned),
                 )
             },
-            onToggleMute = rememberChatMuteAction(chat.chatId, chat.isMuted, appManager::dispatch, untilSecs = preferences.timedChatMutes.firstOrNull { it.chatId == chat.chatId }?.untilSecs),
+            onToggleMute = rememberChatMuteAction(chat.chatId, chat.isMuted, appManager::dispatch, untilSecs = preferences.timedChatMutes.firstOrNull { it.chatId == chat.chatId }?.untilSecs, notifyMentions = !preferences.silentMentionChatIds.contains(chat.chatId)),
             onDeleteRequest = { onDeleteRequest(chat) },
         ) {
             IrisChatListRow(

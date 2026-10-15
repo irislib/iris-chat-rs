@@ -194,6 +194,7 @@ public partial class ChatView : UserControl
         if (Composer.EditingMessageId is { } editingId &&
             !chat.messages.Any(message => message.id == editingId && MessageBubble.CanEdit(message)))
             Composer.CancelEdit();
+        Composer.MentionParticipants = chat?.kind == ChatKind.Group ? chat.participants : Array.Empty<ChatParticipantSnapshot>();
         Composer.DirectSendAllowed = chat.kind == ChatKind.Direct;
         Composer.Visibility = userBlocked || messageRequest || removedFromGroup
             ? Visibility.Collapsed

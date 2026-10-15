@@ -72,7 +72,7 @@ func replySnippet(for message: ChatMessageSnapshot) -> String {
     if message.deletedForEveryone { return "Message deleted" }
     let parsed = parseReplyEncodedMessage(message.body)
     let source = parsed.body.isEmpty ? copyableMessageText(message) : parsed.body
-    let normalized = source
+    let normalized = displayMessageMentions(text: source)
         .replacingOccurrences(of: "\n", with: " ")
         .trimmingCharacters(in: .whitespacesAndNewlines)
     if normalized.isEmpty {
@@ -88,23 +88,32 @@ let replyMessagePrefix = "↩ "
 // underline. Without the explicit foregroundColor, AttributedString
 // still rendered links in the system accent / blue on iOS, which
 // shifted hue between incoming and outgoing bubbles.
-func linkedMessageAttributedString(_ text: String, foreground: Color) -> AttributedString {
-    var attributed = AttributedString()
-    var cursor = text.startIndex
+func linkedMessageAttributedString(_ text: String, foreground: Color, names: [String: String] = [:]) -> AttributedString {
+    let mentions = messageMentions(text: text)
+    let encoded = text as NSString
+    var parts: [(range: NSRange, visible: String, url: URL, mention: Bool)] = mentions.compactMap { mention in
+        guard let url = URL(string: "irischat-mention:\(mention.ownerPubkeyHex)") else { return nil }
+        let name = names[mention.ownerPubkeyHex]
+        return (NSRange(location: Int(mention.start), length: Int(mention.length)), name.map { "@" + $0 } ?? mention.label, url, true)
+    }
     for match in messageURLMatches(in: text) {
-        if cursor < match.range.lowerBound {
-            attributed.append(AttributedString(String(text[cursor..<match.range.lowerBound])))
-        }
-        var linked = AttributedString(String(text[match.range]))
-        linked.link = match.url
+        let range = NSRange(match.range, in: text)
+        if parts.contains(where: { NSIntersectionRange($0.range, range).length > 0 }) { continue }
+        parts.append((range, String(text[match.range]), match.url, false))
+    }
+    var attributed = AttributedString()
+    var cursor = 0
+    for part in parts.sorted(by: { $0.range.location < $1.range.location }) {
+        attributed.append(AttributedString(encoded.substring(with: NSRange(location: cursor, length: part.range.location - cursor))))
+        var linked = AttributedString(part.visible)
+        linked.link = part.url
         linked.underlineStyle = .single
         linked.foregroundColor = foreground
+        if part.mention { linked.inlinePresentationIntent = .stronglyEmphasized }
         attributed.append(linked)
-        cursor = match.range.upperBound
+        cursor = NSMaxRange(part.range)
     }
-    if cursor < text.endIndex {
-        attributed.append(AttributedString(String(text[cursor...])))
-    }
+    attributed.append(AttributedString(encoded.substring(from: cursor)))
     return attributed
 }
 
@@ -144,7 +153,7 @@ let messageURLTrailingPunctuation = CharacterSet(charactersIn: ".,;:!?)]")
 func copyableMessageText(_ message: ChatMessageSnapshot) -> String {
     var pieces: [String] = []
     if !message.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-        pieces.append(message.body)
+        pieces.append(displayMessageMentions(text: message.body))
     }
     pieces.append(contentsOf: message.attachments.map(\.htreeUrl))
     return pieces.joined(separator: "\n")

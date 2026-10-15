@@ -40,6 +40,14 @@ internal static class ChatMuteMenu
         foreach (var (label, seconds) in Durations)
             Add(label, () => manager.SetChatMuteUntil(chatId, checked((ulong)DateTimeOffset.UtcNow.ToUnixTimeSeconds() + seconds)));
         Add("Always", () => manager.SetChatMuted(chatId, true));
+        if (chatId.StartsWith("group:", StringComparison.Ordinal))
+        {
+            items.Add(new Separator());
+            var mentions = new MenuItem { Header = "Notify for mentions while muted", IsCheckable = true,
+                IsChecked = !manager.Preferences.silentMentionChatIds.Contains(chatId) };
+            mentions.Click += (_, _) => manager.SetChatMentionNotifications(chatId, mentions.IsChecked);
+            items.Add(mentions);
+        }
         void Add(string label, Action action)
         {
             var item = new MenuItem { Header = label };

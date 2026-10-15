@@ -262,7 +262,7 @@ fun GroupDetailsScreen(
                             } else {
                                 IrisIcons.NotificationsOff
                             },
-                        onClick = rememberChatMuteAction(groupChatId, details.isMuted, appManager::dispatch, untilSecs = appState.preferences.timedChatMutes.firstOrNull { it.chatId == groupChatId }?.untilSecs),
+                        onClick = rememberChatMuteAction(groupChatId, details.isMuted, appManager::dispatch, untilSecs = appState.preferences.timedChatMutes.firstOrNull { it.chatId == groupChatId }?.untilSecs, notifyMentions = !appState.preferences.silentMentionChatIds.contains(groupChatId)),
                         modifier = Modifier.testTag("groupDetailsMuteButton"),
                     )
                 }

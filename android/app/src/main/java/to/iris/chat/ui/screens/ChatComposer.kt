@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.input.then
 import androidx.compose.foundation.text.input.TextFieldState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
@@ -212,6 +213,7 @@ internal fun ComposerBar(
     isEditing: Boolean = false,
     sendFilesDirectly: Boolean = false,
     inputContentModifier: Modifier = Modifier,
+    mentionParticipants: List<to.iris.chat.rust.ChatParticipantSnapshot> = emptyList(),
 ) {
     val haptics = rememberIrisHapticFeedback()
     val currentOnDraftChange by rememberUpdatedState(onDraftChange)
@@ -231,6 +233,7 @@ internal fun ComposerBar(
     val showDesktopComposerTools = windowWidth >= 600.dp
     var showingEmojiPicker by remember { mutableStateOf(false) }
     val emojiCompletion = rememberChatEmojiCompletion(draft)
+    val mentionCompletion = rememberChatMentionCompletion(draft, mentionParticipants)
     val attachInteractionSource = remember { MutableInteractionSource() }
     val emojiInteractionSource = remember { MutableInteractionSource() }
     val sendInteractionSource = remember { MutableInteractionSource() }
@@ -262,6 +265,9 @@ internal fun ComposerBar(
                     .padding(horizontal = 12.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
+            if (sendAllowed && mentionParticipants.isNotEmpty()) {
+                ChatMentionSuggestions(mentionCompletion)
+            }
             if (selectedAttachments.isNotEmpty() && sendFilesDirectly) {
                 Text(
                     "Send directly · Both devices must stay online",
@@ -382,12 +388,14 @@ internal fun ComposerBar(
 
                         ChatMessageInput(
                             state = draft,
-                            inputTransformation = emojiCompletion.inputTransformation,
+                            inputTransformation = emojiCompletion.inputTransformation.then(mentionCompletion.inputTransformation),
                             modifier =
                                 (focusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
                                     .then(inputContentModifier)
-                                    .onPreviewKeyEvent(emojiCompletion::onKeyEvent)
+                                    .onPreviewKeyEvent { mentionCompletion.onKeyEvent(it) || emojiCompletion.onKeyEvent(it) }
                                     .onFocusChanged {
+                                        mentionCompletion.focused = it.isFocused
+                                        if (!it.isFocused) mentionCompletion.dismiss()
                                         emojiCompletion.focused = it.isFocused
                                         if (!it.isFocused) emojiCompletion.dismiss()
                                     }

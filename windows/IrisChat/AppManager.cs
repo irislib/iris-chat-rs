@@ -443,6 +443,9 @@ public sealed partial class AppManager : INotifyPropertyChanged
     public void SetChatMuted(string chatId, bool muted) =>
         DispatchToRust(new AppAction.SetChatMuted(chatId, muted));
 
+    public void SetChatMentionNotifications(string chatId, bool enabled) =>
+        DispatchToRust(new AppAction.SetChatMentionNotifications(chatId, enabled));
+
     public void SetChatMuteUntil(string chatId, ulong untilSecs) =>
         DispatchToRust(new AppAction.SetChatMuteUntil(chatId, untilSecs));
 

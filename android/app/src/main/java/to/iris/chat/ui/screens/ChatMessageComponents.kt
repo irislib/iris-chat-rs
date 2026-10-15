@@ -82,6 +82,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import to.iris.chat.rust.AccountSnapshot
+import to.iris.chat.rust.AppAction
+import to.iris.chat.rust.Screen
 import to.iris.chat.rust.ChatKind
 import to.iris.chat.rust.ChatMessageKind
 import to.iris.chat.rust.ChatMessageSnapshot
@@ -436,6 +438,8 @@ internal fun MessageBubble(
                             val bodyStyle = MaterialTheme.typography.bodyLarge.copy(fontSize = messageSize, lineHeight = messageSize * 1.4f)
                             TruncatableMessageBody(
                                 text = parsed.body,
+                                mentionNames = chat?.participants?.associate { it.ownerPubkeyHex to (to.iris.chat.ui.components.explicitPersonName(it.ownerPubkeyHex, appManager?.state?.value) ?: it.displayName) }.orEmpty(),
+                                onMention = { owner -> appManager?.dispatch(AppAction.PushScreen(Screen.DirectChatInfo(owner))) },
                                 style =
                                     bodyStyle.copy(
                                         fontSize = jumbomojiFontSize(parsed.body) ?: bodyStyle.fontSize,
@@ -1182,7 +1186,7 @@ internal fun replySnippet(message: ChatMessageSnapshot): String {
     if (message.deletedForEveryone) return "Message deleted"
     val parsed = parseReplyEncodedMessage(message.body)
     val source = parsed.body.ifBlank { copyableMessageText(message) }
-    val normalized = source.replace('\n', ' ').trim()
+    val normalized = to.iris.chat.rust.displayMessageMentions(source).replace('\n', ' ').trim()
     if (normalized.isBlank()) {
         return message.attachments.firstOrNull()?.filename ?: "Attachment"
     }
@@ -1201,6 +1205,8 @@ private fun TruncatableMessageBody(
     style: TextStyle,
     color: Color,
     toggleColor: Color,
+    onMention: (String) -> Unit = {},
+    mentionNames: Map<String, String> = emptyMap(),
 ) {
     val collapsedMaxLines = 14
     val collapsedMaxHeight = 320.dp
@@ -1208,8 +1214,8 @@ private fun TruncatableMessageBody(
     var didOverflow by remember(text) { mutableStateOf(false) }
     val haptics = rememberIrisHapticFeedback()
     val toggleInteractionSource = remember { MutableInteractionSource() }
-    val annotated = remember(text, color) {
-        linkedMessageAnnotatedString(text, color)
+    val annotated = remember(text, color, onMention, mentionNames) {
+        linkedMentionMessageAnnotatedString(text, color, onMention, mentionNames)
     }
 
     Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
@@ -1254,7 +1260,7 @@ private fun TruncatableMessageBody(
 
 // Signal-style link styling: force the bubble's body text colour so URL hue
 // stays stable between incoming and outgoing bubbles, then underline.
-private fun linkedMessageAnnotatedString(text: String, color: Color): AnnotatedString =
+internal fun linkedPlainMessageAnnotatedString(text: String, color: Color): AnnotatedString =
     buildAnnotatedString {
         val linkStyle = SpanStyle(color = color, textDecoration = TextDecoration.Underline)
         var index = 0
@@ -1319,7 +1325,7 @@ private val MessageUrlRegex =
 private fun copyableMessageText(message: ChatMessageSnapshot): String {
     val pieces = buildList {
         if (message.body.isNotBlank()) {
-            add(message.body)
+            add(to.iris.chat.rust.displayMessageMentions(message.body))
         }
         message.attachments.forEach { attachment ->
             add(attachment.htreeUrl)

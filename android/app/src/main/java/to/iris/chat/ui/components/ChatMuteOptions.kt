@@ -7,6 +7,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.Checkbox
+import androidx.compose.foundation.layout.Row
+import androidx.compose.ui.Alignment
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -19,7 +22,7 @@ import to.iris.chat.rust.AppAction
 internal val chatMuteDurations = listOf("1 hour" to 3600uL, "8 hours" to 28800uL, "1 day" to 86400uL, "1 week" to 604800uL)
 
 @Composable
-fun rememberChatMuteAction(chatId: String, muted: Boolean, dispatch: (AppAction) -> Unit, untilSecs: ULong? = null): () -> Unit {
+fun rememberChatMuteAction(chatId: String, muted: Boolean, dispatch: (AppAction) -> Unit, untilSecs: ULong? = null, notifyMentions: Boolean = true): () -> Unit {
     var showing by remember(chatId) { mutableStateOf(false) }
     if (showing) {
         AlertDialog(
@@ -46,6 +49,14 @@ fun rememberChatMuteAction(chatId: String, muted: Boolean, dispatch: (AppAction)
                         showing = false
                         dispatch(AppAction.SetChatMuted(chatId, true))
                     }, modifier = Modifier.fillMaxWidth().testTag("chatMuteAlways")) { Text("Always") }
+                    if (chatId.startsWith("group:")) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Checkbox(checked = notifyMentions, onCheckedChange = {
+                                dispatch(AppAction.SetChatMentionNotifications(chatId, it))
+                            }, modifier = Modifier.testTag("chatMuteMentions"))
+                            Text("Notify for mentions while muted")
+                        }
+                    }
                 }
             },
             confirmButton = { TextButton(onClick = { showing = false }) { Text("Cancel") } },

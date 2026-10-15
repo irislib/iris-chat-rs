@@ -25,6 +25,13 @@ public partial class ComposerBar : UserControl
     private long _draftGeneration;
     private readonly ComposerEmojiCompletion _emojiCompletion;
 
+    private readonly MentionDraft _mentions = new();
+    private ComposerMentionCompletion? _mentionCompletion;
+    public IReadOnlyList<IrisChat.Bindings.ChatParticipantSnapshot> MentionParticipants
+    {
+        set => _mentionCompletion?.SetPeople(value);
+    }
+    private string WireText => _mentions.WireText(Input.Text);
     private bool _wasTyping;
     private bool _restoringDraft;
     private bool _directSendAllowed;
@@ -40,6 +47,10 @@ public partial class ComposerBar : UserControl
     {
         InitializeComponent();
         _emojiCompletion = new ComposerEmojiCompletion(Input, () => !_restoringDraft);
+        _mentionCompletion = new ComposerMentionCompletion(Input, () => !_restoringDraft, (start, label, token) => {
+            _mentions.Insert(start, label, token);
+            if (EditingMessageId == null) DraftChanged?.Invoke(WireText);
+        });
         StagedAttachmentsList.ItemsSource = _staged;
         _ = new AttachmentPasteTarget(Input, () => EditingMessageId == null && AttachmentPasteScope?.Invoke() is {} destination
                 ? new AttachmentPasteContext(destination, _draftGeneration, SendDirectly) : null,
@@ -75,8 +86,9 @@ public partial class ComposerBar : UserControl
         _restoringDraft = true;
         try
         {
-            Input.Text = text;
-            Input.CaretIndex = text.Length;
+            _mentionCompletion?.Dismiss();
+            Input.Text = _mentions.Restore(text);
+            Input.CaretIndex = Input.Text.Length;
         }
         finally { _restoringDraft = false; }
     }
@@ -97,7 +109,7 @@ public partial class ComposerBar : UserControl
 
     public void BeginEdit(string messageId, string text)
     {
-        if (EditingMessageId == null) _savedDraft = Input.Text;
+        if (EditingMessageId == null) _savedDraft = WireText;
         _draftGeneration++;
         EditingMessageId = messageId;
         EditBanner.Visibility = Visibility.Visible;
@@ -134,6 +146,7 @@ public partial class ComposerBar : UserControl
     private void OnInputKeyDown(object sender, KeyEventArgs e)
     {
         if (_emojiCompletion.HandleKey(e)) { e.Handled = true; return; }
+        if (_mentionCompletion?.Handle(e) == true) return;
         if (e.Key == Key.Escape && EditingMessageId != null)
         {
             e.Handled = true;
@@ -156,7 +169,8 @@ public partial class ComposerBar : UserControl
             var text = Input.Text;
             ComposerTextLayout.Update(Input, text.Length);
             if (_restoringDraft) return;
-            if (EditingMessageId == null) DraftChanged?.Invoke(text);
+            _mentions.Changed(text);
+            if (EditingMessageId == null) DraftChanged?.Invoke(WireText);
             var hasText = !string.IsNullOrWhiteSpace(text);
             if (hasText && !_wasTyping) { _wasTyping = true; Typing?.Invoke(); }
             else if (!hasText) StopTyping();
@@ -255,7 +269,7 @@ public partial class ComposerBar : UserControl
     private void Submit()
     {
         if (!SendAllowed) return;
-        var text = Input.Text?.Trim() ?? string.Empty;
+        var text = WireText.Trim();
         if (EditingMessageId is { } messageId)
         {
             if (text.Length == 0) return;

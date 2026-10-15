@@ -18,6 +18,14 @@ use crate::widgets::{audio_message, image_cache};
 
 mod chat_links;
 mod image_clipboard;
+mod mention_completion;
+mod mention_completion_logic;
+#[cfg(feature = "ui-tests")]
+mod mention_completion_tests;
+#[cfg(feature = "ui-tests")]
+pub use mention_completion_tests::verify_ui as verify_mention_completion_ui;
+mod mention_draft;
+mod mention_text;
 #[cfg(feature = "ui-tests")]
 pub use image_clipboard::verify_ui as verify_image_clipboard_ui;
 mod contact_details;
@@ -29,9 +37,9 @@ mod emoji_completion_logic;
 #[cfg(feature = "ui-tests")]
 mod emoji_completion_tests;
 #[cfg(feature = "ui-tests")]
-pub use emoji_completion_tests::verify_ui as verify_emoji_completion_ui;
-#[cfg(feature = "ui-tests")]
 pub use composer_clipboard::tests::verify_ui as verify_composer_clipboard_ui;
+#[cfg(feature = "ui-tests")]
+pub use emoji_completion_tests::verify_ui as verify_emoji_completion_ui;
 mod direct_files;
 mod expiry;
 #[cfg(feature = "ui-tests")]
@@ -1026,7 +1034,7 @@ fn render_message(
         deleted.add_css_class("dim-label");
         bubble.append(&deleted);
     } else if !message.body.is_empty() {
-        append_truncatable_body(&bubble, &message.body);
+        append_truncatable_body(&bubble, &message.body, manager);
     }
 
     for attachment in message
@@ -1088,20 +1096,16 @@ fn render_message(
 // char-and-newline heuristic plus a hard `lines` cap means a single
 // pathological glyph stream still gets ellipsized — Pango won't render
 // past the lines limit even if the chars-per-line is unusual.
-fn append_truncatable_body(bubble: &gtk::Box, body_text: &str) {
+fn append_truncatable_body(bubble: &gtk::Box, body_text: &str, manager: &Rc<AppManager>) {
     const COLLAPSED_LINES: i32 = 14;
     const LONG_CHAR_THRESHOLD: usize = 600;
     const LONG_NEWLINE_THRESHOLD: usize = 14;
 
-    let linkified = linkified_text(body_text);
-    let body = if linkified.urls.is_empty() {
-        gtk::Label::new(Some(body_text))
-    } else {
-        let label = gtk::Label::new(None);
-        label.set_markup(&linkified.markup);
-        install_link_actions(&label, linkified.urls);
-        label
-    };
+    let linkified = mention_text::linked(body_text, &manager.current_state());
+    let body = gtk::Label::new(None);
+    body.set_markup(&linkified.markup);
+    mention_text::install_actions(&body, manager);
+    install_link_actions(&body, linkified.urls);
     body.set_wrap(true);
     body.set_wrap_mode(gtk::pango::WrapMode::WordChar);
     body.set_xalign(0.0);
@@ -1269,7 +1273,7 @@ fn build_message_popover(
     let copy = gtk::Button::with_label("Copy text");
     copy.add_css_class("flat");
     copy.set_halign(gtk::Align::Fill);
-    let body = message.body.clone();
+    let body = iris_chat_core::display_message_mentions(message.body.clone());
     let popover_for_copy = popover.clone();
     copy.connect_clicked(move |_| {
         crate::platform::clipboard::copy(&body);

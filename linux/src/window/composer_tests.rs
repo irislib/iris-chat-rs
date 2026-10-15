@@ -131,6 +131,7 @@ pub fn run() {
     crate::calls::verify_ui(manager.clone());
     crate::screens::chat::verify_image_clipboard_ui();
     crate::screens::chat::verify_emoji_completion_ui();
+    crate::screens::chat::verify_mention_completion_ui(manager.clone());
     crate::screens::chat::verify_direct_files_ui(manager.clone());
     let rx = manager.update_rx();
     let drain = || {

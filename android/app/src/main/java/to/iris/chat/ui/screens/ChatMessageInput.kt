@@ -28,6 +28,7 @@ internal fun ChatMessageInput(
 ) {
     BasicTextField(
         state = state,
+        outputTransformation = mentionOutputTransformation,
         modifier = modifier,
         inputTransformation = inputTransformation,
         textStyle = MaterialTheme.typography.bodyLarge.copy(

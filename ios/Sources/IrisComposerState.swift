@@ -7,9 +7,21 @@ import Foundation
 final class IrisComposerState: ObservableObject {
     @Published var text = "" {
         didSet {
-            if text != oldValue { hasLocalEdits = true }
+            if text != oldValue {
+                if !restoringMentions { mentions.textDidChange(from: oldValue, to: text) }
+                hasLocalEdits = true
+            }
         }
     }
+    private var mentions = IrisMentionDraft()
+    private var restoringMentions = false
+    var wireText: String { mentions.wireText(from: text) }
+
+    func insertMention(label: String, token: String, owner: String, at location: Int) {
+        objectWillChange.send()
+        mentions.insert(label: label, token: token, owner: owner, at: location)
+    }
+
     var lastTypingSentAt: Date?
     var sentTypingIndicator = false
     private(set) var attachmentGeneration = UUID()
@@ -25,9 +37,17 @@ final class IrisComposerState: ObservableObject {
             pendingSave?.cancel()
             pendingSave = nil
             lastPersistedText = persisted
-            text = persisted
+            restoringMentions = true
+            let encoded = persisted as NSString
+            let spans = messageMentions(text: persisted).map { mention in
+                let range = NSRange(location: Int(mention.start), length: Int(mention.length))
+                return IrisMentionDraft.Span(range: range, label: mention.label,
+                    token: encoded.substring(with: range), owner: mention.ownerPubkeyHex)
+            }
+            text = mentions.restore(wireText: persisted, encodedSpans: spans)
+            restoringMentions = false
             hasLocalEdits = false
-        } else if text == persisted {
+        } else if wireText == persisted {
             lastPersistedText = persisted
         }
     }
@@ -44,8 +64,8 @@ final class IrisComposerState: ObservableObject {
     func scheduleSave(_ persist: @escaping (String) -> Void) {
         pendingSave?.cancel()
         pendingSave = nil
-        guard lastPersistedText != text else { return }
-        let value = text
+        guard lastPersistedText != wireText else { return }
+        let value = wireText
         let work = DispatchWorkItem { [weak self] in
             guard let self else { return }
             self.pendingSave = nil
@@ -63,9 +83,9 @@ final class IrisComposerState: ObservableObject {
     func flush(_ persist: (String) -> Void) {
         pendingSave?.cancel()
         pendingSave = nil
-        guard lastPersistedText != text else { return }
-        lastPersistedText = text
-        persist(text)
+        guard lastPersistedText != wireText else { return }
+        lastPersistedText = wireText
+        persist(wireText)
     }
 
     deinit {

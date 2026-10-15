@@ -732,6 +732,7 @@ fun ChatScreen(
                         }) {
                             ComposerBar(
                                 draft = if (editTarget == null) draft else editDraft,
+                                mentionParticipants = if (chat.kind == ChatKind.GROUP) chat.participants else emptyList(),
                                 inputContentModifier = attachmentPaste.receiverModifier(
                                     enabled = editTarget == null && !capabilityBlocked && !busy.sendingMessage && !busy.uploadingAttachment,
                                     sendDirectly = sendFilesDirectly,

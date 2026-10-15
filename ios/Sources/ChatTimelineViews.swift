@@ -375,6 +375,7 @@ struct ChatMessageRow: View, Equatable {
     // message update only re-renders that one row instead of all 50.
     static func == (lhs: ChatMessageRow, rhs: ChatMessageRow) -> Bool {
         lhs.message == rhs.message
+            && lhs.mentionNames == rhs.mentionNames
             && lhs.socialConnection == rhs.socialConnection
             && lhs.senderPictureUrl == rhs.senderPictureUrl
             && lhs.avatarPreferences == rhs.avatarPreferences
@@ -398,6 +399,7 @@ struct ChatMessageRow: View, Equatable {
     var senderPictureUrl: String? = nil
     var avatarPreferences: PreferencesSnapshot? = nil
     var manager: AppManager? = nil
+    var mentionNames: [String: String] = [:]
     let message: ChatMessageSnapshot
     let chatKind: ChatKind
     let showDayChip: Bool
@@ -588,11 +590,20 @@ struct ChatMessageRow: View, Equatable {
                                         parsed.body,
                                         foreground: message.isOutgoing
                                             ? palette.onBubbleMine
-                                            : palette.onBubbleTheirs
+                                            : palette.onBubbleTheirs,
+                                        names: mentionNames
                                     ),
                                     isOutgoing: message.isOutgoing,
                                     bodyFont: irisMessageBodyFont(for: parsed.body)
                                 )
+                                .environment(\.openURL, OpenURLAction { url in
+                                    let prefix = "irischat-mention:"
+                                    guard url.absoluteString.hasPrefix(prefix), let manager else { return .systemAction }
+                                    let owner = String(url.absoluteString.dropFirst(prefix.count))
+                                    guard isValidPeerInput(input: owner) else { return .discarded }
+                                    manager.dispatch(.pushScreen(screen: .directChatInfo(chatId: owner)))
+                                    return .handled
+                                })
                             }
                             if let transfer = message.directTransfer {
                                 ChatDirectFileTransferView(transfer: transfer, chatId: directTransferChatId, dispatch: onDirectTransferAction, accept: onDirectTransferAccept)

@@ -9,12 +9,15 @@ use crate::app_manager::AppManager;
 use crate::screens::chat_list::unix_now;
 use crate::widgets::clickable::PointerCursorExt;
 
+use super::mention_draft::{MentionDraft, Span};
+
 type SendCallback = Rc<RefCell<Option<Box<dyn Fn()>>>>;
 
 #[derive(Clone)]
 struct EditControls {
     state: Rc<RefCell<Option<(String, String)>>>,
     buffer: gtk::TextBuffer,
+    mentions: Rc<RefCell<MentionDraft>>,
     input: glib::WeakRef<gtk::TextView>,
     banner: glib::WeakRef<gtk::Box>,
     send: glib::WeakRef<gtk::Button>,
@@ -44,7 +47,7 @@ impl EditControls {
             .borrow()
             .as_ref()
             .map(|(_, draft)| draft.clone())
-            .unwrap_or_else(|| composer_buffer_text(&self.buffer));
+            .unwrap_or_else(|| self.mentions.borrow().wire_text());
         *self.state.borrow_mut() = Some((message.id.clone(), draft));
         input.add_css_class("editing-message");
         banner.set_visible(true);
@@ -54,7 +57,7 @@ impl EditControls {
         send.set_label("Save");
         send.remove_css_class("circular");
         send.set_tooltip_text(Some("Save changes"));
-        self.buffer.set_text(&message.body);
+        restore_mention_draft(&self.buffer, &self.mentions, &message.body);
         input.grab_focus();
     }
 
@@ -81,7 +84,7 @@ impl EditControls {
                 .child()
                 .is_some_and(|row| row.first_child().is_some()),
         );
-        self.buffer.set_text(&draft);
+        restore_mention_draft(&self.buffer, &self.mentions, &draft);
         input.grab_focus();
     }
 
@@ -89,7 +92,7 @@ impl EditControls {
         if !can_send(manager, chat_id) || manager.current_state().busy.sending_message {
             return;
         }
-        let text = composer_buffer_text(&self.buffer).trim().to_string();
+        let text = self.mentions.borrow().wire_text().trim().to_string();
         if text.is_empty() {
             return;
         }
@@ -130,6 +133,7 @@ pub(super) struct Composer {
     preview_row: gtk::Box,
     preview_scroll: gtk::ScrolledWindow,
     edit: EditControls,
+    mention_completion: super::mention_completion::MentionCompletion,
 }
 
 impl Composer {
@@ -275,6 +279,7 @@ impl Composer {
         row.append(&attach);
 
         let buffer = gtk::TextBuffer::new(None);
+        let mentions = Rc::new(RefCell::new(MentionDraft::default()));
         let input = gtk::TextView::with_buffer(&buffer);
         input.add_css_class("composer-input");
         input.set_accepts_tab(true);
@@ -318,7 +323,7 @@ impl Composer {
 
         // Seed before wiring `connect_changed`; the core dedups identical draft writes.
         if !chat.draft.is_empty() {
-            buffer.set_text(&chat.draft);
+            restore_mention_draft(&buffer, &mentions, &chat.draft);
         }
         placeholder.set_visible(chat.draft.is_empty());
         row.append(&input_overlay);
@@ -352,8 +357,10 @@ impl Composer {
             let chat_id_for_typing = chat.chat_id.clone();
             let placeholder_for_typing = placeholder.clone();
             let editing = editing.clone();
+            let mentions = mentions.clone();
             buffer.connect_changed(move |buffer| {
                 let text = composer_buffer_text(buffer);
+                mentions.borrow_mut().changed(&text);
                 placeholder_for_typing.set_visible(text.is_empty());
                 if text.is_empty() {
                     manager_for_typing.dispatch(AppAction::StopTyping {
@@ -367,7 +374,7 @@ impl Composer {
                 if editing.borrow().is_none() {
                     manager_for_typing.dispatch(AppAction::SetChatDraft {
                         chat_id: chat_id_for_typing.clone(),
-                        text,
+                        text: mentions.borrow().wire_text(),
                     });
                 }
             });
@@ -384,6 +391,7 @@ impl Composer {
         let edit = EditControls {
             state: editing,
             buffer: buffer.clone(),
+            mentions: mentions.clone(),
             input: input.downgrade(),
             banner: edit_banner.downgrade(),
             send: send.downgrade(),
@@ -414,6 +422,7 @@ impl Composer {
                 &manager_for_click,
                 &chat_id,
                 &buffer_for_click,
+                &edit_for_click.mentions,
                 ttl_for_click.get(),
                 direct_for_click.is_active(),
                 &preview_row_for_send,
@@ -433,6 +442,31 @@ impl Composer {
         let preview_row_for_enter = preview_row.clone();
         let preview_scroll_for_enter = preview_scroll.clone();
         let key_controller = gtk::EventControllerKey::new();
+        let mentions_for_insert = mentions.clone();
+        let buffer_for_insert = buffer.clone();
+        let manager_for_insert = manager.clone();
+        let chat_for_insert = chat.chat_id.clone();
+        let editing_for_insert = edit.state.clone();
+        let mention_completion = super::mention_completion::MentionCompletion::new(
+            &input,
+            move |offset, label, token| {
+                let text = composer_buffer_text(&buffer_for_insert);
+                let byte = text
+                    .char_indices()
+                    .nth(offset as usize)
+                    .map(|(byte, _)| byte)
+                    .unwrap_or(text.len());
+                mentions_for_insert.borrow_mut().insert(byte, label, token);
+                if editing_for_insert.borrow().is_none() {
+                    manager_for_insert.dispatch(AppAction::SetChatDraft {
+                        chat_id: chat_for_insert.clone(),
+                        text: mentions_for_insert.borrow().wire_text(),
+                    });
+                }
+            },
+        );
+        outer.append(&mention_completion.root);
+        let mentions_for_key = mention_completion.clone();
         let emoji_completion = super::emoji_completion::EmojiCompletion::new(&input);
         outer.append(&emoji_completion.root);
         key_controller.set_propagation_phase(gtk::PropagationPhase::Capture);
@@ -440,7 +474,9 @@ impl Composer {
         let sent = on_send.clone();
         let edit_for_enter = edit.clone();
         key_controller.connect_key_pressed(move |_, keyval, _, state| {
-            if emoji_completion.handle_key(keyval, state) {
+            if mentions_for_key.handle_key(keyval, state)
+                || emoji_completion.handle_key(keyval, state)
+            {
                 return glib::Propagation::Stop;
             }
             if keyval == gtk::gdk::Key::Escape && edit_for_enter.active() {
@@ -461,6 +497,7 @@ impl Composer {
                 &manager_for_enter,
                 &chat_id,
                 &buffer_for_enter,
+                &edit_for_enter.mentions,
                 ttl_for_enter.get(),
                 direct_for_enter.is_active(),
                 &preview_row_for_enter,
@@ -486,6 +523,7 @@ impl Composer {
             preview_row,
             preview_scroll,
             edit,
+            mention_completion,
         };
         composer.update(chat, state);
         composer
@@ -579,6 +617,12 @@ impl Composer {
     }
 
     pub fn update(&self, chat: &CurrentChatSnapshot, state: &AppState) {
+        self.mention_completion
+            .set_people(if chat.kind == iris_chat_core::ChatKind::Group {
+                chat.participants.clone()
+            } else {
+                vec![]
+            });
         let editing_id = self.edit.state.borrow().as_ref().map(|(id, _)| id.clone());
         if editing_id.is_some_and(|id| {
             !chat
@@ -623,6 +667,23 @@ impl Composer {
     }
 }
 
+fn restore_mention_draft(buffer: &gtk::TextBuffer, draft: &Rc<RefCell<MentionDraft>>, wire: &str) {
+    let spans = iris_chat_core::message_mentions(wire.to_string())
+        .into_iter()
+        .filter_map(|mention| {
+            let start = super::mention_text::byte_at_utf16(wire, mention.start)?;
+            let end = super::mention_text::byte_at_utf16(wire, mention.start + mention.length)?;
+            Some(Span {
+                range: start..end,
+                label: mention.label,
+                token: wire[start..end].to_string(),
+            })
+        })
+        .collect();
+    let text = draft.borrow_mut().restore(wire, spans);
+    buffer.set_text(&text);
+}
+
 fn composer_buffer_text(buffer: &gtk::TextBuffer) -> String {
     let (start, end) = buffer.bounds();
     buffer.text(&start, &end, true).to_string()
@@ -632,6 +693,7 @@ fn submit_composer(
     manager: &Rc<AppManager>,
     chat_id: &str,
     buffer: &gtk::TextBuffer,
+    mentions: &Rc<RefCell<MentionDraft>>,
     ttl_seconds: Option<u64>,
     direct: bool,
     preview_row: &gtk::Box,
@@ -640,7 +702,7 @@ fn submit_composer(
     if !can_send(manager, chat_id) {
         return false;
     }
-    let text = composer_buffer_text(buffer).trim().to_string();
+    let text = mentions.borrow().wire_text().trim().to_string();
     let staged = manager.staged_attachments(chat_id);
     if text.is_empty() && staged.is_empty() {
         return false;

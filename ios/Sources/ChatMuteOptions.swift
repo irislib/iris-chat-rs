@@ -30,5 +30,12 @@ struct ChatMuteOptions: View {
             }
         }
         Button("Always") { manager.dispatch(.setChatMuted(chatId: chatId, muted: true)) }
+        if chatId.hasPrefix("group:") {
+            Divider()
+            Toggle("Notify for mentions while muted", isOn: Binding(
+                get: { !manager.state.preferences.silentMentionChatIds.contains(chatId) },
+                set: { manager.dispatch(.setChatMentionNotifications(chatId: chatId, enabled: $0)) }
+            ))
+        }
     }
 }

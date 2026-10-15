@@ -69,8 +69,9 @@ public partial class MessageBubble : UserControl
             AuthorText.Visibility = Visibility.Collapsed;
         }
 
-        BodyText.Text = message.deletedForEveryone ? "Message deleted" : message.body ?? string.Empty;
-        BodyText.Visibility = string.IsNullOrEmpty(BodyText.Text) ? Visibility.Collapsed : Visibility.Visible;
+        var bodyText = message.deletedForEveryone ? "Message deleted" : message.body ?? string.Empty;
+        MentionText.Render(BodyText, bodyText);
+        BodyText.Visibility = string.IsNullOrEmpty(bodyText) ? Visibility.Collapsed : Visibility.Visible;
         ApplyJumbomojiFont(message.body);
         ApplyBodyTruncation(message.body);
         BodyText.FontStyle = message.deletedForEveryone ? FontStyles.Italic : FontStyles.Normal;
@@ -609,7 +610,7 @@ public partial class MessageBubble : UserControl
     {
         if (_message == null) return;
         var pieces = new List<string>();
-        if (!string.IsNullOrEmpty(_message.body)) pieces.Add(_message.body);
+        if (!string.IsNullOrEmpty(_message.body)) pieces.Add(Native.DisplayMessageMentions(_message.body));
         if (_message.attachments != null)
         {
             foreach (var att in _message.attachments)
