@@ -70,10 +70,17 @@ internal static class MentionCompletionTests
             Pump();
             MentionEditingTests.Run(composer, input, first, second, () => saved, Pump);
 
-            var body = new RichTextBox { IsReadOnly = true, IsDocumentEnabled = true };
-            window.Content = body;
-            MentionText.Render(body, "Hello " + token + " https://iris.to, www.example.org!"); Pump();
-            CompletionScreenshots.Save(body, "windows-mentions-links");
+            var bubble = new MessageBubble();
+            bubble.Bind(new ChatMessageSnapshot("mention-preview", "chat", ChatMessageKind.User,
+                "Alex", first, null, "Hello " + token + " https://iris.to, www.example.org!",
+                [], [], [], false, 100, null, DeliveryState.Received, [],
+                new MessageDeliveryTraceSnapshot([], [], [], [], null), null));
+            var preview = new StackPanel { Margin = new Thickness(16) };
+            preview.Children.Add(bubble);
+            window.Content = preview;
+            Pump();
+            var body = (RichTextBox)bubble.FindName("BodyText");
+            CompletionScreenshots.Save(bubble, "windows-mentions-links");
             var paragraph = body.Document.Blocks.OfType<Paragraph>().Single();
             var links = paragraph.Inlines.OfType<Hyperlink>().ToArray();
             Check(links.Length == 3 && links.All(link => link.Cursor == Cursors.Hand), "Only actionable profile and URL spans use hand cursors");
