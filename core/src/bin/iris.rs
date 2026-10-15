@@ -318,6 +318,11 @@ enum ChatCommands {
         chat: String,
         muted: bool,
     },
+    /// Show or change whether mentions notify you in a muted group.
+    MentionNotifications {
+        chat: String,
+        enabled: Option<bool>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -845,6 +850,9 @@ fn handle_chat_command(cli: &CliApp, command: ChatCommands) -> Result<Value> {
             send_message(cli, &chat, &message, expires_at)
         }
         ChatCommands::Seen { chat, message_ids } => mark_seen(cli, &chat, message_ids),
+        ChatCommands::MentionNotifications { chat, enabled } => {
+            iris_message_actions::mention_notifications(cli, &chat, enabled)
+        }
         ChatCommands::Delete { chat } => {
             let chat_id = resolve_chat_id(&cli.app.state(), &chat)?;
             cli.dispatch_and_wait(

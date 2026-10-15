@@ -5,7 +5,7 @@ fn group_outer_event_source_count_excludes_unrelated_queued_recoveries() {
     let mut snapshot = engine.group_manager.snapshot();
     snapshot.sender_keys[0].sender_event_pubkey = ndr_device(author.public_key());
     engine.group_manager = GroupEventManager::from_snapshot(snapshot).unwrap();
-    for candidate in engine.pending_group_sender_key_messages.iter_mut() {
+    for candidate in engine.pending_group_sender_key_messages.changed().iter_mut() {
         candidate.sender_event_pubkey = ndr_device(author.public_key());
     }
     let current = engine.pending_group_sender_key_messages.remove(0);

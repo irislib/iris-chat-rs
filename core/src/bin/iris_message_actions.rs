@@ -1,5 +1,31 @@
 use super::*;
 
+pub(super) fn mention_notifications(
+    cli: &CliApp,
+    chat: &str,
+    enabled: Option<bool>,
+) -> Result<Value> {
+    let chat_id = resolve_chat_id(&cli.app.state(), chat)?;
+    anyhow::ensure!(chat_id.starts_with("group:"), "Choose a group chat.");
+    if let Some(enabled) = enabled {
+        let state = cli.dispatch_and_wait(
+            AppAction::SetChatMentionNotifications {
+                chat_id: chat_id.clone(),
+                enabled,
+            },
+            Duration::from_secs(2),
+        )?;
+        fail_on_toast(&state)?;
+    }
+    let enabled = !cli
+        .app
+        .state()
+        .preferences
+        .silent_mention_chat_ids
+        .contains(&chat_id);
+    Ok(json!({ "chat_id": chat_id, "enabled": enabled }))
+}
+
 pub(super) fn handle_message_top_command(
     cli: &CliApp,
     command: MessageTopCommands,

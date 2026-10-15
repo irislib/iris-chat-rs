@@ -1686,8 +1686,8 @@ pub fn read_mobile_push_notification_indexes(
     })
 }
 
-pub use crate::core::notifications::NotificationCandidate;
 pub use crate::core::desktop_read_notifications::DesktopNotificationMessage;
+pub use crate::core::notifications::NotificationCandidate;
 
 #[uniffi::export]
 pub fn read_desktop_notification_indexes(
@@ -1697,7 +1697,9 @@ pub fn read_desktop_notification_indexes(
 ) -> Vec<u64> {
     ffi_or("read_desktop_notification_indexes", Vec::new(), || {
         crate::core::desktop_read_notifications::read_desktop_notification_indexes(
-            data_dir, owner_pubkey_hex, messages,
+            data_dir,
+            owner_pubkey_hex,
+            messages,
         )
     })
 }
