@@ -109,3 +109,111 @@ fn authorization_records_keep_signatures_and_reject_forged_proofs() {
     restored.restore_device_sync_record_projection();
     assert!(restored.app_keys.contains_key(&peer.public_key().to_hex()));
 }
+
+#[test]
+fn private_state_reconciliation_allows_approved_pre_link_history() {
+    for include_history in [false, true] {
+        let mut pair = chat_read_sync_pair("private-state-link-history");
+        pair.b.app_keys = pair.a.app_keys.clone();
+        let owner = pair.owner.public_key();
+        let old = AppKeys::new(vec![DeviceEntry::new(pair.a_device.public_key(), 1)])
+            .get_event_at(owner, 50)
+            .sign_with_keys(&pair.owner)
+            .unwrap();
+        let current = AppKeys::new(vec![
+            DeviceEntry::new(pair.a_device.public_key(), 1),
+            DeviceEntry::new(pair.b_device.public_key(), 100),
+        ])
+        .get_event_at(owner, 100)
+        .sign_with_keys(&pair.owner)
+        .unwrap();
+        assert!(pair.a.apply_app_keys_event(&old).unwrap());
+        assert!(pair.a.apply_app_keys_event(&current).unwrap());
+        assert!(pair.b.apply_app_keys_event(&current).unwrap());
+        let chat = owner.to_hex();
+        pair.a.push_incoming_message_from(
+            &chat,
+            Some("before-link".into()),
+            "Saved before linking".into(),
+            60,
+            None,
+            None,
+            Some(chat.clone()),
+            None,
+        );
+        pair.a
+            .create_device_history_transfer(
+                pair.b_device.public_key(),
+                include_history,
+                "ba".repeat(32),
+            )
+            .unwrap();
+        pair.b
+            .record_device_history_approver(
+                &pair.a_device.public_key().to_hex(),
+                100,
+                "ba".repeat(32),
+            )
+            .unwrap();
+        let endpoint = Arc::new(
+            pair.a
+                .runtime
+                .block_on(
+                    fips_core::FipsEndpoint::builder()
+                        .without_system_tun()
+                        .bind(),
+                )
+                .unwrap(),
+        );
+        let (left_tx, left_rx) = DeviceSyncTcpSender::test_channel(256, 64 * 1024);
+        let (right_tx, right_rx) = DeviceSyncTcpSender::test_channel(256, 64 * 1024);
+        pair.a.install_device_sync_sender_for_test(
+            endpoint.clone(),
+            left_tx,
+            vec![test_fips_peer(&pair.b_device)],
+        );
+        pair.b.install_device_sync_sender_for_test(
+            endpoint,
+            right_tx,
+            vec![test_fips_peer(&pair.a_device)],
+        );
+        pair.a.refresh_device_sync_on_foreground();
+        pair.b.refresh_device_sync_on_foreground();
+        let mut trace = Vec::new();
+        for _ in 0..512 {
+            let x = drain_history_wire(
+                &mut pair.a,
+                &pair.a_device,
+                &mut pair.b,
+                &pair.b_device,
+                &left_rx,
+                &mut trace,
+            );
+            let y = drain_history_wire(
+                &mut pair.b,
+                &pair.b_device,
+                &mut pair.a,
+                &pair.a_device,
+                &right_rx,
+                &mut trace,
+            );
+            if !x && !y {
+                break;
+            }
+        }
+        assert_eq!(
+            has_device_sync_message(&pair.b, &chat, "before-link"),
+            include_history,
+            "wire: {}",
+            serde_json::to_string(&trace).unwrap()
+        );
+        if include_history {
+            assert!(
+                pair.b
+                    .device_history_transfer(&pair.a_device.public_key().to_hex())
+                    .unwrap()
+                    .complete
+            );
+        }
+    }
+}

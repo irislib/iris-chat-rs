@@ -150,7 +150,10 @@ impl AppCore {
 
     pub(in crate::core) fn device_history_receive_since(&self, peer: &str) -> Option<u64> {
         self.device_history_transfer(peer)
-            .filter(|record| !record.outbound)
+            // Before the approver's policy arrives, leave the request unset so
+            // their private grant selects the window. Advertising the temporary
+            // link-time cutoff would permanently exclude approved older history.
+            .filter(|record| !record.outbound && record.policy_known)
             .map(|record| {
                 if record.complete {
                     record.link_at
