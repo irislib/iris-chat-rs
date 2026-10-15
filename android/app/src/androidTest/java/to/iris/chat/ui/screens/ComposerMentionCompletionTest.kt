@@ -1,8 +1,5 @@
 package to.iris.chat.ui.screens
 
-import android.graphics.Bitmap
-import java.io.File
-import androidx.test.platform.app.InstrumentationRegistry
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.ui.text.TextRange
 
@@ -29,21 +26,17 @@ class ComposerMentionCompletionTest {
         var sent = 0
         compose.setContent {
             IrisChatTheme(darkTheme = false) {
-                ComposerBar(draft, emptyList(), false, false, null,
-                    onDraftChange = {}, onAttach = {}, onRemoveAttachment = {}, onSend = { sent++ },
-                    mentionParticipants = people)
+                ComposerTestFrame {
+                    ComposerBar(draft, emptyList(), false, false, null,
+                        onDraftChange = {}, onAttach = {}, onRemoveAttachment = {}, onSend = { sent++ },
+                        mentionParticipants = people)
+                }
             }
         }
         val field = compose.onNodeWithTag("chatMessageInput")
         field.performClick().performTextInput("@")
         compose.onNodeWithTag("chatMention-$first").assertIsDisplayed()
-        val instrumentation = InstrumentationRegistry.getInstrumentation()
-        instrumentation.uiAutomation.takeScreenshot()?.let { bitmap ->
-            File(instrumentation.targetContext.cacheDir, "mention-completion.png").outputStream().use {
-                bitmap.compress(Bitmap.CompressFormat.PNG, 100, it)
-            }
-            bitmap.recycle()
-        }
+        captureComposerTest("mention-completion")
         compose.onNodeWithTag("chatMention-$second").performClick()
         compose.runOnIdle {
             assertEquals(second, messageMentions(draft.text.toString()).single().ownerPubkeyHex)

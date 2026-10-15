@@ -213,8 +213,9 @@ final class MacKeyboardNavigationTests: XCTestCase {
         #if IRIS_KEYBOARD_HARNESS
         NSApp.setActivationPolicy(.accessory)
         NSApp.finishLaunching()
-        NSApp.activate(ignoringOtherApps: true)
         #endif
+        NSApp.unhide(nil)
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     private func keyboardButton(_ title: String, action: @escaping () -> Void) -> some View {

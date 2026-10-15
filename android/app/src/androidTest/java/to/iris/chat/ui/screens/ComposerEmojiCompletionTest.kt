@@ -1,9 +1,6 @@
 package to.iris.chat.ui.screens
 
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.text.input.TextFieldState
-import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
 import org.junit.Assert.*
@@ -19,8 +16,7 @@ class ComposerEmojiCompletionTest {
         var sent = 0
         compose.setContent {
             IrisChatTheme(darkTheme = false) {
-                Column {
-                    Spacer(Modifier.weight(1f))
+                ComposerTestFrame {
                     ComposerBar(draft, emptyList(), false, false, null,
                         onDraftChange = {}, onAttach = {}, onRemoveAttachment = {}, onSend = { sent++ })
                 }
@@ -28,7 +24,9 @@ class ComposerEmojiCompletionTest {
         }
         val field = compose.onNodeWithTag("chatMessageInput")
         field.performClick().performTextInput(":sm")
-        compose.onNodeWithTag("chatEmojiCompletion-smile").assertIsDisplayed().performClick()
+        compose.onNodeWithTag("chatEmojiCompletion-smile").assertIsDisplayed()
+        captureComposerTest("emoji-completion")
+        compose.onNodeWithTag("chatEmojiCompletion-smile").performClick()
         compose.runOnIdle {
             assertEquals("Hello 😄 ", draft.text.toString())
             assertEquals(0, sent)

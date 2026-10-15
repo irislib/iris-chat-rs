@@ -60,7 +60,9 @@ class ChatMuteOptionsTest {
             }, notifyMentions = enabled.value)) { Text("Options") }
         } }
         compose.onNodeWithText("Options").performClick()
-        compose.onNodeWithTag("chatMuteMentions").assertIsOn().performClick()
+        compose.onNodeWithTag("chatMuteMentions").assertIsOn()
+        captureComposerTest("muted-group-mentions")
+        compose.onNodeWithTag("chatMuteMentions").performClick()
         compose.onNodeWithTag("chatMuteMentions").assertIsOff()
         compose.runOnIdle {
             assertEquals(AppAction.SetChatMentionNotifications("group:test", false), actions.single())

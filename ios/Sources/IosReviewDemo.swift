@@ -72,21 +72,25 @@ enum IosReviewDemo {
         primary.dispatch(action: .setNearbyBluetoothEnabled(enabled: true))
         let link = try IosDemoLocalLink(first: primary, second: peer)
         var preparationError: Error?
+        var stage = "account creation"
         do {
             peer.dispatch(action: .createAccount(name: sampleName))
             try await waitUntil { peer.state().account != nil && primary.state().account != nil }
             guard let reviewerID = primary.state().account?.publicKeyHex,
                   let sampleID = peer.state().account?.publicKeyHex else { throw PreparationError.notReady }
             try Data(sampleID.utf8).write(to: progressURL, options: .atomic)
+            stage = "sample conversation setup"
             primary.dispatch(action: .createChat(peerInput: sampleID))
             peer.dispatch(action: .createChat(peerInput: reviewerID))
             primary.dispatch(action: .setContactDetails(ownerPubkeyHex: sampleID, nickname: sampleName, note: "Sample contact; offline after setup."))
             primary.dispatch(action: .setMessageRequestAccepted(chatId: sampleID))
             peer.dispatch(action: .setMessageRequestAccepted(chatId: reviewerID))
+            stage = "welcome delivery"
             peer.dispatch(action: .sendMessage(chatId: reviewerID, text: welcome))
             try await waitUntil {
                 primary.chatSnapshot(chatId: sampleID, limit: 30)?.messages.contains(where: { $0.body == welcome }) == true
             }
+            stage = "sample history delivery"
             primary.dispatch(action: .sendMessage(chatId: sampleID, text: "Thanks! I'll try the message controls here."))
             peer.dispatch(action: .sendMessage(chatId: reviewerID, text: "These are sample messages. This sample contact is offline after setup; use a second device for live calls."))
             peer.dispatch(action: .sendMessage(chatId: reviewerID, text: "Play this sample audio. You can pause, seek, and change playback speed.\n\(audioHash)/\(audioFilename)"))
@@ -95,15 +99,24 @@ enum IosReviewDemo {
                 guard let messages = primary.chatSnapshot(chatId: sampleID, limit: 30)?.messages else { return false }
                 return messages.contains(where: { $0.body == twoDeviceInstructions }) && messages.contains(where: { $0.attachments.contains(where: { $0.nhash == audioHash }) })
             }
+            stage = "sample group preparation"
             try await prepareGroup(primary)
             try Task.checkCancellation()
             primary.dispatch(action: .updateScreenStack(stack: []))
         } catch {
+            #if DEBUG
+            print("Iris demo setup failed during \(stage)")
+            #endif
             preparationError = error
         }
         // Always try acknowledged teardown before restoring the real adapter.
         // A failed close is setup failure, never a ready demo or a silent retry.
-        try link.close()
+        do { try link.close() } catch {
+            #if DEBUG
+            print("Iris demo setup failed during local link teardown")
+            #endif
+            throw error
+        }
         if let preparationError { throw preparationError }
         try Data("ready".utf8).write(to: marker(in: directory), options: .atomic)
     }

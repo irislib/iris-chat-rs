@@ -434,9 +434,8 @@ final class IrisChatMacComposerTests: XCTestCase {
         assertHeights(scrollView: scrollView, textView: textView, viewport: lineHeight, document: lineHeight)
 
         publishNativeText("first\nsecond", in: textView)
-        host.layoutSubtreeIfNeeded()
-        assertHeights(scrollView: scrollView, textView: textView, viewport: lineHeight, document: lineHeight)
-
+        // SwiftUI may apply the native size change immediately or on its next
+        // pass. Verify the settled layout rather than an intermediate frame.
         runMainLoop()
         host.layoutSubtreeIfNeeded()
         assertHeights(
