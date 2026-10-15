@@ -2,6 +2,7 @@ using System;
 using System.Linq;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Documents;
 using IrisChat.Bindings;
 using IrisChat.Chrome;
 
@@ -50,7 +51,9 @@ internal static class MessageActionsTests
         bubble.Bind(message with { isOutgoing = false });
         Check(bubble.ContextMenu.Items.OfType<MenuItem>().Any(item => Equals(item.Header, "Edit history")), "Received messages offer history too");
         bubble.Bind(message with { deletedForEveryone = true, body = "", editHistory = [] });
-        Check(((TextBox)bubble.FindName("BodyText")).Text == "Message deleted", "Deleted content is a tombstone");
+        var body = (RichTextBox)bubble.FindName("BodyText");
+        Check(new TextRange(body.Document.ContentStart, body.Document.ContentEnd).Text.TrimEnd() == "Message deleted",
+            "Deleted content is a tombstone");
         Check(((Button)bubble.FindName("EditedButton")).Visibility == Visibility.Collapsed, "Deleted message has no history link");
         Check(!bubble.ContextMenu.Items.OfType<MenuItem>().Any(item =>
             Equals(item.Header, "Edit message") || Equals(item.Header, "React") || Equals(item.Header, "Edit history")),
