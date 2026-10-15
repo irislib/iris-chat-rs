@@ -26,6 +26,11 @@ on:
         type: string
         required: false
         default: "[]"
+      notary_release_environment:
+        description: Compare the same read-only checks with the release signing keychain
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
@@ -44,6 +49,7 @@ jobs:
     name: Read-only Apple ticket transport diagnostic
     runs-on: macos-15
     timeout-minutes: 10
+    environment: macos-release
     steps:
       - uses: actions/checkout@v4
       - name: Verify and inspect an already released app
@@ -59,12 +65,24 @@ jobs:
           gh release verify-asset v2026.10.13 "$probe_dir/$archive" --repo irislib/iris-chat-rs
           tar -xzf "$probe_dir/$archive" -C "$probe_dir"
           python3 scripts/diagnose_macos_ticket.py "$probe_dir/Iris Chat.app" work/notary-transport/receipt.json
+      - name: Configure a temporary release signing keychain
+        if: inputs.notary_release_environment
+        env:
+          MACOS_CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+        run: python3 scripts/diagnose_macos_keychain.py setup
+      - name: Compare ticket transport with the release keychain
+        if: inputs.notary_release_environment
+        run: python3 scripts/diagnose_macos_ticket.py "$RUNNER_TEMP/notary-probe/Iris Chat.app" work/notary-transport/release-keychain.json
+      - name: Remove the temporary diagnostic keychain
+        if: always() && inputs.notary_release_environment
+        run: python3 scripts/diagnose_macos_keychain.py cleanup
       - name: Preserve sanitized diagnostic results
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: macos-notary-transport
-          path: work/notary-transport/receipt.json
+          path: work/notary-transport/*.json
           if-no-files-found: error
           retention-days: 14
 
