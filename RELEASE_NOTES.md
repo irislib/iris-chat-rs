@@ -2,6 +2,36 @@
 
 Each release has channel-specific notes. The release tag must match the `##` heading exactly.
 
+## v2026.10.16
+
+### GitHub
+
+- Add group mention menus opened by `@` and emoji completion opened by `:` across the native apps. Preserve the selected person's identity through edits, deletion, and undo, including people with the same display name.
+- Allow mentions to notify in muted groups, with a separate preference synced privately between authorized devices through Negentropy. Keep quiet preferences when concurrent changes have the same timestamp.
+- Clear desktop notifications when their exact messages are read on another device, while retaining notifications for messages that remain unread. Preserve authenticated message identities through group-message recovery.
+- Replace valid attachment hashes in notifications and chat-list previews with readable attachment labels while preserving captions and message bodies.
+- Preserve new drafts and navigation when an earlier attachment upload finishes. Improve link cursors and link contrast in message bubbles.
+- Accept encrypted private personal and group invitations stored in Hashtree.
+- Expose mention-notification settings in the CLI and deliver complete service errors even when they exceed one socket write.
+
+### Apple
+
+- Type `@` to mention someone in a group, or `:` to find an emoji.
+- Choose whether mentions notify you in a muted group, and keep that choice in sync across devices.
+- Keep new text you write while an attachment is uploading.
+- Show readable attachment labels in notifications and the chat list.
+- Open private invitations to people and groups.
+- Improve message editing and notification cleanup across linked devices.
+
+### Zapstore
+
+- Type `@` to mention someone in a group, or `:` to find an emoji.
+- Choose whether mentions notify you in a muted group, and keep that choice in sync across devices.
+- Keep new text you write while an attachment is uploading.
+- Show readable attachment labels in notifications and the chat list.
+- Open private invitations to people and groups.
+- Improve message editing and notification cleanup across linked devices.
+
 ## v2026.10.15.1
 
 ### GitHub
