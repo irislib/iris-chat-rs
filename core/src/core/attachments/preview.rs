@@ -41,7 +41,11 @@ pub(super) fn without_hash_references(text: &str) -> String {
             {
                 end += 1;
             }
-            while end > filename_start && b".,;:!?".contains(&bytes[end - 1]) {
+            while end > filename_start
+                && bytes
+                    .get(end - 1)
+                    .is_some_and(|byte| b".,;:!?".contains(byte))
+            {
                 end -= 1;
             }
             if let Some(attachment) = parse_file_link(&text[start..end]) {
@@ -54,7 +58,7 @@ pub(super) fn without_hash_references(text: &str) -> String {
             if let Some(open) = text[..start - 2].rfind('[') {
                 let title = &text[open + 1..start - 2];
                 if !title.contains(['\n', '[', ']']) {
-                    start = if open > 0 && bytes[open - 1] == b'!' {
+                    start = if open > 0 && bytes.get(open - 1) == Some(&b'!') {
                         open - 1
                     } else {
                         open

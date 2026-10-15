@@ -62,6 +62,37 @@ fn start(path: &Path) -> Service {
     s
 }
 
+#[cfg(unix)]
+#[test]
+fn service_drains_large_command_errors_before_closing_the_connection() {
+    use std::{io::Write, os::unix::net::UnixStream};
+
+    let dir = TempDir::new().unwrap();
+    let _service = start(dir.path());
+    let mut stream = UnixStream::connect(dir.path().join("cli.sock")).unwrap();
+    stream
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .unwrap();
+    let invalid = format!("invalid-{}", "x".repeat(400_000));
+    let request = serde_json::json!({
+        "version": 1,
+        "profile": dir.path().canonicalize().unwrap(),
+        "args": [&invalid],
+    });
+    serde_json::to_writer(&mut stream, &request).unwrap();
+    stream.write_all(b"\n").unwrap();
+    let mut response = String::new();
+    BufReader::new(stream).read_line(&mut response).unwrap();
+    let frame: Value = serde_json::from_str(&response)
+        .unwrap_or_else(|_| panic!("truncated service response: {} bytes", response.len()));
+    assert_eq!(frame["type"], "error");
+    assert!(frame["error"].as_str().unwrap().contains(&invalid));
+    assert_eq!(
+        run(dir.path(), &["service", "status"])["data"]["running"],
+        true
+    );
+}
+
 #[test]
 fn service_keeps_profile_owned_and_serves_commands_while_listening() {
     let dir = TempDir::new().unwrap();

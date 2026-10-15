@@ -143,12 +143,21 @@ fn serve(data_dir: &Path, nearby_lan: bool) -> Result<()> {
                 match poll_client(client, &cli, data_dir, nearby_lan, &mut stopping) {
                     Ok(keep) => keep,
                     Err(error) => {
-                        // Best effort error; never log message bodies or command arguments.
-                        let _ = client
+                        // Drain errors through the same bounded nonblocking path as results.
+                        // A diagnostic can exceed one socket/pipe write; dropping it here
+                        // would hide the command outcome from the client.
+                        if client.done {
+                            return false;
+                        }
+                        if client
                             .connection
-                            .queue(&json!({"type":"error","error":error.to_string()}));
-                        let _ = client.connection.flush();
-                        false
+                            .queue(&json!({"type":"error","error":error.to_string()}))
+                            .is_err()
+                        {
+                            return false;
+                        }
+                        client.done = true;
+                        true
                     }
                 }
             });

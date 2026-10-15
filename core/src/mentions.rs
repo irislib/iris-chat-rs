@@ -78,7 +78,9 @@ fn mentions(text: &str) -> Vec<(usize, usize, PublicKey, &str)> {
         let start = cursor + offset;
         cursor = start + 2;
         let label_window_end = (cursor + 328).min(text.len());
-        let label_window = &text.as_bytes()[cursor..label_window_end];
+        let Some(label_window) = text.as_bytes().get(cursor..label_window_end) else {
+            break;
+        };
         let Some(label_end) = label_window
             .windows(8)
             .position(|w| w == b"](nostr:")
