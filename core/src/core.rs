@@ -658,6 +658,7 @@ pub struct AppCore {
     open_invite_chat_on_join: bool,
     pending_private_invite_responses: BTreeMap<String, invites::PendingPrivateInviteResponseV1>,
     pending_private_invite_cleanup_retry: bool,
+    pending_private_invite_lookup: Option<String>,
     pending_outgoing_invite_acceptance: Option<invites::PendingOutgoingInviteAcceptance>,
     threads: BTreeMap<String, ThreadRecord>,
     chat_deletions: BTreeMap<String, u64>,

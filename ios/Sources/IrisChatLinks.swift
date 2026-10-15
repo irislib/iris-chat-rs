@@ -32,6 +32,9 @@ private func isInviteChatLink(_ url: URL) -> Bool {
     }
 
     let fragmentComponents = chatLinkFragmentComponents(url)
+    if fragmentComponents.count == 1, fragmentComponents[0].hasPrefix("nhash1") {
+        return true
+    }
     if fragmentComponents.first?.lowercased() == "invite" && fragmentComponents.count >= 2 {
         return true
     }

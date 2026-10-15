@@ -20,6 +20,7 @@ internal fun parseChatLink(input: String): AppAction? {
     val fragment = decodeLinkPart(uri.rawFragment.orEmpty())
     val fragmentSegments = fragment.trim().removePrefix("/").split('/').filter(String::isNotBlank)
     val isInvite =
+        (fragmentSegments.size == 1 && fragmentSegments[0].startsWith("nhash1")) ||
         (path.firstOrNull().equals("invite", ignoreCase = true) && path.size >= 2) ||
             (fragmentSegments.firstOrNull().equals("invite", ignoreCase = true) && fragmentSegments.size >= 2) ||
             (fragment.contains("\"ephemeralKey\"") && fragment.contains("\"sharedSecret\""))

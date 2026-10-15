@@ -21,6 +21,7 @@ pub(super) struct PendingPrivateInviteResponseV1 {
 #[derive(Clone, Debug)]
 pub(super) struct PendingOutgoingInviteAcceptance {
     pub(super) invite: Invite,
+    pub(super) record: Option<crate::invite_record::InviteRecord>,
     pub(super) claimed_owner: PublicKey,
     pub(super) queued_at_secs: u64,
 }
@@ -553,6 +554,82 @@ impl AppCore {
     }
 
     pub(super) fn accept_invite(&mut self, invite_input: &str) {
+        self.pending_private_invite_lookup = None;
+        self.pending_outgoing_invite_acceptance = None;
+        if let Some(reference) = crate::invite_record::reference_from_input(invite_input) {
+            let Some(owner) = self
+                .logged_in
+                .as_ref()
+                .map(|login| login.owner_pubkey.to_hex())
+            else {
+                return;
+            };
+            let request_id = uuid::Uuid::new_v4().to_string();
+            self.pending_private_invite_lookup = Some(request_id.clone());
+            self.state.busy.accepting_invite = true;
+            self.emit_state();
+            let reference = reference.to_string();
+            let sender = self.core_sender.clone();
+            self.runtime.spawn(async move {
+                let result = crate::invite_record::load_record(&reference)
+                    .await
+                    .map_err(|e| e.to_string());
+                let _ = sender.send(CoreMsg::Internal(Box::new(
+                    InternalEvent::PrivateInviteResolved {
+                        request_id,
+                        owner,
+                        result,
+                    },
+                )));
+            });
+            return;
+        }
+        self.accept_invite_input(invite_input, None);
+    }
+
+    pub(super) fn finish_private_invite_lookup(
+        &mut self,
+        request_id: String,
+        owner: String,
+        result: Result<crate::invite_record::InviteRecord, String>,
+    ) {
+        if self.pending_private_invite_lookup.as_ref() != Some(&request_id)
+            || self
+                .logged_in
+                .as_ref()
+                .map(|login| login.owner_pubkey.to_hex())
+                .as_ref()
+                != Some(&owner)
+        {
+            return;
+        }
+        self.pending_private_invite_lookup = None;
+        match result.and_then(|record| {
+            if record
+                .expires_at
+                .is_some_and(|expiry| expiry <= unix_now().get())
+            {
+                return Err("This invite has expired.".to_string());
+            }
+            record
+                .legacy_url()
+                .map(|url| (url, record))
+                .map_err(|e| e.to_string())
+        }) {
+            Ok((url, record)) => self.accept_invite_input(&url, Some(record)),
+            Err(error) => {
+                self.state.busy.accepting_invite = false;
+                self.state.toast = Some(error);
+                self.emit_state();
+            }
+        }
+    }
+
+    fn accept_invite_input(
+        &mut self,
+        invite_input: &str,
+        record: Option<crate::invite_record::InviteRecord>,
+    ) {
         if !self.can_use_chats() {
             self.state.toast = Some(chat_unavailable_message(self.logged_in.as_ref()).to_string());
             self.emit_state();
@@ -578,6 +655,7 @@ impl AppCore {
                         self.pending_outgoing_invite_acceptance =
                             Some(PendingOutgoingInviteAcceptance {
                                 invite,
+                                record: record.clone(),
                                 claimed_owner: owner_pubkey,
                                 queued_at_secs: unix_now().get(),
                             });
@@ -589,7 +667,7 @@ impl AppCore {
                             }
                         }
                     } else {
-                        self.accept_parsed_invite(invite, owner_pubkey)?
+                        self.accept_parsed_invite(invite, owner_pubkey, record.as_ref())?
                             .map(AcceptInviteDispatch::Completed)
                             .ok_or_else(|| anyhow::anyhow!("Invite authorization is unavailable."))
                     }
@@ -603,8 +681,14 @@ impl AppCore {
 
         match result {
             Ok(AcceptInviteDispatch::Completed(chat_id)) => {
-                self.active_chat_id = Some(chat_id.clone());
-                self.screen_stack = vec![Screen::Chat { chat_id }];
+                if chat_id.starts_with("group:") {
+                    self.active_chat_id = None;
+                    self.screen_stack = vec![Screen::ChatList];
+                    self.state.toast = Some("Waiting for the group admin to connect…".to_string());
+                } else {
+                    self.active_chat_id = Some(chat_id.clone());
+                    self.screen_stack = vec![Screen::Chat { chat_id }];
+                }
                 self.request_protocol_subscription_refresh_forced();
                 self.fetch_recent_protocol_state();
                 self.persist_best_effort();
@@ -634,6 +718,7 @@ impl AppCore {
         &mut self,
         invite: Invite,
         owner_pubkey: PublicKey,
+        record: Option<&crate::invite_record::InviteRecord>,
     ) -> anyhow::Result<Option<String>> {
         if self.defer_owner_app_keys_publish {
             self.recover_deferred_owner_registration();
@@ -655,6 +740,14 @@ impl AppCore {
         };
         let chat_id = result.owner_pubkey.to_hex();
 
+        if let Some(record) = record.filter(|record| record.kind == "group") {
+            self.process_protocol_engine_effects(result.effects);
+            self.send_group_invite_join_request(record)?;
+            return Ok(Some(format!(
+                "group:{}",
+                record.group_id.as_deref().unwrap_or_default()
+            )));
+        }
         self.ensure_thread_record(&chat_id, unix_now().get())
             .unread_count = 0;
         self.remember_recent_handshake_peer(
@@ -689,7 +782,7 @@ impl AppCore {
                 "Could not verify the invite owner's device list. Reopen the invite to retry."
             );
         }
-        let accepted = self.accept_parsed_invite(pending.invite, owner)?;
+        let accepted = self.accept_parsed_invite(pending.invite, owner, pending.record.as_ref())?;
         if accepted.is_some() {
             self.pending_outgoing_invite_acceptance = None;
         }
@@ -701,8 +794,14 @@ impl AppCore {
             Ok(Some(chat_id)) => {
                 self.state.busy.accepting_invite = false;
                 self.state.toast = None;
-                self.active_chat_id = Some(chat_id.clone());
-                self.screen_stack = vec![Screen::Chat { chat_id }];
+                if chat_id.starts_with("group:") {
+                    self.active_chat_id = None;
+                    self.screen_stack = vec![Screen::ChatList];
+                    self.state.toast = Some("Waiting for the group admin to connect…".to_string());
+                } else {
+                    self.active_chat_id = Some(chat_id.clone());
+                    self.screen_stack = vec![Screen::Chat { chat_id }];
+                }
                 self.request_protocol_subscription_refresh_forced();
                 self.fetch_recent_protocol_state();
                 self.persist_best_effort();
@@ -721,10 +820,100 @@ impl AppCore {
         }
     }
 
+    fn send_group_invite_join_request(
+        &mut self,
+        record: &crate::invite_record::InviteRecord,
+    ) -> anyhow::Result<()> {
+        let owner = self
+            .logged_in
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Not logged in"))?
+            .owner_pubkey;
+        let peer = PublicKey::from_hex(&record.invite.owner)?;
+        let group_id = record
+            .group_id
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("Invalid group invite"))?;
+        let content =
+            serde_json::json!({ "v": 1, "groupId": group_id, "token": record.token }).to_string();
+        self.private_chat_invite_storage()?.put(
+            &format!("pending-group-invite-v1/{group_id}"),
+            serde_json::to_string(record)?,
+        )?;
+        let unsigned = EventBuilder::new(Kind::Custom(10461), content)
+            .tag(nostr::Tag::public_key(peer))
+            .build(owner);
+        anyhow::ensure!(
+            self.send_protocol_engine_unsigned_event_to_peer_only(
+                peer,
+                &peer.to_hex(),
+                unsigned,
+                "group_invite.join"
+            ),
+            "Could not send join request. Reopen the invite to retry."
+        );
+        self.schedule_fast_protocol_retry_if_pending();
+        Ok(())
+    }
+
+    pub(super) fn receive_group_invite_result(
+        &mut self,
+        sender: PublicKey,
+        device: Option<PublicKey>,
+        content: &str,
+    ) -> bool {
+        if content.len() > 1024 {
+            return true;
+        }
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(content) else {
+            return true;
+        };
+        let Some(group_id) = value
+            .get("groupId")
+            .and_then(|v| v.as_str())
+            .filter(|v| v.len() <= 512)
+        else {
+            return true;
+        };
+        let pending = self
+            .private_chat_invite_storage()
+            .and_then(|storage| {
+                storage
+                    .get(&format!("pending-group-invite-v1/{group_id}"))?
+                    .ok_or_else(|| anyhow::anyhow!("No pending invitation"))
+            })
+            .ok()
+            .and_then(|data| {
+                serde_json::from_str::<crate::invite_record::InviteRecord>(&data).ok()
+            });
+        let Some(record) = pending else {
+            return true;
+        };
+        if value.get("v").and_then(|v| v.as_u64()) != Some(1)
+            || sender.to_hex() != record.invite.owner
+            || device.map(|v| v.to_hex()).as_deref() != Some(record.invite.inviter.as_str())
+            || value.get("token").and_then(|v| v.as_str()) != record.token.as_deref()
+        {
+            return true;
+        }
+        let message = match value.get("status").and_then(|v| v.as_str()) {
+            Some("added" | "already-member") => "Joining group…",
+            Some("expired") => "This invite has expired.",
+            Some("full") => "This invite has reached its use limit.",
+            Some("used") => "This invite has already been used.",
+            Some("unavailable") => "This invite is no longer available.",
+            _ => return true,
+        };
+        self.state.toast = Some(message.to_string());
+        self.emit_state();
+        true
+    }
+
     pub(super) fn reset_pending_invite_acceptance(&mut self) {
         if self.pending_outgoing_invite_acceptance.take().is_some() {
             self.state.toast = None;
         }
+        self.pending_private_invite_lookup = None;
         self.state.busy.accepting_invite = false;
     }
 }

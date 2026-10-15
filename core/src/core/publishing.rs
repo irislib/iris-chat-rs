@@ -147,7 +147,7 @@ impl AppCore {
                 tag.as_slice() == ["type", "private_contact"]
                     || tag.as_slice() == ["type", "private_setting"]
             }))
-            || matches!(event.kind.as_u16(), 10449..=10456)
+            || matches!(event.kind.as_u16(), 10449..=10456 | 10461 | 10462)
             || private_contacts::obsolete_private_contact_event(&event)
             || private_device_labels::obsolete_private_app_keys_event(&event)
         {

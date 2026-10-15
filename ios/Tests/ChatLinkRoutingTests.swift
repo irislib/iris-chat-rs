@@ -27,6 +27,17 @@ final class ChatLinkRoutingTests: XCTestCase {
         XCTAssertEqual(value, "https://chat.iris.to/#\(fragment)")
     }
 
+    func testPrivateHashtreeInviteKeepsItsFragmentForBothSchemes() throws {
+        let reference = "nhash1qqszmy69qm5qaj8hynac4r2tlczdqmtscv3y59qlpvgjl6kq5jtfgws9yzkv26y93cdc4j00ql9nmfzzazwq4sf35ymflpw6glgxp677lzqcu56ywqa"
+        for scheme in ["https", "irischat"] {
+            let url = try XCTUnwrap(URL(string: "\(scheme)://chat.iris.to/#/\(reference)"))
+            guard case let .acceptInvite(value) = IrisChatLinks.action(for: url) else {
+                return XCTFail("Expected a private invite action")
+            }
+            XCTAssertEqual(value, "https://chat.iris.to/#/\(reference)")
+        }
+    }
+
     func testUnrelatedSchemesHostsAndSettingsAreIgnored() throws {
         for value in [
             "irischat://share/example", "irischat://other.example/#/\(peer)",

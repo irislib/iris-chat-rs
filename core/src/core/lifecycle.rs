@@ -93,6 +93,7 @@ impl AppCore {
             open_invite_chat_on_join: true,
             pending_private_invite_responses: BTreeMap::new(),
             pending_private_invite_cleanup_retry: false,
+            pending_private_invite_lookup: None,
             pending_outgoing_invite_acceptance: None,
             threads: BTreeMap::new(),
             chat_deletions: BTreeMap::new(),
@@ -239,6 +240,7 @@ impl AppCore {
                 }
                 InternalEvent::FollowUpdateReady { .. } => "FollowUpdateReady",
                 InternalEvent::UserDiscoveryFetchFinished { .. } => "UserDiscoveryFetchFinished",
+                InternalEvent::PrivateInviteResolved { .. } => "PrivateInviteResolved",
                 InternalEvent::ProfileSearchRequested { .. } => "ProfileSearchRequested",
                 InternalEvent::ProfileSearchDebounceElapsed { .. } => {
                     "ProfileSearchDebounceElapsed"
@@ -773,6 +775,13 @@ impl AppCore {
             }
             InternalEvent::UserDiscoveryFetchFinished { token, result } => {
                 self.handle_user_discovery_fetch_finished(token, result);
+            }
+            InternalEvent::PrivateInviteResolved {
+                request_id,
+                owner,
+                result,
+            } => {
+                self.finish_private_invite_lookup(request_id, owner, result);
             }
             InternalEvent::ProfileSearchRequested { query } => {
                 self.request_profile_search(&query);
