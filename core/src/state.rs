@@ -374,6 +374,12 @@ pub struct SocialConnectionSnapshot {
 }
 
 #[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
+pub struct MentionNotificationSnapshot {
+    pub message_id: String,
+    pub preview: String,
+}
+
+#[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
 pub struct ChatThreadSnapshot {
     pub social_connection: Option<SocialConnectionSnapshot>,
     pub chat_id: String,
@@ -389,8 +395,10 @@ pub struct ChatThreadSnapshot {
     pub last_message_preview: Option<String>,
     pub last_message_at_secs: Option<u64>,
     pub last_message_is_outgoing: Option<bool>,
-    #[uniffi(default = false)]
-    pub last_message_mentions_you: bool,
+    #[uniffi(default = None)]
+    pub last_message_id: Option<String>,
+    #[uniffi(default = [])]
+    pub unread_mention_messages: Vec<MentionNotificationSnapshot>,
     pub last_message_delivery: Option<DeliveryState>,
     pub unread_count: u64,
     pub is_typing: bool,

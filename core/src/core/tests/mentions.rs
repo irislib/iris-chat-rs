@@ -179,3 +179,74 @@ fn mentions_opt_out_is_private_durable_and_order_independent() {
         "old opt-out cannot undo a newer choice"
     );
 }
+
+#[test]
+fn mentions_coalesced_state_keeps_new_identity_without_renotifying_old_unread_mentions() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let sender = Keys::generate();
+    let mut core = logged_in_test_core("mentions-coalesced", &owner, &device);
+    let chat = "group:coalesced";
+    core.ensure_thread_record(chat, 10);
+    core.set_chat_muted(chat, true);
+    core.active_chat_id = None;
+    core.rebuild_persist_and_emit_state();
+    let before = core.state.chat_list.clone();
+    let mention = crate::format_message_mention(owner.public_key().to_hex(), "You".into());
+    core.enter_batch();
+    for (id, body, timestamp) in [
+        ("mention-one", mention.clone(), 100),
+        ("ordinary-one", "Later ordinary message".into(), 101),
+    ] {
+        core.push_incoming_message_from(
+            chat,
+            Some(id.into()),
+            body,
+            timestamp,
+            None,
+            None,
+            Some(sender.public_key().to_hex()),
+            None,
+        );
+        core.rebuild_persist_and_emit_state();
+    }
+    core.exit_batch();
+    let after = core.state.chat_list.clone();
+    assert_eq!(after[0].last_message_id.as_deref(), Some("ordinary-one"));
+    let candidates =
+        notifications::decide_notifications(&before, &after, &core.preferences, false, None);
+    assert_eq!(candidates.len(), 1);
+    assert_eq!(candidates[0].message_id.as_deref(), Some("mention-one"));
+    assert_eq!(candidates[0].body, "@You");
+    core.push_incoming_message_from(
+        chat,
+        Some("ordinary-two".into()),
+        "Another ordinary message".into(),
+        102,
+        None,
+        None,
+        Some(sender.public_key().to_hex()),
+        None,
+    );
+    core.rebuild_persist_and_emit_state();
+    assert!(notifications::decide_notifications(
+        &after,
+        &core.state.chat_list,
+        &core.preferences,
+        false,
+        None
+    )
+    .is_empty());
+    let before_seen = core.state.chat_list.clone();
+    core.mark_messages_seen(chat, &["mention-one".into()]);
+    core.rebuild_persist_and_emit_state();
+    assert!(core.state.chat_list[0].unread_mention_messages.is_empty());
+    assert!(notifications::decide_notifications(
+        &before_seen,
+        &core.state.chat_list,
+        &core.preferences,
+        false,
+        None
+    )
+    .is_empty());
+}
