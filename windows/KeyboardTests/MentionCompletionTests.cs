@@ -26,7 +26,7 @@ internal static class MentionCompletionTests
         Check(model.WireText(modelInput.Text) == "Hello 👋 " + token, "Unicode edits preserve exact identity");
         modelInput.Select("Hello 👋 ".Length, modelInput.Text.Length - "Hello 👋 ".Length);
         modelInput.SelectedText = "@Someone else";
-        Check(Native.MessageMentions(model.WireText("Hello 👋 @Someone else")).Count == 0, "Edited labels never guess identity");
+        Check(Native.MessageMentions(model.WireText("Hello 👋 @Someone else")).Length == 0, "Edited labels never guess identity");
         var previous = window.Content;
         var composer = new ComposerBar();
         composer.MentionParticipants = new[] {

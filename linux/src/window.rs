@@ -667,12 +667,7 @@ fn post_notifications_from_core(
         if let Some((id, target)) =
             manager.notification_message_target(&candidate.chat_id, candidate.message_id)
         {
-            notifications::notify(
-                &id,
-                &candidate.title,
-                &candidate.body,
-                &target,
-            );
+            notifications::notify(&id, &candidate.title, &candidate.body, &target);
         }
     }
 }
