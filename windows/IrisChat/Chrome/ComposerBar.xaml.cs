@@ -82,6 +82,15 @@ public partial class ComposerBar : UserControl
 
     public void RestoreDraft(string text)
     {
+        _draftGeneration++;
+        // Clipboard providers can re-enter while WPF has an undo unit open.
+        // Finish that native operation before resetting text/identity history.
+        if (NativePasteScope.DeferRestore(Input, () => ApplyRestoredDraft(text))) return;
+        ApplyRestoredDraft(text);
+    }
+
+    private void ApplyRestoredDraft(string text)
+    {
         _emojiCompletion?.Dismiss();
         _restoringDraft = true;
         var undoEnabled = Input.IsUndoEnabled;

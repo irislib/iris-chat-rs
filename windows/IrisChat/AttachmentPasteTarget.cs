@@ -39,10 +39,13 @@ internal sealed class AttachmentPasteTarget
             {
                 var captured = scope();
                 if (captured == null || !input.IsLoaded) return;
+                // Once we own the command, an exception must not fall through
+                // to a second, unguarded native Paste.
+                e.Handled = true;
                 var data = Clipboard.GetDataObject();
                 if (!HasAttachment(data))
                 {
-                    e.Handled = LargePlainTextPaste.TryPaste(input, data,
+                    e.Handled = NativePlainTextPaste.TryPaste(input, data,
                         () => input.IsLoaded && scope() == captured);
                     return;
                 }

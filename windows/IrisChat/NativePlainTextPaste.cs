@@ -5,16 +5,17 @@ using System.Windows.Controls;
 
 namespace IrisChat;
 
-internal static class LargePlainTextPaste
+internal static class NativePlainTextPaste
 {
     internal static bool TryPaste(TextBox input, IDataObject? data, Func<bool> isCurrent)
     {
         if (data == null || input.IsReadOnly || !input.IsEnabled || !input.AcceptsReturn ||
             !data.GetDataPresent(DataFormats.UnicodeText) ||
-            data.GetData(DataFormats.UnicodeText) is not string text || text.Length < ComposerTextLayout.BulkLength)
+            data.GetData(DataFormats.UnicodeText) is not string text)
             return false;
         if (!isCurrent()) return true;
 
+        var bulk = text.Length >= ComposerTextLayout.BulkLength;
         var timing = PastePhaseDiagnostics.Begin(input);
         DataObjectPastingEventHandler guard = (_, e) =>
         {
@@ -24,7 +25,7 @@ internal static class LargePlainTextPaste
             // Native Paste flushes pending typing before this event. If that
             // changed the draft policy, settle the old text at the final width
             // again before WPF inserts clipboard content.
-            if (ComposerTextLayout.Update(input, ComposerTextLayout.BulkLength)) input.UpdateLayout();
+            if (bulk && ComposerTextLayout.Update(input, ComposerTextLayout.BulkLength)) input.UpdateLayout();
             timing?.Mark("native_pasting_event_policy_layout");
             // Snapshot the native plaintext choice while checking each provider
             // read. WPF's Unicode-null fallback reads SourceDataObject directly,
@@ -49,18 +50,18 @@ internal static class LargePlainTextPaste
         DataObject.AddPastingHandler(input, guard);
         try
         {
-            ComposerTextLayout.Update(input, ComposerTextLayout.BulkLength);
+            if (bulk) ComposerTextLayout.Update(input, ComposerTextLayout.BulkLength);
             timing?.Mark("reserve_scrollbar_policy");
-            input.UpdateLayout();
+            if (bulk) input.UpdateLayout();
             timing?.Mark("existing_draft_layout");
             if (!isCurrent()) return true;
             // This public method invokes the native editor directly, without
             // routing another Paste command through PreviewExecuted. WPF owns
             // pending input, format/filter handling, selection and undo/redo.
             timing?.BeginNativePaste();
-            input.Paste();
+            using (NativePasteScope.Begin(input)) input.Paste();
             timing?.NativePasteReturned();
-            if (isCurrent()) ComposerTextLayout.CompletePaste(input, timing);
+            if (bulk && isCurrent()) ComposerTextLayout.CompletePaste(input, timing);
         }
         catch (StalePasteException) { timing?.Mark("stale_native_paste"); }
         finally
