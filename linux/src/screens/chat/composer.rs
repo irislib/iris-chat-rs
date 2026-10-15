@@ -7,6 +7,7 @@ use iris_chat_core::{AppAction, AppState, CurrentChatSnapshot, OutgoingAttachmen
 
 use crate::app_manager::AppManager;
 use crate::screens::chat_list::unix_now;
+use crate::widgets::clickable::PointerCursorExt;
 
 type SendCallback = Rc<RefCell<Option<Box<dyn Fn()>>>>;
 
@@ -147,6 +148,7 @@ impl Composer {
         editing_label.set_xalign(0.0);
         edit_banner.append(&editing_label);
         let cancel_edit = gtk::Button::with_label("Cancel");
+        cancel_edit.show_pointer_cursor();
         cancel_edit.add_css_class("flat");
         edit_banner.append(&cancel_edit);
         edit_banner.set_visible(false);
@@ -196,6 +198,7 @@ impl Composer {
             ("File", "text-x-generic-symbolic", false),
         ] {
             let source = gtk::Button::new();
+            source.show_pointer_cursor();
             let content = gtk::Box::new(gtk::Orientation::Horizontal, 10);
             content.append(&gtk::Image::from_icon_name(icon));
             content.append(&gtk::Label::new(Some(label)));
@@ -430,11 +433,16 @@ impl Composer {
         let preview_row_for_enter = preview_row.clone();
         let preview_scroll_for_enter = preview_scroll.clone();
         let key_controller = gtk::EventControllerKey::new();
+        let emoji_completion = super::emoji_completion::EmojiCompletion::new(&input);
+        outer.append(&emoji_completion.root);
         key_controller.set_propagation_phase(gtk::PropagationPhase::Capture);
         let direct_for_enter = direct.clone();
         let sent = on_send.clone();
         let edit_for_enter = edit.clone();
         key_controller.connect_key_pressed(move |_, keyval, _, state| {
+            if emoji_completion.handle_key(keyval, state) {
+                return glib::Propagation::Stop;
+            }
             if keyval == gtk::gdk::Key::Escape && edit_for_enter.active() {
                 edit_for_enter.cancel();
                 return glib::Propagation::Stop;
@@ -688,6 +696,7 @@ fn attachment_chip(
     inner.append(&label);
 
     let remove = gtk::Button::from_icon_name("window-close-symbolic");
+    remove.show_pointer_cursor();
     remove.add_css_class("flat");
     remove.add_css_class("circular");
     remove.set_tooltip_text(Some("Remove attachment"));
@@ -732,6 +741,7 @@ fn image_attachment_chip(
     overlay.set_child(Some(&picture));
 
     let remove = gtk::Button::from_icon_name("window-close-symbolic");
+    remove.show_pointer_cursor();
     remove.add_css_class("circular");
     remove.add_css_class("osd");
     remove.set_tooltip_text(Some("Remove attachment"));

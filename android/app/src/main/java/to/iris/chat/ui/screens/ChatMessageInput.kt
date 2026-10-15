@@ -8,6 +8,7 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.input.TextFieldLineLimits
 import androidx.compose.foundation.text.input.TextFieldState
+import androidx.compose.foundation.text.input.InputTransformation
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -23,10 +24,12 @@ import to.iris.chat.ui.theme.IrisTheme
 internal fun ChatMessageInput(
     state: TextFieldState,
     modifier: Modifier,
+    inputTransformation: InputTransformation? = null,
 ) {
     BasicTextField(
         state = state,
         modifier = modifier,
+        inputTransformation = inputTransformation,
         textStyle = MaterialTheme.typography.bodyLarge.copy(
             fontSize = to.iris.chat.ui.theme.LocalMessageFontSize.current.body.sp,
             lineHeight = (to.iris.chat.ui.theme.LocalMessageFontSize.current.body * 1.4f).sp,

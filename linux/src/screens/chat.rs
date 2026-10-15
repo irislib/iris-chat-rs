@@ -24,6 +24,12 @@ mod contact_details;
 use contact_details::nickname_card;
 mod composer;
 mod composer_clipboard;
+mod emoji_completion;
+mod emoji_completion_logic;
+#[cfg(feature = "ui-tests")]
+mod emoji_completion_tests;
+#[cfg(feature = "ui-tests")]
+pub use emoji_completion_tests::verify_ui as verify_emoji_completion_ui;
 #[cfg(feature = "ui-tests")]
 pub use composer_clipboard::tests::verify_ui as verify_composer_clipboard_ui;
 mod direct_files;

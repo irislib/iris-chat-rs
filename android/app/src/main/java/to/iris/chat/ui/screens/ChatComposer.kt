@@ -28,6 +28,8 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -228,6 +230,7 @@ internal fun ComposerBar(
     val windowWidth = with(density) { LocalWindowInfo.current.containerSize.width.toDp() }
     val showDesktopComposerTools = windowWidth >= 600.dp
     var showingEmojiPicker by remember { mutableStateOf(false) }
+    val emojiCompletion = rememberChatEmojiCompletion(draft)
     val attachInteractionSource = remember { MutableInteractionSource() }
     val emojiInteractionSource = remember { MutableInteractionSource() }
     val sendInteractionSource = remember { MutableInteractionSource() }
@@ -313,6 +316,7 @@ internal fun ComposerBar(
                 }
             }
 
+            if (!showingEmojiPicker) ChatEmojiCompletionSuggestions(emojiCompletion)
             if (showDesktopComposerTools && showingEmojiPicker) {
                 EmojiPickerRow(
                     enabled = !isBusy,
@@ -357,6 +361,7 @@ internal fun ComposerBar(
                                             indication = null,
                                         ) {
                                             haptics.press()
+                                            emojiCompletion.dismiss()
                                             showingEmojiPicker = !showingEmojiPicker
                                         }
                                         .testTag("chatEmojiButton"),
@@ -377,9 +382,15 @@ internal fun ComposerBar(
 
                         ChatMessageInput(
                             state = draft,
+                            inputTransformation = emojiCompletion.inputTransformation,
                             modifier =
                                 (focusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
                                     .then(inputContentModifier)
+                                    .onPreviewKeyEvent(emojiCompletion::onKeyEvent)
+                                    .onFocusChanged {
+                                        emojiCompletion.focused = it.isFocused
+                                        if (!it.isFocused) emojiCompletion.dismiss()
+                                    }
                                     .weight(1f)
                                     .heightIn(min = 44.dp, max = 132.dp)
                                     .padding(

@@ -91,7 +91,7 @@
                                 <Trigger Property="IsKeyboardFocused" Value="True">
                                     <Setter TargetName="Bd" Property="BorderBrush" Value="{StaticResource Accent}" />
                                 </Trigger>
-                                <Trigger Property="IsEnabled" Value="False">
+                                    <Trigger Property="IsEnabled" Value="False">
                                     <Setter Property="Opacity" Value="0.4" />
                                 </Trigger>
                             </ControlTemplate.Triggers>
@@ -157,8 +157,9 @@
                                 <Trigger Property="IsPressed" Value="True">
                                     <Setter TargetName="Bd" Property="Opacity" Value="0.78" />
                                 </Trigger>
-                                <Trigger Property="IsEnabled" Value="False">
+                                    <Trigger Property="IsEnabled" Value="False">
                                     <Setter Property="Opacity" Value="0.45" />
+                                    <Setter Property="Cursor" Value="Arrow" />
                                 </Trigger>
                             </ControlTemplate.Triggers>
                         </ControlTemplate>
@@ -200,8 +201,9 @@
                                 <Trigger Property="IsPressed" Value="True">
                                     <Setter TargetName="Bd" Property="Opacity" Value="0.78" />
                                 </Trigger>
-                                <Trigger Property="IsEnabled" Value="False">
+                                    <Trigger Property="IsEnabled" Value="False">
                                     <Setter Property="Opacity" Value="0.45" />
+                                    <Setter Property="Cursor" Value="Arrow" />
                                 </Trigger>
                             </ControlTemplate.Triggers>
                         </ControlTemplate>
@@ -245,6 +247,9 @@
                                 <Trigger Property="IsMouseOver" Value="True">
                                     <Setter TargetName="Bd" Property="Background" Value="{StaticResource Panel}" />
                                 </Trigger>
+                                <Trigger Property="IsEnabled" Value="False">
+                                    <Setter Property="Cursor" Value="Arrow" />
+                                </Trigger>
                             </ControlTemplate.Triggers>
                         </ControlTemplate>
                     </Setter.Value>
@@ -274,7 +279,7 @@
                                 <Trigger Property="IsKeyboardFocused" Value="True">
                                     <Setter TargetName="Circle" Property="BorderBrush" Value="{StaticResource Accent}" />
                                 </Trigger>
-                                <Trigger Property="IsEnabled" Value="False">
+                                    <Trigger Property="IsEnabled" Value="False">
                                     <Setter Property="Opacity" Value="0.4" />
                                     <Setter TargetName="Circle" Property="Background" Value="Transparent" />
                                 </Trigger>
@@ -313,7 +318,7 @@
                                     <Setter TargetName="Knob" Property="HorizontalAlignment" Value="Right" />
                                     <Setter TargetName="Knob" Property="Margin" Value="0,0,3,0" />
                                 </Trigger>
-                                <Trigger Property="IsEnabled" Value="False">
+                                    <Trigger Property="IsEnabled" Value="False">
                                     <Setter Property="Opacity" Value="0.5" />
                                 </Trigger>
                             </ControlTemplate.Triggers>
