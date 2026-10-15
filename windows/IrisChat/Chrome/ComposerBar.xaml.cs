@@ -84,13 +84,15 @@ public partial class ComposerBar : UserControl
     {
         _emojiCompletion?.Dismiss();
         _restoringDraft = true;
+        var undoEnabled = Input.IsUndoEnabled;
         try
         {
+            Input.IsUndoEnabled = false;
             _mentionCompletion?.Dismiss();
             Input.Text = _mentions.Restore(text);
             Input.CaretIndex = Input.Text.Length;
         }
-        finally { _restoringDraft = false; }
+        finally { Input.IsUndoEnabled = undoEnabled; _restoringDraft = false; }
     }
 
     public void AddAttachments(IEnumerable<string> filePaths)
@@ -169,7 +171,7 @@ public partial class ComposerBar : UserControl
             var text = Input.Text;
             ComposerTextLayout.Update(Input, text.Length);
             if (_restoringDraft) return;
-            _mentions.Changed(text);
+            _mentions.Changed(text, e.Changes, e.UndoAction, Input.UndoLimit);
             if (EditingMessageId == null) DraftChanged?.Invoke(WireText);
             var hasText = !string.IsNullOrWhiteSpace(text);
             if (hasText && !_wasTyping) { _wasTyping = true; Typing?.Invoke(); }
