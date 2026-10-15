@@ -44,6 +44,7 @@ pub fn verify_ui() {
     buffer.insert_at_cursor("hi :sm");
     buffer.end_user_action();
     pump_until(|| completion.root.is_visible());
+    super::completion_screenshots::save(&window, "linux-emoji-suggestions");
     assert!(completion.handle_key(gdk::Key::Down, gdk::ModifierType::empty()));
     assert!(completion.handle_key(gdk::Key::Return, gdk::ModifierType::empty()));
     assert!(text(&buffer).starts_with("hi "));

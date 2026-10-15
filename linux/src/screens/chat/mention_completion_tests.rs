@@ -93,6 +93,7 @@ pub fn verify_ui(manager: Rc<crate::app_manager::AppManager>) {
     buffer.insert_at_cursor("@");
     buffer.end_user_action();
     pump_until(|| completion.root.is_visible());
+    super::completion_screenshots::save(&window, "linux-mention-suggestions");
     assert!(completion.handle_key(gdk::Key::Return, gdk::ModifierType::empty()));
     assert_eq!(text(&buffer), "👋 @Alex @Alex ");
     let both = draft.borrow().wire_text();
@@ -144,6 +145,7 @@ pub fn verify_ui(manager: Rc<crate::app_manager::AppManager>) {
     label.select_region(0, -1);
     assert_eq!(label.text(), "Hello @Old name https://iris.to!");
     assert!(label.selection_bounds().is_some());
+    super::completion_screenshots::save(&window, "linux-mentions-links");
     window.close();
     println!("PASS: bare @, exact same-name identity, Unicode edits, keyboard acceptance, undo and dismissal");
 }

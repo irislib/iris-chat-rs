@@ -31,6 +31,8 @@ mod mention_text;
 pub use image_clipboard::verify_ui as verify_image_clipboard_ui;
 mod contact_details;
 use contact_details::nickname_card;
+#[cfg(feature = "ui-tests")]
+mod completion_screenshots;
 mod composer;
 mod composer_clipboard;
 mod emoji_completion;
