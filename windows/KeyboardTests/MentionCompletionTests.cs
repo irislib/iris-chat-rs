@@ -45,6 +45,7 @@ internal static class MentionCompletionTests
             var input = (TextBox)composer.FindName("Input");
             Check(input.IsKeyboardFocused, "Loaded mention composer receives keyboard focus");
             input.AppendText("Hi @"); input.CaretIndex = input.Text.Length; Pump();
+            CompletionScreenshots.Menu(composer, "_mentionCompletion", "windows-mention");
             Check(Press(input, Key.Down).Handled, "Keyboard chooses between same-name people");
             Check(Press(input, Key.Enter).Handled && sent == 0, "Accepting mention does not send");
             Check(Native.MessageMentions(saved).Single().ownerPubkeyHex == second, "Selection saves chosen identity");
@@ -72,6 +73,7 @@ internal static class MentionCompletionTests
             var body = new RichTextBox { IsReadOnly = true, IsDocumentEnabled = true };
             window.Content = body;
             MentionText.Render(body, "Hello " + token + " https://iris.to, www.example.org!"); Pump();
+            CompletionScreenshots.Save(body, "windows-mentions-links");
             var paragraph = body.Document.Blocks.OfType<Paragraph>().Single();
             var links = paragraph.Inlines.OfType<Hyperlink>().ToArray();
             Check(links.Length == 3 && links.All(link => link.Cursor == Cursors.Hand), "Only actionable profile and URL spans use hand cursors");

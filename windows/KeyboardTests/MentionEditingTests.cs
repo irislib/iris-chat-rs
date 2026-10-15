@@ -54,19 +54,18 @@ internal static class MentionEditingTests
         // TextChange offsets describe the final buffer. Applying them in
         // ascending order must preserve the middle span through a batched edit.
         composer.RestoreDraft(one + " / " + two);
-        TextChangedEventHandler traceBatch = (_, e) => Console.WriteLine(
-            "Batched mention edit: " + e.UndoAction + " " + string.Join(", ", e.Changes.Select(change =>
-                $"at {change.Offset}: remove {change.RemovedLength}, add {change.AddedLength}")));
-        input.TextChanged += traceBatch;
         input.BeginChange();
         try
         {
             input.Select(0, 0); input.SelectedText = "Hi ";
-            input.Select(input.Text.Length - "@Alex".Length, "@Alex".Length);
+            // TextBox.Text is deferred until EndChange; use the native buffer's
+            // intended coordinate instead of reading that stale property.
+            input.Select("Hi @Alex / ".Length, "@Alex".Length);
             input.SelectedText = "there";
         }
-        finally { input.EndChange(); input.TextChanged -= traceBatch; }
+        finally { input.EndChange(); }
         pump();
+        Check(input.Text == "Hi @Alex / there", "Batched edit targets the second duplicate label");
         Identities(saved(), first);
         input.Undo(); pump();
         Identities(saved(), first, second);

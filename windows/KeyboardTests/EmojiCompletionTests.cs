@@ -28,6 +28,7 @@ internal static class EmojiCompletionTests
             var sent = 0;
             composer.Submitted += (_, _) => sent++;
             input.AppendText("hi :sm"); input.CaretIndex = input.Text.Length; Pump();
+            CompletionScreenshots.Menu(composer, "_emojiCompletion", "windows-emoji");
             Check(Press(input, Key.Down).Handled, "Arrow selects an emoji result");
             Check(Press(input, Key.Enter).Handled && sent == 0 && !input.Text.Contains(":sm"), "Enter selects before sending");
             input.Undo(); Pump();
