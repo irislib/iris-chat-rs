@@ -3427,10 +3427,10 @@ final class AppManager: ObservableObject {
     }
 
     private func postDesktopNotifications(from oldState: AppState, to nextState: AppState) {
-        guard let accountID = nextState.account?.publicKeyHex,
-              oldState.account?.publicKeyHex == accountID else {
-            return
-        }
+        guard let accountID = nextState.account?.publicKeyHex else { return }
+        desktopNotifications.clearRead(accountID: accountID, dataDir: dataDir.path,
+            fullyReadChatIDs: Set(nextState.chatList.filter { $0.unreadCount == 0 }.map(\.chatId)))
+        guard oldState.account?.publicKeyHex == accountID else { return }
         let candidates = decidePendingNotifications(
             previousChats: oldState.chatList,
             nextChats: nextState.chatList,
@@ -3438,15 +3438,8 @@ final class AppManager: ObservableObject {
             appForeground: appSceneIsActive,
             openChatId: routerOpenChatId(router: nextState.router)
         )
-        let previouslyUnread = Set(oldState.chatList.filter { $0.unreadCount > 0 }.map(\.chatId))
-        let newlyRead = Set(nextState.chatList.filter {
-            $0.unreadCount == 0 && previouslyUnread.contains($0.chatId)
-        }.map(\.chatId))
-        if !newlyRead.isEmpty {
-            desktopNotifications.clearRead(accountID: accountID, chatIDs: newlyRead)
-        }
         for candidate in candidates {
-            desktopNotifications.post(accountID: accountID, chatID: candidate.chatId, title: candidate.title, body: candidate.body)
+            desktopNotifications.post(accountID: accountID, chatID: candidate.chatId, messageID: candidate.messageId, dataDir: dataDir.path, title: candidate.title, body: candidate.body)
         }
     }
 

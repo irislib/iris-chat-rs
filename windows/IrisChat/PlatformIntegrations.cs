@@ -153,4 +153,5 @@ public interface IDesktopNotificationPoster
 {
     void Post(string title, string body, DesktopNotificationTarget target);
     void Clear();
+    void ClearRead(string dataDir, string owner, System.Collections.Generic.IReadOnlySet<string> fullyReadChats) { }
 }

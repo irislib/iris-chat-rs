@@ -6,7 +6,7 @@ using System.Text.Json;
 
 namespace IrisChat;
 
-public sealed record DesktopNotificationTarget(string Owner, string Chat, string Session);
+public sealed record DesktopNotificationTarget(string Owner, string Chat, string Session, string? MessageId = null, string? Kind = null);
 
 /// A persisted session distinguishes a normal restart from logging out and
 /// restoring the same account. Old Action Center entries cannot cross logout.

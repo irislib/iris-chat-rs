@@ -114,7 +114,8 @@ mod tests {
             read_desktop_notification_indexes(path.clone(), OWNER.into(), targets.clone()),
             vec![0, 4, 5]
         );
-        assert!(read_desktop_notification_indexes(path, "f".repeat(64), targets).is_empty());
+        let other_owner = nostr::Keys::generate().public_key().to_hex();
+        assert!(read_desktop_notification_indexes(path, other_owner, targets).is_empty());
     }
 
     #[test]

@@ -1248,7 +1248,10 @@ public sealed partial class AppManager : INotifyPropertyChanged
 
     private void PostDesktopNotifications(AppState old, AppState next)
     {
-        if (old.account == null || next.account == null || old.account.publicKeyHex != next.account.publicKeyHex) return;
+        if (next.account == null) return;
+        try { _notifier.ClearRead(_dataDir, next.account.publicKeyHex,
+            next.chatList.Where(chat => chat.unreadCount == 0).Select(chat => chat.chatId).ToHashSet()); } catch { }
+        if (old.account == null || old.account.publicKeyHex != next.account.publicKeyHex) return;
 
         var mainWindow = Application.Current?.MainWindow;
         var appForeground = mainWindow?.IsActive ?? false;
@@ -1263,8 +1266,11 @@ public sealed partial class AppManager : INotifyPropertyChanged
         );
         foreach (var candidate in candidates)
         {
+            if (candidate.messageId != null && Native.ReadDesktopNotificationIndexes(dataDir: _dataDir,
+                ownerPubkeyHex: next.account.publicKeyHex,
+                messages: new[] { new DesktopNotificationMessage(candidate.chatId, candidate.messageId) }).Length > 0) continue;
             try { _notifier.Post(candidate.title, candidate.body,
-                _notificationNavigation.Target(next.account.publicKeyHex, candidate.chatId)); } catch { }
+                _notificationNavigation.Target(next.account.publicKeyHex, candidate.chatId) with { MessageId = candidate.messageId, Kind = "message" }); } catch { }
         }
     }
 
