@@ -54,7 +54,7 @@ public partial class ComposerBar : UserControl
         StagedAttachmentsList.ItemsSource = _staged;
         _ = new AttachmentPasteTarget(Input, () => EditingMessageId == null && AttachmentPasteScope?.Invoke() is {} destination
                 ? new AttachmentPasteContext(destination, _draftGeneration, SendDirectly) : null,
-            paths => AddAttachments(paths), _clipboardFiles,
+            () => _draftGeneration, paths => AddAttachments(paths), _clipboardFiles,
             () => App.CurrentManager.ShowToast("Could not paste files."));
         Unloaded += (_, _) => Clear();
     }

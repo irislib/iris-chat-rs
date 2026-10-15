@@ -108,6 +108,7 @@ internal static class NativePasteDestinationTests
                 }
                 Check(composer.StagedFilePaths.Count == 0, "delayed text never stages attachments");
             }
+            VerifyEditCancellation(composer, input, text);
             VerifyNativeTextFallback(composer, input, text);
         }
         finally
@@ -116,6 +117,30 @@ internal static class NativePasteDestinationTests
             composer.DraftChanged -= recordDraft;
             composer.AttachmentPasteScope = originalScope;
             direct.IsChecked = false;
+        }
+    }
+
+    private static void VerifyEditCancellation(ComposerBar composer, TextBox input, string text)
+    {
+        foreach (var payload in new[] { text, "short clipboard text" })
+        {
+            composer.Clear();
+            composer.RestoreDraft("Unsent caption");
+            composer.BeginEdit("message", "Earlier sent message");
+            Clipboard.SetText(payload);
+            var delayed = new DelayedText(payload, composer.CancelEdit);
+            DataObjectPastingEventHandler replace = (_, e) =>
+            {
+                e.DataObject = delayed;
+                e.FormatToApply = DataFormats.UnicodeText;
+            };
+            DataObject.AddPastingHandler(input, replace);
+            try { ApplicationCommands.Paste.Execute(null, input); }
+            finally { DataObject.RemovePastingHandler(input, replace); }
+            Check(delayed.Reads == 1 && composer.EditingMessageId == null && input.Text == "Unsent caption",
+                "canceling a sent-message edit during Paste restores the unsent draft without clipboard content");
+            Check(input.IsUndoEnabled && !input.IsReadOnly && !input.CanUndo && !input.CanRedo,
+                "canceling an edit closes the native undo unit before resetting restored draft history");
         }
     }
 

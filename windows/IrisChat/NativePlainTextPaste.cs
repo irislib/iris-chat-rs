@@ -9,11 +9,12 @@ internal static class NativePlainTextPaste
 {
     internal static bool TryPaste(TextBox input, IDataObject? data, Func<bool> isCurrent)
     {
-        if (data == null || input.IsReadOnly || !input.IsEnabled || !input.AcceptsReturn ||
-            !data.GetDataPresent(DataFormats.UnicodeText) ||
-            data.GetData(DataFormats.UnicodeText) is not string text)
-            return false;
+        if (data == null || input.IsReadOnly || !input.IsEnabled || !input.AcceptsReturn) return false;
+        var text = data.GetDataPresent(DataFormats.UnicodeText) ? data.GetData(DataFormats.UnicodeText) as string : null;
         if (!isCurrent()) return true;
+        if (text == null && data.GetDataPresent(DataFormats.Text)) text = data.GetData(DataFormats.Text) as string;
+        if (!isCurrent()) return true;
+        if (text == null) return false;
 
         var bulk = text.Length >= ComposerTextLayout.BulkLength;
         var timing = PastePhaseDiagnostics.Begin(input);

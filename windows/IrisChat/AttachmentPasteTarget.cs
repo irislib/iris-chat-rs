@@ -18,7 +18,7 @@ internal readonly record struct AttachmentPasteContext(
 internal sealed class AttachmentPasteTarget
 {
     internal AttachmentPasteTarget(TextBox input, Func<AttachmentPasteContext?> scope,
-        Action<IReadOnlyList<string>> stage, ClipboardAttachmentFiles files, Action failed)
+        Func<long> draftGeneration, Action<IReadOnlyList<string>> stage, ClipboardAttachmentFiles files, Action failed)
     {
         CommandManager.AddPreviewCanExecuteHandler(input, (_, e) =>
         {
@@ -38,7 +38,8 @@ internal sealed class AttachmentPasteTarget
             try
             {
                 var captured = scope();
-                if (captured == null || !input.IsLoaded) return;
+                var generation = draftGeneration();
+                if (!input.IsLoaded) return;
                 // Once we own the command, an exception must not fall through
                 // to a second, unguarded native Paste.
                 e.Handled = true;
@@ -46,10 +47,10 @@ internal sealed class AttachmentPasteTarget
                 if (!HasAttachment(data))
                 {
                     e.Handled = NativePlainTextPaste.TryPaste(input, data,
-                        () => input.IsLoaded && scope() == captured);
+                        () => input.IsLoaded && draftGeneration() == generation && scope() == captured);
                     return;
                 }
-                e.Handled = true;
+                if (captured == null) return; // Editing messages permits text, not attachments.
                 IReadOnlyList<string> paths;
                 if (data!.GetDataPresent(DataFormats.FileDrop))
                 {
