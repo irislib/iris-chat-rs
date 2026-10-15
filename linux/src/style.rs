@@ -85,6 +85,10 @@ const CUSTOM_CSS: &str = r#"
     background-color: @iris_bubble_mine;
     color: @iris_on_bubble_mine;
 }
+.bubble-in label link,
+.bubble-out label link {
+    color: inherit;
+}
 .bubble-out .dim-label,
 .bubble-in .dim-label {
     color: inherit;

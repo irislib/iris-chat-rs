@@ -132,20 +132,28 @@ pub fn verify_ui(manager: Rc<crate::app_manager::AppManager>) {
     assert!(completion.handle_key(gdk::Key::Escape, gdk::ModifierType::empty()));
     assert_eq!(text(&buffer), "@A");
     let token = iris_chat_core::format_message_mention(first, "Old name".into());
-    let linked = super::mention_text::linked(
+    let bubble = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    bubble.add_css_class("bubble-in");
+    bubble.set_valign(gtk::Align::Start);
+    super::append_truncatable_body(
+        &bubble,
         &format!("Hello {token} https://iris.to!"),
-        &manager.current_state(),
+        &manager,
     );
-    let label = gtk::Label::new(None);
-    label.set_markup(&linked.markup);
-    label.set_selectable(true);
-    super::mention_text::install_actions(&label, &manager);
-    super::chat_links::install_link_actions(&label, linked.urls);
-    root.append(&label);
+    let label = bubble
+        .first_child()
+        .unwrap()
+        .downcast::<gtk::Label>()
+        .unwrap();
+    window.set_child(Some(&bubble));
     label.select_region(0, -1);
     assert_eq!(label.text(), "Hello @Old name https://iris.to!");
     assert!(label.selection_bounds().is_some());
+    label.select_region(0, 0);
     super::completion_screenshots::save(&window, "linux-mentions-links");
+    bubble.remove_css_class("bubble-in");
+    bubble.add_css_class("bubble-out");
+    super::completion_screenshots::save(&window, "linux-outgoing-mentions-links");
     window.close();
     println!("PASS: bare @, exact same-name identity, Unicode edits, keyboard acceptance, undo and dismissal");
 }
