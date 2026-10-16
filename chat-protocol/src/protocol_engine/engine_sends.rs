@@ -546,6 +546,10 @@ impl ProtocolEngine {
             .map_or(0, BTreeSet::len)
     }
 
+    pub fn group_snapshot(&self, group_id: &str) -> Option<GroupSnapshot> {
+        self.group_manager.group(group_id)
+    }
+
     pub fn group_invite_used_by(&self, group_id: &str, token: &str, member: PublicKey) -> bool {
         self.group_invite_uses
             .get(&format!("{group_id}:{token}"))
