@@ -154,7 +154,7 @@ impl AppCore {
                     self.state.toast = Some(error.to_string());
                 } else {
                     self.private_chat_invites
-                        .insert(private_chat_invite_key(&invite), invite);
+                        .insert(super::invites::private_chat_invite_key(&invite), invite);
                     self.mark_mobile_push_dirty();
                     self.request_protocol_subscription_refresh();
                     self.persist_best_effort();
