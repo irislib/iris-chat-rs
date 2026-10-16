@@ -552,7 +552,20 @@ async fn newly_received_message_is_queued_for_an_authorized_sibling() {
         None,
         DeliveryState::Pending,
     );
-    assert!(records.try_recv().is_err());
+    // Composing a reply accepts the chat immediately, so siblings may receive
+    // metadata before delivery. The pending message itself must stay local.
+    let metadata = records.try_iter().collect::<Vec<_>>();
+    assert!(!metadata.is_empty(), "reply acceptance wakes sibling metadata sync");
+    for queued in metadata {
+        assert_eq!(queued.peer, sibling);
+        for bytes in queued.records {
+            let packet: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            assert!(packet["messages"].as_array().is_none_or(Vec::is_empty));
+            assert!(!bytes.windows("live-outgoing-id".len()).any(|window| {
+                window == b"live-outgoing-id"
+            }));
+        }
+    }
     assert!(!core
         .build_device_sync_packets_for_test(100, true)
         .iter()
