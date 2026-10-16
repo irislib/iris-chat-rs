@@ -5,6 +5,7 @@ using System.Linq;
 using System.Text;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
 using IrisChat.Bindings;
@@ -13,9 +14,11 @@ namespace IrisChat.Chrome;
 
 public class MessageInfoWindow : Window
 {
-    private readonly ChatMessageSnapshot _message;
+    private ChatMessageSnapshot _message;
     private readonly AppManager _manager;
     private readonly string? _accountAtOpen;
+    private readonly StackPanel _attachmentRows = new();
+    private FrameworkElement? _attachmentSection;
     private sealed record ParticipantInfo(string? OwnerPubkeyHex, string Name, string? PictureUrl, bool IsMe);
 
     public MessageInfoWindow(ChatMessageSnapshot message)
@@ -38,7 +41,20 @@ public class MessageInfoWindow : Window
         {
             var current = CurrentMessage();
             if (current == null || current.deletedForEveryone != message.deletedForEveryone ||
-                current.body != message.body || !(current.editHistory ?? []).SequenceEqual(message.editHistory ?? [])) Close();
+                current.body != message.body || !(current.editHistory ?? []).SequenceEqual(message.editHistory ?? []))
+            {
+                Close();
+                return;
+            }
+            var oldAttachments = _message.attachments ?? [];
+            var newAttachments = current.attachments ?? [];
+            if (oldAttachments.Length != newAttachments.Length || oldAttachments.Zip(newAttachments).Any(pair =>
+                pair.First.htreeUrl != pair.Second.htreeUrl || pair.First.filename != pair.Second.filename ||
+                !AttachmentUploadUrls(pair.First).SequenceEqual(AttachmentUploadUrls(pair.Second))))
+            {
+                _message = current;
+                RefreshAttachmentRows();
+            }
         };
         Loaded += (_, _) => { _manager.PropertyChanged += changed; changed(this, new PropertyChangedEventArgs(null)); };
         Closed += (_, _) => _manager.PropertyChanged -= changed;
@@ -93,10 +109,9 @@ public class MessageInfoWindow : Window
             stack.Children.Add(BuildSection("Transport", transportRows));
         }
         stack.Children.Add(BuildSection("IDs", BuildIdRows()));
-        if (_message.attachments != null && _message.attachments.Length > 0)
-        {
-            stack.Children.Add(BuildSection("Attachments", BuildAttachmentRows()));
-        }
+        _attachmentSection = BuildSection("Attachments", new List<UIElement> { _attachmentRows });
+        RefreshAttachmentRows();
+        stack.Children.Add(_attachmentSection);
         if ((_message.reactions != null && _message.reactions.Length > 0) ||
             (_message.reactors != null && _message.reactors.Length > 0))
         {
@@ -358,15 +373,48 @@ public class MessageInfoWindow : Window
         return rows;
     }
 
-    private List<UIElement> BuildAttachmentRows()
+    private void RefreshAttachmentRows()
     {
-        var rows = new List<UIElement>();
-        foreach (var att in _message.attachments!)
+        var existing = _attachmentRows.Children.OfType<FrameworkElement>().ToDictionary(row => (string)row.Tag);
+        var desired = new List<FrameworkElement>();
+        foreach (var (att, attachmentIndex) in (_message.attachments ?? []).Select((att, index) => (att, index)))
         {
-            rows.Add(CopyRow(string.IsNullOrEmpty(att.filename) ? "File" : att.filename, att.htreeUrl));
+            Add($"file:{attachmentIndex}:{att.htreeUrl}:{att.filename}", string.IsNullOrEmpty(att.filename) ? "File" : att.filename, att.htreeUrl, false);
+            var uploads = AttachmentUploadUrls(att).ToArray();
+            for (var index = 0; index < uploads.Length; index++)
+                Add($"upload:{attachmentIndex}:{att.htreeUrl}:{uploads[index]}", index == 0 ? "Encrypted uploads" : "", uploads[index], true);
         }
-        return rows;
+        var focused = Keyboard.FocusedElement as Visual;
+        var preserveFocus = focused != null && _attachmentRows.IsAncestorOf(focused);
+        foreach (var obsolete in existing.Values) _attachmentRows.Children.Remove(obsolete);
+        for (var index = 0; index < desired.Count; index++)
+        {
+            var row = desired[index];
+            if (index < _attachmentRows.Children.Count && ReferenceEquals(_attachmentRows.Children[index], row)) continue;
+            _attachmentRows.Children.Remove(row);
+            _attachmentRows.Children.Insert(index, row);
+        }
+        if (preserveFocus && focused is IInputElement input && _attachmentRows.IsAncestorOf(focused)) Keyboard.Focus(input);
+        if (_attachmentSection != null) _attachmentSection.Visibility = desired.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
+
+        void Add(string key, string label, string value, bool link)
+        {
+            if (!existing.Remove(key, out var row))
+            {
+                row = (FrameworkElement)CopyRow(label, value, link);
+                row.Tag = key;
+            }
+            else if (row is Grid grid && grid.Children[0] is TextBlock heading) heading.Text = label;
+            desired.Add(row);
+        }
     }
+
+    private static IEnumerable<string> AttachmentUploadUrls(MessageAttachmentSnapshot attachment) =>
+        (attachment.uploadedUrls ?? []).Where(value =>
+            Uri.TryCreate(value, UriKind.Absolute, out var uri) &&
+            (uri.Scheme == "http" || uri.Scheme == "https") && !string.IsNullOrEmpty(uri.Host) &&
+            string.IsNullOrEmpty(uri.UserInfo) && string.IsNullOrEmpty(uri.Query) && string.IsNullOrEmpty(uri.Fragment))
+            .Distinct(StringComparer.Ordinal);
 
     private List<UIElement> BuildReactionRows()
     {
@@ -476,7 +524,7 @@ public class MessageInfoWindow : Window
         return grid;
     }
 
-    private UIElement CopyRow(string label, string value)
+    private UIElement CopyRow(string label, string value, bool link = false)
     {
         var grid = new Grid { Margin = new Thickness(0, 3, 0, 3) };
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(120) });
@@ -493,13 +541,27 @@ public class MessageInfoWindow : Window
         grid.Children.Add(labelBlock);
         var valueBlock = new TextBlock
         {
-            Text = ShortIdentifier(value),
+            Text = link ? "" : ShortIdentifier(value),
             FontSize = 12,
             FontFamily = new FontFamily("Consolas"),
             Foreground = (Brush)Application.Current.Resources["TextPrimary"],
             TextWrapping = TextWrapping.Wrap,
             VerticalAlignment = VerticalAlignment.Center,
         };
+        if (link)
+        {
+            var hyperlink = new Hyperlink(new Run(value))
+            {
+                NavigateUri = new Uri(value), Cursor = Cursors.Hand,
+                Foreground = (Brush)Application.Current.Resources["TextPrimary"],
+            };
+            hyperlink.RequestNavigate += (_, e) =>
+            {
+                PlatformDocumentOpener.OpenUrl(e.Uri.AbsoluteUri);
+                e.Handled = true;
+            };
+            valueBlock.Inlines.Add(hyperlink);
+        }
         Grid.SetColumn(valueBlock, 1);
         grid.Children.Add(valueBlock);
         var copy = new Button
@@ -652,6 +714,9 @@ public class MessageInfoWindow : Window
             foreach (var att in message.attachments)
             {
                 sb.AppendLine($"- {(string.IsNullOrEmpty(att.filename) ? "File" : att.filename)} {att.htreeUrl}");
+                var uploads = AttachmentUploadUrls(att).ToArray();
+                if (uploads.Length > 0)
+                    sb.AppendLine($"  Encrypted uploads: {string.Join(", ", uploads)}");
             }
         }
         if (message.reactions != null && message.reactions.Length > 0)

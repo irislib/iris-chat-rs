@@ -212,9 +212,13 @@ func messageInfoText(_ message: ChatMessageSnapshot, chat: CurrentChatSnapshot? 
     }
     if !message.attachments.isEmpty {
         lines.append("Attachments")
-        lines.append(contentsOf: message.attachments.map { attachment in
-            "- \((attachment.filename.isEmpty ? "File" : attachment.filename)) \(attachment.htreeUrl)"
-        })
+        for attachment in message.attachments {
+            lines.append("- \((attachment.filename.isEmpty ? "File" : attachment.filename)) \(attachment.htreeUrl)")
+            let uploads = attachment.uploadedUrls.filter { attachmentUploadURL($0) != nil }
+            if !uploads.isEmpty {
+                lines.append("  Encrypted uploads: \(uploads.joined(separator: ", "))")
+            }
+        }
     }
     if !message.reactions.isEmpty {
         lines.append("Reactions")
@@ -285,4 +289,13 @@ func shortMessageIdentifier(_ value: String) -> String {
         return value
     }
     return "\(value.prefix(8))...\(value.suffix(8))"
+}
+
+// Upload receipts link to encrypted HTTP blobs, never local files or app capabilities.
+func attachmentUploadURL(_ value: String) -> URL? {
+    guard let parts = URLComponents(string: value),
+          let scheme = parts.scheme?.lowercased(), ["http", "https"].contains(scheme),
+          parts.host?.isEmpty == false, parts.user == nil, parts.password == nil,
+          parts.query == nil, parts.fragment == nil else { return nil }
+    return parts.url
 }

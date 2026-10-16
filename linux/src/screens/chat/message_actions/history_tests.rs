@@ -405,9 +405,67 @@ pub fn verify_edit_history_ui(manager: Rc<AppManager>) {
     present_message_info(Some(window.upcast_ref()), &message, &chat, &manager);
     assert!(window.visible_dialog().is_none());
 
+    check_attachment_receipts(&window, &manager, &state);
     apply(&manager, &original);
     window.destroy();
     println!("PASS: edit history details/menu/Edited access, newest-first selectable versions, live updates, account/chat/deletion/expiry closure");
+}
+
+fn check_attachment_receipts(window: &adw::Window, manager: &Rc<AppManager>, state: &AppState) {
+    let mut state = state.clone();
+    let message = &mut state.current_chat.as_mut().unwrap().messages[0];
+    message.attachments = vec![iris_chat_core::MessageAttachmentSnapshot {
+        nhash: "fixture".into(),
+        filename: "photo.jpg".into(),
+        filename_encoded: "photo.jpg".into(),
+        htree_url: "htree://fixture/photo.jpg".into(),
+        is_image: true,
+        is_video: false,
+        is_audio: false,
+        uploaded_urls: vec![],
+    }];
+    let message = message.clone();
+    let chat = state.current_chat.as_ref().unwrap().clone();
+    apply(manager, &state);
+    present_message_info(Some(window.upcast_ref()), &message, &chat, manager);
+    let details = dialog(window, "Message Details");
+    let first_url = format!("https://files.example/{}.bin", "a".repeat(64));
+    let second_url = format!("https://backup.example/{}.bin", "a".repeat(64));
+    let key = |url: &str| format!("upload:0:htree://fixture/photo.jpg:{url}");
+    assert!(find(details.upcast_ref(), &key(&first_url)).is_none());
+    state.current_chat.as_mut().unwrap().messages[0].attachments[0].uploaded_urls =
+        vec![first_url.clone()];
+    apply(manager, &state);
+    pump_until(|| find(details.upcast_ref(), &key(&first_url)).is_some());
+    let row = find(details.upcast_ref(), &key(&first_url)).unwrap();
+    let link = row
+        .first_child()
+        .unwrap()
+        .next_sibling()
+        .unwrap()
+        .downcast::<gtk::Label>()
+        .unwrap();
+    assert_eq!(link.text(), first_url);
+    assert!(link.is_selectable());
+    link.select_region(0, 8);
+    let selection = link.selection_bounds();
+    state.current_chat.as_mut().unwrap().messages[0].attachments[0]
+        .uploaded_urls
+        .push(second_url.clone());
+    apply(manager, &state);
+    pump_until(|| find(details.upcast_ref(), &key(&second_url)).is_some());
+    assert_eq!(find(details.upcast_ref(), &key(&first_url)), Some(row));
+    assert_eq!(
+        link.selection_bounds(),
+        selection,
+        "a new receipt must preserve selected link text"
+    );
+    assert!(message_info_text(
+        &state.current_chat.as_ref().unwrap().messages[0],
+        Some(&chat)
+    )
+    .contains(&second_url));
+    close(window);
 }
 
 fn screenshot(window: &adw::Window) {

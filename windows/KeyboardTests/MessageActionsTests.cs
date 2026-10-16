@@ -60,6 +60,7 @@ internal static class MessageActionsTests
             "Deleted messages cannot be edited, reacted to, or expose history");
         composer.Clear();
         EditHistoryTests.Run(window, IrisChat.App.CurrentManager);
+        AttachmentInfoTests.Run(window, IrisChat.App.CurrentManager);
         Console.WriteLine("PASS: message edit Save/Cancel, draft and attachment preservation, history and deleted-message controls");
     }
 

@@ -50,6 +50,7 @@ pub use direct_files::verify_ui as verify_direct_files_ui;
 pub(super) use expiry::settings_row as disappearing_messages_row;
 mod grouping;
 mod message_actions;
+mod message_attachment_info;
 #[cfg(feature = "ui-tests")]
 pub use message_actions::verify_edit_history_ui;
 #[cfg(feature = "ui-tests")]
@@ -481,9 +482,10 @@ fn present_message_info(
     header_row.append(&header_spacer);
     let copy_all = gtk::Button::with_label("Copy info");
     copy_all.add_css_class("flat");
-    let info_text = message_info_text(message, Some(chat));
+    let info_text = Rc::new(RefCell::new(message_info_text(message, Some(chat))));
+    let copied_info = info_text.clone();
     copy_all.connect_clicked(move |_| {
-        crate::platform::clipboard::copy(&info_text);
+        crate::platform::clipboard::copy(&copied_info.borrow());
     });
     header_row.append(&copy_all);
     content.append(&header_row);
@@ -667,18 +669,12 @@ fn present_message_info(
     content.append(&ids_section);
 
     // Attachments
-    if !message.attachments.is_empty() {
-        let attach_section = info_section("Attachments");
-        for attachment in &message.attachments {
-            let label = if attachment.filename.is_empty() {
-                "File".to_string()
-            } else {
-                attachment.filename.clone()
-            };
-            info_copy_row(&attach_section, &label, &attachment.htree_url, true);
-        }
-        content.append(&attach_section);
-    }
+    let attach_section = info_section("Attachments");
+    let attach_rows = gtk::Box::new(gtk::Orientation::Vertical, 2);
+    message_attachment_info::append_rows(&attach_rows, &message.attachments);
+    attach_section.append(&attach_rows);
+    attach_section.set_visible(!message.attachments.is_empty());
+    content.append(&attach_section);
 
     // Reactions
     if !message.reactions.is_empty() || !message.reactors.is_empty() {
@@ -736,12 +732,15 @@ fn present_message_info(
     scroll.set_child(Some(&content));
     dialog.set_child(Some(&scroll));
     crate::widgets::dialogs::present(&dialog, parent);
-    let shown = message.clone();
-    message_actions::watch_message(&dialog, message, manager, move |current| {
-        current.deleted_for_everyone == shown.deleted_for_everyone
-            && current.body == shown.body
-            && current.edit_history == shown.edit_history
-    });
+    message_attachment_info::watch_updates(
+        &dialog,
+        message,
+        chat,
+        manager,
+        &attach_section,
+        &attach_rows,
+        info_text,
+    );
 }
 
 fn info_section(title: &str) -> gtk::Box {
@@ -1785,17 +1784,7 @@ fn message_info_text(message: &ChatMessageSnapshot, chat: Option<&CurrentChatSna
     }
     if !message.attachments.is_empty() {
         lines.push("Attachments".to_string());
-        lines.extend(message.attachments.iter().map(|attachment| {
-            format!(
-                "- {} {}",
-                if attachment.filename.is_empty() {
-                    "File"
-                } else {
-                    attachment.filename.as_str()
-                },
-                attachment.htree_url,
-            )
-        }));
+        lines.extend(message_attachment_info::text_lines(&message.attachments));
     }
     if !message.reactions.is_empty() {
         lines.push("Reactions".to_string());

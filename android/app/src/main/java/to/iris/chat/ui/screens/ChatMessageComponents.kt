@@ -60,6 +60,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.PointerIcon
+import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -1522,14 +1524,7 @@ private fun MessageInfoDialog(
 
                 if (message.attachments.isNotEmpty()) {
                     MessageInfoSection(title = "Attachments") {
-                        message.attachments.forEach { attachment ->
-                            MessageInfoValueRow(
-                                label = if (attachment.filename.isBlank()) "File" else attachment.filename,
-                                value = attachment.htreeUrl,
-                                monospaced = true,
-                                copyValue = attachment.htreeUrl,
-                            )
-                        }
+                        MessageInfoAttachmentRows(message.attachments)
                     }
                 }
 
@@ -1629,11 +1624,12 @@ private fun MessageInfoSection(title: String, content: @Composable ColumnScope.(
 }
 
 @Composable
-private fun MessageInfoValueRow(
+internal fun MessageInfoValueRow(
     label: String,
     value: String,
     monospaced: Boolean = false,
     copyValue: String? = null,
+    link: Boolean = false,
 ) {
     val palette = IrisTheme.palette
     val clipboard = rememberIrisClipboard()
@@ -1651,8 +1647,8 @@ private fun MessageInfoValueRow(
             fontWeight = FontWeight.SemiBold,
         )
         Text(
-            text = value,
-            modifier = Modifier.weight(1f),
+            text = if (link) linkedPlainMessageAnnotatedString(value, MaterialTheme.colorScheme.onSurface) else AnnotatedString(value),
+            modifier = Modifier.weight(1f).then(if (link) Modifier.pointerHoverIcon(PointerIcon.Hand) else Modifier),
             style =
                 if (monospaced) {
                     MaterialTheme.typography.labelMedium.copy(fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace)
@@ -1739,7 +1735,7 @@ private fun MessageInfoRecipientRow(
     }
 }
 
-private fun messageInfoText(
+internal fun messageInfoText(
     message: ChatMessageSnapshot,
     chat: CurrentChatSnapshot? = null,
 ): String {
@@ -1785,10 +1781,7 @@ private fun messageInfoText(
     }
     if (message.attachments.isNotEmpty()) {
         lines += "Attachments"
-        lines +=
-            message.attachments.map { attachment ->
-                "- ${if (attachment.filename.isBlank()) "File" else attachment.filename} ${attachment.htreeUrl}"
-            }
+        lines += attachmentInfoTextLines(message.attachments)
     }
     if (message.reactions.isNotEmpty()) {
         lines += "Reactions"

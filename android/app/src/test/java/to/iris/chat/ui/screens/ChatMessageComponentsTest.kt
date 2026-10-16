@@ -160,6 +160,25 @@ class ChatMessageComponentsTest {
         )
     }
 
+    @Test
+    fun attachmentUploadReceiptsStayInDetailsAndUseOnlyExternalHttpUrls() {
+        val url = "https://files.example/" + "a".repeat(64) + ".bin"
+        val attachment = MessageAttachmentSnapshot(
+            nhash = "fixture", filename = "photo.jpg", filenameEncoded = "photo.jpg",
+            htreeUrl = "htree://fixture/photo.jpg", isImage = true, isVideo = false, isAudio = false,
+            uploadedUrls = emptyList(),
+        )
+        val local = makeMessage("A photo", listOf(attachment))
+        assertFalse(messageInfoText(local).contains("Encrypted uploads"))
+        val uploaded = local.copy(attachments = listOf(attachment.copy(uploadedUrls = listOf(url))))
+        assertTrue(messageInfoText(uploaded).contains(url))
+        assertEquals("A photo\nhtree://fixture/photo.jpg", forwardableMessageText(uploaded))
+        assertTrue(isAttachmentUploadUrl(url))
+        listOf("file:///tmp/photo.jpg", "htree://secret/photo.jpg", "javascript:alert(1)",
+            "https://user:secret@files.example/blob", "https://files.example/blob#key",
+            "https://files.example/blob?secret=key").forEach { assertFalse(isAttachmentUploadUrl(it)) }
+    }
+
     private fun makeMessage(
         body: String,
         attachments: List<MessageAttachmentSnapshot> = emptyList(),

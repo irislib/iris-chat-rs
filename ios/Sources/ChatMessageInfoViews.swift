@@ -231,16 +231,7 @@ struct MessageInfoSheet: View {
     @ViewBuilder
     private var attachmentSection: some View {
         if !message.attachments.isEmpty {
-            MessageInfoSection(title: "Attachments") {
-                ForEach(message.attachments, id: \.htreeUrl) { attachment in
-                    MessageInfoValueRow(
-                        label: attachment.filename.isEmpty ? "File" : attachment.filename,
-                        value: attachment.htreeUrl,
-                        monospaced: true,
-                        copyValue: attachment.htreeUrl
-                    )
-                }
-            }
+            MessageInfoAttachmentSection(attachments: message.attachments)
         }
     }
 
@@ -458,6 +449,7 @@ struct MessageInfoValueRow: View {
     let value: String
     var monospaced: Bool = false
     var copyValue: String?
+    var linkURL: URL? = nil
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
@@ -465,7 +457,14 @@ struct MessageInfoValueRow: View {
                 .font(.system(.subheadline, design: .rounded, weight: .semibold))
                 .foregroundStyle(palette.muted)
                 .frame(width: 96, alignment: .leading)
-            Text(value)
+            Group {
+                if let linkURL {
+                    Link(destination: linkURL) { Text(value).underline() }
+                        .irisHoverPointer()
+                } else {
+                    Text(value)
+                }
+            }
                 .font(monospaced ? .system(.footnote, design: .monospaced, weight: .medium) : .system(.subheadline, design: .rounded))
                 .foregroundStyle(palette.textPrimary)
                 .textSelection(.enabled)
@@ -484,6 +483,27 @@ struct MessageInfoValueRow: View {
             }
         }
         .padding(.vertical, 8)
+    }
+}
+
+struct MessageInfoAttachmentSection: View {
+    let attachments: [MessageAttachmentSnapshot]
+
+    var body: some View {
+        MessageInfoSection(title: "Attachments") {
+            ForEach(attachments, id: \.htreeUrl) { attachment in
+                MessageInfoValueRow(
+                    label: attachment.filename.isEmpty ? "File" : attachment.filename,
+                    value: attachment.htreeUrl,
+                    monospaced: true,
+                    copyValue: attachment.htreeUrl
+                )
+                ForEach(Array(attachment.uploadedUrls.filter { attachmentUploadURL($0) != nil }.enumerated()), id: \.element) { index, value in
+                    MessageInfoValueRow(label: index == 0 ? "Encrypted uploads" : "", value: value,
+                                        copyValue: value, linkURL: attachmentUploadURL(value))
+                }
+            }
+        }
     }
 }
 
