@@ -117,8 +117,8 @@ internal static class DraftTests
             _ = ffi.ExportSupportBundleJson();
             Check(input.Text.Length == 0 && ffi.State().chatList.First(chat => chat.chatId == own).draft.Length == 0,
                 "Local attachment sending clears the submitted draft before the HTTP upload ACK");
-            Check(manager.CurrentChat!.messages.Single(message => message.body == caption).attachments
-                .Single(file => file.filename == "upload-draft.txt").uploadedUrls.Count == 0,
+            Check(!manager.CurrentChat!.messages.Single(message => message.body == caption).attachments
+                .Single(file => file.filename == "upload-draft.txt").uploadedUrls.Any(),
                 "The locally sent file has no upload receipt while the server response is held");
 
             input.Text = nextDraft;
