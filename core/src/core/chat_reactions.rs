@@ -33,6 +33,7 @@ impl AppCore {
             return;
         }
         let outgoing_emoji = toggle_local_reaction(message, &local_owner, emoji);
+        self.sync_request_acceptance(&normalized_chat_id);
         self.send_reaction(&normalized_chat_id, message_id, &outgoing_emoji);
         self.persist_best_effort();
         self.rebuild_state();

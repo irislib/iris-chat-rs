@@ -18,7 +18,16 @@ pub(super) fn is_message_request_thread(
     accepted_owner_pubkeys: &[String],
     group_creator_hex: Option<&str>,
     local_owner_hex: Option<&str>,
+    request_decision: Option<&str>,
 ) -> bool {
+    // A durable decision already incorporates authenticated engagement by time.
+    // Old loaded messages must not bypass a later rejection or reset.
+    if let Some(decision) = request_decision {
+        return decision != "accepted";
+    }
+    if accepted_owner_pubkeys.contains(&thread.chat_id) {
+        return false;
+    }
     // Any outgoing message — including ones self-synced from a linked
     // device after we replied there — counts as implicit acceptance,
     // so the bar disappears on every device once the user engages
@@ -80,6 +89,9 @@ impl AppCore {
             &self.preferences.accepted_owner_pubkeys,
             group_creator_hex.as_deref(),
             local_owner_hex.as_deref(),
+            self.request_decision(chat_id)
+                .map(|state| state.decision)
+                .as_deref(),
         )
     }
 
@@ -355,6 +367,9 @@ impl AppCore {
                     &self.preferences.accepted_owner_pubkeys,
                     group_creator_hex.as_deref(),
                     local_owner_hex.as_deref(),
+                    self.request_decision(&thread.chat_id)
+                        .map(|state| state.decision)
+                        .as_deref(),
                 );
                 ChatThreadSnapshot {
                     social_connection: self.social_connection(&thread.chat_id),
@@ -437,6 +452,9 @@ impl AppCore {
                     &self.preferences.accepted_owner_pubkeys,
                     current_group_creator_hex.as_deref(),
                     local_owner_hex.as_deref(),
+                    self.request_decision(&thread.chat_id)
+                        .map(|state| state.decision)
+                        .as_deref(),
                 );
                 CurrentChatSnapshot {
                     contact_identity: self.contact_identity(&thread.chat_id),

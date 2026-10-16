@@ -604,13 +604,21 @@ impl AppCore {
                             }
                             self.schedule_next_message_expiry();
                         }
-                        DeviceSyncRecord::Reaction { reaction: r } => self
-                            .apply_incoming_reaction_to_chat(
+                        DeviceSyncRecord::Reaction { reaction: r } => {
+                            if !self.observe_chat_engagement(
+                                &r.chat_id,
+                                &r.author,
+                                effective_ms(r.created_at, r.created_at_ms),
+                            ) {
+                                return false;
+                            }
+                            self.apply_incoming_reaction_to_chat(
                                 &r.chat_id,
                                 &r.message_id,
                                 &r.author,
                                 &r.emoji,
-                            ),
+                            );
+                        }
                         DeviceSyncRecord::GroupSettings { settings: s } => {
                             let chat = format!("group:{}", s.group_id);
                             if let Some(ttl) = s.message_ttl_seconds {

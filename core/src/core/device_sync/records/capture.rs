@@ -137,7 +137,7 @@ impl AppCore {
             }
             return accepted;
         }
-        if kind != REACTION_KIND && kind != CHAT_SETTINGS_KIND {
+        if kind != REACTION_KIND && kind != CHAT_SETTINGS_KIND && kind != CHAT_MESSAGE_KIND {
             return true;
         }
         let created_at_ms = match tags
@@ -150,6 +150,14 @@ impl AppCore {
             },
             None => None,
         };
+        if kind == CHAT_MESSAGE_KIND {
+            return !valid_time(created_at, created_at_ms)
+                || self.observe_chat_engagement(
+                    chat,
+                    author,
+                    effective_ms(created_at, created_at_ms),
+                );
+        }
         let records = if kind == REACTION_KIND {
             let targets = message_ids_from_tags(tags.iter());
             // A typed reaction ID names one original event and one target.
@@ -207,6 +215,15 @@ impl AppCore {
             }
             let existed = self.sync_record_is_stored(&record);
             if self.store_sync_record(&record).unwrap_or(false) {
+                if let DeviceSyncRecord::Reaction { reaction: r } = &record {
+                    if !self.observe_chat_engagement(
+                        &r.chat_id,
+                        &r.author,
+                        effective_ms(r.created_at, r.created_at_ms),
+                    ) {
+                        return false;
+                    }
+                }
                 accepted = true;
                 if !existed {
                     self.broadcast_device_sync_snapshot();

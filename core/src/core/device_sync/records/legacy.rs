@@ -61,6 +61,16 @@ impl AppCore {
                 && !self.has_reaction_head(chat, id, &reaction.author)
             {
                 self.apply_incoming_reaction_to_chat(chat, id, &reaction.author, &reaction.emoji);
+                if let Some(time) = self
+                    .threads
+                    .get(chat)
+                    .and_then(|thread| thread.messages.iter().find(|message| message.id == id))
+                    .map(|message| message.created_at_secs)
+                {
+                    // Legacy reactions lack their own clock. The target time
+                    // is a conservative bound and cannot defeat newer choices.
+                    self.observe_chat_engagement(chat, &reaction.author, time.saturating_mul(1000));
+                }
             }
         }
     }

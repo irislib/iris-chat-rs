@@ -172,3 +172,57 @@ fn obsolete_message_history_wire_routes_are_not_supported() {
         assert!(serde_json::from_value::<DeviceSyncPacket>(value).is_err());
     }
 }
+
+#[test]
+fn request_acceptance_from_sibling_reaction_and_history_records_is_durable() {
+    for reaction in [false, true] {
+        let owner = Keys::generate();
+        let (mut core, _, _dir) = crate::core::tests::logged_in_test_core_with_updates(
+            "engagement-records",
+            &owner,
+            &Keys::generate(),
+        );
+        let peer = Keys::generate();
+        let chat = peer.public_key().to_hex();
+        core.apply_runtime_text_message(
+            peer.public_key(),
+            None,
+            "Request".into(),
+            200,
+            None,
+            Some("request".into()),
+            None,
+        );
+        if reaction {
+            assert!(core.apply_sync_record(DeviceSyncRecord::Reaction {
+                reaction: DeviceSyncReaction {
+                    chat_id: chat.clone(),
+                    id: "reacted-on-sibling".into(),
+                    author: owner.public_key().to_hex(),
+                    created_at: 201,
+                    created_at_ms: Some(201_123),
+                    message_id: "request".into(),
+                    emoji: "❤".into(),
+                },
+            }));
+        } else {
+            core.apply_device_sync_snapshot(
+                DeviceSyncSnapshot {
+                    messages: vec![DeviceSyncMessage {
+                        chat_id: chat.clone(),
+                        id: "replied-on-sibling".into(),
+                        body: "Hello".into(),
+                        author: owner.public_key().to_hex(),
+                        created_at: 201,
+                        expires_at: None,
+                        legacy_reactions: None,
+                    }],
+                    ..Default::default()
+                },
+                Some(100),
+            );
+        }
+        assert_eq!(core.request_decision(&chat).unwrap().decision, "accepted");
+        assert!(!core.thread_is_message_request(&chat));
+    }
+}

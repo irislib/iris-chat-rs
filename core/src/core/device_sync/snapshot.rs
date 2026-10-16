@@ -297,7 +297,11 @@ impl AppCore {
                 && self.message_was_seen_on_own_device(&chat_id, message.created_at, &message.id);
             let count_unread = !is_outgoing && !already_seen && !self.is_chat_visible(&chat_id);
             if is_outgoing {
-                self.accept_direct_peer(&chat_id);
+                self.observe_chat_engagement(
+                    &chat_id,
+                    &message.author,
+                    message.created_at.saturating_mul(1000),
+                );
             }
             let thread = self.ensure_thread_record(&chat_id, message.created_at);
             thread.updated_at_secs = thread.updated_at_secs.max(message.created_at);
