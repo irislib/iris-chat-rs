@@ -254,9 +254,6 @@ async fn real_blossom_round_trip_survives_sender_cache_clear() {
         .expect("upload Iris logo to configured Blossom server");
 
     *active_local_store().write().unwrap() = None;
-    *attachment_blob_store()
-        .write()
-        .unwrap_or_else(|poison| poison.into_inner()) = None;
 
     let downloaded = download_hashtree_attachment_base64(&nhash)
         .await

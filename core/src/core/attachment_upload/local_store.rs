@@ -26,6 +26,7 @@ pub(in crate::core) struct AttachmentChunkStore {
     data_budget: u64,
     state: Mutex<State>,
     pub(super) wake: tokio::sync::Notify,
+    pub(super) readiness: tokio::sync::watch::Sender<super::readiness::State>,
 }
 
 pub(super) struct UploadSession {
@@ -122,6 +123,7 @@ impl AttachmentChunkStore {
                 closed: false,
             }),
             wake: tokio::sync::Notify::new(),
+            readiness: tokio::sync::watch::channel(super::readiness::State::Pending).0,
         });
         let state = store.lock()?;
         let hashes = store.blobs.scan_hashes_after(None, MAX_BLOCKS + 1)?;
@@ -412,7 +414,19 @@ impl AttachmentChunkStore {
     pub(super) fn close(&self) {
         if let Ok(mut state) = self.state.lock() {
             state.closed = true;
+            self.readiness.send_replace(super::readiness::State::Closed);
         }
+    }
+
+    pub(super) fn transport_ready(&self, route: &Arc<RoutedStore<Self>>) -> anyhow::Result<()> {
+        let _state = self.lock()?;
+        anyhow::ensure!(
+            std::ptr::eq(self, route.primary().as_ref()),
+            "attachment account changed"
+        );
+        self.readiness
+            .send_replace(super::readiness::State::Ready(Arc::downgrade(route)));
+        Ok(())
     }
 
     pub(super) fn configure_pending(&self, servers: &[String]) -> anyhow::Result<()> {
@@ -547,6 +561,7 @@ impl AttachmentChunkStore {
     pub(super) fn close_and_clear(&self) -> anyhow::Result<()> {
         let mut state = self.lock()?;
         state.closed = true;
+        self.readiness.send_replace(super::readiness::State::Closed);
         state.db.execute(
             "INSERT OR REPLACE INTO metadata(key,value) VALUES('resetting','1')",
             [],

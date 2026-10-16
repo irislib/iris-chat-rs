@@ -22,6 +22,7 @@ use tokio_util::compat::TokioAsyncReadCompatExt;
 
 mod local_store;
 mod message_commit;
+mod readiness;
 mod replication;
 use local_store::AttachmentChunkStore;
 pub(super) use replication::AttachmentService;
@@ -49,20 +50,6 @@ impl AttachmentBlobRuntime {
     pub(super) fn set_peers(&self, peers: Vec<fips_core::PeerIdentity>) {
         self.provider.set_explicit_peers(peers);
     }
-}
-
-fn attachment_blob_store() -> &'static RwLock<Option<Weak<RoutedStore<AttachmentChunkStore>>>> {
-    static STORE: OnceLock<RwLock<Option<Weak<RoutedStore<AttachmentChunkStore>>>>> =
-        OnceLock::new();
-    STORE.get_or_init(|| RwLock::new(None))
-}
-
-fn active_attachment_blob_store() -> Option<Arc<RoutedStore<AttachmentChunkStore>>> {
-    attachment_blob_store()
-        .read()
-        .unwrap_or_else(|poison| poison.into_inner())
-        .as_ref()
-        .and_then(Weak::upgrade)
 }
 
 pub(super) async fn bind_same_host_attachment_store(
@@ -109,9 +96,7 @@ pub(super) async fn bind_same_host_attachment_store(
         _transport: transport,
         provider,
     });
-    *attachment_blob_store()
-        .write()
-        .unwrap_or_else(|poison| poison.into_inner()) = Some(Arc::downgrade(&runtime.store));
+    runtime.store.primary().transport_ready(&runtime.store)?;
     Ok(runtime)
 }
 
@@ -120,7 +105,9 @@ pub(super) async fn start_same_host_attachment_reuse(
     peers: Vec<fips_core::PeerIdentity>,
     primary: Arc<AttachmentChunkStore>,
 ) -> anyhow::Result<Arc<AttachmentBlobRuntime>> {
-    let standalone: Arc<dyn BlobRoute> = Arc::new(StoreBlobRoute::new(blossom_read_store()?));
+    let standalone: Arc<dyn BlobRoute> = Arc::new(StoreBlobRoute::new(
+        blossom_read_store_with_local(Some(primary.clone()))?,
+    ));
     bind_same_host_attachment_store(endpoint, standalone, peers, primary).await
 }
 
@@ -549,14 +536,11 @@ async fn download_hashtree_attachment_base64_with_limit(
         hash: data.hash,
         key: data.decrypt_key,
     };
-    let _read_lease = current_local_store()
-        .map(|store| store.reading())
-        .transpose()?;
-    let bytes = if let Some(store) = active_attachment_blob_store() {
-        read_hashtree_attachment(&cid, store, max_bytes).await?
-    } else {
-        read_hashtree_attachment(&cid, blossom_read_store()?, max_bytes).await?
-    };
+    // Capture one account before starting HTTP; a later account switch must
+    // neither replace its cache nor supply a different account's peer route.
+    let local = current_local_store();
+    let fallback = blossom_read_store_with_local(local.clone())?;
+    let bytes = readiness::read(&cid, local, fallback, max_bytes, Duration::from_secs(8)).await?;
     Ok(base64::engine::general_purpose::STANDARD.encode(bytes))
 }
 
@@ -574,7 +558,9 @@ async fn read_hashtree_attachment<S: Store + 'static>(
     Ok(bytes)
 }
 
-fn blossom_read_store() -> anyhow::Result<Arc<UploadingBlossomStore>> {
+fn blossom_read_store_with_local(
+    local: Option<Arc<AttachmentChunkStore>>,
+) -> anyhow::Result<Arc<UploadingBlossomStore>> {
     let (read_servers, write_servers) = blossom_servers_from_config();
     Ok(Arc::new(
         UploadingBlossomStore::new(
@@ -583,7 +569,7 @@ fn blossom_read_store() -> anyhow::Result<Arc<UploadingBlossomStore>> {
             Vec::new(),
             None,
         )?
-        .with_local(current_local_store()),
+        .with_local(local),
     ))
 }
 
