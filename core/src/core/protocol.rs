@@ -1770,7 +1770,7 @@ impl AppCore {
                 self.logged_in.as_ref().is_some_and(|local| {
                     group
                         .members
-                        .contains(&ndr_owner_pubkey(local.owner_pubkey))
+                        .contains(&NdrOwnerPubkey::from_bytes(local.owner_pubkey.to_bytes()))
                 }) && !self.thread_is_message_request(&group_chat_id(&group.group_id))
             })
             .flat_map(|group| group.members.iter().map(ToString::to_string))
