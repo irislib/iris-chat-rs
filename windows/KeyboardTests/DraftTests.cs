@@ -111,18 +111,24 @@ internal static class DraftTests
             composer.AddAttachments(new[] { upload.SourcePath });
             Until(() => composer.SendAllowed);
             ((Button)composer.FindName("SendButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-            Until(() => upload.RequestReceived && manager.Busy.uploadingAttachment);
+            Until(() => upload.RequestReceived && !manager.Busy.uploadingAttachment &&
+                manager.CurrentChat?.messages.Any(message => message.body == caption &&
+                    message.attachments.Any(file => file.filename == "upload-draft.txt")) == true);
             _ = ffi.ExportSupportBundleJson();
             Check(input.Text.Length == 0 && ffi.State().chatList.First(chat => chat.chatId == own).draft.Length == 0,
-                "Attachment submission clears the submitted persisted draft before upload completion");
+                "Local attachment sending clears the submitted draft before the HTTP upload ACK");
+            Check(manager.CurrentChat!.messages.Single(message => message.body == caption).attachments
+                .Single(file => file.filename == "upload-draft.txt").uploadedUrls.Count == 0,
+                "The locally sent file has no upload receipt while the server response is held");
 
             input.Text = nextDraft;
             Until(() => Draft(own) == nextDraft);
             upload.Complete();
-            Until(() => !manager.Busy.uploadingAttachment && manager.CurrentChat?.messages.Any(message =>
-                message.body == caption && message.attachments.Any(file => file.filename == "upload-draft.txt")) == true);
+            Until(() => manager.CurrentChat?.messages.Any(message => message.body == caption &&
+                message.attachments.Any(file => file.filename == "upload-draft.txt" &&
+                    file.uploadedUrls.Any(upload.ServedCiphertext))) == true);
             Check(input.Text == nextDraft && Draft(own) == nextDraft,
-                "Finishing the upload preserves the next draft instead of clearing it");
+                "Confirming HTTP replication preserves the next draft instead of clearing it");
             manager.OpenChat(other);
             Until(() => manager.CurrentChat?.chatId == other);
             manager.OpenChat(own);
@@ -192,7 +198,7 @@ internal static class DraftTests
         Until(() => Draft(own) == closingDraft);
         manager.SetChatDraft(own, "");
         Until(() => Draft(own).Length == 0);
-        Console.WriteLine("PASS: real Core drafts, pending chat switch, edit isolation, clear/send, delayed attachment upload, unload/close/restore and list precedence");
+        Console.WriteLine("PASS: real Core drafts, pending chat switch, edit isolation, clear/send, local attachment send before HTTP ACK, confirmed replication preserving drafts, unload/close/restore and list precedence");
     }
 
     private static void DrainDraftTimer()
