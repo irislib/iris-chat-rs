@@ -14,6 +14,7 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 - Accept encrypted private personal and group invitations stored in Hashtree.
 - Expose mention-notification settings in the CLI and deliver complete service errors even when they exceed one socket write.
 - Recover device sync after linked browsers reload or connect simultaneously, preserving queued records and keeping one consistent connection direction.
+- Keep Linux chat-list and composer shortcuts working during navigation and pane animations.
 
 ### Apple
 
