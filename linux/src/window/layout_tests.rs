@@ -2,7 +2,7 @@ use super::*;
 
 mod section_focus;
 use iris_chat_core::{DeviceHistorySyncPhase, DeviceHistorySyncSnapshot};
-use section_focus::check_narrow_section_shortcuts;
+use section_focus::{check_narrow_section_shortcuts, check_wide_section_shortcuts};
 
 fn descendants(widget: &gtk::Widget) -> Vec<gtk::Widget> {
     let mut result = vec![widget.clone()];
@@ -248,6 +248,7 @@ pub(super) fn run(manager: Rc<AppManager>) {
     check_preview(root, &chat_id);
     check_controls(root);
     check_sidebar_settings(root);
+    check_wide_section_shortcuts(&slot, &manager, &window);
 
     search.grab_focus();
     pump_until(|| owns_focus(&window, search.upcast_ref()));

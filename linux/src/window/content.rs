@@ -186,7 +186,11 @@ impl Content {
                     Some((account.public_key_hex.clone(), chat.chat_id.clone()));
             }
             if composer {
-                if (!content.split.is_collapsed() || content.split.shows_content())
+                // Navigation updates the logical route before GTK renders the
+                // new pane. A still-mapped old pane must not consume the key.
+                if (!content.split.is_collapsed()
+                    || (content.split.shows_content()
+                        && matches!(current_screen(&state), Screen::Chat { .. })))
                     && crate::widgets::keyboard_list::focus_composer(content.root.upcast_ref())
                 {
                     return glib::Propagation::Stop;
@@ -210,7 +214,9 @@ impl Content {
                     .as_ref()
                     .filter(|(owner, _)| *owner == account.public_key_hex)
                     .map(|(_, id)| id.as_str());
-                if (!content.split.is_collapsed() || !content.split.shows_content())
+                if (!content.split.is_collapsed()
+                    || (!content.split.shows_content()
+                        && current_screen(&state) == Screen::ChatList))
                     && crate::widgets::keyboard_list::focus_list(
                         content.root.upcast_ref(),
                         preferred_chat,

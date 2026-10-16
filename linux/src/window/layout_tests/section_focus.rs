@@ -28,6 +28,41 @@ fn focus_state(
     )
 }
 
+pub(super) fn check_wide_section_shortcuts(
+    slot: &Content,
+    manager: &Rc<AppManager>,
+    window: &adw::Window,
+) {
+    let keys = window
+        .observe_controllers()
+        .iter::<glib::Object>()
+        .filter_map(Result::ok)
+        .find_map(|controller| controller.downcast::<gtk::EventControllerKey>().ok())
+        .expect("production section keyboard shortcuts");
+    let route = manager.current_state().router;
+    assert!(keys.emit_by_name::<bool>(
+        "key-pressed",
+        &[
+            &gtk::gdk::Key::t,
+            &0u32,
+            &gtk::gdk::ModifierType::CONTROL_MASK
+        ]
+    ));
+    let list = named(slot.root.upcast_ref(), "iris-keyboard-chat-list");
+    assert!(owns_focus(window, &list));
+    assert_eq!(manager.current_state().router, route);
+    assert!(keys.emit_by_name::<bool>(
+        "key-pressed",
+        &[
+            &gtk::gdk::Key::t,
+            &0u32,
+            &(gtk::gdk::ModifierType::CONTROL_MASK | gtk::gdk::ModifierType::SHIFT_MASK)
+        ]
+    ));
+    assert!(text_view(slot.root.upcast_ref()).unwrap().has_focus());
+    assert_eq!(manager.current_state().router, route);
+}
+
 pub(super) fn check_narrow_section_shortcuts(
     slot: &Content,
     header: &HeaderWidgets,
