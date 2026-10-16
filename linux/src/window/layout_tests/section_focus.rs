@@ -69,6 +69,7 @@ pub(super) fn check_narrow_section_shortcuts(
     manager: &Rc<AppManager>,
     window: &adw::Window,
     chat_id: &str,
+    age_previous_request: bool,
 ) {
     let wait = |stage: &str, mut ready: Box<dyn FnMut() -> bool + '_>| {
         let mut previous = String::new();
@@ -130,6 +131,14 @@ pub(super) fn check_narrow_section_shortcuts(
         "Ctrl+Shift+T must restore the logical chat route even while its old pane is still mapped"
     );
     press(gtk::gdk::ModifierType::CONTROL_MASK);
+    if age_previous_request {
+        // Render the request so its animation tick is installed, then model
+        // a busy main thread. A new key arrives before that old tick can run.
+        // The pause is the failure trigger; actual row focus remains the gate.
+        apply_state(slot, header, manager, &manager.current_state());
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        press(gtk::gdk::ModifierType::CONTROL_MASK);
+    }
     wait(
         "chat-list",
         Box::new(|| {
