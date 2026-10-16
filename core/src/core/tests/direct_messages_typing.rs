@@ -208,6 +208,21 @@ fn unknown_users_toggle_off_excludes_non_accepted_peers_from_subs() {
         );
     }
 
+    let group = test_group_snapshot("accepted-push-group", "Friends", bob_owner.public_key(),
+        vec![alice_owner.public_key(), bob_owner.public_key()], vec![bob_owner.public_key()], 1);
+    alice.apply_group_roster_snapshot(group, 200);
+    alice.accept_message_request("group:accepted-push-group");
+    let group_authors = alice.subscribable_message_author_hexes();
+    assert!(bob_event_authors.iter().all(|author| group_authors.contains(author)),
+        "accepted group sender-key controls must still wake unknown-DM-off clients");
+    assert!(!alice.preferences.accepted_owner_pubkeys.contains(&bob_hex),
+        "group transport must not implicitly accept the member's direct chat");
+    assert!(alice.thread_is_message_request(&bob_hex));
+    alice.set_user_blocked(&bob_hex, true);
+    assert!(bob_event_authors.iter().all(|author| !alice.subscribable_message_author_hexes().contains(author)));
+    alice.set_user_blocked(&bob_hex, false);
+    alice.groups.remove("accepted-push-group");
+
     // Now accept bob: his event authors come back into the sub.
     alice.handle_action(AppAction::SetMessageRequestAccepted {
         chat_id: bob_hex.clone(),
