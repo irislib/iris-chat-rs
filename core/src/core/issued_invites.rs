@@ -416,6 +416,20 @@ impl AppCore {
             .token
             .as_deref()
             .ok_or_else(|| anyhow::anyhow!("Invalid group invite"))?;
+        // Admission and its use receipt commit before the UI projection. Repair
+        // an interrupted projection before deciding whether this is a retry.
+        let durable_group = self
+            .protocol_engine
+            .as_ref()
+            .and_then(|engine| engine.group_snapshot(group_id));
+        if let Some(group) = durable_group {
+            let previous = self.groups.get(group_id).cloned();
+            if previous.as_ref().is_none_or(|old| {
+                (old.revision, old.updated_at) < (group.revision, group.updated_at)
+            }) {
+                self.apply_local_group_snapshot(previous.as_ref(), group, "group.invite_restored");
+            }
+        }
         let correct_device = self.logged_in.as_ref().is_some_and(|l| {
             l.owner_pubkey.to_hex() == record.invite.owner
                 && l.device_keys.public_key().to_hex() == record.invite.inviter

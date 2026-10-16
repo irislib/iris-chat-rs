@@ -103,6 +103,25 @@ fn native_group_invite_requires_current_admin_and_authenticated_controls() {
 }
 
 #[test]
+fn native_group_invite_retry_repairs_interrupted_membership_projection() {
+    let owner = Keys::generate(); let device = Keys::generate();
+    let mut core = logged_in_test_core("native-invite-projection-retry", &owner, &device);
+    core.create_group("Picnic", &[]);
+    let group_id = core.groups.keys().next().unwrap().clone();
+    let (_, issued) = publish_issued_invite_for_test(&mut core, Some(&group_id), Some(1), None);
+    let peer = Keys::generate().public_key();
+    let token = issued.record.token.as_ref().unwrap();
+    core.protocol_engine.as_mut().unwrap().admit_group_invite_member(&group_id, token, peer, Some(1)).unwrap();
+    // Crash after the atomic engine commit, before updating app-state groups.
+    assert!(!core.groups[&group_id].members.contains(&NdrOwnerPubkey::from_bytes(peer.to_bytes())));
+    let storage = Arc::new(core.private_chat_invite_storage().unwrap());
+    core.protocol_engine = Some(ProtocolEngine::load_or_create_for_local_device(storage, owner.public_key(), &device).unwrap());
+    assert_eq!(core.admit_invite_request(&issued, peer).unwrap(), "already-member");
+    assert_eq!(core.group_invite_snapshots(&group_id)[0].use_count, 1);
+    assert!(core.groups[&group_id].members.contains(&NdrOwnerPubkey::from_bytes(peer.to_bytes())));
+}
+
+#[test]
 fn native_group_invite_storage_failure_rolls_back_membership_and_use_together() {
     let owner = Keys::generate(); let device = Keys::generate();
     let mut core = logged_in_test_core("native-invite-atomic", &owner, &device);
