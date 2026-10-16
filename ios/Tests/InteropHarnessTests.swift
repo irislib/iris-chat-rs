@@ -84,6 +84,10 @@ final class InteropHarnessTests: XCTestCase {
             try? FileManager.default.removeItem(at: dataDir)
         }
         try FileManager.default.createDirectory(at: dataDir, withIntermediateDirectories: true)
+        let offlineLan = try prepareOfflineLanFixture(
+            action: action, runID: runID, dataDir: dataDir, env: env
+        )
+        defer { offlineLan?.close() }
         if action == "report_storage_counts_without_bootstrap" {
             status("action", action)
             status("run_id", runID)
@@ -111,6 +115,14 @@ final class InteropHarnessTests: XCTestCase {
         status("bootstrap_elapsed_ms", String(Int(bootstrapElapsed * 1000)))
 
         switch action {
+        case "offline_lan_attachment_prepare", "offline_lan_attachment_sender",
+             "offline_lan_attachment_receiver", "offline_lan_attachment_reopen":
+            guard let offlineLan else {
+                throw HarnessError.unexpected("offline LAN fixture was not configured before bootstrap")
+            }
+            try await runOfflineLanAttachment(
+                action: action, fixture: offlineLan, manager: manager, dataDir: dataDir, env: env
+            )
         case "create_account_and_report_identity":
             let snapshot = try await createOrLoadAccount(manager: manager, env: env)
             try await waitForRelayDrainIfRequested(manager: manager, dataDir: dataDir, env: env)
