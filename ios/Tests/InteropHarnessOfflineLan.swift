@@ -15,11 +15,21 @@ final class OfflineLanFixture {
     static let filename = "offline-lan.bin"
     let directory: URL
     let httpURL: String
+    let discoveryScope: String
     let configuredAtMS: Int64
     private var socketFD: Int32
 
-    init(directory: URL) throws {
+    static func validatedScope(_ value: String?) throws -> String {
+        guard let value,
+              value.range(of: "^iris-offline-lan-[0-9a-f]{16,64}$", options: .regularExpression) == value.startIndex..<value.endIndex else {
+            throw HarnessError.unexpected("offline LAN requires a dedicated bounded discovery scope")
+        }
+        return value
+    }
+
+    init(directory: URL, discoveryScope: String) throws {
         self.directory = directory
+        self.discoveryScope = try Self.validatedScope(discoveryScope)
         let descriptor = Darwin.socket(AF_INET, SOCK_STREAM, 0)
         guard descriptor >= 0 else { throw HarnessError.unexpected("failed HTTP endpoint socket") }
         var address = sockaddr_in()
@@ -66,6 +76,10 @@ extension InteropHarnessTests {
               runID.range(of: "^offline-lan-[A-Za-z0-9-]{8,80}$", options: .regularExpression) != nil else {
             throw HarnessError.unexpected("offline LAN requires explicit isolated harness storage")
         }
+        let discoveryScope = try OfflineLanFixture.validatedScope(env["IRIS_IOS_HARNESS_DISCOVERY_SCOPE"])
+        guard env["IRIS_CHAT_OFFLINE_LAN_SCOPE"] == discoveryScope else {
+            throw HarnessError.unexpected("wrapper and harness discovery scopes differ")
+        }
         guard FileManager.default.fileExists(atPath: dataDir.appendingPathComponent("account-secret.json").path) else {
             throw HarnessError.unexpected("bootstrap the isolated account and accepted chat first")
         }
@@ -84,7 +98,7 @@ extension InteropHarnessTests {
                 at: recent, to: directory.appendingPathComponent("recent-peers-\(UUID().uuidString).json")
             )
         }
-        let fixture = try OfflineLanFixture(directory: directory)
+        let fixture = try OfflineLanFixture(directory: directory, discoveryScope: discoveryScope)
         let configDir = directory.appendingPathComponent("hashtree", isDirectory: true)
         try FileManager.default.createDirectory(at: configDir, withIntermediateDirectories: true)
         let config = """
@@ -108,10 +122,12 @@ extension InteropHarnessTests {
             "IRIS_CHAT_SAME_HOST_HASHTREE": "0",
             // Enables bounded observation, not an alternate transport or store.
             "IRIS_CHAT_OFFLINE_LAN_FIXTURE": "1",
+            "IRIS_CHAT_OFFLINE_LAN_SCOPE": discoveryScope,
         ]
         for (key, value) in overrides { setenv(key, value, 1) }
         status("offline_lan_configured_at_ms", String(fixture.configuredAtMS))
         status("offline_lan_http_endpoint", fixture.httpURL)
+        status("offline_lan_discovery_scope", fixture.discoveryScope)
         return fixture
     }
 

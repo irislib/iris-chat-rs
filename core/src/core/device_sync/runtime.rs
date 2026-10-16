@@ -209,6 +209,14 @@ impl AppCore {
     }
 
     fn reconcile_shared_fips(&mut self, options: SharedFipsOptions) {
+        let fixture_scope = match super::super::support::offline_lan::requested_scope() {
+            Ok(scope) => scope,
+            Err(error) => {
+                self.stop_device_sync();
+                self.push_debug_log("fips.config.error", error);
+                return;
+            }
+        };
         self.reconcile_update_sources();
         let host_ble_requested = self.pending_host_ble.is_some() || self.host_ble_attached;
         let (mut config, device_sync_enabled) = match self.device_sync_config() {
@@ -263,7 +271,7 @@ impl AppCore {
             format!("{DEVICE_SYNC_SCOPE_PREFIX}{}", config.owner_hex)
         };
         let runtime_key = format!(
-            "{}:same-host={}:nearby={}:ble={}:routed={:?}:static={:?}:udp={:?}:update={:?}",
+            "{}:same-host={}:nearby={}:ble={}:routed={:?}:static={:?}:udp={:?}:update={:?}:fixture-scope={:?}",
             config.key,
             options.same_host_hashtree,
             nearby_enabled,
@@ -272,11 +280,12 @@ impl AppCore {
             options.additional_peers,
             options.udp_bind_addr,
             update_publisher,
+            fixture_scope,
         );
         // Learning another contact changes routing, not our transport or Noise
         // identity. Keep established sessions (including an in-progress call).
         let peer_refresh_key = format!(
-            "{}:{}:{}:{:?}:{:?}:{}:{}:{}:{}:{:?}:{:?}:{}",
+            "{}:{}:{}:{:?}:{:?}:{}:{}:{}:{}:{:?}:{:?}:{}:{:?}",
             config.owner_hex,
             config.local_npub,
             config.roster_at,
@@ -289,6 +298,7 @@ impl AppCore {
             options.udp_bind_addr,
             options.rendezvous_addr,
             discovery_scope,
+            fixture_scope,
         );
         let device_sync_packets = if device_sync_enabled {
             let request = serde_json::to_vec(&DeviceSyncPacket::Request {
@@ -470,6 +480,9 @@ impl AppCore {
             fips_config.node.discovery.nostr.advertise = false;
         }
         configure_fips_lan(&mut fips_config, config.nearby_ip_enabled);
+        if let Some(scope) = fixture_scope {
+            fips_config.node.discovery.lan.scope = Some(scope);
+        }
         if let Some(bind_addr) = options.udp_bind_addr {
             fips_config.transports.udp = TransportInstances::Single(UdpConfig {
                 bind_addr: Some(bind_addr),

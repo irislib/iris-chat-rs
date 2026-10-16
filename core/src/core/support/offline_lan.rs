@@ -8,6 +8,9 @@ use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
+mod scope;
+pub(in crate::core) use scope::requested_scope;
+
 pub(in crate::core) fn enabled() -> bool {
     cfg!(debug_assertions) && std::env::var("IRIS_CHAT_OFFLINE_LAN_FIXTURE").as_deref() == Ok("1")
 }
@@ -50,7 +53,12 @@ pub(in crate::core) fn capture_network(
     // Fixtures archive recent peer hints before startup. Identity-only peers
     // remain valid: LAN discovery still uses the production signed roster.
     let addressed_peers = config.peers.iter().any(|peer| !peer.addresses.is_empty());
+    let fixture_scope_valid = requested_scope()
+        .ok()
+        .flatten()
+        .is_some_and(|scope| config.node.discovery.lan.scope.as_deref() == Some(scope.as_str()));
     let isolation = relays.is_empty()
+        && fixture_scope_valid
         && !ble
         && !same_host
         && config.node.discovery.lan.enabled
@@ -65,6 +73,8 @@ pub(in crate::core) fn capture_network(
             network: json!({"transports": transports, "message_servers": relays.len(),
                 "nostr_discovery": config.node.discovery.nostr.enabled,
                 "lan_discovery": config.node.discovery.lan.enabled,
+                "lan_scope": config.node.discovery.lan.scope,
+                "fixture_scope_valid": fixture_scope_valid,
                 "addressed_peers": addressed_peers, "host_bluetooth": ble, "same_host":same_host}),
             reads: Reads::default(),
             local_hashes: BTreeMap::new(),

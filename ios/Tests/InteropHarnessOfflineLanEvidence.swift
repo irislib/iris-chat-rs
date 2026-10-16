@@ -38,9 +38,13 @@ struct OfflineLanReadEvidence {
             raw["schema"] as? Int == 1 && raw["valid"] as? Bool == false
     }
 
-    init(_ raw: JsonObject, httpURL: String) throws {
+    init(_ raw: JsonObject, httpURL: String, discoveryScope: String) throws {
+        _ = try OfflineLanFixture.validatedScope(discoveryScope)
         guard raw["schema"] as? Int == 1, raw["valid"] as? Bool == true,
               raw["isolation_valid"] as? Bool == true,
+              let network = raw["network"] as? JsonObject,
+              network["lan_scope"] as? String == discoveryScope,
+              network["fixture_scope_valid"] as? Bool == true,
               raw["blossom_read_servers"] as? [String] == [httpURL],
               raw["blossom_write_servers"] as? [String] == [httpURL],
               let epoch = raw["epoch"] as? String, !epoch.isEmpty,
@@ -164,7 +168,9 @@ extension InteropHarnessTests {
                     // full support bundle or private account/protocol records.
                     raw["fips_services"] = services
                     raw["fips_transport"] = transport
-                    observed = .success(try OfflineLanReadEvidence(raw, httpURL: fixture.httpURL))
+                    observed = .success(try OfflineLanReadEvidence(
+                        raw, httpURL: fixture.httpURL, discoveryScope: fixture.discoveryScope
+                    ))
                     return
                 } catch {
                     observed = .failure(error)

@@ -3,6 +3,7 @@ import XCTest
 
 final class OfflineLanEvidenceTests: XCTestCase {
     private let http = "http://127.0.0.1:49000"
+    private let scope = "iris-offline-lan-0123456789abcdef"
     private let wifi = [OfflineLanWiFiAddress(interface: "wifi", address: "192.168.1.10", netmask: "255.255.255.0")]
 
     private func sample(
@@ -12,11 +13,12 @@ final class OfflineLanEvidenceTests: XCTestCase {
     ) throws -> OfflineLanReadEvidence {
         try OfflineLanReadEvidence([
             "schema": 1, "valid": true, "isolation_valid": true, "epoch": epoch,
+            "network": ["lan_scope": scope, "fixture_scope_valid": true],
             "blossom_read_servers": [http], "blossom_write_servers": [http],
             "peers": [["npub": "expected-peer", "transport": transport, "address": address]],
             "reads": ["local_hits": hits, "local_misses": misses, "peer_blocks": blocks,
                       "peer_bytes": bytes, "http_blocks": httpBlocks, "http_bytes": UInt64(0)],
-        ], httpURL: http)
+        ], httpURL: http, discoveryScope: scope)
     }
 
     func testOnlyMinimalInitializingShapeCanBeRetried() {
@@ -24,6 +26,24 @@ final class OfflineLanEvidenceTests: XCTestCase {
         XCTAssertFalse(OfflineLanReadEvidence.isInitializing([:]))
         XCTAssertFalse(OfflineLanReadEvidence.isInitializing(["schema": 2, "valid": false]))
         XCTAssertFalse(OfflineLanReadEvidence.isInitializing(["schema": 1, "valid": false, "isolation_valid": false]))
+    }
+
+    func testDiscoveryScopeMustBeDedicatedAndMatchEffectiveConfiguration() throws {
+        XCTAssertEqual(try OfflineLanFixture.validatedScope(scope), scope)
+        for invalid in [nil, "", "iris-chat-nearby-v1", scope + "\n", scope + "G",
+                        "iris-offline-lan-" + String(repeating: "a", count: 65)] {
+            XCTAssertThrowsError(try OfflineLanFixture.validatedScope(invalid))
+        }
+        let raw = try sample().raw
+        XCTAssertThrowsError(try OfflineLanReadEvidence(raw, httpURL: http,
+                                                      discoveryScope: "iris-offline-lan-fedcba9876543210"))
+        let invalidNetworks: [JsonObject] = [[:], ["lan_scope": scope],
+                                            ["lan_scope": scope, "fixture_scope_valid": false]]
+        for network in invalidNetworks {
+            var changed = raw
+            changed["network"] = network
+            XCTAssertThrowsError(try OfflineLanReadEvidence(changed, httpURL: http, discoveryScope: scope))
+        }
     }
 
     func testLocalhostUSBCarrierAndWrongPeerCannotCountAsWiFi() throws {
