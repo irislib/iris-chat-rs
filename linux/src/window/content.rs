@@ -265,6 +265,10 @@ impl Content {
             // Wait for the pane animation, not for a future state change to
             // make a missing/restricted composer available and steal focus.
             if started.elapsed() >= std::time::Duration::from_secs(1) {
+                eprintln!(
+                    "SECTION_CLEAR timeout pending={:?}",
+                    section.borrow().pending_composer
+                );
                 let mut section = section.borrow_mut();
                 section.pending_composer = None;
                 section.pending_tick = false;
@@ -326,6 +330,16 @@ impl Content {
             }
             self.sidebar_account.borrow_mut().take();
         }
+        if self.section.borrow().pending_composer.is_some() {
+            eprintln!(
+                "SECTION_RENDER route={:?} pending={:?} detail_mapped={} sidebar_mapped={} show={}",
+                std::mem::discriminant(screen),
+                self.section.borrow().pending_composer,
+                self.detail_page.is_mapped(),
+                self.sidebar_page.is_mapped(),
+                self.split.shows_content()
+            );
+        }
         self.split
             .set_show_content(!matches!(screen, Screen::ChatList));
         self.navigating.set(false);
@@ -341,6 +355,10 @@ impl Content {
                         .is_some_and(|account| account.public_key_hex == *owner)
                 });
         if state.account.is_none() || !same_account {
+            eprintln!(
+                "SECTION_CLEAR account pending={:?}",
+                self.section.borrow().pending_composer
+            );
             *self.section.borrow_mut() = SectionFocus::default();
             self.chat.borrow_mut().take();
             self.settings.borrow_mut().take();
@@ -352,6 +370,11 @@ impl Content {
         // Older snapshots of the opposite section can still be queued while
         // a shortcut navigates. Only leaving the pair cancels its focus request.
         if !matches!(screen, Screen::Chat { .. } | Screen::ChatList) {
+            eprintln!(
+                "SECTION_CLEAR route={:?} pending={:?}",
+                std::mem::discriminant(screen),
+                self.section.borrow().pending_composer
+            );
             self.section.borrow_mut().pending_composer = None;
         }
         if matches!(screen, Screen::Settings) {
@@ -464,6 +487,15 @@ fn focus_section(
         None => return true,
     };
     if focused {
+        eprintln!(
+            "SECTION_CONSUMED pending={:?} sidebar_mapped={} detail_mapped={} focus={:?}",
+            section.pending_composer,
+            split.sidebar().is_some_and(|p| p.is_mapped()),
+            split.content().is_some_and(|p| p.is_mapped()),
+            root.root()
+                .and_then(|r| r.focus())
+                .map(|w| (w.type_().name().to_owned(), w.widget_name().to_string()))
+        );
         section.pending_composer = None;
     }
     focused
