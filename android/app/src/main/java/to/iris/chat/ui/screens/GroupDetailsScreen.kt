@@ -268,6 +268,10 @@ fun GroupDetailsScreen(
                 }
             }
 
+            if (details.canManage) {
+                GroupInviteLinks(appManager, details, appState.busy.creatingInvite)
+            }
+
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text(
                     text = "Members",

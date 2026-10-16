@@ -33,53 +33,7 @@ pub(super) struct PendingOutgoingInviteAcceptance {
 }
 
 impl AppCore {
-    pub(super) fn create_public_invite(&mut self) {
-        if !self.can_use_chats() {
-            self.state.toast = Some(chat_unavailable_message(self.logged_in.as_ref()).to_string());
-            self.emit_state();
-            return;
-        }
-
-        self.state.busy.creating_invite = true;
-        self.emit_state();
-
-        let result = (|| -> anyhow::Result<Invite> {
-            let logged_in = self
-                .logged_in
-                .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("Create or restore a profile first."))?;
-            let device_pubkey = logged_in.device_keys.public_key();
-            let device_id = device_pubkey.to_hex();
-            let mut invite = Invite::create_new(device_pubkey, Some(device_id), Some(1))?;
-            invite.owner_public_key = Some(logged_in.owner_pubkey);
-            invite.purpose = Some("private".to_string());
-            Ok(invite)
-        })();
-
-        match result {
-            Ok(invite) => {
-                self.ensure_local_app_keys_for_public_invite();
-                if let Err(error) = self.store_private_chat_invite(&invite) {
-                    self.state.toast = Some(error.to_string());
-                } else {
-                    self.private_chat_invites
-                        .insert(private_chat_invite_key(&invite), invite);
-                    self.mark_mobile_push_dirty();
-                    self.request_protocol_subscription_refresh();
-                    self.persist_best_effort();
-                }
-            }
-            Err(error) => {
-                self.state.toast = Some(error.to_string());
-            }
-        }
-
-        self.state.busy.creating_invite = false;
-        self.rebuild_state();
-        self.emit_state();
-    }
-
-    fn ensure_local_app_keys_for_public_invite(&mut self) {
+    pub(super) fn ensure_local_app_keys_for_public_invite(&mut self) {
         let Some(logged_in) = self.logged_in.as_ref() else {
             return;
         };
@@ -105,7 +59,7 @@ impl AppCore {
         }
     }
 
-    fn private_chat_invite_storage(&self) -> anyhow::Result<SqliteStorageAdapter> {
+    pub(super) fn private_chat_invite_storage(&self) -> anyhow::Result<SqliteStorageAdapter> {
         let logged_in = self
             .logged_in
             .as_ref()
@@ -117,7 +71,7 @@ impl AppCore {
         ))
     }
 
-    fn store_private_chat_invite(&self, invite: &Invite) -> anyhow::Result<()> {
+    pub(super) fn store_private_chat_invite(&self, invite: &Invite) -> anyhow::Result<()> {
         let storage = self.private_chat_invite_storage()?;
         storage.put(&private_chat_invite_key(invite), invite.serialize()?)?;
         Ok(())
@@ -130,8 +84,10 @@ impl AppCore {
         let storage = self.private_chat_invite_storage()?;
         // The session import receipt is already durable. Make one-use invite
         // consumption durable before removing retry state or exposing effects.
-        storage.del(invite_key)?;
-        self.private_chat_invites.remove(invite_key);
+        if !self.issued_invites.contains_key(invite_key) {
+            storage.del(invite_key)?;
+            self.private_chat_invites.remove(invite_key);
+        }
 
         let pending_response_ids = self
             .pending_private_invite_responses
@@ -332,9 +288,25 @@ impl AppCore {
             return false;
         }
 
+        // A reusable response may be wrapped in another valid outer event.
+        // Pin the receipt to its proved session key, not the transport event ID.
+        let receipt_id = if self.issued_invites.contains_key(&pending.invite_key) {
+            let Some(session_key) = response.session.state.their_next_nostr_public_key else {
+                return false;
+            };
+            format!(
+                "invite-session:{}:{}:{}:{}",
+                invite.inviter_ephemeral_public_key,
+                pending.claimed_owner,
+                pending.authenticated_device,
+                session_key
+            )
+        } else {
+            event_id.clone()
+        };
         let import_result = self.protocol_engine.as_mut().map(|engine| {
             engine.import_private_invite_session_once(
-                &event_id,
+                &receipt_id,
                 pending.claimed_owner,
                 pending.authenticated_device,
                 response.session.state,
@@ -368,9 +340,11 @@ impl AppCore {
 
         // Capture the displayed invite before consumption removes it. An older
         // outstanding invite must not redirect a newer invite screen.
-        let is_displayed_invite = self
-            .build_public_invite_snapshot()
-            .is_some_and(|snapshot| chat_invite_url(&invite).is_ok_and(|url| url == snapshot.url));
+        let is_displayed_invite = self.is_displayed_personal_invite(&pending.invite_key);
+        let is_group_invite = self
+            .issued_invites
+            .get(&pending.invite_key)
+            .is_some_and(|issued| issued.record.kind == "group");
         if let Err(error) = self.consume_private_chat_invite_after_response(&pending.invite_key) {
             self.pending_private_invite_cleanup_retry = true;
             self.push_debug_log(
@@ -391,14 +365,16 @@ impl AppCore {
         self.schedule_tracked_peer_catch_up(Duration::from_secs(2));
 
         let chat_id = pending.claimed_owner.to_hex();
-        self.ensure_thread_record(&chat_id, unix_now().get())
-            .unread_count = 0;
+        if !is_group_invite {
+            self.ensure_thread_record(&chat_id, unix_now().get())
+                .unread_count = 0;
+        }
         self.remember_recent_handshake_peer(
             chat_id.clone(),
             pending.authenticated_device.to_hex(),
             unix_now().get(),
         );
-        // Both the device proof and durable one-use consumption have succeeded.
+        // The device proof and replay receipt are durable before navigation.
         // Respect the current screen so delayed handshakes cannot steal focus.
         if is_displayed_invite
             && self.open_invite_chat_on_join

@@ -41,6 +41,7 @@ impl ProtocolEngine {
             verified_app_keys_owners: BTreeSet::new(),
             invite_owner_app_keys_evidence: BTreeMap::new(),
             processed_private_invite_response_ids: Vec::new(),
+            group_invite_uses: BTreeMap::new(),
             local_app_keys_observed: false,
             local_owner_authenticated: false,
             subscription_generation: 0,
@@ -129,6 +130,7 @@ impl ProtocolEngine {
             invite_owner_app_keys_evidence: state.invite_owner_app_keys_evidence,
             processed_private_invite_response_ids: state
                 .processed_private_invite_response_ids,
+            group_invite_uses: state.group_invite_uses,
             local_owner_authenticated: false,
             subscription_generation: state.subscription_generation,
             batch_depth: std::cell::Cell::new(0),
@@ -947,12 +949,14 @@ impl ProtocolEngine {
             processed_private_invite_response_ids: self
                 .processed_private_invite_response_ids
                 .clone(),
+            group_invite_uses: self.group_invite_uses.clone(),
             local_app_keys_observed: self.local_app_keys_observed,
             subscription_generation: self.subscription_generation,
         }
     }
 
     fn restore_checkpoint(&mut self, checkpoint: ProtocolEngineCheckpoint) {
+        self.group_invite_uses = checkpoint.group_invite_uses;
         self.session_manager = checkpoint.session_manager;
         self.group_manager = checkpoint.group_manager;
         self.pending_inbound = checkpoint.pending_inbound;

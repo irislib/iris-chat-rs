@@ -16,7 +16,13 @@ pub fn render(state: &AppState, manager: &Rc<AppManager>) -> gtk::Widget {
         manager.dispatch(AppAction::CreatePublicInvite);
     }
 
-    let title = gtk::Label::new(Some("Invite"));
+    let title = gtk::Label::new(Some(
+        state
+            .public_invite
+            .as_ref()
+            .map(|i| i.title.as_str())
+            .unwrap_or("Chat with me"),
+    ));
     title.add_css_class("title-2");
     title.set_halign(gtk::Align::Start);
     container.append(&title);

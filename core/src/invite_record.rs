@@ -101,6 +101,18 @@ impl InviteRecord {
         Ok(url.to_string())
     }
 }
+/// Encode exactly one private CHK leaf, compatible with the web invite codec.
+pub fn encode_record(record: &InviteRecord) -> anyhow::Result<(String, Vec<u8>)> {
+    record.validate()?;
+    let (ciphertext, key) = hashtree_core::encrypt_chk(&serde_json::to_vec(record)?)?;
+    anyhow::ensure!(ciphertext.len() <= MAX_INVITE_BYTES, "Invite is too large");
+    let reference = nhash_encode_full(&NHashData {
+        hash: sha256(&ciphertext),
+        decrypt_key: Some(key),
+    })?;
+    Ok((reference, ciphertext))
+}
+
 pub fn reference_from_input(input: &str) -> Option<&str> {
     let input = input.trim();
     let reference = input

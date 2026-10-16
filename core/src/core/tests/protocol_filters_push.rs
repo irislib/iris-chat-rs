@@ -2145,7 +2145,7 @@ fn mobile_push_decrypt_renders_matching_pending_invite_response_with_chat_id() {
     let device = Keys::generate();
     let peer = Keys::generate();
     let mut core = logged_in_test_core("mobile-push-invite-response-match", &owner, &device);
-    core.handle_action(AppAction::CreatePublicInvite);
+    publish_personal_invite_for_test(&mut core);
     let invite = core
         .private_chat_invites
         .values()
@@ -2205,7 +2205,7 @@ fn mobile_push_decrypt_suppresses_unverified_invite_owner_claim() {
     let claimed_owner = Keys::generate();
     let attacker_device = Keys::generate();
     let mut core = logged_in_test_core("mobile-push-invite-owner-spoof", &owner, &device);
-    core.handle_action(AppAction::CreatePublicInvite);
+    publish_personal_invite_for_test(&mut core);
     let invite = core
         .private_chat_invites
         .values()
@@ -2251,7 +2251,7 @@ fn mobile_push_decrypt_uses_verified_invite_owner_claim() {
     let peer_owner = Keys::generate();
     let peer_device = Keys::generate();
     let mut core = logged_in_test_core("mobile-push-invite-owner-verified", &owner, &device);
-    core.handle_action(AppAction::CreatePublicInvite);
+    publish_personal_invite_for_test(&mut core);
     let invite = core
         .private_chat_invites
         .values()
@@ -2421,14 +2421,8 @@ fn app_invite_consumers_use_protocol_owned_local_invite() {
     let protocol_pubkey = protocol_invite.inviter_ephemeral_public_key.to_hex();
     assert_ne!(login_pubkey, protocol_pubkey);
 
-    let public_invite = core
-        .build_public_invite_snapshot()
-        .and_then(|snapshot| super::invites::parse_public_invite_input(&snapshot.url).ok())
-        .expect("public invite fallback");
-    assert_eq!(
-        public_invite.inviter_ephemeral_public_key,
-        protocol_invite.inviter_ephemeral_public_key
-    );
+    assert!(core.build_public_invite_snapshot().is_none(),
+        "Public discovery invites must not be reused for private sharing");
 
     let push = core.build_mobile_push_sync_snapshot();
     assert_eq!(push.invite_response_pubkeys, vec![protocol_pubkey.clone()]);
@@ -2509,7 +2503,7 @@ fn mobile_push_snapshot_tracks_private_invite_when_enabled() {
     let owner = Keys::generate();
     let device = Keys::generate();
     let mut core = logged_in_test_core("mobile-push-private-invite-response", &owner, &device);
-    core.handle_action(AppAction::CreatePublicInvite);
+    publish_personal_invite_for_test(&mut core);
 
     let snapshot = core.build_mobile_push_sync_snapshot();
 

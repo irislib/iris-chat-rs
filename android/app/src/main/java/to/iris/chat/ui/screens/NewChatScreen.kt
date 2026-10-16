@@ -137,7 +137,7 @@ fun NewChatScreen(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 Text(
-                    text = "Share invite",
+                    text = appState.publicInvite?.title ?: "Chat with me",
                     style = MaterialTheme.typography.titleMedium,
                     modifier = Modifier.padding(horizontal = 2.dp),
                 )
@@ -168,6 +168,8 @@ fun NewChatScreen(
                             icon = { Icon(imageVector = IrisIcons.ScanQr, contentDescription = null) },
                         )
                     }
+                } else if (!appState.busy.creatingInvite) {
+                    NewChatInviteActionButton(text = "Create invite", onClick = { appManager.dispatch(AppAction.CreatePublicInvite) }, modifier = Modifier.fillMaxWidth(), icon = { Icon(imageVector = IrisIcons.Share, contentDescription = null) })
                 } else {
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(vertical = 24.dp),
@@ -237,11 +239,11 @@ fun NewChatScreen(
     qrDialogTab?.let { initialTab ->
         ProfileQrDialog(
             qrBitmap = qrBitmap,
-            displayName = "Invite code",
+            displayName = appState.publicInvite?.title ?: "Chat with me",
             canShare = canShareInvite && inviteUrl != null,
             initialTab = initialTab,
             qrTag = "newChatInviteQrCode",
-            qrContentDescription = "Invite code",
+            qrContentDescription = appState.publicInvite?.title ?: "Chat with me",
             scanTag = "newChatQrScanner",
             copyContentDescription = "Copy invite",
             shareContentDescription = "Share invite",

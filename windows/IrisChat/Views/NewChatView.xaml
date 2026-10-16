@@ -11,7 +11,7 @@
                     Padding="22,20"
                     Margin="0,0,0,16">
                 <StackPanel HorizontalAlignment="Center">
-                    <TextBlock Text="New Chat"
+                    <TextBlock x:Name="InviteTitle" Text="Chat with me"
                                Foreground="{StaticResource TextPrimary}"
                                FontSize="22"
                                FontWeight="SemiBold"

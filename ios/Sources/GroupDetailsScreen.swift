@@ -128,6 +128,10 @@ struct GroupDetailsScreen: View {
                     }
                 }
 
+                if details.canManage {
+                    GroupInviteLinksView(manager: manager, details: details)
+                }
+
                 IrisSectionCard {
                     CardHeader(
                         title: "Disappearing messages",
@@ -563,5 +567,68 @@ struct GroupDetailsScreen: View {
         .buttonStyle(IrisSecondaryButtonStyle(compact: true))
         .disabled(manager.state.busy.updatingGroup || member.isCreator)
         .accessibilityIdentifier("groupDetailsRemoveMember-\(String(member.ownerPubkeyHex.prefix(12)))")
+    }
+}
+
+
+private struct GroupInviteLinksView: View {
+    @ObservedObject var manager: AppManager
+    let details: GroupDetailsSnapshot
+    @State private var maxUses: UInt32 = 0
+    @State private var expiryDays = 30
+    @State private var shownCode: String?
+
+    var body: some View {
+        IrisSectionCard {
+            DisclosureGroup("Invite links") {
+                VStack(spacing: 14) {
+                    Picker("Uses", selection: $maxUses) {
+                        Text("No limit").tag(UInt32(0))
+                        Text("1").tag(UInt32(1))
+                        Text("10").tag(UInt32(10))
+                        Text("100").tag(UInt32(100))
+                    }
+                    Picker("Expires", selection: $expiryDays) {
+                        Text("In 7 days").tag(7)
+                        Text("In 30 days").tag(30)
+                        Text("Never").tag(0)
+                    }
+                    Button(manager.state.busy.creatingInvite ? "Creating…" : "Create link") {
+                        manager.dispatch(.createGroupInvite(
+                            groupId: details.groupId,
+                            maxUses: maxUses == 0 ? nil : maxUses,
+                            expiresInSeconds: expiryDays == 0 ? nil : UInt64(expiryDays * 86400)))
+                    }
+                    .buttonStyle(IrisPrimaryButtonStyle())
+                    .disabled(manager.state.busy.creatingInvite)
+                    .accessibilityIdentifier("groupInviteCreateButton")
+                    ForEach(details.inviteLinks, id: \.id) { invite in
+                        VStack(spacing: 10) {
+                            Text(invite.title).font(.headline).multilineTextAlignment(.center)
+                            Text(invite.maxUses.map { "\(invite.useCount) of \($0) joined" } ?? "\(invite.useCount) joined")
+                                .font(.footnote)
+                            if let expiry = invite.expiresAt {
+                                Text("Expires \(Date(timeIntervalSince1970: TimeInterval(expiry)).formatted(date: .abbreviated, time: .omitted))")
+                                    .font(.footnote)
+                            }
+                            if shownCode == invite.id {
+                                QrCodeImage(text: invite.url)
+                                    .accessibilityIdentifier("groupInviteQrCode")
+                            }
+                            HStack {
+                                Button("Copy") { manager.copyToClipboard(invite.url) }
+                                ShareLink("Share", item: invite.url)
+                                Button(shownCode == invite.id ? "Hide code" : "Show code") {
+                                    shownCode = shownCode == invite.id ? nil : invite.id
+                                }
+                            }.buttonStyle(IrisSecondaryButtonStyle(compact: true))
+                            Button("Revoke", role: .destructive) {
+                                manager.dispatch(.revokeGroupInvite(groupId: details.groupId, inviteId: invite.id))
+                            }.accessibilityIdentifier("groupInviteRevokeButton")
+                        }.padding(.top, 8)
+                    }
+                }.padding(.top, 12)
+            }
+        }
     }
 }

@@ -33,7 +33,7 @@ internal static class GroupMemberPickerTests
             pictureUrl = null, subtitle = null,
         }).ToArray();
         var details = new GroupDetailsSnapshot("picker-test", "People", null, null, "You", "",
-            true, false, 1, Array.Empty<GroupMemberSnapshot>());
+            true, false, 1, Array.Empty<GroupMemberSnapshot>(), Array.Empty<GroupInviteSnapshot>());
         void Update(GroupDetailsSnapshot next) {
             details = next;
             apply.Invoke(manager, new object[] { new AppUpdate.FullState(original with {

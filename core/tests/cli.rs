@@ -1,3 +1,4 @@
+mod common;
 use std::path::Path;
 use std::process::Command;
 use std::time::{Duration, Instant};
@@ -9,6 +10,7 @@ use tempfile::TempDir;
 
 fn run_iris(data_dir: &Path, args: &[&str]) -> Value {
     let output = Command::new(env!("CARGO_BIN_EXE_iris"))
+        .env("HTREE_CONFIG_DIR", common::invite_server_config())
         .arg("--json")
         .arg("--data-dir")
         .arg(data_dir)
@@ -30,6 +32,7 @@ fn run_iris(data_dir: &Path, args: &[&str]) -> Value {
 
 fn run_iris_error(data_dir: &Path, args: &[&str]) -> Value {
     let output = Command::new(env!("CARGO_BIN_EXE_iris"))
+        .env("HTREE_CONFIG_DIR", common::invite_server_config())
         .arg("--json")
         .arg("--data-dir")
         .arg(data_dir)
@@ -51,6 +54,7 @@ fn run_iris_error(data_dir: &Path, args: &[&str]) -> Value {
 
 fn start_iris(data_dir: &Path, args: &[&str]) -> std::process::Child {
     Command::new(env!("CARGO_BIN_EXE_iris"))
+        .env("HTREE_CONFIG_DIR", common::invite_server_config())
         .arg("--json")
         .arg("--data-dir")
         .arg(data_dir)
@@ -77,6 +81,7 @@ fn read_json_line(reader: &mut BufReader<std::process::ChildStdout>) -> Value {
 #[test]
 fn help_groups_top_level_commands() {
     let output = Command::new(env!("CARGO_BIN_EXE_iris"))
+        .env("HTREE_CONFIG_DIR", common::invite_server_config())
         .arg("--help")
         .output()
         .expect("run iris help");
@@ -115,6 +120,7 @@ fn whoami_does_not_emit_perf_logs_by_default() {
     run_iris(dir.path(), &["account", "create", "--name", "Alice"]);
 
     let output = Command::new(env!("CARGO_BIN_EXE_iris"))
+        .env("HTREE_CONFIG_DIR", common::invite_server_config())
         .env_remove("IRIS_PERF_LOG")
         .arg("--data-dir")
         .arg(dir.path())
@@ -366,13 +372,32 @@ fn invite_create_group_create_relays_and_logout_are_scriptable() {
     run_iris(dir.path(), &["relay", "set"]);
 
     let invite = run_iris(dir.path(), &["invite", "create"]);
-    assert!(invite["data"]["url"].as_str().unwrap().contains("iris"));
+    assert!(invite["data"]["url"]
+        .as_str()
+        .unwrap()
+        .starts_with("https://chat.iris.to/#/nhash1"));
 
     let group = run_iris(dir.path(), &["group", "create", "Notes", bob_user_id]);
     let chat_id = group["data"]["current_chat"]["chat_id"].as_str().unwrap();
     assert!(chat_id.starts_with("group:"));
 
     let group_id = group["data"]["current_chat"]["group_id"].as_str().unwrap();
+    let link = run_iris(
+        dir.path(),
+        &["invite", "group", group_id, "--max-uses", "10"],
+    );
+    let issued = &link["data"]["invites"][0];
+    assert!(issued["url"]
+        .as_str()
+        .unwrap()
+        .starts_with("https://chat.iris.to/#/nhash1"));
+    assert_eq!(issued["max_uses"], 10);
+    assert_eq!(issued["uses"], 0);
+    let revoked = run_iris(
+        dir.path(),
+        &["invite", "revoke", group_id, issued["id"].as_str().unwrap()],
+    );
+    assert_eq!(revoked["data"]["revoked"], true);
     let sent = run_iris(dir.path(), &["group", "send", group_id, "group note"]);
     assert_eq!(sent["data"]["body"], "group note");
     let message_id = sent["data"]["id"].as_str().unwrap();
@@ -549,6 +574,7 @@ fn account_profile_preserves_omitted_fields_across_processes() {
     let dir = TempDir::new().unwrap();
     let run = |args: &[&str]| {
         let output = Command::new(env!("CARGO_BIN_EXE_iris"))
+            .env("HTREE_CONFIG_DIR", common::invite_server_config())
             .env("IRIS_DEMO_RELAYS", "")
             .arg("--json")
             .arg("--data-dir")

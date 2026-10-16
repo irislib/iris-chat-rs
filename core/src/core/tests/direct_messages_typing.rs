@@ -147,13 +147,13 @@ fn unknown_users_toggle_off_excludes_non_accepted_peers_from_subs() {
 
     let mut alice = logged_in_test_core("push-filter-toggle-alice", &alice_owner, &alice_device);
     alice.pending_relay_publishes.clear();
-    alice.handle_action(AppAction::CreatePublicInvite);
+    publish_personal_invite_for_test(&mut alice);
     let invite_url = alice
         .state
         .public_invite
         .as_ref()
         .expect("alice invite")
-        .url
+        .legacy_url
         .clone();
 
     let mut bob = logged_in_test_core("push-filter-toggle-bob", &bob_owner, &bob_device);
@@ -2011,13 +2011,13 @@ fn group_delivered_receipt_is_queued_directly_to_message_author() {
         &alice_owner,
         &alice_device,
     );
-    alice.handle_action(AppAction::CreatePublicInvite);
+    publish_personal_invite_for_test(&mut alice);
     let invite_url = alice
         .state
         .public_invite
         .as_ref()
         .expect("alice invite")
-        .url
+        .legacy_url
         .clone();
 
     let mut bob = logged_in_test_core("group-delivered-author-only-bob", &bob_owner, &bob_device);
@@ -2095,13 +2095,13 @@ fn assert_group_seen_receipt_updates_sender_copy(batched_unloaded: bool) {
 
     let mut alice = logged_in_test_core("group-seen-author-alice", &alice_owner, &alice_device);
     alice.pending_relay_publishes.clear();
-    alice.handle_action(AppAction::CreatePublicInvite);
+    publish_personal_invite_for_test(&mut alice);
     let invite_url = alice
         .state
         .public_invite
         .as_ref()
         .expect("alice invite")
-        .url
+        .legacy_url
         .clone();
 
     let mut bob = logged_in_test_core("group-seen-author-bob", &bob_owner, &bob_device);

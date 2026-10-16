@@ -15,6 +15,8 @@ impl AppCore {
         self.clear_update_sources();
         self.reset_pending_invite_acceptance();
         self.private_chat_invites.clear();
+        self.issued_invites.clear();
+        self.pending_invite_upload = None;
         self.pending_private_invite_responses.clear();
         self.pending_private_invite_cleanup_retry = false;
         self.device_invite_poll_token = self.device_invite_poll_token.saturating_add(1);

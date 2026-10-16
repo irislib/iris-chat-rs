@@ -82,6 +82,22 @@
                 </StackPanel>
             </Border>
 
+            <Expander x:Name="InviteLinksSection" Header="Invite links" Margin="0,0,0,16">
+                <StackPanel Margin="0,12,0,0">
+                    <TextBlock Text="Uses" />
+                    <ComboBox x:Name="InviteUses" SelectedIndex="0" Margin="0,4,0,10">
+                        <ComboBoxItem Content="No limit" /><ComboBoxItem Content="1" />
+                        <ComboBoxItem Content="10" /><ComboBoxItem Content="100" />
+                    </ComboBox>
+                    <TextBlock Text="Expires" />
+                    <ComboBox x:Name="InviteExpiry" SelectedIndex="0" Margin="0,4,0,10">
+                        <ComboBoxItem Content="In 30 days" /><ComboBoxItem Content="In 7 days" /><ComboBoxItem Content="Never" />
+                    </ComboBox>
+                    <Button x:Name="CreateInviteButton" Content="Create link" Style="{StaticResource PrimaryButton}" Click="OnCreateInvite" />
+                    <StackPanel x:Name="InviteLinksList" />
+                </StackPanel>
+            </Expander>
+
             <Border Background="{StaticResource Panel}"
                     CornerRadius="{StaticResource SectionRadius}"
                     Padding="20"

@@ -19,13 +19,8 @@ fn crafted_private_invite_response(
 
 fn create_private_invite_for_test(core: &mut AppCore) -> String {
     core.pending_relay_publishes.clear();
-    core.handle_action(AppAction::CreatePublicInvite);
-    core.state
-        .public_invite
-        .as_ref()
-        .expect("private invite")
-        .url
-        .clone()
+    core.create_legacy_invite_for_test();
+    super::invites::chat_invite_url(core.private_chat_invites.values().max_by_key(|i| i.created_at).unwrap()).unwrap()
 }
 
 fn active_session_device_pubkeys(core: &AppCore, owner: PublicKey) -> Vec<PublicKey> {

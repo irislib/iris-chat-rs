@@ -343,6 +343,7 @@ fn fixture_search_hit(query: &str, index: u32) -> MessageSearchHit {
 fn fixture_group_details(group_count: u32) -> GroupDetailsSnapshot {
     let member_count = group_count.clamp(3, 32);
     GroupDetailsSnapshot {
+        invite_links: Vec::new(),
         group_id: "group-0001".to_string(),
         name: "Project Group 0001".to_string(),
         picture_url: None,

@@ -86,6 +86,7 @@ fun CreateInviteScreen(
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             if (qrBitmap != null && inviteUrl != null) {
+                Text(appState.publicInvite?.title ?: "Chat with me", style = MaterialTheme.typography.titleLarge)
                 IrisQrCodeImage(
                     bitmap = qrBitmap,
                     contentDescription = "Invite code",

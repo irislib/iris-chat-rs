@@ -657,21 +657,7 @@ impl AppCore {
     }
 
     pub(super) fn build_public_invite_snapshot(&self) -> Option<PublicInviteSnapshot> {
-        let invite = self
-            .private_chat_invites
-            .values()
-            .max_by_key(|invite| invite.created_at)
-            .cloned()
-            .or_else(|| {
-                self.protocol_engine
-                    .as_ref()
-                    .and_then(ProtocolEngine::local_invite)
-            })?;
-        let url = super::invites::chat_invite_url(&invite).ok()?;
-        Some(PublicInviteSnapshot {
-            url,
-            open_chat_on_join: self.open_invite_chat_on_join,
-        })
+        self.personal_invite_snapshot()
     }
 
     pub(super) fn build_link_device_snapshot(&self) -> Option<LinkDeviceSnapshot> {
@@ -836,6 +822,7 @@ impl AppCore {
         let picture_url = self.group_picture_url(&group);
         let about = group.about.clone();
 
+        let invite_links = self.group_invite_snapshots(group_id);
         Some(GroupDetailsSnapshot {
             group_id: group.group_id,
             name: group.name,
@@ -850,6 +837,7 @@ impl AppCore {
             is_muted,
             revision: group.revision,
             members,
+            invite_links,
         })
     }
 

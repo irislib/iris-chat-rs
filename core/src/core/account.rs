@@ -701,6 +701,8 @@ impl AppCore {
             device_pubkey.to_hex(),
         )) as Arc<dyn StorageAdapter>;
         self.private_chat_invites = load_private_chat_invites(storage.as_ref())?;
+        self.issued_invites = super::issued_invites::load_issued_invites(storage.as_ref())?;
+        self.pending_invite_upload = None;
         self.pending_private_invite_responses =
             load_pending_private_invite_responses(storage.as_ref())?;
 

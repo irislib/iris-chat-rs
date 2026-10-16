@@ -110,6 +110,15 @@ impl AppCore {
                 &picture_filename,
             ),
             AppAction::CreatePublicInvite => self.create_public_invite(),
+            AppAction::CreateGroupInvite {
+                group_id,
+                max_uses,
+                expires_in_seconds,
+            } => self.create_group_invite(&group_id, max_uses, expires_in_seconds),
+            AppAction::RevokeGroupInvite {
+                group_id,
+                invite_id,
+            } => self.revoke_group_invite(&group_id, &invite_id),
             AppAction::SetInviteOpenOnJoin { enabled } => {
                 self.open_invite_chat_on_join = enabled;
                 self.rebuild_state();

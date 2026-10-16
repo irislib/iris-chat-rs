@@ -23,6 +23,27 @@ https://git.iris.to/#/npub1399g0q2gtwjcglyjcg3jw3rcllqhm375pwases5hkvqa56aqe5wsz
 - Search and choose one or more recipients.
 - iOS suggests recent chats in the share sheet.
 
+## Invitations
+
+Native apps create encrypted personal and group links in the same
+`https://chat.iris.to/#/nhash1…` format as web. A link is shown only after its
+private hashtree record has been uploaded successfully. Existing personal links
+still work. Personal links are reusable; the code screen identifies the person
+with “Chat with [name]”.
+
+Group admins can create, copy, show and revoke links in group details. The default
+is unlimited uses with a 30-day expiry, with 1/10/100-use and 7-day/never options.
+Only the issuing device handles joins. Requests wait while it is offline; other
+admins can create their own links. Admission authenticates the joiner's device,
+checks current admin authority, expiry and revocation, and saves membership and
+the distinct-person use receipt in one transaction. Retries do not consume a
+second use, and removed members cannot reuse the same link. Group message keys
+are never included in invite records.
+
+The CLI supports `iris invite create`, `iris invite group GROUP_ID --max-uses 10`
+(with `--expires-in` in seconds, default 30 days; 0 means never), and
+`iris invite revoke GROUP_ID INVITE_ID`.
+
 ## Status
 
 - Shared Rust core drives app state, navigation, messaging, sync, persistence,

@@ -9,7 +9,7 @@
                     Padding="22,20"
                     Margin="0,0,0,12">
                 <StackPanel HorizontalAlignment="Center">
-                    <TextBlock Text="Public invite"
+                    <TextBlock x:Name="InviteTitle" Text="Chat with me"
                                Foreground="{StaticResource TextPrimary}"
                                FontSize="22"
                                FontWeight="SemiBold"

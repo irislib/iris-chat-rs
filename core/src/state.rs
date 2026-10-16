@@ -504,6 +504,17 @@ pub struct GroupDetailsSnapshot {
     pub is_muted: bool,
     pub revision: u64,
     pub members: Vec<GroupMemberSnapshot>,
+    pub invite_links: Vec<GroupInviteSnapshot>,
+}
+
+#[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
+pub struct GroupInviteSnapshot {
+    pub id: String,
+    pub url: String,
+    pub title: String,
+    pub use_count: u32,
+    pub max_uses: Option<u32>,
+    pub expires_at: Option<u64>,
 }
 
 #[derive(uniffi::Record, Clone, Debug, Default, PartialEq, Eq)]
@@ -688,6 +699,8 @@ impl SearchResultSnapshot {
 #[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
 pub struct PublicInviteSnapshot {
     pub url: String,
+    pub legacy_url: String,
+    pub title: String,
     #[uniffi(default = true)]
     pub open_chat_on_join: bool,
 }

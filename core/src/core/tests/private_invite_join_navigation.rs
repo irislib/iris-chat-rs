@@ -5,10 +5,10 @@ fn private_invite_join_opens_chat_without_a_first_message() {
     let peer_owner = Keys::generate();
     let peer_device = Keys::generate();
     let mut inviter = isolated_invite_ui_core("join-auto-open-inviter", &owner, &device);
-    inviter.handle_action(AppAction::CreatePublicInvite);
+    publish_personal_invite_for_test(&mut inviter);
     inviter.handle_action(AppAction::PushScreen { screen: Screen::NewChat });
     assert!(matches!(inviter.screen_stack.last(), Some(Screen::NewChat)));
-    let url = inviter.state.public_invite.as_ref().unwrap().url.clone();
+    let url = inviter.state.public_invite.as_ref().unwrap().legacy_url.clone();
     let mut joiner = isolated_invite_ui_core("join-auto-open-peer", &peer_owner, &peer_device);
     joiner.handle_action(AppAction::AcceptInvite { invite_input: url });
     prove_invite_owner(&mut joiner, &owner, &device, 10);
@@ -20,7 +20,7 @@ fn private_invite_join_opens_chat_without_a_first_message() {
     assert!(matches!(inviter.screen_stack.last(), Some(Screen::Chat { chat_id }) if chat_id == &peer_owner.public_key().to_hex()),
         "An authenticated invite join should open the chat without any text message");
     assert!(inviter.threads[&peer_owner.public_key().to_hex()].messages.is_empty());
-    assert!(inviter.private_chat_invites.is_empty(), "Consumption must be durable before navigation");
+    assert!(!inviter.private_chat_invites.is_empty(), "Reusable invite survives authenticated joins");
 }
 
 #[test]
@@ -31,10 +31,10 @@ fn private_invite_join_respects_unchecked_away_and_different_invite() {
         let peer_owner = Keys::generate();
         let peer_device = Keys::generate();
         let mut inviter = isolated_invite_ui_core("invite-no-focus-steal", &owner, &device);
-        inviter.handle_action(AppAction::CreatePublicInvite);
+        publish_personal_invite_for_test(&mut inviter);
         inviter.handle_action(AppAction::PushScreen { screen: Screen::NewChat });
         assert!(inviter.state.public_invite.as_ref().unwrap().open_chat_on_join);
-        let url = inviter.state.public_invite.as_ref().unwrap().url.clone();
+        let url = inviter.state.public_invite.as_ref().unwrap().legacy_url.clone();
         let mut joiner = isolated_invite_ui_core("invite-no-focus-steal-peer", &peer_owner, &peer_device);
         joiner.handle_action(AppAction::AcceptInvite { invite_input: url.clone() });
         prove_invite_owner(&mut joiner, &owner, &device, 10);
@@ -47,8 +47,8 @@ fn private_invite_join_respects_unchecked_away_and_different_invite() {
             "different_invite" => {
                 // Invite timestamps are seconds; give the newly displayed invite a distinct time.
                 std::thread::sleep(Duration::from_millis(1100));
-                inviter.handle_action(AppAction::CreatePublicInvite);
-                assert_ne!(inviter.state.public_invite.as_ref().unwrap().url, url);
+                publish_personal_invite_for_test(&mut inviter);
+                assert_ne!(inviter.state.public_invite.as_ref().unwrap().legacy_url, url);
             }
             _ => unreachable!(),
         }
