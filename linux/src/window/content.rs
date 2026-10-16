@@ -349,17 +349,11 @@ impl Content {
             self.section.borrow_mut().remembered_chat =
                 Some((account.public_key_hex.clone(), chat.chat_id.clone()));
         }
-        let mut section = self.section.borrow_mut();
-        if section.pending_composer.is_some_and(|composer| {
-            if composer {
-                !matches!(screen, Screen::Chat { .. })
-            } else {
-                *screen != Screen::ChatList
-            }
-        }) {
-            section.pending_composer = None;
+        // Older snapshots of the opposite section can still be queued while
+        // a shortcut navigates. Only leaving the pair cancels its focus request.
+        if !matches!(screen, Screen::Chat { .. } | Screen::ChatList) {
+            self.section.borrow_mut().pending_composer = None;
         }
-        drop(section);
         if matches!(screen, Screen::Settings) {
             if let Some(view) = self.settings.borrow_mut().as_mut() {
                 view.update(state, manager);
