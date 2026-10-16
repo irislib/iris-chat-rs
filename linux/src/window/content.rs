@@ -23,20 +23,27 @@ pub(super) struct Content {
 #[derive(Default)]
 struct SectionFocus {
     remembered_chat: Option<(String, String)>,
-    pending_composer: Option<bool>,
-    pending_since: Option<std::time::Instant>,
+    pending: Option<Rc<SectionFocusRequest>>,
     pending_tick: bool,
+}
+
+struct SectionFocusRequest {
+    composer: bool,
+    started: std::time::Instant,
 }
 
 impl SectionFocus {
     fn request(&mut self, composer: bool) {
-        self.pending_composer = Some(composer);
-        self.pending_since = Some(std::time::Instant::now());
+        self.pending = Some(Rc::new(SectionFocusRequest {
+            composer,
+            started: std::time::Instant::now(),
+        }));
+        self.pending_tick = false;
     }
 
     fn clear_request(&mut self) {
-        self.pending_composer = None;
-        self.pending_since = None;
+        self.pending = None;
+        self.pending_tick = false;
     }
 }
 
@@ -256,19 +263,21 @@ impl Content {
             self.split.shows_content(),
             self.sidebar_page.is_mapped(),
             self.detail_page.is_mapped(),
-            section.pending_composer,
+            section.pending.as_ref().map(|request| request.composer),
             section.pending_tick,
         )
     }
 
     fn focus_pending_section(&self) {
-        if focus_section(self.root.upcast_ref(), &self.section, &self.split) {
-            return;
-        }
         let mut section = self.section.borrow_mut();
-        if section.pending_composer.is_none() || section.pending_tick {
+        if section.pending_tick {
             return;
         }
+        let Some(request) = section.pending.clone() else {
+            return;
+        };
+        // Render the queued snapshots before consuming focus. A transient pane
+        // can already be mapped while later snapshots still change its route.
         section.pending_tick = true;
         let weak = Rc::downgrade(&self.section);
         let split = self.split.downgrade();
@@ -276,15 +285,19 @@ impl Content {
             let (Some(section), Some(split)) = (weak.upgrade(), split.upgrade()) else {
                 return glib::ControlFlow::Break;
             };
-            // Wait for the pane animation, not for a future state change to
-            // make a missing/restricted composer available and steal focus.
-            // The callback can survive several rapid shortcuts. Its age must
-            // not expire a newer request before that pane finishes animating.
-            if section
+            // An older tick must not consume or cancel a newer key request,
+            // including after an account reset creates a new focus state.
+            if !section
                 .borrow()
-                .pending_since
-                .is_some_and(|started| started.elapsed() >= std::time::Duration::from_secs(1))
+                .pending
+                .as_ref()
+                .is_some_and(|current| Rc::ptr_eq(current, &request))
             {
+                return glib::ControlFlow::Break;
+            }
+            // Wait only for this explicit request's pane animation, never for
+            // a future state change that could make a missing composer appear.
+            if request.started.elapsed() >= std::time::Duration::from_secs(1) {
                 let mut section = section.borrow_mut();
                 section.clear_request();
                 section.pending_tick = false;
@@ -469,19 +482,19 @@ fn focus_section(
     split: &adw::NavigationSplitView,
 ) -> bool {
     let mut section = section.borrow_mut();
-    if section
-        .pending_composer
-        .is_some_and(|composer| !section_pane_ready(split, composer))
-    {
+    let Some(request) = section.pending.as_ref() else {
+        return true;
+    };
+    if !section_pane_ready(split, request.composer) {
         return false;
     }
-    let focused = match section.pending_composer {
-        Some(true) => crate::widgets::keyboard_list::focus_composer(root),
-        Some(false) => crate::widgets::keyboard_list::focus_list(
+    let focused = if request.composer {
+        crate::widgets::keyboard_list::focus_composer(root)
+    } else {
+        crate::widgets::keyboard_list::focus_list(
             root,
             section.remembered_chat.as_ref().map(|(_, id)| id.as_str()),
-        ),
-        None => return true,
+        )
     };
     if focused {
         section.clear_request();
