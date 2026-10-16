@@ -105,10 +105,14 @@ impl AppCore {
                         .iter()
                         .filter(|message| {
                             message.is_outgoing
-                                || message
-                                    .reactors
-                                    .iter()
-                                    .any(|reaction| reaction.author == owner)
+                                || message.reactors.iter().any(|reaction| {
+                                    reaction.author == owner
+                                        && !self.has_reaction_head(
+                                            &thread.chat_id,
+                                            &message.id,
+                                            &owner,
+                                        )
+                                })
                         })
                         .map(|message| message.created_at_secs)
                         .max()

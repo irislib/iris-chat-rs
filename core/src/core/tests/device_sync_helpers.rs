@@ -1,4 +1,4 @@
-fn configure_test_device_sync_profile(
+pub(super) fn configure_test_device_sync_profile(
     core: &mut AppCore,
     owner: &Keys,
     local_device: &Keys,

@@ -177,10 +177,18 @@ fn obsolete_message_history_wire_routes_are_not_supported() {
 fn request_acceptance_from_sibling_reaction_and_history_records_is_durable() {
     for reaction in [false, true] {
         let owner = Keys::generate();
+        let device = Keys::generate();
         let (mut core, _, _dir) = crate::core::tests::logged_in_test_core_with_updates(
             "engagement-records",
             &owner,
+            &device,
+        );
+        crate::core::tests::configure_test_device_sync_profile(
+            &mut core,
+            &owner,
+            &device,
             &Keys::generate(),
+            None,
         );
         let peer = Keys::generate();
         let chat = peer.public_key().to_hex();
@@ -225,4 +233,48 @@ fn request_acceptance_from_sibling_reaction_and_history_records_is_durable() {
         assert_eq!(core.request_decision(&chat).unwrap().decision, "accepted");
         assert!(!core.thread_is_message_request(&chat));
     }
+}
+
+#[test]
+fn request_acceptance_typed_reaction_never_uses_a_later_target_timestamp() {
+    let owner = Keys::generate();
+    let (mut core, _, _dir) = crate::core::tests::logged_in_test_core_with_updates(
+        "reaction-original-clock",
+        &owner,
+        &Keys::generate(),
+    );
+    let peer = Keys::generate();
+    let chat = peer.public_key().to_hex();
+    core.ensure_thread_record(&chat, 100);
+    assert!(core.apply_sync_record(DeviceSyncRecord::Reaction {
+        reaction: DeviceSyncReaction {
+            chat_id: chat.clone(),
+            id: "typed-reaction".into(),
+            author: owner.public_key().to_hex(),
+            created_at: 200,
+            created_at_ms: None,
+            message_id: "late-target".into(),
+            emoji: "❤".into(),
+        }
+    }));
+    let rejection = nostr_identity::build_private_setting(
+        owner.public_key(),
+        "requestDecision",
+        &chat,
+        &serde_json::json!({"chatId":chat,"decision":"rejected","updatedAtMs":250_000}),
+    )
+    .unwrap();
+    assert!(core.merge_private_setting(&rejection));
+    core.apply_runtime_text_message(
+        peer.public_key(),
+        None,
+        "Late target".into(),
+        300,
+        None,
+        Some("late-target".into()),
+        None,
+    );
+    core.restore_device_sync_record_projection();
+    assert_eq!(core.request_decision(&chat).unwrap().decision, "rejected");
+    assert!(core.thread_is_message_request(&chat));
 }

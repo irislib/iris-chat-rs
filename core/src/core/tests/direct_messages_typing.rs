@@ -208,6 +208,8 @@ fn unknown_users_toggle_off_excludes_non_accepted_peers_from_subs() {
         );
     }
 
+    alice.apply_runtime_text_message(bob_owner.public_key(), None, "Direct request".into(),
+        unix_now().get(), None, Some("group-transport-request".into()), None);
     let group = test_group_snapshot("accepted-push-group", "Friends", bob_owner.public_key(),
         vec![alice_owner.public_key(), bob_owner.public_key()], vec![bob_owner.public_key()], 1);
     alice.apply_group_roster_snapshot(group, 200);
