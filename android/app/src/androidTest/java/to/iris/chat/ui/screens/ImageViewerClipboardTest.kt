@@ -32,7 +32,16 @@ class ImageViewerClipboardTest {
         }
         val bytes = ByteArrayOutputStream().also { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }.toByteArray()
         bitmap.recycle()
-        val attachment = MessageAttachmentSnapshot("fixture", "colors.png", "colors.png", "htree://fixture/colors.png", true, false, false)
+        val attachment = MessageAttachmentSnapshot(
+            uploadedUrls = emptyList(),
+            nhash = "fixture",
+            filename = "colors.png",
+            filenameEncoded = "colors.png",
+            htreeUrl = "htree://fixture/colors.png",
+            isImage = true,
+            isVideo = false,
+            isAudio = false,
+        )
         val clipboard = context.getSystemService(ClipboardManager::class.java)
         compose.setContent { IrisChatTheme {
             ImageViewerDialog(ImageViewerItem(listOf(attachment), 0, bytes, "Alex", 0), { bytes }, {}, {})
@@ -72,7 +81,16 @@ class ImageViewerClipboardTest {
     @Test fun animatedImageLongPressCopiesOriginalGif() {
         val context = InstrumentationRegistry.getInstrumentation().targetContext
         val bytes = android.util.Base64.decode("R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7", android.util.Base64.DEFAULT)
-        val attachment = MessageAttachmentSnapshot("gif-fixture", "animation.gif", "animation.gif", "htree://fixture/animation.gif", true, false, false)
+        val attachment = MessageAttachmentSnapshot(
+            uploadedUrls = emptyList(),
+            nhash = "gif-fixture",
+            filename = "animation.gif",
+            filenameEncoded = "animation.gif",
+            htreeUrl = "htree://fixture/animation.gif",
+            isImage = true,
+            isVideo = false,
+            isAudio = false,
+        )
         val clipboard = context.getSystemService(ClipboardManager::class.java)
         compose.setContent { IrisChatTheme {
             ImageViewerDialog(ImageViewerItem(listOf(attachment), 0, bytes, "Alex", 0), { bytes }, {}, {})

@@ -84,7 +84,16 @@ class ChatAudioMessageTest {
 
     @Test fun incomingAndOutgoingAttachmentsHaveSeekableInlineWaveforms() {
         val data = bytes()
-        val attachment = MessageAttachmentSnapshot("fixture", "Voice message.M4A", "Voice%20message.M4A", "htree://fixture/Voice%20message.M4A", false, false, false)
+        val attachment = MessageAttachmentSnapshot(
+            uploadedUrls = emptyList(),
+            nhash = "fixture",
+            filename = "Voice message.M4A",
+            filenameEncoded = "Voice%20message.M4A",
+            htreeUrl = "htree://fixture/Voice%20message.M4A",
+            isImage = false,
+            isVideo = false,
+            isAudio = false,
+        )
         var downloads = 0
         compose.setContent {
             IrisChatTheme(darkTheme = true) {

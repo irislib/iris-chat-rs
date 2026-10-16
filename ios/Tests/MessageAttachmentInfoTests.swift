@@ -12,9 +12,9 @@ final class MessageAttachmentInfoTests: XCTestCase {
     private let upload = "https://files.example/" + String(repeating: "a", count: 64) + ".bin"
 
     private func attachment(uploads: [String]) -> MessageAttachmentSnapshot {
-        MessageAttachmentSnapshot(nhash: "fixture", filename: "photo.jpg", filenameEncoded: "photo.jpg",
+        MessageAttachmentSnapshot(uploadedUrls: uploads, nhash: "fixture", filename: "photo.jpg", filenameEncoded: "photo.jpg",
                                   htreeUrl: "htree://fixture/photo.jpg", isImage: true, isVideo: false,
-                                  isAudio: false, uploadedUrls: uploads)
+                                  isAudio: false)
     }
 
     func testLocalReceiptsAreCopiedInDetailsButNeverForwardedOrPutInRumor() {

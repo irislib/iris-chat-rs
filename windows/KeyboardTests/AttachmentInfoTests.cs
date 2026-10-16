@@ -19,8 +19,9 @@ internal static class AttachmentInfoTests
         var chat = original.currentChat!;
         var firstUrl = "https://files.example/" + new string('a', 64) + ".bin";
         var secondUrl = "https://backup.example/" + new string('a', 64) + ".bin";
-        var attachment = new MessageAttachmentSnapshot("fixture", "photo.jpg", "photo.jpg",
-            "htree://fixture/photo.jpg", true, false, false, uploadedUrls: []);
+        var attachment = new MessageAttachmentSnapshot(uploadedUrls: [], nhash: "fixture",
+            filename: "photo.jpg", filenameEncoded: "photo.jpg", htreeUrl: "htree://fixture/photo.jpg",
+            isImage: true, isVideo: false, isAudio: false);
         var message = new ChatMessageSnapshot("attachment-info", chat.chatId, ChatMessageKind.User,
             "You", null, null, "A photo", [attachment], [], [], true, 100, null, DeliveryState.Sent,
             [], new MessageDeliveryTraceSnapshot([], [], [], [], null), null);
