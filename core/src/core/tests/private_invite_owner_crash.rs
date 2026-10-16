@@ -78,8 +78,9 @@ fn private_invite_delete_failure_blocks_sibling_imports_in_same_retry_pass() {
     assert_eq!(stored_session_count(&inviter, peer_owner.public_key()), 1);
     assert!(inviter.pending_private_invite_responses.is_empty());
     assert!(inviter.private_chat_invites.is_empty());
-    assert!(matches!(inviter.screen_stack.last(), Some(Screen::Chat { chat_id })
-        if chat_id == &peer_owner.public_key().to_hex()));
+    assert!(inviter.threads.contains_key(&peer_owner.public_key().to_hex()));
+    assert!(matches!(inviter.screen_stack.last(), Some(Screen::NewChat)),
+        "A legacy link that is not displayed must not redirect the current code screen");
 }
 
 #[test]
