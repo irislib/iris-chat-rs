@@ -2075,9 +2075,9 @@ dependencies = [
 
 [[package]]
 name = "hashtree-lmdb"
-version = "0.2.89"
+version = "0.2.90"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dc874eda0fb73a25af9ff9ddcbba569b2690c2a5ad4f8dd33230c16bc60730cd"
+checksum = "7d1d8661c416dd410eb09dc3477c6aaf6d7146627be1c633d5c765fecb1febeb"
 dependencies = [
  "async-trait",
  "hashtree-core",
