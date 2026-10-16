@@ -1743,11 +1743,10 @@ impl AppCore {
     /// expected event-author pubkeys (hex), narrowed to peers the
     /// user actually wants traffic from: blocked owners are always
     /// excluded, and when the unknown-users toggle is off, owners
-    /// that aren't in the accepted set are excluded too. The owner
+    /// outside accepted conversations are excluded too. The owner
     /// gate is applied per-session (so we never include any of a
     /// blocked owner's device-ephemeral event authors). The result
-    /// feeds both the nostr relay subscription's `authors` filter and
-    /// the mobile-push subscription body.
+    /// feeds the mobile-push subscription body.
     pub(super) fn subscribable_message_author_hexes(&self) -> HashSet<String> {
         let accept_unknown = self.preferences.accept_unknown_direct_messages;
         let blocked: HashSet<String> = self
@@ -1761,6 +1760,20 @@ impl AppCore {
             .accepted_owner_pubkeys
             .iter()
             .cloned()
+            .collect();
+        // Group sender-key updates use pairwise transport. Accepting that
+        // group permits its transport without whitelisting each member's DM.
+        let group_peers: HashSet<String> = self
+            .groups
+            .values()
+            .filter(|group| {
+                self.logged_in.as_ref().is_some_and(|local| {
+                    group
+                        .members
+                        .contains(&ndr_owner_pubkey(local.owner_pubkey))
+                }) && !self.thread_is_message_request(&group_chat_id(&group.group_id))
+            })
+            .flat_map(|group| group.members.iter().map(ToString::to_string))
             .collect();
         let Some(engine) = self.protocol_engine.as_ref() else {
             return HashSet::new();
@@ -1778,7 +1791,7 @@ impl AppCore {
                 if blocked.contains(&hex) {
                     return false;
                 }
-                accept_unknown || accepted.contains(&hex)
+                accept_unknown || accepted.contains(&hex) || group_peers.contains(&hex)
             })
             .into_iter()
             .map(|pubkey| pubkey.to_hex())
