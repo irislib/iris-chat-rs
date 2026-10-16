@@ -332,7 +332,7 @@ async fn query_endpoint(
 
 impl AppCore {
     pub(in crate::core) fn export_support_bundle_with_traffic(&self, reply: flume::Sender<String>) {
-        let bundle =
+        let mut bundle =
             serde_json::to_value(self.build_support_bundle()).unwrap_or_else(|_| json!({}));
         let endpoint = self
             .device_sync
@@ -347,15 +347,22 @@ impl AppCore {
             .device_sync
             .as_ref()
             .and_then(|runtime| runtime.pubsub.clone());
-        self.runtime.spawn(send_reply(
-            bundle,
-            reply,
-            query_endpoint(endpoint, pubsub),
-            self.fips_traffic_history.clone(),
-            configured,
-            self.fips_connection_generation,
-            QUERY_TIMEOUT,
-        ));
+        let history = self.fips_traffic_history.clone();
+        let generation = self.fips_connection_generation;
+        let relays_empty = self.preferences.nostr_relay_urls.is_empty();
+        self.runtime.spawn(async move {
+            super::offline_lan::append(&mut bundle, endpoint.clone(), relays_empty).await;
+            send_reply(
+                bundle,
+                reply,
+                query_endpoint(endpoint, pubsub),
+                history,
+                configured,
+                generation,
+                QUERY_TIMEOUT,
+            )
+            .await;
+        });
     }
 }
 

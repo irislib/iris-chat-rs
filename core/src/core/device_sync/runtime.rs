@@ -497,6 +497,12 @@ impl AppCore {
             fips_config.transports.websocket = TransportInstances::Single(websocket);
         }
 
+        super::super::support::offline_lan::capture_network(
+            &fips_config,
+            &config.relay_urls,
+            host_ble_requested,
+            options.same_host_hashtree,
+        );
         let mut builder = FipsEndpoint::builder()
             .config(fips_config)
             .identity_nsec(config.secret_hex)

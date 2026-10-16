@@ -1,6 +1,7 @@
 use super::*;
 mod fips_services;
 mod fips_traffic;
+pub(in crate::core) mod offline_lan;
 pub(super) use fips_traffic::TrafficHistory;
 
 impl AppCore {

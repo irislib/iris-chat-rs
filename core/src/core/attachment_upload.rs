@@ -91,8 +91,14 @@ pub(super) async fn bind_same_host_attachment_store(
                 "attachment-cache",
                 Arc::new(StoreBlobRoute::new(primary.clone())),
             ),
-            BlobRouteEntry::new("same-host-fips", provider.clone()),
-            BlobRouteEntry::new("blossom", standalone),
+            BlobRouteEntry::new(
+                "same-host-fips",
+                super::support::offline_lan::route(provider.clone(), true),
+            ),
+            BlobRouteEntry::new(
+                "blossom",
+                super::support::offline_lan::route(standalone, false),
+            ),
         ],
         Some(primary.clone()),
         BlobRouterConfig::default(),
@@ -572,7 +578,7 @@ fn blossom_read_store() -> anyhow::Result<Arc<UploadingBlossomStore>> {
     ))
 }
 
-fn blossom_servers_from_config() -> (Vec<String>, Vec<String>) {
+pub(in crate::core) fn blossom_servers_from_config() -> (Vec<String>, Vec<String>) {
     let cfg = HashtreeConfig::load_or_default();
     let mut read = cfg.blossom.all_read_servers();
     let configured_write = cfg.blossom.all_write_servers();

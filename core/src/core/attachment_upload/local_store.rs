@@ -546,7 +546,11 @@ impl Store for AttachmentChunkStore {
     }
     async fn get(&self, hash: &Hash) -> Result<Option<Vec<u8>>, StoreError> {
         let state = self.lock().map_err(error)?;
-        self.read_locked(&state, hash).map_err(error)
+        let result = self.read_locked(&state, hash).map_err(error);
+        if let Ok(bytes) = &result {
+            crate::core::support::offline_lan::local_read(hash, bytes.as_deref());
+        }
+        result
     }
     async fn has(&self, hash: &Hash) -> Result<bool, StoreError> {
         Ok(self.get(hash).await?.is_some())
