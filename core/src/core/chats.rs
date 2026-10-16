@@ -544,6 +544,7 @@ impl AppCore {
                 .map(|ttl_seconds| now.get().saturating_add(*ttl_seconds))
         });
         self.state.busy.sending_message = true;
+        self.sync_request_acceptance(&normalized_chat_id);
 
         if is_group_chat_id(&normalized_chat_id) {
             self.send_group_message(&normalized_chat_id, trimmed, now, expires_at_secs);
@@ -901,13 +902,11 @@ impl AppCore {
         if let Some(thread) = self.threads.get_mut(chat_id) {
             thread.updated_at_secs = thread.updated_at_secs.max(created_at_secs);
         }
-        // Any outgoing message landing in a direct thread — local send
-        // OR self-synced reply from a linked device — counts as
-        // implicit Accept. Add the peer to the accepted set so the
-        // push subscription includes them too (the projection's
-        // `is_request` flag already flips off on any outgoing, but the
-        // wire layer only sees this set, not message history).
-        self.accept_direct_peer(chat_id);
+        // Local sends and authenticated sibling replies share one durable
+        // acceptance record, independent of whether message history survives.
+        if let Some(author) = &message.author_owner_pubkey_hex {
+            self.observe_chat_engagement(chat_id, author, created_at_secs.saturating_mul(1000));
+        }
         self.bump_typing_floor(chat_id, created_at_secs);
         if expires_at_secs.is_some() {
             self.schedule_next_message_expiry();
@@ -920,19 +919,8 @@ impl AppCore {
     }
 
     pub(super) fn accept_direct_peer(&mut self, chat_id: &str) {
-        if !is_group_chat_id(chat_id)
-            && !self
-                .preferences
-                .accepted_owner_pubkeys
-                .iter()
-                .any(|hex| hex == chat_id)
-        {
-            self.preferences
-                .accepted_owner_pubkeys
-                .push(chat_id.to_string());
-            self.preferences.accepted_owner_pubkeys.sort();
-            self.preferences.accepted_owner_pubkeys.dedup();
-            self.mark_mobile_push_dirty();
+        if !is_group_chat_id(chat_id) {
+            self.sync_request_acceptance(chat_id);
         }
     }
 

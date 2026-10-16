@@ -52,13 +52,19 @@ impl AppCore {
                     DeviceSyncRecord::MessageMutation { mutation: m } => {
                         self.project_message_mutations(&m.chat_id, &m.message_id);
                     }
-                    DeviceSyncRecord::Reaction { reaction: r } => self
-                        .apply_incoming_reaction_to_chat(
+                    DeviceSyncRecord::Reaction { reaction: r } => {
+                        self.observe_chat_engagement(
+                            &r.chat_id,
+                            &r.author,
+                            effective_ms(r.created_at, r.created_at_ms),
+                        );
+                        self.apply_incoming_reaction_to_chat(
                             &r.chat_id,
                             &r.message_id,
                             &r.author,
                             &r.emoji,
-                        ),
+                        );
+                    }
                     DeviceSyncRecord::GroupSettings { settings: s } => {
                         let chat = group_chat_id(&s.group_id);
                         if let Some(ttl) = s.message_ttl_seconds {
@@ -81,6 +87,36 @@ impl AppCore {
                     }
                     _ => {}
                 }
+            }
+        }
+        // Upgrade already-loaded history from clients that only projected the
+        // request banner locally. Use the original time, never restart time.
+        if let Some(owner) = self
+            .logged_in
+            .as_ref()
+            .map(|login| login.owner_pubkey.to_hex())
+        {
+            let engagement = self
+                .threads
+                .values()
+                .filter_map(|thread| {
+                    thread
+                        .messages
+                        .iter()
+                        .filter(|message| {
+                            message.is_outgoing
+                                || message
+                                    .reactors
+                                    .iter()
+                                    .any(|reaction| reaction.author == owner)
+                        })
+                        .map(|message| message.created_at_secs)
+                        .max()
+                        .map(|time| (thread.chat_id.clone(), time))
+                })
+                .collect::<Vec<_>>();
+            for (chat, time) in engagement {
+                self.observe_chat_engagement(&chat, &owner, time.saturating_mul(1000));
             }
         }
     }

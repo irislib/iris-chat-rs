@@ -257,15 +257,7 @@ impl AppCore {
             return;
         }
         // Starting a call is an explicit interaction with this contact.
-        if !self
-            .preferences
-            .accepted_owner_pubkeys
-            .iter()
-            .any(|v| v == owner)
-        {
-            self.preferences.accepted_owner_pubkeys.push(owner.into());
-            self.persist_best_effort();
-        }
+        self.accept_direct_peer(owner);
         let id = rand::random::<[u8; 16]>()
             .iter()
             .map(|v| format!("{v:02x}"))

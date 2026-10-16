@@ -269,30 +269,15 @@ impl AppCore {
         if normalized.is_empty() {
             return;
         }
-        // For group threads the peer to whitelist is the group's
-        // creator (Signal-style: accepting means "I trust whoever
-        // added me"). For direct threads the chat_id is already the
-        // peer's owner pubkey.
-        let target_owner_hex = if is_group_chat_id(&normalized) {
-            let Some(group_id) = parse_group_id_from_chat_id(&normalized) else {
-                return;
-            };
-            let Some(group) = self.groups.get(&group_id) else {
-                return;
-            };
-            group.created_by.to_string()
-        } else {
-            normalized.clone()
-        };
+        // Acceptance belongs to this conversation, including group threads.
+        // Accepting a group does not also trust unrelated groups by its creator.
         if self
-            .preferences
-            .accepted_owner_pubkeys
-            .iter()
-            .any(|hex| hex == &target_owner_hex)
+            .request_decision(&normalized)
+            .is_some_and(|state| state.decision == "accepted")
         {
             return;
         }
-        if !self.sync_request_acceptance(&target_owner_hex) {
+        if !self.sync_request_acceptance(&normalized) {
             return;
         }
         self.preferences.accepted_owner_pubkeys.sort();

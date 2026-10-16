@@ -60,9 +60,10 @@ fn group_created_by_unknown_creator_surfaces_as_request_and_clears_on_accept() {
         core.state
             .preferences
             .accepted_owner_pubkeys
-            .contains(&creator.public_key().to_hex()),
-        "group accept whitelists the creator (Signal pattern) so future adds by them auto-accept"
+            .contains(&chat_id),
+        "group acceptance belongs to the conversation"
     );
+    assert!(!core.preferences.accepted_owner_pubkeys.contains(&creator.public_key().to_hex()));
 }
 
 #[test]

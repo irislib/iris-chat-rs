@@ -239,16 +239,53 @@ impl AppCore {
         self.mark_mobile_push_dirty();
     }
     pub(in crate::core) fn sync_request_acceptance(&mut self, target: &str) -> bool {
+        let millis = unix_now_ms().max(
+            self.request_decision(target)
+                .map_or(0, |state| state.updated_at_ms.saturating_add(1)),
+        );
+        self.sync_request_acceptance_at(target, millis)
+    }
+
+    /// Replay uses the original activity time. Arrival time must never turn
+    /// delayed history into a new decision that defeats a later rejection.
+    pub(in crate::core) fn observe_chat_engagement(
+        &mut self,
+        chat: &str,
+        author: &str,
+        created_at_ms: u64,
+    ) -> bool {
+        if self
+            .logged_in
+            .as_ref()
+            .is_none_or(|login| login.owner_pubkey.to_hex() != author)
+            || self.chat_activity_is_deleted(chat, created_at_ms / 1000)
+        {
+            return true;
+        }
+        self.sync_request_acceptance_at(chat, created_at_ms)
+    }
+
+    fn sync_request_acceptance_at(&mut self, target: &str, updated_at_ms: u64) -> bool {
+        if !valid_device_sync_chat_id(target)
+            || updated_at_ms == 0
+            || updated_at_ms > unix_now_ms().saturating_add(300_000)
+            || self.is_owner_blocked(target)
+        {
+            return true;
+        }
+        if self.request_decision(target).is_some_and(|previous| {
+            previous.updated_at_ms > updated_at_ms
+                || (previous.updated_at_ms == updated_at_ms && previous.decision != "none")
+        }) {
+            return true;
+        }
         let Some(login) = &self.logged_in else {
             return false;
         };
         let state = RequestDecision {
             chat_id: target.into(),
             decision: "accepted".into(),
-            updated_at_ms: unix_now_ms().max(
-                self.request_decision(target)
-                    .map_or(0, |state| state.updated_at_ms + 1),
-            ),
+            updated_at_ms,
         };
         let Ok(value) = serde_json::to_value(state) else {
             return false;
