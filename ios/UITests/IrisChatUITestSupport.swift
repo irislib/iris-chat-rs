@@ -208,7 +208,14 @@ extension IrisChatUITestCase {
             acceptOnboardingTermsIfNeeded(app, file: file, line: line)
         }
         XCTAssertTrue(action.isEnabled, file: file, line: line)
+#if os(iOS)
+        // XCTest can return a pixel-scaled accessibility hit point after relaunch.
+        // Keep this a real tap, anchored to the visible control's point-space frame.
+        XCTAssertTrue(action.isHittable, file: file, line: line)
+        action.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+#else
         action.tap()
+#endif
     }
     func acceptOnboardingTermsIfNeeded(
         _ app: XCUIApplication,
