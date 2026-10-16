@@ -20,7 +20,7 @@ on:
         description: Checks to run (releases require all)
         type: choice
         default: all
-        options: [all, core, android, windows, apple, macos]
+        options: [all, core, android, windows, apple, macos, linux-layout]
 
 permissions:
   contents: read
@@ -205,7 +205,7 @@ jobs:
           retention-days: 14
 
   linux:
-    if: ${{ inputs.scope == '' || inputs.scope == 'all' }}
+    if: ${{ inputs.scope == '' || inputs.scope == 'all' || inputs.scope == 'linux-layout' }}
     name: Linux build and tests (Rust ${{ matrix.toolchain }})
     strategy:
       fail-fast: false
@@ -262,16 +262,31 @@ jobs:
             linux-${{ runner.os }}-${{ matrix.toolchain }}-
 
       - name: Desktop media regression tests
+        if: ${{ inputs.scope != 'linux-layout' }}
         run: |
           cargo clippy --manifest-path core/Cargo.toml --features desktop-media --locked --lib -- -D warnings -D clippy::panic -D clippy::unwrap_used -D clippy::expect_used -D clippy::unimplemented -D clippy::todo -D clippy::indexing_slicing
           cargo test --manifest-path core/Cargo.toml --features desktop-media --locked --lib desktop_call -- --nocapture
 
       - name: Linux tests
+        if: ${{ inputs.scope != 'linux-layout' }}
         run: |
           mkdir -p work/clipboard
           IRIS_CLIPBOARD_UI_SCREENSHOT="$PWD/work/clipboard/linux.png" \
           IRIS_KEYBOARD_SCREENSHOT="$PWD/work/clipboard/linux-keyboard.png" \
             dbus-run-session -- xvfb-run -a cargo test --manifest-path linux/Cargo.toml --locked --features ui-tests
+
+      - name: Repeated Linux layout diagnosis
+        if: ${{ inputs.scope == 'linux-layout' }}
+        run: |
+          set -o pipefail
+          mkdir -p work/clipboard
+          for attempt in $(seq 1 5); do
+            echo "Layout attempt $attempt"
+            IRIS_LAYOUT_FOCUS_REPETITIONS=20 \
+            IRIS_LAYOUT_UI_SCREENSHOTS="$PWD/work/clipboard/layout-$attempt" \
+              dbus-run-session -- xvfb-run -a cargo test --manifest-path linux/Cargo.toml --locked --features ui-tests --test layout \
+              2>&1 | tee "work/clipboard/layout-$attempt.log"
+          done
 
       - name: Upload Linux clipboard results
         if: always()
