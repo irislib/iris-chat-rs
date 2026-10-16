@@ -55,6 +55,7 @@ async fn http_miss_waits_for_exact_store_transport_event_then_caches() {
     let directory = tempfile::tempdir().unwrap();
     let local = AttachmentChunkStore::open(directory.path(), local_store::DEFAULT_BUDGET).unwrap();
     let (cid, memory) = fixture().await;
+    let cached_cid = cid.clone();
     let http = Arc::new(MissingHttp::default());
     let waiting_local = local.clone();
     let waiting_http = http.clone();
@@ -81,9 +82,8 @@ async fn http_miss_waits_for_exact_store_transport_event_then_caches() {
     );
     assert_eq!(http.calls.load(Ordering::SeqCst), 1);
     // The successful routed retry wrote into this account's persistent cache.
-    let (cid, _) = fixture().await;
     assert_eq!(
-        read_hashtree_attachment(&cid, local, MAX_ATTACHMENT_BYTES)
+        read_hashtree_attachment(&cached_cid, local, MAX_ATTACHMENT_BYTES)
             .await
             .unwrap(),
         b"late peer attachment"

@@ -35,7 +35,10 @@ pub(super) struct UploadSession {
     progress: Option<Arc<AtomicU64>>,
 }
 
-pub(super) struct ReadLease(Arc<AttachmentChunkStore>);
+pub(super) struct ReadLease {
+    store: Arc<AttachmentChunkStore>,
+    references: Mutex<HashMap<Hash, read_protection::ReadReference>>,
+}
 
 pub(super) struct TreeLease {
     store: Arc<AttachmentChunkStore>,
@@ -180,7 +183,11 @@ impl AttachmentChunkStore {
     fn sync_pin(&self, state: &State, hash: &Hash) -> anyhow::Result<()> {
         let pending: bool = state.db.query_row("SELECT EXISTS(SELECT 1 FROM tree_blocks t JOIN trees a ON a.root=t.root WHERE t.hash=?1 AND a.replicated=0)", [to_hex(hash)], |r| r.get(0))?;
         // Iris owns overlapping references; the backend needs one durable veto.
-        let desired = u32::from(pending || state.pins.contains_key(hash));
+        // Missing referenced blocks need only the in-process admission veto.
+        // put_locked restores the backend pin before exposing a newly cached
+        // block; never leave durable pins for absent hashes after a crash.
+        let desired =
+            u32::from((pending || state.pins.contains_key(hash)) && self.blobs.exists(hash)?);
         let current = self.blobs.pin_count(hash);
         anyhow::ensure!(
             current <= MAX_UPLOADS as u32 + MAX_TREES as u32 + 2,
@@ -349,7 +356,10 @@ impl AttachmentChunkStore {
         let mut state = self.lock()?;
         anyhow::ensure!(state.readers < 4, "too many attachment readers");
         state.readers += 1;
-        Ok(ReadLease(self.clone()))
+        Ok(ReadLease {
+            store: self.clone(),
+            references: Mutex::new(HashMap::new()),
+        })
     }
 
     pub(in crate::core) fn uploaded_urls(&self, nhash: &str) -> Vec<String> {
@@ -698,7 +708,10 @@ impl Drop for UploadSession {
 
 impl Drop for ReadLease {
     fn drop(&mut self) {
-        if let Ok(mut state) = self.0.state.lock() {
+        if let Ok(references) = self.references.lock() {
+            unpin(&self.store, references.keys().copied());
+        }
+        if let Ok(mut state) = self.store.state.lock() {
             state.readers = state.readers.saturating_sub(1);
         }
     }
@@ -775,3 +788,6 @@ impl Store for UploadSession {
 
 #[path = "local_store_commit.rs"]
 mod message_commit;
+
+#[path = "local_store_reads.rs"]
+mod read_protection;

@@ -273,11 +273,16 @@ async fn routed_download_replaces_full_evictable_cache_while_reading() {
         .unwrap(),
     );
     let routed = Arc::new(RoutedStore::new(store.clone(), router));
-    let _reading = store.reading().unwrap();
     assert_eq!(
-        read_hashtree_attachment(&cid, routed, MAX_ATTACHMENT_BYTES)
-            .await
-            .unwrap(),
+        readiness::read(
+            &cid,
+            Some(store.clone()),
+            routed,
+            MAX_ATTACHMENT_BYTES,
+            Duration::ZERO
+        )
+        .await
+        .unwrap(),
         expected
     );
     assert!(store.get(&old_hash).await.unwrap().is_none());

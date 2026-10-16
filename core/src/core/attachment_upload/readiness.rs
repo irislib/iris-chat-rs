@@ -64,19 +64,19 @@ pub(super) async fn read<S: Store + 'static>(
     let Some(local) = local else {
         return read_hashtree_attachment(cid, fallback, max_bytes).await;
     };
-    let _lease = local.reading()?;
+    let lease = Arc::new(local.reading_tree(cid)?);
     let mut changes = local.readiness.subscribe();
     let route = ready(&changes.borrow())?;
     if let Some(route) = route {
         return while_open(
             &mut changes,
-            read_hashtree_attachment(cid, route, max_bytes),
+            read_leased(cid, route, lease.clone(), max_bytes),
         )
         .await;
     }
     let initial_error = match while_open(
         &mut changes,
-        read_hashtree_attachment(cid, fallback, max_bytes),
+        read_leased(cid, fallback, lease.clone(), max_bytes),
     )
     .await
     {
@@ -94,9 +94,49 @@ pub(super) async fn read<S: Store + 'static>(
     );
     while_open(
         &mut changes,
-        read_hashtree_attachment(cid, route, max_bytes),
+        read_leased(cid, route, lease.clone(), max_bytes),
     )
     .await
+}
+
+async fn read_leased<S: Store + 'static>(
+    cid: &Cid,
+    source: Arc<S>,
+    lease: Arc<local_store::ReadLease>,
+    max_bytes: u64,
+) -> anyhow::Result<Vec<u8>> {
+    read_hashtree_attachment(cid, Arc::new(LeasedRead { source, lease }), max_bytes).await
+}
+
+struct LeasedRead<S> {
+    source: Arc<S>,
+    lease: Arc<local_store::ReadLease>,
+}
+
+#[async_trait]
+impl<S: Store + 'static> Store for LeasedRead<S> {
+    async fn get(&self, hash: &Hash) -> Result<Option<Vec<u8>>, StoreError> {
+        let bytes = self.source.get(hash).await?;
+        if let Some(bytes) = &bytes {
+            self.lease
+                .observe(hash, bytes)
+                .map_err(|error| StoreError::Other(error.to_string()))?;
+        }
+        Ok(bytes)
+    }
+    async fn has(&self, hash: &Hash) -> Result<bool, StoreError> {
+        Ok(self.get(hash).await?.is_some())
+    }
+    async fn put(&self, _: Hash, _: Vec<u8>) -> Result<bool, StoreError> {
+        Err(StoreError::Other(
+            "attachment read lease is read-only".into(),
+        ))
+    }
+    async fn delete(&self, _: &Hash) -> Result<bool, StoreError> {
+        Err(StoreError::Other(
+            "attachment read lease is read-only".into(),
+        ))
+    }
 }
 
 #[cfg(test)]
