@@ -186,7 +186,11 @@ impl Content {
                     Some((account.public_key_hex.clone(), chat.chat_id.clone()));
             }
             if composer {
-                if (!content.split.is_collapsed() || content.split.shows_content())
+                // Navigation updates the logical route before GTK renders the
+                // new pane. A still-mapped old pane must not consume the key.
+                if (!content.split.is_collapsed()
+                    || matches!(current_screen(&state), Screen::Chat { .. }))
+                    && section_pane_ready(&content.split, true)
                     && crate::widgets::keyboard_list::focus_composer(content.root.upcast_ref())
                 {
                     return glib::Propagation::Stop;
@@ -210,7 +214,8 @@ impl Content {
                     .as_ref()
                     .filter(|(owner, _)| *owner == account.public_key_hex)
                     .map(|(_, id)| id.as_str());
-                if (!content.split.is_collapsed() || !content.split.shows_content())
+                if (!content.split.is_collapsed() || current_screen(&state) == Screen::ChatList)
+                    && section_pane_ready(&content.split, false)
                     && crate::widgets::keyboard_list::focus_list(
                         content.root.upcast_ref(),
                         preferred_chat,
@@ -227,8 +232,22 @@ impl Content {
         window.add_controller(keys);
     }
 
+    #[cfg(feature = "ui-tests")]
+    pub(super) fn section_focus_debug(&self) -> String {
+        let section = self.section.borrow();
+        format!(
+            "collapsed={} show_content={} sidebar_mapped={} detail_mapped={} pending_composer={:?} pending_tick={}",
+            self.split.is_collapsed(),
+            self.split.shows_content(),
+            self.sidebar_page.is_mapped(),
+            self.detail_page.is_mapped(),
+            section.pending_composer,
+            section.pending_tick,
+        )
+    }
+
     fn focus_pending_section(&self) {
-        if focus_section(self.root.upcast_ref(), &self.section) {
+        if focus_section(self.root.upcast_ref(), &self.section, &self.split) {
             return;
         }
         let mut section = self.section.borrow_mut();
@@ -237,9 +256,10 @@ impl Content {
         }
         section.pending_tick = true;
         let weak = Rc::downgrade(&self.section);
+        let split = self.split.downgrade();
         let started = std::time::Instant::now();
         self.root.add_tick_callback(move |root, _| {
-            let Some(section) = weak.upgrade() else {
+            let (Some(section), Some(split)) = (weak.upgrade(), split.upgrade()) else {
                 return glib::ControlFlow::Break;
             };
             // Wait for the pane animation, not for a future state change to
@@ -250,7 +270,7 @@ impl Content {
                 section.pending_tick = false;
                 return glib::ControlFlow::Break;
             }
-            if focus_section(root.upcast_ref(), &section) {
+            if focus_section(root.upcast_ref(), &section, &split) {
                 section.borrow_mut().pending_tick = false;
                 glib::ControlFlow::Break
             } else {
@@ -329,6 +349,11 @@ impl Content {
             self.section.borrow_mut().remembered_chat =
                 Some((account.public_key_hex.clone(), chat.chat_id.clone()));
         }
+        // Older snapshots of the opposite section can still be queued while
+        // a shortcut navigates. Only leaving the pair cancels its focus request.
+        if !matches!(screen, Screen::Chat { .. } | Screen::ChatList) {
+            self.section.borrow_mut().pending_composer = None;
+        }
         if matches!(screen, Screen::Settings) {
             if let Some(view) = self.settings.borrow_mut().as_mut() {
                 view.update(state, manager);
@@ -404,8 +429,32 @@ impl Content {
     }
 }
 
-fn focus_section(root: &gtk::Widget, section: &Rc<RefCell<SectionFocus>>) -> bool {
+fn section_pane_ready(split: &adw::NavigationSplitView, composer: bool) -> bool {
+    if !split.is_collapsed() {
+        return true;
+    }
+    // Both pages are mapped during the animation. Focusing then can succeed
+    // before navigation restores its own remembered focus over ours.
+    let outgoing = if composer {
+        split.sidebar()
+    } else {
+        split.content()
+    };
+    split.shows_content() == composer && outgoing.is_none_or(|page| !page.is_mapped())
+}
+
+fn focus_section(
+    root: &gtk::Widget,
+    section: &Rc<RefCell<SectionFocus>>,
+    split: &adw::NavigationSplitView,
+) -> bool {
     let mut section = section.borrow_mut();
+    if section
+        .pending_composer
+        .is_some_and(|composer| !section_pane_ready(split, composer))
+    {
+        return false;
+    }
     let focused = match section.pending_composer {
         Some(true) => crate::widgets::keyboard_list::focus_composer(root),
         Some(false) => crate::widgets::keyboard_list::focus_list(

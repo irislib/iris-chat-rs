@@ -1,5 +1,8 @@
 use super::*;
+
+mod section_focus;
 use iris_chat_core::{DeviceHistorySyncPhase, DeviceHistorySyncSnapshot};
+use section_focus::{check_narrow_section_shortcuts, check_wide_section_shortcuts};
 
 fn descendants(widget: &gtk::Widget) -> Vec<gtk::Widget> {
     let mut result = vec![widget.clone()];
@@ -127,105 +130,6 @@ fn check_new_chat_form(
     assert!(owns_focus(window, peer.upcast_ref()));
 }
 
-fn check_narrow_section_shortcuts(
-    slot: &Content,
-    header: &HeaderWidgets,
-    manager: &Rc<AppManager>,
-    window: &adw::Window,
-    chat_id: &str,
-) {
-    let rx = manager.update_rx();
-    let drain = || {
-        while let Ok(update) = rx.try_recv() {
-            if let Some(AppUpdate::FullState(state)) = manager.apply_update(update) {
-                apply_state(slot, header, manager, &state);
-            }
-        }
-    };
-    // Use real navigation updates here; synthetic layout snapshots above do
-    // not change the manager's route or the underlying conversation.
-    manager.dispatch(AppAction::OpenChat {
-        chat_id: chat_id.into(),
-    });
-    apply_state(slot, header, manager, &manager.current_state());
-    pump_until(|| {
-        drain();
-        text_view(slot.root.upcast_ref()).is_some_and(|input| input.is_mapped())
-            && matches!(current_screen(&manager.current_state()), Screen::Chat { chat_id: id } if id == chat_id)
-    });
-    let keys = window
-        .observe_controllers()
-        .iter::<glib::Object>()
-        .filter_map(Result::ok)
-        .find_map(|controller| controller.downcast::<gtk::EventControllerKey>().ok())
-        .expect("production section keyboard shortcuts");
-    let press = |modifiers: gtk::gdk::ModifierType| {
-        assert!(keys.emit_by_name::<bool>("key-pressed", &[&gtk::gdk::Key::t, &0u32, &modifiers]));
-    };
-    press(gtk::gdk::ModifierType::CONTROL_MASK);
-    pump_until(|| {
-        drain();
-        if current_screen(&manager.current_state()) != Screen::ChatList {
-            return false;
-        }
-        let row = named(
-            slot.root.upcast_ref(),
-            &format!("iris-keyboard-chat-{chat_id}"),
-        );
-        row.is_mapped() && owns_focus(window, &row)
-    });
-    press(gtk::gdk::ModifierType::CONTROL_MASK | gtk::gdk::ModifierType::SHIFT_MASK);
-    pump_until(|| {
-        drain();
-        matches!(current_screen(&manager.current_state()), Screen::Chat { chat_id: id } if id == chat_id)
-            && text_view(slot.root.upcast_ref())
-                .is_some_and(|input| input.is_mapped() && input.has_focus())
-    });
-
-    let original_query = manager.search_ui().query;
-    manager.set_search_query("layout-empty-results-83ad0927".into());
-    apply_state(slot, header, manager, &manager.current_state());
-    pump_until(|| {
-        drain();
-        manager.search_results(50).is_some_and(|results| {
-            results.people.is_empty()
-                && results.contacts.is_empty()
-                && results.groups.is_empty()
-                && results.messages.is_empty()
-                && results.shortcut.is_none()
-        })
-    });
-    apply_state(slot, header, manager, &manager.current_state());
-    press(gtk::gdk::ModifierType::CONTROL_MASK);
-    pump_until(|| {
-        drain();
-        let search = named(slot.root.upcast_ref(), "iris-keyboard-search");
-        current_screen(&manager.current_state()) == Screen::ChatList
-            && search.is_mapped()
-            && owns_focus(window, &search)
-    });
-    let list = named(slot.root.upcast_ref(), "iris-keyboard-chat-list");
-    assert!(
-        !descendants(&list)
-            .iter()
-            .any(|widget| widget.is::<adw::ActionRow>() || widget.is::<gtk::Button>()),
-        "empty-result shortcut must focus search without requiring a result row"
-    );
-    press(gtk::gdk::ModifierType::CONTROL_MASK | gtk::gdk::ModifierType::SHIFT_MASK);
-    pump_until(|| {
-        drain();
-        matches!(current_screen(&manager.current_state()), Screen::Chat { chat_id: id } if id == chat_id)
-            && text_view(slot.root.upcast_ref())
-                .is_some_and(|input| input.is_mapped() && input.has_focus())
-    });
-    manager.set_search_query(original_query);
-    apply_state(slot, header, manager, &manager.current_state());
-    assert_eq!(
-        manager.current_state().current_chat.unwrap().chat_id,
-        chat_id
-    );
-}
-
 fn screenshot(window: &adw::Window, filename: &str) {
     let Some(directory) = std::env::var_os("IRIS_LAYOUT_UI_SCREENSHOTS") else {
         return;
@@ -344,6 +248,7 @@ pub(super) fn run(manager: Rc<AppManager>) {
     check_preview(root, &chat_id);
     check_controls(root);
     check_sidebar_settings(root);
+    check_wide_section_shortcuts(&slot, &manager, &window);
 
     search.grab_focus();
     pump_until(|| owns_focus(&window, search.upcast_ref()));
@@ -424,7 +329,15 @@ pub(super) fn run(manager: Rc<AppManager>) {
     eprintln!("Checking persistent new-chat form");
     check_new_chat_form(&slot, &header, &manager, &window, &state);
     eprintln!("Checking narrow keyboard navigation");
-    check_narrow_section_shortcuts(&slot, &header, &manager, &window, &chat_id);
+    let repetitions = std::env::var("IRIS_LAYOUT_FOCUS_REPETITIONS")
+        .ok()
+        .map(|value| value.parse::<usize>().expect("integer focus repetitions"))
+        .unwrap_or(1);
+    assert!((1..=100).contains(&repetitions));
+    for repetition in 1..=repetitions {
+        eprintln!("Narrow keyboard navigation {repetition}/{repetitions}");
+        check_narrow_section_shortcuts(&slot, &header, &manager, &window, &chat_id);
+    }
     let mut settings_state = manager.current_state();
     settings_state.router.screen_stack.push(Screen::Settings);
     apply_state(&slot, &header, &manager, &settings_state);
