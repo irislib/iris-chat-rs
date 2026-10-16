@@ -499,7 +499,7 @@ impl AttachmentChunkStore {
             *state.pins.entry(*hash).or_default() += 1;
             if let Err(error) = self.sync_pin(&state, hash) {
                 drop(state);
-                unpin(self, hashes[..=index].iter().copied());
+                unpin(self, hashes.iter().take(index + 1).copied());
                 return Err(error);
             }
         }
