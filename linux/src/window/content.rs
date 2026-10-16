@@ -30,11 +30,25 @@ struct SectionFocus {
 
 impl SectionFocus {
     fn request(&mut self, composer: bool) {
+        eprintln!(
+            "SECTION_REQUEST composer={composer} old={:?} age={:?} tick={}",
+            self.pending_composer,
+            self.pending_since.map(|s| s.elapsed()),
+            self.pending_tick
+        );
         self.pending_composer = Some(composer);
         self.pending_since = Some(std::time::Instant::now());
     }
 
+    #[track_caller]
     fn clear_request(&mut self) {
+        eprintln!(
+            "SECTION_CLEAR caller={} pending={:?} age={:?} tick={}",
+            std::panic::Location::caller(),
+            self.pending_composer,
+            self.pending_since.map(|s| s.elapsed()),
+            self.pending_tick
+        );
         self.pending_composer = None;
         self.pending_since = None;
     }
@@ -346,6 +360,16 @@ impl Content {
             }
             self.sidebar_account.borrow_mut().take();
         }
+        if self.section.borrow().pending_composer.is_some() {
+            eprintln!(
+                "SECTION_RENDER route={:?} pending={:?} detail_mapped={} sidebar_mapped={} show={}",
+                std::mem::discriminant(screen),
+                self.section.borrow().pending_composer,
+                self.detail_page.is_mapped(),
+                self.sidebar_page.is_mapped(),
+                self.split.shows_content()
+            );
+        }
         self.split
             .set_show_content(!matches!(screen, Screen::ChatList));
         self.navigating.set(false);
@@ -361,6 +385,10 @@ impl Content {
                         .is_some_and(|account| account.public_key_hex == *owner)
                 });
         if state.account.is_none() || !same_account {
+            eprintln!(
+                "SECTION_CLEAR account pending={:?}",
+                self.section.borrow().pending_composer
+            );
             *self.section.borrow_mut() = SectionFocus::default();
             self.chat.borrow_mut().take();
             self.settings.borrow_mut().take();
@@ -484,6 +512,15 @@ fn focus_section(
         None => return true,
     };
     if focused {
+        eprintln!(
+            "SECTION_CONSUMED pending={:?} sidebar_mapped={} detail_mapped={} focus={:?}",
+            section.pending_composer,
+            split.sidebar().is_some_and(|p| p.is_mapped()),
+            split.content().is_some_and(|p| p.is_mapped()),
+            root.root()
+                .and_then(|r| r.focus())
+                .map(|w| (w.type_().name().to_owned(), w.widget_name().to_string()))
+        );
         section.clear_request();
     }
     focused
