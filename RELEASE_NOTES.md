@@ -11,7 +11,10 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 - Clear desktop notifications when their exact messages are read on another device, while retaining notifications for messages that remain unread. Preserve authenticated message identities through group-message recovery.
 - Replace valid attachment hashes in notifications and chat-list previews with readable attachment labels while preserving captions and message bodies.
 - Preserve new drafts and navigation when an earlier attachment upload finishes. Improve link cursors and link contrast in message bubbles.
-- Accept encrypted private personal and group invitations stored in Hashtree.
+- Create and manage encrypted private personal and group invitations, including expiry, use limits and revocation. Preserve durable admission decisions across retries and restarts.
+- Sync chat acceptance through private request-decision events, including authenticated replies and reactions from linked devices, while preserving newer rejection and blocking decisions.
+- Keep encrypted attachments in a bounded local store so a temporary upload-server outage does not prevent sending. Retry replication in the background and serve available ciphertext to peers.
+- Show confirmed encrypted upload URLs in message details, with full clickable links and copying.
 - Expose mention-notification settings in the CLI and deliver complete service errors even when they exceed one socket write.
 - Recover device sync after linked browsers reload or connect simultaneously, preserving queued records and keeping one consistent connection direction.
 - Keep Linux chat-list and composer shortcuts working during navigation and pane animations.
@@ -22,7 +25,9 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 - Choose whether mentions notify you in a muted group, and keep that choice in sync across devices.
 - Keep new text you write while an attachment is uploading.
 - Show readable attachment labels in notifications and the chat list.
-- Open private invitations to people and groups.
+- Create and open private invitations to people and groups.
+- Keep accepted chats in sync across your devices.
+- Send attachments when the upload server is unavailable, and view encrypted upload links in message details.
 - Improve message editing and notification cleanup across linked devices.
 - Keep chat settings in sync when linked browsers reconnect.
 
@@ -32,7 +37,9 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 - Choose whether mentions notify you in a muted group, and keep that choice in sync across devices.
 - Keep new text you write while an attachment is uploading.
 - Show readable attachment labels in notifications and the chat list.
-- Open private invitations to people and groups.
+- Create and open private invitations to people and groups.
+- Keep accepted chats in sync across your devices.
+- Send attachments when the upload server is unavailable, and view encrypted upload links in message details.
 - Improve message editing and notification cleanup across linked devices.
 - Keep chat settings in sync when linked browsers reconnect.
 
