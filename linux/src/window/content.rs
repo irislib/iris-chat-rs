@@ -24,7 +24,20 @@ pub(super) struct Content {
 struct SectionFocus {
     remembered_chat: Option<(String, String)>,
     pending_composer: Option<bool>,
+    pending_since: Option<std::time::Instant>,
     pending_tick: bool,
+}
+
+impl SectionFocus {
+    fn request(&mut self, composer: bool) {
+        self.pending_composer = Some(composer);
+        self.pending_since = Some(std::time::Instant::now());
+    }
+
+    fn clear_request(&mut self) {
+        self.pending_composer = None;
+        self.pending_since = None;
+    }
 }
 
 impl Content {
@@ -193,6 +206,7 @@ impl Content {
                     && section_pane_ready(&content.split, true)
                     && crate::widgets::keyboard_list::focus_composer(content.root.upcast_ref())
                 {
+                    section.clear_request();
                     return glib::Propagation::Stop;
                 }
                 let Some((_owner, chat_id)) =
@@ -205,7 +219,7 @@ impl Content {
                     return glib::Propagation::Proceed;
                 };
                 let chat_id = chat_id.clone();
-                section.pending_composer = Some(true);
+                section.request(true);
                 drop(section);
                 manager.dispatch(AppAction::OpenChat { chat_id });
             } else {
@@ -221,9 +235,10 @@ impl Content {
                         preferred_chat,
                     )
                 {
+                    section.clear_request();
                     return glib::Propagation::Stop;
                 }
-                section.pending_composer = Some(false);
+                section.request(false);
                 drop(section);
                 manager.dispatch(AppAction::UpdateScreenStack { stack: vec![] });
             }
@@ -257,16 +272,21 @@ impl Content {
         section.pending_tick = true;
         let weak = Rc::downgrade(&self.section);
         let split = self.split.downgrade();
-        let started = std::time::Instant::now();
         self.root.add_tick_callback(move |root, _| {
             let (Some(section), Some(split)) = (weak.upgrade(), split.upgrade()) else {
                 return glib::ControlFlow::Break;
             };
             // Wait for the pane animation, not for a future state change to
             // make a missing/restricted composer available and steal focus.
-            if started.elapsed() >= std::time::Duration::from_secs(1) {
+            // The callback can survive several rapid shortcuts. Its age must
+            // not expire a newer request before that pane finishes animating.
+            if section
+                .borrow()
+                .pending_since
+                .is_some_and(|started| started.elapsed() >= std::time::Duration::from_secs(1))
+            {
                 let mut section = section.borrow_mut();
-                section.pending_composer = None;
+                section.clear_request();
                 section.pending_tick = false;
                 return glib::ControlFlow::Break;
             }
@@ -352,7 +372,7 @@ impl Content {
         // Older snapshots of the opposite section can still be queued while
         // a shortcut navigates. Only leaving the pair cancels its focus request.
         if !matches!(screen, Screen::Chat { .. } | Screen::ChatList) {
-            self.section.borrow_mut().pending_composer = None;
+            self.section.borrow_mut().clear_request();
         }
         if matches!(screen, Screen::Settings) {
             if let Some(view) = self.settings.borrow_mut().as_mut() {
@@ -464,7 +484,7 @@ fn focus_section(
         None => return true,
     };
     if focused {
-        section.pending_composer = None;
+        section.clear_request();
     }
     focused
 }

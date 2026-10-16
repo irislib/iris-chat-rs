@@ -336,7 +336,14 @@ pub(super) fn run(manager: Rc<AppManager>) {
     assert!((1..=100).contains(&repetitions));
     for repetition in 1..=repetitions {
         eprintln!("Narrow keyboard navigation {repetition}/{repetitions}");
-        check_narrow_section_shortcuts(&slot, &header, &manager, &window, &chat_id);
+        check_narrow_section_shortcuts(
+            &slot,
+            &header,
+            &manager,
+            &window,
+            &chat_id,
+            repetition == 1,
+        );
     }
     let mut settings_state = manager.current_state();
     settings_state.router.screen_stack.push(Screen::Settings);
