@@ -14,61 +14,28 @@ use hashtree_network::{BlobRouteEntry, BlobRouter, BlobRouterConfig, RoutedStore
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{OnceLock, RwLock, RwLockReadGuard, RwLockWriteGuard, Weak};
+use std::sync::{OnceLock, RwLock, Weak};
 use std::time::Duration;
 use tokio::io::AsyncReadExt;
 use tokio::sync::RwLock as AsyncRwLock;
 use tokio_util::compat::TokioAsyncReadCompatExt;
 
-/// Process-wide cache of hashtree chunks we've put or fetched. Without this,
-/// a freshly uploaded chunk is invisible to a follow-up `HashTree::get`
-/// (e.g. when iOS uses one store for the upload and another for the avatar
-/// render), and the avatar falls back to placeholder if the public Blossom
-/// servers can't serve the chunk back yet.
-fn shared_chunk_cache() -> &'static std::sync::RwLock<HashMap<String, Vec<u8>>> {
-    static CACHE: OnceLock<std::sync::RwLock<HashMap<String, Vec<u8>>>> = OnceLock::new();
-    CACHE.get_or_init(|| std::sync::RwLock::new(HashMap::new()))
+mod local_store;
+mod replication;
+use local_store::AttachmentChunkStore;
+pub(super) use replication::AttachmentService;
+
+fn active_local_store() -> &'static RwLock<Option<Weak<AttachmentChunkStore>>> {
+    static STORE: OnceLock<RwLock<Option<Weak<AttachmentChunkStore>>>> = OnceLock::new();
+    STORE.get_or_init(|| RwLock::new(None))
 }
 
-fn shared_chunk_cache_read() -> RwLockReadGuard<'static, HashMap<String, Vec<u8>>> {
-    shared_chunk_cache()
+fn current_local_store() -> Option<Arc<AttachmentChunkStore>> {
+    active_local_store()
         .read()
-        .unwrap_or_else(|poison| poison.into_inner())
-}
-
-fn shared_chunk_cache_write() -> RwLockWriteGuard<'static, HashMap<String, Vec<u8>>> {
-    shared_chunk_cache()
-        .write()
-        .unwrap_or_else(|poison| poison.into_inner())
-}
-
-/// The network serves the exact uploaded/downloaded blocks, never assembled files or keys.
-pub(super) struct AttachmentChunkStore;
-
-#[async_trait]
-impl Store for AttachmentChunkStore {
-    async fn put(&self, hash: Hash, data: Vec<u8>) -> Result<bool, StoreError> {
-        if hashtree_core::sha256(&data) != hash {
-            return Err(StoreError::Other(
-                "attachment cache hash mismatch".to_string(),
-            ));
-        }
-        Ok(shared_chunk_cache_write()
-            .insert(to_hex(&hash), data)
-            .is_none())
-    }
-
-    async fn get(&self, hash: &Hash) -> Result<Option<Vec<u8>>, StoreError> {
-        Ok(shared_chunk_cache_read().get(&to_hex(hash)).cloned())
-    }
-
-    async fn has(&self, hash: &Hash) -> Result<bool, StoreError> {
-        Ok(shared_chunk_cache_read().contains_key(&to_hex(hash)))
-    }
-
-    async fn delete(&self, hash: &Hash) -> Result<bool, StoreError> {
-        Ok(shared_chunk_cache_write().remove(&to_hex(hash)).is_some())
-    }
+        .unwrap_or_else(|p| p.into_inner())
+        .as_ref()
+        .and_then(Weak::upgrade)
 }
 
 pub(super) struct AttachmentBlobRuntime {
@@ -101,8 +68,8 @@ pub(super) async fn bind_same_host_attachment_store(
     endpoint: Arc<FipsEndpoint>,
     standalone: Arc<dyn BlobRoute>,
     peers: Vec<fips_core::PeerIdentity>,
+    primary: Arc<AttachmentChunkStore>,
 ) -> anyhow::Result<Arc<AttachmentBlobRuntime>> {
-    let primary = Arc::new(AttachmentChunkStore);
     let transport = Arc::new(
         TcpBlobTransport::bind_advertised_with_config(
             endpoint.clone(),
@@ -144,9 +111,10 @@ pub(super) async fn bind_same_host_attachment_store(
 pub(super) async fn start_same_host_attachment_reuse(
     endpoint: Arc<FipsEndpoint>,
     peers: Vec<fips_core::PeerIdentity>,
+    primary: Arc<AttachmentChunkStore>,
 ) -> anyhow::Result<Arc<AttachmentBlobRuntime>> {
     let standalone: Arc<dyn BlobRoute> = Arc::new(StoreBlobRoute::new(blossom_read_store()?));
-    bind_same_host_attachment_store(endpoint, standalone, peers).await
+    bind_same_host_attachment_store(endpoint, standalone, peers, primary).await
 }
 
 impl AppCore {
@@ -211,16 +179,16 @@ impl AppCore {
             }
         };
 
-        let Some(logged_in) = self.logged_in.as_ref() else {
-            self.state.toast = Some("Create or restore a profile first.".to_string());
-            self.emit_state();
-            return;
+        let store = match self.ensure_attachment_service() {
+            Ok(store) => store,
+            Err(error) => {
+                self.push_debug_log("attachment.storage.open.error", error.to_string());
+                self.state.toast = Some("Attachment could not be saved.".to_string());
+                self.emit_state();
+                return;
+            }
         };
-        let upload_keys = logged_in
-            .owner_keys
-            .as_ref()
-            .unwrap_or(&logged_in.device_keys);
-        let secret_hex = upload_keys.secret_key().to_secret_hex();
+        let store_id = store.id;
         let caption = caption.trim().to_string();
         let sender = self.core_sender.clone();
         let upload_chat_id = normalized_chat_id.clone();
@@ -271,23 +239,22 @@ impl AppCore {
                     last_reported = current;
                     let _ = progress_sender.send(CoreMsg::Internal(Box::new(
                         InternalEvent::AttachmentUploadProgress {
+                            store_id,
                             bytes_uploaded: current,
                             total_bytes: progress_total,
                         },
                     )));
                 }
             });
-            let result = upload_files_to_hashtree(
-                &secret_hex,
-                &upload_attachments,
-                Some(bytes_uploaded.clone()),
-            )
-            .await
-            .map(|uploaded| format_attachment_links_message(&caption, &uploaded))
-            .map_err(|error| error.to_string());
+            let result =
+                upload_files_locally(store, &upload_attachments, Some(bytes_uploaded.clone()))
+                    .await
+                    .map(|uploaded| format_attachment_links_message(&caption, &uploaded))
+                    .map_err(|error| error.to_string());
             progress_handle.abort();
             let _ = sender.send(CoreMsg::Internal(Box::new(
                 InternalEvent::AttachmentUploadFinished {
+                    store_id,
                     chat_id: upload_chat_id,
                     result,
                 },
@@ -377,6 +344,9 @@ struct PreparedOutgoingAttachment {
 fn prepare_outgoing_attachments(
     attachments: &[OutgoingAttachment],
 ) -> Result<Vec<PreparedOutgoingAttachment>, &'static str> {
+    if attachments.len() > local_store::MAX_UPLOADS {
+        return Err("Select up to 32 attachments at once.");
+    }
     let mut prepared = Vec::with_capacity(attachments.len());
     for attachment in attachments {
         let file_path = PathBuf::from(attachment.file_path.trim());
@@ -417,17 +387,21 @@ pub(super) fn display_filename(filename: &str, file_path: &Path) -> String {
         .to_string()
 }
 
-async fn upload_files_to_hashtree(
-    secret_hex: &str,
+async fn upload_files_locally(
+    store: Arc<AttachmentChunkStore>,
     attachments: &[PreparedOutgoingAttachment],
     progress: Option<Arc<AtomicU64>>,
 ) -> anyhow::Result<Vec<(String, String)>> {
+    let servers = replication::bounded_servers(&blossom_servers_from_config().1);
+    let mut staged = Vec::with_capacity(attachments.len());
     let mut uploaded = Vec::with_capacity(attachments.len());
     for attachment in attachments {
-        let nhash =
-            upload_file_to_hashtree(secret_hex, &attachment.file_path, progress.clone()).await?;
+        let session = store.begin(progress.clone())?;
+        let nhash = upload_file_to_store(&attachment.file_path, session.clone()).await?;
+        staged.push((session, nhash.clone()));
         uploaded.push((nhash, attachment.filename.clone()));
     }
+    store.finish_batch(&staged, &servers)?;
     Ok(uploaded)
 }
 
@@ -444,12 +418,10 @@ pub(super) async fn upload_file_to_hashtree(
         anyhow::bail!("no hashtree write servers configured");
     }
 
-    let store = Arc::new(UploadingBlossomStore::new(
-        keys,
-        read_servers,
-        write_servers,
-        progress,
-    )?);
+    let store = Arc::new(
+        UploadingBlossomStore::new(keys, read_servers, write_servers, progress)?
+            .with_local(current_local_store()),
+    );
     upload_file_to_store(path, store).await
 }
 
@@ -544,6 +516,9 @@ async fn download_hashtree_attachment_base64_with_limit(
         hash: data.hash,
         key: data.decrypt_key,
     };
+    let _read_lease = current_local_store()
+        .map(|store| store.reading())
+        .transpose()?;
     let bytes = if let Some(store) = active_attachment_blob_store() {
         read_hashtree_attachment(&cid, store, max_bytes).await?
     } else {
@@ -568,12 +543,15 @@ async fn read_hashtree_attachment<S: Store + 'static>(
 
 fn blossom_read_store() -> anyhow::Result<Arc<UploadingBlossomStore>> {
     let (read_servers, write_servers) = blossom_servers_from_config();
-    Ok(Arc::new(UploadingBlossomStore::new(
-        nostr::Keys::generate(),
-        merge_read_servers(read_servers, &write_servers),
-        Vec::new(),
-        None,
-    )?))
+    Ok(Arc::new(
+        UploadingBlossomStore::new(
+            nostr::Keys::generate(),
+            merge_read_servers(read_servers, &write_servers),
+            Vec::new(),
+            None,
+        )?
+        .with_local(current_local_store()),
+    ))
 }
 
 fn blossom_servers_from_config() -> (Vec<String>, Vec<String>) {
@@ -659,6 +637,7 @@ struct UploadingBlossomStore {
     download_client: reqwest::Client,
     uploaded: AsyncRwLock<HashSet<String>>,
     progress: Option<Arc<AtomicU64>>,
+    local: Option<Arc<AttachmentChunkStore>>,
 }
 
 impl UploadingBlossomStore {
@@ -678,7 +657,13 @@ impl UploadingBlossomStore {
                 .build()?,
             uploaded: AsyncRwLock::new(HashSet::new()),
             progress,
+            local: None,
         })
+    }
+
+    fn with_local(mut self, local: Option<Arc<AttachmentChunkStore>>) -> Self {
+        self.local = local;
+        self
     }
 }
 
@@ -712,9 +697,9 @@ impl Store for UploadingBlossomStore {
             )));
         }
 
-        {
-            let mut cache = shared_chunk_cache_write();
-            cache.insert(hash_hex.clone(), data);
+        if let Some(local) = &self.local {
+            // The strict path has a durable remote copy; caching is best effort.
+            let _ = local.put(hash, data).await;
         }
         let mut uploaded = self.uploaded.write().await;
         uploaded.insert(hash_hex);
@@ -726,10 +711,9 @@ impl Store for UploadingBlossomStore {
 
     async fn get(&self, hash: &Hash) -> Result<Option<Vec<u8>>, StoreError> {
         let key = to_hex(hash);
-        {
-            let cache = shared_chunk_cache_read();
-            if let Some(data) = cache.get(&key) {
-                return Ok(Some(data.clone()));
+        if let Some(local) = &self.local {
+            if let Ok(Some(data)) = local.get(hash).await {
+                return Ok(Some(data));
             }
         }
 
@@ -744,7 +728,9 @@ impl Store for UploadingBlossomStore {
             )
             .await
             {
-                shared_chunk_cache_write().insert(key.clone(), data.clone());
+                if let Some(local) = &self.local {
+                    let _ = local.put(*hash, data.clone()).await;
+                }
                 return Ok(Some(data));
             }
         }
@@ -753,9 +739,8 @@ impl Store for UploadingBlossomStore {
 
     async fn has(&self, hash: &Hash) -> Result<bool, StoreError> {
         let key = to_hex(hash);
-        {
-            let cache = shared_chunk_cache_read();
-            if cache.contains_key(&key) {
+        if let Some(local) = &self.local {
+            if local.has(hash).await.unwrap_or(false) {
                 return Ok(true);
             }
         }
@@ -771,9 +756,9 @@ impl Store for UploadingBlossomStore {
 
     async fn delete(&self, hash: &Hash) -> Result<bool, StoreError> {
         let key = to_hex(hash);
-        let mut removed = {
-            let mut cache = shared_chunk_cache_write();
-            cache.remove(&key).is_some()
+        let mut removed = match &self.local {
+            Some(local) => local.delete(hash).await.unwrap_or(false),
+            None => false,
         };
         let mut uploaded = self.uploaded.write().await;
         removed |= uploaded.remove(&key);
@@ -854,3 +839,6 @@ mod upload_tests;
 #[cfg(test)]
 #[path = "attachment_upload/same_host_tests.rs"]
 mod same_host_tests;
+
+#[cfg(test)]
+mod storage_tests;

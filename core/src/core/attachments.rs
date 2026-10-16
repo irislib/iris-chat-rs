@@ -211,6 +211,7 @@ fn parse_file_link(link: &str) -> Option<MessageAttachmentSnapshot> {
 
     let filename = percent_decode(filename_encoded);
     Some(MessageAttachmentSnapshot {
+        uploaded_urls: Vec::new(),
         nhash: nhash.to_string(),
         filename,
         filename_encoded: filename_encoded.to_string(),
@@ -435,6 +436,7 @@ mod tests {
     #[test]
     fn message_preview_falls_back_to_attachment_for_empty_reply_body() {
         let attachment = MessageAttachmentSnapshot {
+            uploaded_urls: Vec::new(),
             nhash: "nhash1abc123".to_string(),
             filename: "photo.jpg".to_string(),
             filename_encoded: "photo.jpg".to_string(),

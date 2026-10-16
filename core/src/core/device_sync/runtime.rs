@@ -616,19 +616,24 @@ impl AppCore {
             );
         }
 
-        let attachment_store = if options.same_host_hashtree {
+        let local_attachments = self.ensure_attachment_service();
+        let attachment_store = if let (true, Ok(local_attachments)) =
+            (options.same_host_hashtree, local_attachments)
+        {
             let result = match options.standalone_route {
                 Some(route) => self.runtime.block_on(
                     super::super::attachment_upload::bind_same_host_attachment_store(
                         endpoint.clone(),
                         route,
                         config.peers.clone(),
+                        local_attachments.clone(),
                     ),
                 ),
                 None => self.runtime.block_on(
                     super::super::attachment_upload::start_same_host_attachment_reuse(
                         endpoint.clone(),
                         config.peers.clone(),
+                        local_attachments,
                     ),
                 ),
             };

@@ -215,7 +215,10 @@ fn single_device_without_relays_reuses_provider_and_preserves_fallback_and_outbo
     let (upload_url, upload_server) = super::upload_tests::serve_one_blossom_upload("200 OK");
     let uploading = Arc::new(
         UploadingBlossomStore::new(nostr::Keys::generate(), Vec::new(), vec![upload_url], None)
-            .unwrap(),
+            .unwrap()
+            .with_local(Some(
+                core.attachment_service.as_ref().unwrap().store.clone(),
+            )),
     );
     let uploaded = core
         .runtime
@@ -269,4 +272,81 @@ fn single_device_without_relays_reuses_provider_and_preserves_fallback_and_outbo
         tokio::time::sleep(Duration::from_millis(50)).await;
     });
     provider_runtime.block_on(sibling.shutdown()).unwrap();
+}
+
+#[test]
+fn peer_retrieves_pending_ciphertext_after_store_reopen_without_http_servers() {
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let storage = dir.path().join("ciphertext");
+    let original = AttachmentChunkStore::open(&storage, local_store::DEFAULT_BUDGET).unwrap();
+    let path = dir.path().join("pending.bin");
+    let plaintext = b"durable peer attachment while every HTTP server is offline";
+    std::fs::write(&path, plaintext).unwrap();
+    let session = original.begin(None).unwrap();
+    let nhash = runtime
+        .block_on(upload_file_to_store(&path, session.clone()))
+        .unwrap();
+    original
+        .finish_batch(&[(session, nhash.clone())], &[])
+        .unwrap();
+    drop(original);
+    let reopened = AttachmentChunkStore::open(&storage, local_store::DEFAULT_BUDGET).unwrap();
+    let rendezvous = match reserve_udp_addr() {
+        SocketAddr::V4(addr) => addr,
+        _ => unreachable!(),
+    };
+    let provider = runtime.block_on(endpoint(
+        rendezvous,
+        reserve_udp_addr(),
+        "durable-provider",
+        Vec::new(),
+    ));
+    let consumer = runtime.block_on(endpoint(
+        rendezvous,
+        reserve_udp_addr(),
+        "durable-consumer",
+        Vec::new(),
+    ));
+    let serving = runtime
+        .block_on(TcpBlobTransport::bind_advertised_with_config(
+            provider.clone(),
+            reopened,
+            TcpBlobTransportConfig::default(),
+            100,
+        ))
+        .unwrap();
+    let fetching = runtime
+        .block_on(TcpBlobTransport::bind(
+            consumer.clone(),
+            Arc::new(MemoryStore::new()),
+        ))
+        .unwrap();
+    wait_until(|| {
+        consumer
+            .local_instance_advertisements()
+            .is_ok_and(|adverts| {
+                adverts.iter().any(|advert| {
+                    advert.npub == provider.npub()
+                        && advert.capability(TCP_BLOB_CAPABILITY).is_some()
+                })
+            })
+    });
+    let decoded = nhash_decode(&nhash).unwrap();
+    let bytes = runtime
+        .block_on(fetching.fetch_from_peer(
+            &decoded.hash,
+            fips_core::PeerIdentity::from_npub(provider.npub()).unwrap(),
+        ))
+        .unwrap()
+        .unwrap();
+    assert_ne!(bytes, plaintext);
+    assert_eq!(
+        hashtree_core::decrypt_chk(&bytes, &decoded.decrypt_key.unwrap()).unwrap(),
+        plaintext
+    );
+    drop(serving);
+    drop(fetching);
+    runtime.block_on(consumer.shutdown()).unwrap();
+    runtime.block_on(provider.shutdown()).unwrap();
 }

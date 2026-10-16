@@ -2139,6 +2139,7 @@ mod tests {
         let mut existing = sample_message("m1", "original", 10);
         existing.delivery = DeliveryState::Seen;
         existing.attachments.push(MessageAttachmentSnapshot {
+            uploaded_urls: Vec::new(),
             nhash: "nhash1abc".to_string(),
             filename: "photo.jpg".to_string(),
             filename_encoded: "photo.jpg".to_string(),

@@ -170,18 +170,19 @@ pub(super) fn serve_one_blossom_upload(status: &str) -> (String, thread::JoinHan
 #[tokio::test]
 async fn rejected_blossom_upload_is_not_reported_as_stored() {
     let hash = hashtree_core::sha256(IRIS_LOGO_PNG);
-    let hash_hex = to_hex(&hash);
-    shared_chunk_cache_write().remove(&hash_hex);
+    let cache_dir = tempfile::tempdir().unwrap();
+    let cache = AttachmentChunkStore::open(cache_dir.path(), local_store::DEFAULT_BUDGET).unwrap();
     let (server_url, server) = serve_one_blossom_upload("403 Forbidden");
     let store = UploadingBlossomStore::new(nostr::Keys::generate(), vec![], vec![server_url], None)
-        .unwrap();
+        .unwrap()
+        .with_local(Some(cache.clone()));
 
     let result = store.put(hash, IRIS_LOGO_PNG.to_vec()).await;
 
     let request = server.join().expect("join local Blossom test server");
     assert!(String::from_utf8_lossy(&request).starts_with("PUT /upload HTTP/1.1"));
     assert!(result.is_err(), "rejected remote upload must fail");
-    assert!(!shared_chunk_cache_read().contains_key(&hash_hex));
+    assert!(cache.get(&hash).await.unwrap().is_none());
 }
 
 #[tokio::test]
@@ -210,8 +211,8 @@ async fn retryable_blossom_failure_is_not_hidden_behind_long_retries() {
 #[tokio::test]
 async fn confirmed_blossom_upload_is_cached_with_matching_bytes() {
     let hash = hashtree_core::sha256(IRIS_LOGO_SVG);
-    let hash_hex = to_hex(&hash);
-    shared_chunk_cache_write().remove(&hash_hex);
+    let cache_dir = tempfile::tempdir().unwrap();
+    let cache = AttachmentChunkStore::open(cache_dir.path(), local_store::DEFAULT_BUDGET).unwrap();
     let (server_url, server) = serve_one_blossom_upload("201 Created");
     let progress = Arc::new(AtomicU64::new(0));
     let store = UploadingBlossomStore::new(
@@ -220,7 +221,8 @@ async fn confirmed_blossom_upload_is_cached_with_matching_bytes() {
         vec![server_url],
         Some(progress.clone()),
     )
-    .unwrap();
+    .unwrap()
+    .with_local(Some(cache.clone()));
 
     let result = store.put(hash, IRIS_LOGO_SVG.to_vec()).await;
 
@@ -233,7 +235,7 @@ async fn confirmed_blossom_upload_is_cached_with_matching_bytes() {
     assert_eq!(&request[body_start..], IRIS_LOGO_SVG);
     assert!(result.expect("confirmed remote upload"));
     assert_eq!(
-        shared_chunk_cache_read().get(&hash_hex).map(Vec::as_slice),
+        cache.get(&hash).await.unwrap().as_deref(),
         Some(IRIS_LOGO_SVG)
     );
     assert_eq!(progress.load(Ordering::Relaxed), IRIS_LOGO_SVG.len() as u64);
@@ -251,8 +253,7 @@ async fn real_blossom_round_trip_survives_sender_cache_clear() {
         .await
         .expect("upload Iris logo to configured Blossom server");
 
-    let uploaded = nhash_decode(&nhash).expect("decode uploaded nhash");
-    shared_chunk_cache_write().remove(&to_hex(&uploaded.hash));
+    *active_local_store().write().unwrap() = None;
     *attachment_blob_store()
         .write()
         .unwrap_or_else(|poison| poison.into_inner()) = None;

@@ -234,6 +234,10 @@ pub enum ChatMessageKind {
 
 #[derive(uniffi::Record, Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct MessageAttachmentSnapshot {
+    /// Local historical receipts for complete encrypted attachment trees.
+    #[serde(default)]
+    #[uniffi(default = [])]
+    pub uploaded_urls: Vec<String>,
     pub nhash: String,
     pub filename: String,
     pub filename_encoded: String,

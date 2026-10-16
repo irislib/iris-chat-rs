@@ -78,6 +78,7 @@ impl AppCore {
             shared_state,
             runtime,
             data_dir,
+            attachment_service: None,
             state: state.clone(),
             logged_in: None,
             private_contacts: private_contacts::PrivateContactRuntime::default(),
@@ -280,6 +281,7 @@ impl AppCore {
                 InternalEvent::SessionStartupFollowUp => "SessionStartupFollowUp",
                 InternalEvent::PrivateContactSyncTick { .. } => "PrivateContactSyncTick",
                 InternalEvent::RetryPendingRelayPublishes { .. } => "RetryPendingRelayPublishes",
+                InternalEvent::AttachmentReceiptsUpdated => "AttachmentReceiptsUpdated",
                 InternalEvent::AttachmentUploadFinished { .. } => "AttachmentUploadFinished",
                 InternalEvent::AttachmentUploadProgress { .. } => "AttachmentUploadProgress",
                 InternalEvent::ProfilePictureUploadFinished { .. } => {
@@ -884,14 +886,36 @@ impl AppCore {
             InternalEvent::RetryPendingRelayPublishes { reason } => {
                 self.retry_pending_relay_publishes(&reason);
             }
-            InternalEvent::AttachmentUploadFinished { chat_id, result } => {
-                self.handle_attachment_upload_finished(chat_id, result);
+            InternalEvent::AttachmentReceiptsUpdated => {
+                self.rebuild_state();
+                self.emit_state();
+            }
+            InternalEvent::AttachmentUploadFinished {
+                store_id,
+                chat_id,
+                result,
+            } => {
+                if self
+                    .attachment_service
+                    .as_ref()
+                    .is_some_and(|s| s.store.id == store_id)
+                {
+                    self.handle_attachment_upload_finished(chat_id, result);
+                }
             }
             InternalEvent::AttachmentUploadProgress {
+                store_id,
                 bytes_uploaded,
                 total_bytes,
             } => {
-                self.handle_attachment_upload_progress(bytes_uploaded, total_bytes);
+                if store_id == 0
+                    || self
+                        .attachment_service
+                        .as_ref()
+                        .is_some_and(|s| s.store.id == store_id)
+                {
+                    self.handle_attachment_upload_progress(bytes_uploaded, total_bytes);
+                }
             }
             InternalEvent::ProfilePictureUploadFinished { result } => {
                 self.handle_profile_picture_upload_finished(result);

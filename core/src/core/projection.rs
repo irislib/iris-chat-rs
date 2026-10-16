@@ -152,6 +152,13 @@ impl AppCore {
         local_owner_hex: Option<&str>,
     ) -> ChatMessageSnapshot {
         let mut decorated = message.clone();
+        for attachment in &mut decorated.attachments {
+            attachment.uploaded_urls = self
+                .attachment_service
+                .as_ref()
+                .map(|service| service.store.uploaded_urls(&attachment.nhash))
+                .unwrap_or_default();
+        }
         let author_owner = decorated.author_owner_pubkey_hex.clone().or_else(|| {
             if matches!(decorated.kind, ChatMessageKind::System) {
                 None
@@ -250,6 +257,9 @@ impl AppCore {
     }
 
     fn rebuild_state_inner(&mut self) {
+        if self.logged_in.is_some() {
+            let _ = self.ensure_attachment_service();
+        }
         let t0 = crate::perflog::now_ms();
         self.state.account = self.build_account_snapshot();
         self.state.device_roster = self.build_device_roster_snapshot();

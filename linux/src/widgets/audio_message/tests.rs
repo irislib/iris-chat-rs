@@ -35,6 +35,7 @@ pub fn run() {
     std::env::set_var("IRIS_UI_TEST_AUDIO_FILE", file.path());
     std::env::set_var("IRIS_UI_TEST_AUDIO_SINK", "fakesink");
     let attachment = MessageAttachmentSnapshot {
+        uploaded_urls: Vec::new(),
         nhash: "audio-test".into(),
         filename: "Voice message.M4A".into(),
         filename_encoded: "Voice%20message.M4A".into(),
@@ -48,6 +49,7 @@ pub fn run() {
         "Old attachments must work without the audio flag"
     );
     assert!(!is_audio(&MessageAttachmentSnapshot {
+        uploaded_urls: Vec::new(),
         filename: "document.pdf".into(),
         ..attachment.clone()
     }));

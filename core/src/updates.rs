@@ -323,11 +323,14 @@ pub(crate) enum InternalEvent {
     RetryPendingRelayPublishes {
         reason: String,
     },
+    AttachmentReceiptsUpdated,
     AttachmentUploadFinished {
+        store_id: u64,
         chat_id: String,
         result: Result<String, String>,
     },
     AttachmentUploadProgress {
+        store_id: u64,
         bytes_uploaded: u64,
         total_bytes: u64,
     },

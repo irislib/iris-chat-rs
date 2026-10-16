@@ -555,6 +555,7 @@ fn message_mutations_reject_ambiguous_forged_and_attachment_edits() {
     core.threads.get_mut(&chat).unwrap().messages[0]
         .attachments
         .push(MessageAttachmentSnapshot {
+            uploaded_urls: Vec::new(),
             filename: "photo.jpg".into(),
             filename_encoded: "photo.jpg".into(),
             is_image: true,

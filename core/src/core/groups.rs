@@ -210,6 +210,7 @@ impl AppCore {
                     last_reported = current;
                     let _ = progress_sender.send(CoreMsg::Internal(Box::new(
                         InternalEvent::AttachmentUploadProgress {
+                            store_id: 0,
                             bytes_uploaded: current,
                             total_bytes,
                         },

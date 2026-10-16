@@ -647,6 +647,7 @@ pub struct AppCore {
     shared_state: Arc<RwLock<AppState>>,
     runtime: tokio::runtime::Runtime,
     data_dir: PathBuf,
+    attachment_service: Option<attachment_upload::AttachmentService>,
     state: AppState,
     logged_in: Option<LoggedInState>,
     private_contacts: private_contacts::PrivateContactRuntime,
