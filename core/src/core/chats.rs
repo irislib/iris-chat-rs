@@ -480,6 +480,7 @@ impl AppCore {
 
     pub(super) fn send_prepared_attachment_message(&mut self, chat_id: &str, text: &str) {
         self.send_message_from(chat_id, text, None, MessageSendSource::PreparedAttachment);
+        self.finish_attachment_message(text);
     }
 
     fn send_message_from(
@@ -583,6 +584,10 @@ impl AppCore {
                 "reason=message.direct.send chat_id={normalized_chat_id} message_id={message_id}"
             ),
         );
+        if let Err(error) = self.bind_attachment_message(&normalized_chat_id, &message_id, text) {
+            self.state.toast = Some(error.to_string());
+            return;
+        }
         let message = self.push_outgoing_message_with_id(
             message_id,
             &normalized_chat_id,
@@ -605,6 +610,7 @@ impl AppCore {
                 return;
             }
         }
+        self.finish_attachment_message(text);
         self.drain_queued_direct_text_messages("message.direct.send");
     }
 

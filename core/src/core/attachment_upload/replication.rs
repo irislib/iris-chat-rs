@@ -153,6 +153,7 @@ pub(super) async fn replicate_tree(
 }
 
 pub(in crate::core) struct AttachmentService {
+    owner: String,
     pub(in crate::core) store: Arc<AttachmentChunkStore>,
     task: tokio::task::JoinHandle<()>,
 }
@@ -160,6 +161,7 @@ pub(in crate::core) struct AttachmentService {
 impl Drop for AttachmentService {
     fn drop(&mut self) {
         self.task.abort();
+        self.store.close();
     }
 }
 
@@ -167,13 +169,18 @@ impl AppCore {
     pub(in crate::core) fn ensure_attachment_service(
         &mut self,
     ) -> anyhow::Result<Arc<AttachmentChunkStore>> {
-        if let Some(service) = &self.attachment_service {
-            return Ok(service.store.clone());
-        }
         let account = self
             .logged_in
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("no active attachment account"))?;
+        let owner = account.owner_pubkey.to_hex();
+        if let Some(service) = &self.attachment_service {
+            anyhow::ensure!(
+                service.owner == owner,
+                "attachment service belongs to another account"
+            );
+            return Ok(service.store.clone());
+        }
         let keys = account
             .owner_keys
             .as_ref()
@@ -183,7 +190,10 @@ impl AppCore {
             &self.data_dir.join("attachments"),
             local_store::DEFAULT_BUDGET,
         )?;
-        store.configure_pending(&blossom_servers_from_config().1)?;
+        store.bind_owner(&owner)?;
+        self.resolve_attachment_staging(&store, None)?;
+        let configured_servers = bounded_servers(&blossom_servers_from_config().1);
+        store.configure_pending(&configured_servers)?;
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(15))
             .redirect(reqwest::redirect::Policy::none())
@@ -191,7 +201,19 @@ impl AppCore {
         let worker_store = store.clone();
         let sender = self.core_sender.clone();
         let task = self.runtime.spawn(async move {
+            let mut configured_servers = configured_servers;
+            let mut checked_configuration = std::time::Instant::now();
             loop {
+                if checked_configuration.elapsed() >= Duration::from_secs(30) {
+                    checked_configuration = std::time::Instant::now();
+                    let current = bounded_servers(&blossom_servers_from_config().1);
+                    if current != configured_servers {
+                        if worker_store.configure_pending(&current).is_err() {
+                            break;
+                        }
+                        configured_servers = current;
+                    }
+                }
                 match worker_store.next_replica() {
                     Ok(Some((root, server))) => {
                         let complete = tokio::time::timeout(
@@ -220,15 +242,37 @@ impl AppCore {
             .write()
             .unwrap_or_else(|p| p.into_inner()) = Some(Arc::downgrade(&store));
         self.attachment_service = Some(AttachmentService {
+            owner,
             store: store.clone(),
             task,
         });
         Ok(store)
     }
 
+    pub(in crate::core) fn stop_attachment_service(&mut self) {
+        if let Some(service) = self.attachment_service.take() {
+            service.task.abort();
+            service.store.close();
+            let mut active = active_local_store()
+                .write()
+                .unwrap_or_else(|p| p.into_inner());
+            if active
+                .as_ref()
+                .and_then(Weak::upgrade)
+                .is_some_and(|store| store.id == service.store.id)
+            {
+                *active = None;
+            }
+        }
+    }
+
     pub(in crate::core) fn clear_attachment_service(&mut self) {
         if let Some(service) = self.attachment_service.take() {
             service.task.abort();
+            // Clear this exact live environment while its closed flag excludes
+            // the canceled worker and outstanding leases from further access.
+            let result = service.store.close_and_clear();
+            service.store.close();
             let mut active = active_local_store()
                 .write()
                 .unwrap_or_else(|p| p.into_inner());
@@ -240,9 +284,21 @@ impl AppCore {
                 *active = None;
             }
             drop(active);
-            if let Err(error) = service.store.close_and_clear() {
+            if let Err(error) = result {
                 self.push_debug_log("attachment.storage.clear.error", error.to_string());
             }
+            return;
+        }
+        let directory = self.data_dir.join("attachments");
+        if !directory.join("index.sqlite3").exists() {
+            return;
+        }
+        // Logout also runs before a stored account is restored. Reopen only the
+        // app-owned blob index, without credentials or any replication worker.
+        let result = AttachmentChunkStore::open(&directory, local_store::DEFAULT_BUDGET)
+            .and_then(|store| store.close_and_clear());
+        if let Err(error) = result {
+            self.push_debug_log("attachment.storage.clear.error", error.to_string());
         }
     }
 }

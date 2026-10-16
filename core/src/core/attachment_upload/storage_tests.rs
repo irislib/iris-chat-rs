@@ -138,6 +138,7 @@ async fn offline_attachment_is_durable_and_pending_after_reopen() {
             .unwrap(),
         bytes
     );
+    reopened.resolve_staged(&root.hash, true).unwrap();
     assert!(reopened.next_replica().unwrap().is_some());
     assert!(reopened.delete(&root.hash).await.is_err());
     let metadata = std::fs::read(storage.join("index.sqlite3")).unwrap();
@@ -186,44 +187,107 @@ async fn only_whole_tree_correct_ack_exposes_ciphertext_root_url() {
 }
 
 #[tokio::test]
-async fn quota_protects_pending_and_reads_but_reclaims_failed_staging() {
+async fn quota_protects_pending_but_reclaims_failed_staging_and_read_cache() {
     let dir = tempfile::tempdir().unwrap();
-    let store = AttachmentChunkStore::open(&dir.path().join("blobs"), 1024 * 1024).unwrap();
-    let staged = stage(&store, dir.path(), &vec![7; 300 * 1024]).await;
+    let store = AttachmentChunkStore::open(&dir.path().join("blobs"), 32 * 1024 * 1024).unwrap();
+    let pending_bytes: Vec<u8> = (0..7 * 1024 * 1024)
+        .map(|i| (7 + i / (512 * 1024)) as u8)
+        .collect();
+    let staged = stage(&store, dir.path(), &pending_bytes).await;
     let nhash = staged.1.clone();
     let pending = cid(&nhash);
     store.finish_batch(&[staged], &[]).unwrap();
     let next = store.begin(None).unwrap();
-    let data = vec![8; 300 * 1024];
+    let data = vec![8; 7 * 1024 * 1024];
     assert!(next.put(hashtree_core::sha256(&data), data).await.is_err());
     drop(next);
     assert_eq!(
         read_hashtree_attachment(&pending, store.clone(), MAX_ATTACHMENT_BYTES)
             .await
             .unwrap(),
-        vec![7; 300 * 1024]
+        pending_bytes
     );
 
-    let other = AttachmentChunkStore::open(&dir.path().join("failed"), 1024 * 1024).unwrap();
-    let first = stage(&other, dir.path(), &vec![1; 300 * 1024]).await;
-    let second = other.begin(None).unwrap();
-    let data = vec![2; 300 * 1024];
-    assert!(second
-        .put(hashtree_core::sha256(&data), data)
+    let other = AttachmentChunkStore::open(&dir.path().join("failed"), 32 * 1024 * 1024).unwrap();
+    let first_file = dir.path().join("first.bin");
+    let second_file = dir.path().join("second.bin");
+    std::fs::write(&first_file, &pending_bytes).unwrap();
+    std::fs::write(
+        &second_file,
+        pending_bytes
+            .iter()
+            .map(|b| b.wrapping_add(41))
+            .collect::<Vec<_>>(),
+    )
+    .unwrap();
+    let prepared = [first_file, second_file]
+        .into_iter()
+        .map(|file_path| PreparedOutgoingAttachment {
+            file_path,
+            filename: "fixture.bin".into(),
+            size_bytes: pending_bytes.len() as u64,
+        })
+        .collect::<Vec<_>>();
+    assert!(upload_files_locally(other.clone(), &prepared, None)
         .await
         .is_err());
-    drop(first);
-    drop(second); // Failed multi-file batch never committed persistent pins.
-    let data = vec![3; 300 * 1024];
-    other.put(hashtree_core::sha256(&data), data).await.unwrap();
+    assert!(other.staged_references().unwrap().is_empty());
+    // The failed production multi-file batch leaves no permanent protection.
+    let replacement: Vec<u8> = pending_bytes.iter().map(|b| b.wrapping_add(80)).collect();
+    let replaced = stage(&other, dir.path(), &replacement).await;
+    drop(replaced);
     let read = other.reading().unwrap();
-    let data = vec![4; 300 * 1024];
-    assert!(other
-        .put(hashtree_core::sha256(&data), data.clone())
-        .await
-        .is_err());
-    drop(read);
-    other.put(hashtree_core::sha256(&data), data).await.unwrap();
+    let replacement: Vec<u8> = pending_bytes.iter().map(|b| b.wrapping_add(120)).collect();
+    let replaced = stage(&other, dir.path(), &replacement).await;
+    assert_eq!(
+        read_hashtree_attachment(&cid(&replaced.1), other.clone(), MAX_ATTACHMENT_BYTES)
+            .await
+            .unwrap(),
+        replacement
+    );
+    drop(read); // Reads hold owned bytes, not a veto on unrelated cache eviction.
+}
+
+#[tokio::test]
+async fn routed_download_replaces_full_evictable_cache_while_reading() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = AttachmentChunkStore::open(dir.path(), 32 * 1024 * 1024).unwrap();
+    let old = vec![3; 7 * 1024 * 1024];
+    let old_hash = hashtree_core::sha256(&old);
+    store.put(old_hash, old).await.unwrap();
+    let remote = Arc::new(hashtree_core::MemoryStore::new());
+    let expected: Vec<u8> = (0..7 * 1024 * 1024)
+        .map(|i| (9 + i / (512 * 1024)) as u8)
+        .collect();
+    let tree = HashTree::new(HashTreeConfig::new(remote.clone()));
+    let (cid, _) = tree.put(&expected).await.unwrap();
+    let router = Arc::new(
+        BlobRouter::new(
+            vec![BlobRouteEntry::new(
+                "fixture",
+                Arc::new(StoreBlobRoute::new(remote)),
+            )],
+            Some(store.clone()),
+            BlobRouterConfig::default(),
+        )
+        .unwrap(),
+    );
+    let routed = Arc::new(RoutedStore::new(store.clone(), router));
+    let _reading = store.reading().unwrap();
+    assert_eq!(
+        read_hashtree_attachment(&cid, routed, MAX_ATTACHMENT_BYTES)
+            .await
+            .unwrap(),
+        expected
+    );
+    assert!(store.get(&old_hash).await.unwrap().is_none());
+    // The complete newly received file is now readable without a remote route.
+    assert_eq!(
+        read_hashtree_attachment(&cid, store.clone(), MAX_ATTACHMENT_BYTES)
+            .await
+            .unwrap(),
+        expected
+    );
 }
 
 #[tokio::test]
@@ -233,17 +297,34 @@ async fn restart_repairs_uncommitted_files_and_corruption_never_returns_bytes() 
     let bytes = b"ciphertext fixture".to_vec();
     let hash = hashtree_core::sha256(&bytes);
     store.put(hash, bytes.clone()).await.unwrap();
-    std::fs::write(dir.path().join(to_hex(&hash)), b"corrupt").unwrap();
+    store.raw_put_for_test(hash, b"corrupt");
     assert!(store.get(&hash).await.is_err());
     store.put(hash, bytes.clone()).await.unwrap();
-    drop(store);
     let orphan = hashtree_core::sha256(b"orphan");
-    std::fs::write(dir.path().join(to_hex(&orphan)), b"orphan").unwrap();
-    std::fs::write(dir.path().join("incoming.tmp"), b"interrupted").unwrap();
+    store.raw_put_for_test(orphan, b"orphan");
+    drop(store);
     let reopened = AttachmentChunkStore::open(dir.path(), DEFAULT_BUDGET).unwrap();
-    assert!(!dir.path().join(to_hex(&orphan)).exists());
-    assert!(!dir.path().join("incoming.tmp").exists());
+    assert!(reopened.get(&orphan).await.unwrap().is_none());
     assert_eq!(reopened.get(&hash).await.unwrap(), Some(bytes));
+}
+
+#[tokio::test]
+async fn repaired_pending_block_restores_backend_pin_before_eviction() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = AttachmentChunkStore::open(dir.path(), 32 * 1024 * 1024).unwrap();
+    let staged = stage(&store, dir.path(), b"pending repair").await;
+    let root = cid(&staged.1).hash;
+    let bytes = store.get(&root).await.unwrap().unwrap();
+    store.finish_batch(&[staged], &[]).unwrap();
+    store.raw_put_for_test(root, b"broken");
+    store.put(root, bytes.clone()).await.unwrap();
+    // Enough eligible cache churn to exercise the backend's durable pin veto.
+    for value in 0..20 {
+        let data = vec![value; 1024 * 1024];
+        store.put(hashtree_core::sha256(&data), data).await.unwrap();
+    }
+    assert_eq!(store.get(&root).await.unwrap(), Some(bytes));
+    assert!(store.delete(&root).await.is_err());
 }
 
 #[tokio::test]
@@ -257,6 +338,7 @@ async fn retry_state_is_durable_bounded_and_logout_invalidates_writers() {
     store
         .finish_batch(&[staged], std::slice::from_ref(&server))
         .unwrap();
+    store.resolve_staged(&root, true).unwrap();
     assert!(store.next_replica().unwrap().is_some());
     store.finish_replica(&root, &server, false).unwrap();
     assert!(store.next_replica().unwrap().is_none());
@@ -319,6 +401,14 @@ fn active_account_worker_emits_receipt_refresh_and_ignores_stale_completion() {
     store
         .finish_batch(&[staged], std::slice::from_ref(&server.url))
         .unwrap();
+    let chat = nostr::Keys::generate().public_key().to_hex();
+    core.handle_attachment_upload_finished(
+        chat,
+        Ok(format_attachment_links_message(
+            "",
+            &[(nhash.clone(), "worker.bin".into())],
+        )),
+    );
     let deadline = std::time::Instant::now() + Duration::from_secs(5);
     loop {
         let event = receiver
@@ -363,7 +453,7 @@ async fn metadata_and_parallel_work_are_bounded_across_reconfiguration() {
     let count: usize = db
         .query_row("SELECT COUNT(*) FROM replicas", [], |row| row.get(0))
         .unwrap();
-    assert_eq!(count, 8);
+    assert_eq!(count, 1, "only the current failed target remains");
     let writers = (0..32)
         .map(|_| store.begin(None).unwrap())
         .collect::<Vec<_>>();
@@ -374,4 +464,56 @@ async fn metadata_and_parallel_work_are_bounded_across_reconfiguration() {
     assert!(store.reading().is_err());
     drop(readers);
     assert!(store.reading().is_ok());
+}
+
+#[tokio::test]
+async fn replacing_all_failed_servers_rescues_pending_tree_and_keeps_receipts() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = AttachmentChunkStore::open(&dir.path().join("blobs"), DEFAULT_BUDGET).unwrap();
+    let staged = stage(&store, dir.path(), b"rescue from dead upload targets").await;
+    let nhash = staged.1.clone();
+    let root = cid(&nhash).hash;
+    let old = (0..8)
+        .map(|i| format!("https://old-{i}.invalid"))
+        .collect::<Vec<_>>();
+    store.finish_batch(&[staged], &old).unwrap();
+    store.resolve_staged(&root, true).unwrap();
+    for server in &old {
+        store.finish_replica(&root, server, false).unwrap();
+    }
+    let healthy = BlossomFixture::start(usize::MAX, false).await;
+    let mut replacement = vec![healthy.url.clone()];
+    replacement.extend((0..7).map(|i| format!("https://new-{i}.invalid")));
+    store.configure_pending(&replacement).unwrap();
+    // A superseded in-flight ACK must not erase the new pending protection.
+    store.finish_replica(&root, &old[0], true).unwrap();
+    assert!(store.uploaded_urls(&nhash).is_empty());
+    assert!(store.delete(&root).await.is_err());
+    assert_eq!(
+        store.next_replica().unwrap(),
+        Some((root, healthy.url.clone()))
+    );
+    replication::replicate_tree(
+        &store,
+        &client(),
+        &nostr::Keys::generate(),
+        root,
+        &healthy.url,
+    )
+    .await
+    .unwrap();
+    let receipt = store.uploaded_urls(&nhash);
+    store
+        .configure_pending(&["https://later.invalid".into()])
+        .unwrap();
+    assert_eq!(
+        store.uploaded_urls(&nhash),
+        receipt,
+        "confirmed history survives configuration edits"
+    );
+    let db = rusqlite::Connection::open(dir.path().join("blobs/index.sqlite3")).unwrap();
+    let count: usize = db
+        .query_row("SELECT COUNT(*) FROM replicas", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(count, 1, "old incomplete jobs are retired");
 }

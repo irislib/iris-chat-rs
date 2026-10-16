@@ -34,6 +34,13 @@ impl AppCore {
                 return;
             }
         };
+        let staged_attachment = match self.bind_attachment_message(chat_id, &message_id, text) {
+            Ok(staged) => staged,
+            Err(error) => {
+                self.state.toast = Some(error.to_string());
+                return;
+            }
+        };
         // Group encryption and checkpointing can be expensive with a backlog.
         // Show the authored row first; completion updates this same ID.
         self.push_outgoing_message_with_id(
@@ -45,6 +52,16 @@ impl AppCore {
             DeliveryState::Queued,
         );
         self.emit_pending_message_state();
+        if staged_attachment {
+            // The attachment's durable message reference must precede protocol
+            // publication; restart can then resolve either crash boundary.
+            if let Err(error) = self.persist_app_state() {
+                self.update_message_delivery(chat_id, &message_id, DeliveryState::Failed);
+                self.state.toast = Some(error.to_string());
+                return;
+            }
+            self.finish_attachment_message(text);
+        }
         let result = self
             .protocol_engine
             .as_mut()

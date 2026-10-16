@@ -1,10 +1,11 @@
 //! App-owned ciphertext storage. No nhash decryption keys or signing keys live here.
 use super::*;
+use futures_util::FutureExt;
+use hashtree_lmdb::LmdbBlobStore;
 use rusqlite::{params, Connection, OptionalExtension};
-use std::io::Write;
 use std::sync::{Mutex, MutexGuard};
 
-pub(super) const DEFAULT_BUDGET: u64 = 256 * 1024 * 1024;
+pub(super) const DEFAULT_BUDGET: u64 = 1024 * 1024 * 1024;
 const MAX_BLOCKS: usize = 8192;
 const MAX_TREES: usize = 256;
 pub(super) const MAX_TREE_BLOCKS: usize = 128;
@@ -21,7 +22,7 @@ struct State {
 
 pub(in crate::core) struct AttachmentChunkStore {
     pub(in crate::core) id: u64,
-    directory: PathBuf,
+    blobs: LmdbBlobStore,
     data_budget: u64,
     state: Mutex<State>,
     pub(super) wake: tokio::sync::Notify,
@@ -67,10 +68,11 @@ impl AttachmentChunkStore {
         db.execute_batch(&format!(
             "PRAGMA page_size=4096; PRAGMA max_page_count={};
              PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL; PRAGMA foreign_keys=ON;
+             CREATE TABLE IF NOT EXISTS metadata(key TEXT PRIMARY KEY, value TEXT NOT NULL);
              CREATE TABLE IF NOT EXISTS blocks(hash TEXT PRIMARY KEY, allocated INTEGER NOT NULL,
                  accessed INTEGER NOT NULL);
              CREATE TABLE IF NOT EXISTS trees(root TEXT PRIMARY KEY, replicated INTEGER NOT NULL DEFAULT 0,
-                 created INTEGER NOT NULL);
+                 created INTEGER NOT NULL, committed INTEGER NOT NULL DEFAULT 0, chat_id TEXT, message_id TEXT);
              CREATE TABLE IF NOT EXISTS tree_blocks(root TEXT NOT NULL REFERENCES trees(root) ON DELETE CASCADE,
                  hash TEXT NOT NULL, PRIMARY KEY(root,hash));
              CREATE INDEX IF NOT EXISTS tree_blocks_hash ON tree_blocks(hash);
@@ -79,11 +81,39 @@ impl AttachmentChunkStore {
                  next_retry INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(root,server));",
             metadata_budget / 4096
         ))?;
+        let metadata_pages: u64 = db.query_row("PRAGMA page_count", [], |r| r.get(0))?;
+        anyhow::ensure!(
+            metadata_pages * 4096 <= metadata_budget,
+            "existing attachment metadata exceeds configured quota"
+        );
+        let has_committed: bool = db.query_row(
+            "SELECT EXISTS(SELECT 1 FROM pragma_table_info('trees') WHERE name='committed')",
+            [],
+            |r| r.get(0),
+        )?;
+        if !has_committed {
+            // Preserve unknown legacy protection; unowned stores cannot be
+            // adopted by an account or start a replication worker.
+            db.execute_batch("ALTER TABLE trees ADD COLUMN committed INTEGER NOT NULL DEFAULT 1;
+                ALTER TABLE trees ADD COLUMN chat_id TEXT; ALTER TABLE trees ADD COLUMN message_id TEXT;")?;
+        }
         static NEXT_ID: AtomicU64 = AtomicU64::new(1);
+        let map_budget = budget - metadata_budget * 4;
+        let blobs = LmdbBlobStore::with_exact_map_size_and_external_blob_options(
+            directory.join("blobs"),
+            map_budget as usize,
+            None,
+        )?;
+        anyhow::ensure!(
+            blobs.map_size_bytes() as u64 <= map_budget,
+            "existing attachment map exceeds configured quota"
+        );
         let store = Arc::new(Self {
             id: NEXT_ID.fetch_add(1, Ordering::Relaxed),
-            directory: directory.to_path_buf(),
-            data_budget: budget - metadata_budget * 4,
+            blobs,
+            // The fixed LMDB map is the physical bound; reserve internal COW,
+            // indexes and pin pages rather than promise every map byte as data.
+            data_budget: map_budget * 3 / 4,
             state: Mutex::new(State {
                 db,
                 pins: HashMap::new(),
@@ -93,25 +123,33 @@ impl AttachmentChunkStore {
             }),
             wake: tokio::sync::Notify::new(),
         });
-        // Only an uncommitted ciphertext write may be discarded after a crash.
-        let temporary = directory.join("incoming.tmp");
-        if temporary.exists() {
-            std::fs::remove_file(temporary)?;
-        }
         let state = store.lock()?;
-        for entry in std::fs::read_dir(directory)? {
-            let entry = entry?;
-            let name = entry.file_name().to_string_lossy().into_owned();
-            if hashtree_core::from_hex(&name).is_ok()
-                && !state.db.query_row(
-                    "SELECT EXISTS(SELECT 1 FROM blocks WHERE hash=?1)",
-                    [&name],
-                    |r| r.get::<_, bool>(0),
-                )?
-            {
-                std::fs::remove_file(entry.path())?;
+        let hashes = store.blobs.scan_hashes_after(None, MAX_BLOCKS + 1)?;
+        anyhow::ensure!(
+            hashes.len() <= MAX_BLOCKS,
+            "attachment block count exceeds configured bound"
+        );
+        for hash in hashes {
+            let tracked: bool = state.db.query_row(
+                "SELECT EXISTS(SELECT 1 FROM blocks WHERE hash=?1)",
+                [to_hex(&hash)],
+                |r| r.get(0),
+            )?;
+            if tracked {
+                store.sync_pin(&state, &hash)?;
+            } else {
+                store.blobs.delete_sync(&hash)?;
             }
         }
+        // Unreleased earlier file-backed candidates are not adopted or erased.
+        for entry in std::fs::read_dir(directory)? {
+            let entry = entry?;
+            anyhow::ensure!(
+                hashtree_core::from_hex(&entry.file_name().to_string_lossy()).is_err(),
+                "legacy attachment files require explicit migration"
+            );
+        }
+        store.blobs.force_sync()?;
         drop(state);
         Ok(store)
     }
@@ -125,80 +163,125 @@ impl AttachmentChunkStore {
         Ok(state)
     }
 
+    // The pinned backend's Store pin/eviction methods are synchronous LMDB
+    // transactions wrapped in async_trait. Do not nest a runtime or silently
+    // proceed if a future backend version changes that contract.
+    fn immediate<T>(
+        future: impl std::future::Future<Output = Result<T, StoreError>>,
+    ) -> anyhow::Result<T> {
+        future
+            .now_or_never()
+            .ok_or_else(|| anyhow::anyhow!("attachment backend unexpectedly yielded"))?
+            .map_err(Into::into)
+    }
+
+    fn sync_pin(&self, state: &State, hash: &Hash) -> anyhow::Result<()> {
+        let pending: bool = state.db.query_row("SELECT EXISTS(SELECT 1 FROM tree_blocks t JOIN trees a ON a.root=t.root WHERE t.hash=?1 AND a.replicated=0)", [to_hex(hash)], |r| r.get(0))?;
+        // Iris owns overlapping references; the backend needs one durable veto.
+        let desired = u32::from(pending || state.pins.contains_key(hash));
+        let current = self.blobs.pin_count(hash);
+        anyhow::ensure!(
+            current <= MAX_UPLOADS as u32 + MAX_TREES as u32 + 2,
+            "attachment pin count is invalid"
+        );
+        for _ in current..desired {
+            Self::immediate(self.blobs.pin(hash))?;
+        }
+        for _ in desired..current {
+            Self::immediate(self.blobs.unpin(hash))?;
+        }
+        Ok(())
+    }
+
     fn read_locked(&self, state: &State, hash: &Hash) -> anyhow::Result<Option<Vec<u8>>> {
-        let key = to_hex(hash);
         let tracked: bool = state.db.query_row(
             "SELECT EXISTS(SELECT 1 FROM blocks WHERE hash=?1)",
-            [&key],
+            [to_hex(hash)],
             |r| r.get(0),
         )?;
         if !tracked {
             return Ok(None);
         }
-        let path = self.directory.join(&key);
-        match std::fs::metadata(&path) {
-            Ok(meta) => anyhow::ensure!(
-                meta.is_file() && meta.len() <= MAX_ATTACHMENT_BYTES + 64,
-                "invalid attachment block size"
-            ),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(e) => return Err(e.into()),
-        }
-        let bytes = match std::fs::read(path) {
-            Ok(bytes) => bytes,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(e) => return Err(e.into()),
+        anyhow::ensure!(
+            self.blobs
+                .blob_size_sync(hash)?
+                .is_none_or(|len| len <= MAX_ATTACHMENT_BYTES + 64),
+            "invalid attachment block size"
+        );
+        let Some(bytes) = self.blobs.get_sync(hash)? else {
+            return Ok(None);
         };
         anyhow::ensure!(
             hashtree_core::sha256(&bytes) == *hash,
             "corrupt attachment block"
         );
-        state.db.execute(
-            "UPDATE blocks SET accessed=(SELECT COALESCE(MAX(accessed),0)+1 FROM blocks) WHERE hash=?1",
-            [&key],
-        )?;
+        let accessed = self
+            .blobs
+            .last_accessed_at_sync(hash)?
+            .unwrap_or(0)
+            .max(now())
+            .saturating_add(1);
+        // Read data remains valid if optional LRU bookkeeping runs out of map
+        // space. Owned bytes outlive the lock and any later cache eviction.
+        let _ = self.blobs.touch_accessed_sync(hash, accessed);
         Ok(Some(bytes))
     }
 
     fn make_room(&self, state: &State, additional: u64, new_block: bool) -> anyhow::Result<()> {
-        loop {
-            let (used, count): (u64, usize) = state.db.query_row(
-                "SELECT COALESCE(SUM(allocated),0),COUNT(*) FROM blocks",
-                [],
-                |r| Ok((r.get(0)?, r.get(1)?)),
-            )?;
-            if used.saturating_add(additional) <= self.data_budget
-                && (!new_block || count < MAX_BLOCKS)
-            {
-                return Ok(());
-            }
-            anyhow::ensure!(
-                state.readers == 0,
-                "attachment storage is busy reading protected files"
-            );
-            let mut stmt = state.db.prepare(
-                "SELECT b.hash FROM blocks b WHERE NOT EXISTS(SELECT 1 FROM tree_blocks t
-                 JOIN trees a ON a.root=t.root WHERE t.hash=b.hash AND a.replicated=0)
-                 ORDER BY b.accessed,b.hash",
-            )?;
-            let candidate = stmt
-                .query_map([], |r| r.get::<_, String>(0))?
-                .filter_map(Result::ok)
-                .find(|key| {
-                    hashtree_core::from_hex(key).is_ok_and(|h| !state.pins.contains_key(&h))
-                });
-            let Some(key) = candidate else {
-                anyhow::bail!("attachment storage is full; pending files are protected");
-            };
-            match std::fs::remove_file(self.directory.join(&key)) {
-                Ok(()) => (),
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => (),
-                Err(e) => return Err(e.into()),
-            }
-            state
-                .db
-                .execute("DELETE FROM blocks WHERE hash=?1", [key])?;
+        let (used, count): (u64, usize) = state.db.query_row(
+            "SELECT COALESCE(SUM(allocated),0),COUNT(*) FROM blocks",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )?;
+        if used.saturating_add(additional) <= self.data_budget && (!new_block || count < MAX_BLOCKS)
+        {
+            return Ok(());
         }
+        let need = used
+            .saturating_add(additional)
+            .saturating_sub(self.data_budget)
+            .max(4096);
+        self.evict_bytes(state, need)?;
+        let (used, count): (u64, usize) = state.db.query_row(
+            "SELECT COALESCE(SUM(allocated),0),COUNT(*) FROM blocks",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )?;
+        anyhow::ensure!(
+            used.saturating_add(additional) <= self.data_budget
+                && (!new_block || count < MAX_BLOCKS),
+            "attachment storage is full; pending files are protected"
+        );
+        Ok(())
+    }
+
+    fn evict_bytes(&self, state: &State, need: u64) -> anyhow::Result<()> {
+        // Failed drop-time unpins are conservative until the next admission.
+        // Reconcile only this bounded index before asking the engine to evict.
+        let keys = {
+            let mut stmt = state.db.prepare("SELECT hash FROM blocks LIMIT 8192")?;
+            let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+            rows.collect::<Result<Vec<_>, _>>()?
+        };
+        for key in &keys {
+            self.sync_pin(state, &hashtree_core::from_hex(key)?)?;
+        }
+        let bytes = self.blobs.stats()?.total_bytes;
+        // Eviction is the backend's LRU and rechecks durable pins in its writer
+        // transaction. max_bytes is temporary: raw put must never evict behind
+        // the application's pre-admission and read-protection rules.
+        self.blobs.set_max_bytes(bytes.saturating_sub(need).max(1));
+        let result = Self::immediate(self.blobs.evict_if_needed());
+        self.blobs.set_max_bytes(0);
+        result?;
+        for key in keys {
+            if !self.blobs.exists(&hashtree_core::from_hex(&key)?)? {
+                state
+                    .db
+                    .execute("DELETE FROM blocks WHERE hash=?1", [key])?;
+            }
+        }
+        Ok(())
     }
 
     fn put_locked(&self, state: &State, hash: Hash, data: &[u8]) -> anyhow::Result<bool> {
@@ -226,33 +309,23 @@ impl AttachmentChunkStore {
             charged.saturating_sub(old.unwrap_or(0)),
             old.is_none(),
         )?;
-        // Replace missing/corrupt ciphertext without temporarily counting two full blocks.
-        if old.is_some() && self.directory.join(&key).exists() {
-            std::fs::remove_file(self.directory.join(&key))?;
+        if old.is_some() {
+            self.blobs.delete_sync(&hash)?;
         }
-        let temporary = self.directory.join("incoming.tmp");
-        let result = (|| -> anyhow::Result<()> {
-            let mut file = std::fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&temporary)?;
-            file.write_all(data)?;
-            file.sync_all()?;
-            std::fs::rename(&temporary, self.directory.join(&key))?;
-            #[cfg(unix)]
-            std::fs::File::open(&self.directory)?.sync_all()?;
-            state.db.execute("INSERT INTO blocks(hash,allocated,accessed) VALUES(?1,?2,(SELECT COALESCE(MAX(accessed),0)+1 FROM blocks))
-                ON CONFLICT(hash) DO UPDATE SET allocated=excluded.allocated,accessed=excluded.accessed",
-                params![key, charged])?;
-            Ok(())
-        })();
-        if result.is_err() {
-            let _ = std::fs::remove_file(temporary);
-            if old.is_none() {
-                let _ = std::fs::remove_file(self.directory.join(&key));
+        if let Err(error) = self.blobs.put_sync(hash, data) {
+            // Fragmentation/COW can fill a fixed map before the logical charge.
+            // One bounded extra LRU eviction is allowed, still honoring pins.
+            if !error.to_string().contains("MDB_MAP_FULL") {
+                return Err(error.into());
             }
+            self.evict_bytes(state, charged)?;
+            self.blobs.put_sync(hash, data)?;
         }
-        result?;
+        self.blobs.force_sync()?;
+        state.db.execute("INSERT INTO blocks(hash,allocated,accessed) VALUES(?1,?2,0) ON CONFLICT(hash) DO UPDATE SET allocated=excluded.allocated", params![key, charged])?;
+        // Repairing a corrupt pending block deletes its old backend pin too.
+        self.sync_pin(state, &hash)?;
+        self.blobs.force_sync()?;
         Ok(true)
     }
 
@@ -297,10 +370,70 @@ impl AttachmentChunkStore {
             .collect()
     }
 
+    pub(super) fn bind_owner(&self, owner: &str) -> anyhow::Result<()> {
+        nostr::PublicKey::from_hex(owner)?;
+        let mut state = self.lock()?;
+        let tx = state.db.transaction()?;
+        let resetting: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM metadata WHERE key='resetting')",
+            [],
+            |r| r.get(0),
+        )?;
+        anyhow::ensure!(
+            !resetting,
+            "attachment cleanup is incomplete; log out again to finish"
+        );
+        let previous: Option<String> = tx
+            .query_row("SELECT value FROM metadata WHERE key='owner'", [], |r| {
+                r.get(0)
+            })
+            .optional()?;
+        if let Some(previous) = previous {
+            anyhow::ensure!(
+                previous == owner,
+                "attachment storage belongs to another account"
+            );
+        } else {
+            let occupied: bool = tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM trees) OR EXISTS(SELECT 1 FROM blocks)",
+                [],
+                |r| r.get(0),
+            )?;
+            anyhow::ensure!(!occupied, "attachment storage ownership is unknown");
+            tx.execute(
+                "INSERT INTO metadata(key,value) VALUES('owner',?1)",
+                [owner],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub(super) fn close(&self) {
+        if let Ok(mut state) = self.state.lock() {
+            state.closed = true;
+        }
+    }
+
     pub(super) fn configure_pending(&self, servers: &[String]) -> anyhow::Result<()> {
         let servers = super::replication::bounded_servers(servers);
         let mut state = self.lock()?;
         let tx = state.db.transaction()?;
+        // Successful receipts remain historical. Remove obsolete failed
+        // targets so a new configuration can rescue an entirely offline set.
+        let previous = {
+            let mut stmt = tx.prepare("SELECT DISTINCT server FROM replicas WHERE complete=0")?;
+            let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+            rows.collect::<Result<Vec<_>, _>>()?
+        };
+        for server in previous {
+            if !servers.contains(&server) {
+                tx.execute(
+                    "DELETE FROM replicas WHERE complete=0 AND server=?1",
+                    [server],
+                )?;
+            }
+        }
         for server in servers {
             tx.execute("INSERT OR IGNORE INTO replicas(root,server) SELECT root,?1 FROM trees WHERE replicated=0 AND (SELECT COUNT(*) FROM replicas WHERE replicas.root=trees.root)<8", [server])?;
         }
@@ -314,8 +447,8 @@ impl AttachmentChunkStore {
         let row: Option<(String, String)> = state
             .db
             .query_row(
-                "SELECT root,server FROM replicas WHERE complete=0 AND next_retry<=?1
-             ORDER BY next_retry,root,server LIMIT 1",
+                "SELECT r.root,r.server FROM replicas r JOIN trees t ON t.root=r.root WHERE r.complete=0 AND t.committed=1 AND r.next_retry<=?1
+             ORDER BY r.next_retry,r.root,r.server LIMIT 1",
                 [now()],
                 |r| Ok((r.get(0)?, r.get(1)?)),
             )
@@ -338,8 +471,13 @@ impl AttachmentChunkStore {
             !hashes.is_empty() && hashes.len() <= MAX_TREE_BLOCKS,
             "invalid attachment tree"
         );
-        for hash in &hashes {
+        for (index, hash) in hashes.iter().enumerate() {
             *state.pins.entry(*hash).or_default() += 1;
+            if let Err(error) = self.sync_pin(&state, hash) {
+                drop(state);
+                unpin(self, hashes[..=index].iter().copied());
+                return Err(error);
+            }
         }
         Ok(TreeLease {
             store: self.clone(),
@@ -365,10 +503,15 @@ impl AttachmentChunkStore {
         let mut state = self.lock()?;
         let tx = state.db.transaction()?;
         if complete {
-            tx.execute(
+            if tx.execute(
                 "UPDATE replicas SET complete=1 WHERE root=?1 AND server=?2",
                 params![to_hex(root), server],
-            )?;
+            )? == 0
+            {
+                // Configuration replaced this in-flight target. Do not make a
+                // tree evictable without retaining its complete receipt.
+                return Ok(());
+            }
             tx.execute(
                 "UPDATE trees SET replicated=1 WHERE root=?1",
                 [to_hex(root)],
@@ -404,20 +547,25 @@ impl AttachmentChunkStore {
     pub(super) fn close_and_clear(&self) -> anyhow::Result<()> {
         let mut state = self.lock()?;
         state.closed = true;
+        state.db.execute(
+            "INSERT OR REPLACE INTO metadata(key,value) VALUES('resetting','1')",
+            [],
+        )?;
         let keys = {
             let mut stmt = state.db.prepare("SELECT hash FROM blocks")?;
             let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
             rows.collect::<Result<Vec<_>, _>>()?
         };
-        state
-            .db
-            .execute_batch("DELETE FROM trees; DELETE FROM blocks;")?;
+
         for key in keys {
-            let path = self.directory.join(key);
-            if path.exists() {
-                std::fs::remove_file(path)?;
-            }
+            self.blobs.delete_sync(&hashtree_core::from_hex(&key)?)?;
         }
+        self.blobs.force_sync()?;
+        let tx = state.db.transaction()?;
+        tx.execute("DELETE FROM trees", [])?;
+        tx.execute("DELETE FROM blocks", [])?;
+        tx.execute("DELETE FROM metadata", [])?;
+        tx.commit()?;
         Ok(())
     }
 }
@@ -495,6 +643,12 @@ impl AttachmentChunkStore {
             }
         }
         tx.commit()?;
+        for (_, hashes) in &trees {
+            for hash in hashes {
+                self.sync_pin(&state, hash)?;
+            }
+        }
+        self.blobs.force_sync()?;
         self.wake.notify_one();
         Ok(())
     }
@@ -507,6 +661,9 @@ fn unpin(store: &AttachmentChunkStore, hashes: impl Iterator<Item = Hash>) {
                 *count -= 1;
                 if *count == 0 {
                     state.pins.remove(&hash);
+                }
+                if !state.closed {
+                    let _ = store.sync_pin(&state, &hash);
                 }
             }
         }
@@ -558,13 +715,10 @@ impl Store for AttachmentChunkStore {
     async fn delete(&self, hash: &Hash) -> Result<bool, StoreError> {
         let state = self.lock().map_err(error)?;
         let protected: bool = state.db.query_row("SELECT EXISTS(SELECT 1 FROM tree_blocks t JOIN trees a ON a.root=t.root WHERE t.hash=?1 AND a.replicated=0)", [to_hex(hash)], |r| r.get(0)).map_err(error)?;
-        if protected || state.readers != 0 || state.pins.contains_key(hash) {
+        if protected || state.pins.contains_key(hash) {
             return Err(error("attachment block is protected"));
         }
-        let path = self.directory.join(to_hex(hash));
-        if path.exists() {
-            std::fs::remove_file(path).map_err(error)?;
-        }
+        self.blobs.delete_sync(hash)?;
         Ok(state
             .db
             .execute("DELETE FROM blocks WHERE hash=?1", [to_hex(hash)])
@@ -587,6 +741,7 @@ impl Store for UploadSession {
         let inserted = self.store.put_locked(&state, hash, &data).map_err(error)?;
         *state.pins.entry(hash).or_default() += 1;
         hashes.insert(hash);
+        self.store.sync_pin(&state, &hash).map_err(error)?;
         if let Some(progress) = &self.progress {
             progress.fetch_add(data.len() as u64, Ordering::Relaxed);
         }
@@ -602,3 +757,6 @@ impl Store for UploadSession {
         self.store.delete(hash).await
     }
 }
+
+#[path = "local_store_commit.rs"]
+mod message_commit;

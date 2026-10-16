@@ -21,6 +21,7 @@ use tokio::sync::RwLock as AsyncRwLock;
 use tokio_util::compat::TokioAsyncReadCompatExt;
 
 mod local_store;
+mod message_commit;
 mod replication;
 use local_store::AttachmentChunkStore;
 pub(super) use replication::AttachmentService;
@@ -407,7 +408,15 @@ async fn upload_files_locally(
         staged.push((session, nhash.clone()));
         uploaded.push((nhash, attachment.filename.clone()));
     }
-    store.finish_batch(&staged, &servers)?;
+    if let Err(error) = store.finish_batch(&staged, &servers) {
+        for (_, nhash) in &staged {
+            if let Ok(data) = nhash_decode(nhash) {
+                // Never remove an existing committed message reference.
+                let _ = store.resolve_staged(&data.hash, false);
+            }
+        }
+        return Err(error);
+    }
     Ok(uploaded)
 }
 
@@ -866,3 +875,6 @@ mod same_host_tests;
 
 #[cfg(test)]
 mod storage_tests;
+
+#[cfg(test)]
+mod lifecycle_tests;
