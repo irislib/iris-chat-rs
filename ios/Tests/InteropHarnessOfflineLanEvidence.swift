@@ -147,13 +147,23 @@ extension InteropHarnessTests {
                 do {
                     let bundle = try jsonObjectFromString(await manager.supportBundleJsonAsync())
                     guard !Task.isCancelled else { return }
-                    guard let raw = bundle["offline_lan_attachment"] as? JsonObject else {
+                    guard var raw = bundle["offline_lan_attachment"] as? JsonObject else {
                         throw HarnessError.unexpected("offline LAN diagnostic hook is not integrated")
                     }
                     if OfflineLanReadEvidence.isInitializing(raw) {
                         try await Task.sleep(nanoseconds: 200_000_000)
                         continue
                     }
+                    guard let services = bundle["fips_services"] as? JsonObject,
+                          services["valid"] as? Bool == true,
+                          let transport = bundle["fips_transport"] as? JsonObject,
+                          transport["valid"] as? Bool == true else {
+                        throw HarnessError.unexpected("authoritative offline transport counters unavailable")
+                    }
+                    // Keep only the same-query carrier diagnostics, never the
+                    // full support bundle or private account/protocol records.
+                    raw["fips_services"] = services
+                    raw["fips_transport"] = transport
                     observed = .success(try OfflineLanReadEvidence(raw, httpURL: fixture.httpURL))
                     return
                 } catch {

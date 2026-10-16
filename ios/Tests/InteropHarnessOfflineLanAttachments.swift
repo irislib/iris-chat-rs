@@ -12,6 +12,7 @@ extension InteropHarnessTests {
         action: String, fixture: OfflineLanFixture, manager: AppManager, dataDir: URL, env: [String: String]
     ) async throws {
         let chatID = try await offlineLanOpenExistingChat(manager: manager, env: env)
+        try reportOfflineLanContext(manager: manager, dataDir: dataDir, env: env, label: "context")
         if action == "offline_lan_attachment_prepare" {
             try await disableRelays(manager: manager)
             manager.setNearbyBluetoothEnabled(false)
@@ -54,6 +55,7 @@ extension InteropHarnessTests {
                 try await offlineLanHold(fixture: fixture, manager: manager, peer: peer, wifi: wifi, env: env)
             }
         }
+        try reportOfflineLanContext(manager: manager, dataDir: dataDir, env: env, label: "context_after")
         status("offline_lan_action_verified", "true")
         status("offline_lan_physical_gate_complete", "false")
     }
