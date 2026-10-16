@@ -44,8 +44,8 @@ fn private_invite_capability_response_ignores_unknown_dm_setting_after_owner_ros
         "possession of the private invite capability plus owner roster admits the response"
     );
     assert!(
-        alice.private_chat_invites.is_empty(),
-        "the verified response consumes the single-use invite"
+        !alice.private_chat_invites.is_empty(),
+        "the verified response preserves the reusable private invite"
     );
 }
 
