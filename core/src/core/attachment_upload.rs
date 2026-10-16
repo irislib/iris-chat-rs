@@ -425,6 +425,24 @@ pub(super) async fn upload_file_to_hashtree(
     upload_file_to_store(path, store).await
 }
 
+pub(super) async fn upload_invite_record(
+    secret_hex: &str,
+    record: &crate::invite_record::InviteRecord,
+) -> anyhow::Result<String> {
+    let (reference, ciphertext) = crate::invite_record::encode_record(record)?;
+    let keys = Keys::new(nostr::SecretKey::from_hex(secret_hex)?);
+    let (read, write) = blossom_servers_from_config();
+    anyhow::ensure!(!write.is_empty(), "No file servers configured.");
+    let store = UploadingBlossomStore::new(keys, read, write, None)?;
+    // Return a shareable link only after a server acknowledged the ciphertext.
+    tokio::time::timeout(
+        Duration::from_secs(30),
+        store.put(hashtree_core::sha256(&ciphertext), ciphertext),
+    )
+    .await??;
+    Ok(format!("https://chat.iris.to/#/{reference}"))
+}
+
 async fn upload_file_to_store<S: Store + 'static>(
     path: &Path,
     store: Arc<S>,

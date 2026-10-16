@@ -1,3 +1,4 @@
+mod common;
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::{mpsc, Arc, Mutex};
@@ -54,6 +55,7 @@ fn dispatch_and_wait_state(
 
 fn run_iris(data_dir: &Path, args: &[&str]) -> Value {
     let output = Command::new(env!("CARGO_BIN_EXE_iris"))
+        .env("HTREE_CONFIG_DIR", common::invite_server_config())
         .arg("--json")
         .arg("--data-dir")
         .arg(data_dir)
@@ -77,6 +79,7 @@ fn run_iris(data_dir: &Path, args: &[&str]) -> Value {
 
 fn run_iris_capture(data_dir: &Path, args: &[&str]) -> String {
     let output = Command::new(env!("CARGO_BIN_EXE_iris"))
+        .env("HTREE_CONFIG_DIR", common::invite_server_config())
         .arg("--json")
         .arg("--data-dir")
         .arg(data_dir)
@@ -152,6 +155,7 @@ fn state_contains_group(value: &Value, group_id: &str) -> bool {
 
 fn start_iris(data_dir: &Path, args: &[&str]) -> std::process::Child {
     Command::new(env!("CARGO_BIN_EXE_iris"))
+        .env("HTREE_CONFIG_DIR", common::invite_server_config())
         .arg("--json")
         .arg("--data-dir")
         .arg(data_dir)

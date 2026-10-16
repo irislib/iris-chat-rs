@@ -80,17 +80,12 @@ struct NewChatScreen: View {
 
     private var newChatCard: some View {
         IrisSectionCard {
-            Text("Create chat")
+            Text(manager.state.publicInvite?.title ?? "Chat with me")
                 .font(.system(.title2, design: .rounded, weight: .bold))
                 .foregroundStyle(palette.textPrimary)
                 .frame(maxWidth: .infinity, alignment: .center)
 
             if let invite = manager.state.publicInvite {
-                Text("Share an invite to start a chat")
-                    .font(.system(.footnote, design: .rounded))
-                    .foregroundStyle(palette.muted)
-                    .frame(maxWidth: .infinity, alignment: .center)
-
                 InviteOpenOnJoinToggle(manager: manager)
 
                 HStack(spacing: 10) {
@@ -110,10 +105,11 @@ struct NewChatScreen: View {
                     .buttonStyle(IrisSecondaryButtonStyle(compact: true))
                     .accessibilityIdentifier("newChatInviteQrButton")
                 }
+            } else if manager.state.busy.creatingInvite {
+                ProgressView().padding(.vertical, 24)
             } else {
-                ProgressView()
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 24)
+                Button("Create invite") { manager.dispatch(.createPublicInvite) }
+                    .buttonStyle(IrisPrimaryButtonStyle())
             }
         }
     }
@@ -179,7 +175,7 @@ struct NewChatScreen: View {
         guard let invite = manager.state.publicInvite else { return nil }
         return QrModalCodeContent(
             value: invite.url,
-            label: "chat with me on iris",
+            label: invite.title,
             helperText: "",
             codeAccessibilityIdentifier: "newChatInviteQrCode"
         )
@@ -300,6 +296,9 @@ struct CreateInviteScreen: View {
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 24)
                 } else if let invite = manager.state.publicInvite {
+                    Text(invite.title)
+                        .font(.title2.bold())
+                        .multilineTextAlignment(.center)
                     QrCodeImage(text: invite.url)
                         .frame(maxWidth: .infinity, alignment: .center)
                         .accessibilityIdentifier("createInviteQrCode")

@@ -1434,18 +1434,8 @@ fn assert_local_relay_pairing_recovers_after_disconnect(suspend: bool) {
     assert_ne!(stable_response_pubkey, pairing_response_pubkey);
     assert_ne!(stable_invite.purpose.as_deref(), Some("link"));
 
-    let public_invite = linked
-        .build_public_invite_snapshot()
-        .and_then(|snapshot| super::invites::parse_public_invite_input(&snapshot.url).ok())
-        .expect("public invite snapshot");
-    assert_eq!(
-        public_invite.inviter_ephemeral_public_key,
-        stable_invite.inviter_ephemeral_public_key
-    );
-    assert_ne!(
-        public_invite.inviter_ephemeral_public_key,
-        pairing_invite.inviter_ephemeral_public_key
-    );
+    assert!(linked.build_public_invite_snapshot().is_none(),
+        "Relay-discoverable invite secrets must not be shown as private links");
 
     let filters = linked.recent_protocol_filters(UnixSeconds(1_777_159_500));
     assert!(
@@ -2183,7 +2173,7 @@ fn create_invite_generates_private_link_without_public_republish() {
         .inviter_ephemeral_public_key
         .to_string();
 
-    core.handle_action(AppAction::CreatePublicInvite);
+    publish_personal_invite_for_test(&mut core);
 
     assert_eq!(core.state.toast, None);
     let snapshot = core
@@ -2192,9 +2182,9 @@ fn create_invite_generates_private_link_without_public_republish() {
         .as_ref()
         .expect("private invite snapshot");
     let invite =
-        super::invites::parse_public_invite_input(&snapshot.url).expect("parse private invite");
+        super::invites::parse_public_invite_input(&snapshot.legacy_url).expect("parse private invite");
     assert_eq!(invite.purpose.as_deref(), Some("private"));
-    assert_eq!(invite.max_uses, Some(1));
+    assert_eq!(invite.max_uses, None);
     assert_eq!(invite.owner_public_key, Some(owner.public_key()));
     assert_ne!(
         invite.inviter_ephemeral_public_key.to_string(),
@@ -2244,13 +2234,13 @@ fn private_invite_first_message_installs_creator_session() {
         &alice_device,
     );
     alice.pending_relay_publishes.clear();
-    alice.handle_action(AppAction::CreatePublicInvite);
+    publish_personal_invite_for_test(&mut alice);
     let invite_url = alice
         .state
         .public_invite
         .as_ref()
         .expect("alice invite")
-        .url
+        .legacy_url
         .clone();
 
     let mut bob = logged_in_test_core("private-invite-roundtrip-bob", &bob_owner, &bob_device);
@@ -2286,8 +2276,8 @@ fn private_invite_first_message_installs_creator_session() {
         "Alice should install Bob's session from the private invite response"
     );
     assert!(
-        alice.private_chat_invites.is_empty(),
-        "one-use private invite should be removed after a matching response"
+        !alice.private_chat_invites.is_empty(),
+        "reusable private invite remains available after a matching response"
     );
     assert!(
         alice
@@ -2315,13 +2305,13 @@ fn accepting_invite_alone_installs_session_and_publishes_response() {
     let mut alice =
         logged_in_test_core("accept-invite-bootstrap-alice", &alice_owner, &alice_device);
     alice.pending_relay_publishes.clear();
-    alice.handle_action(AppAction::CreatePublicInvite);
+    publish_personal_invite_for_test(&mut alice);
     let invite_url = alice
         .state
         .public_invite
         .as_ref()
         .expect("alice invite")
-        .url
+        .legacy_url
         .clone();
 
     let mut bob = logged_in_test_core("accept-invite-bootstrap-bob", &bob_owner, &bob_device);

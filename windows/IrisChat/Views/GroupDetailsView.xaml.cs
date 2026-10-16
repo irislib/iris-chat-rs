@@ -68,6 +68,7 @@ public partial class GroupDetailsView : UserControl
                 : Visibility.Visible;
         }
 
+        RefreshInviteLinks(details);
         MembersList.Items.Clear();
         foreach (var m in details.members)
         {
@@ -76,6 +77,50 @@ public partial class GroupDetailsView : UserControl
 
         RebuildKnownUsers();
         UpdateAddMemberButton(details);
+    }
+
+    private string _inviteFingerprint = "";
+
+    private void RefreshInviteLinks(GroupDetailsSnapshot details)
+    {
+        InviteLinksSection.Visibility = details.canManage ? Visibility.Visible : Visibility.Collapsed;
+        CreateInviteButton.IsEnabled = !App.CurrentManager.Busy.creatingInvite;
+        CreateInviteButton.Content = App.CurrentManager.Busy.creatingInvite ? "Creating…" : "Create link";
+        var fingerprint = details.groupId + details.name + string.Join(";", details.inviteLinks.Select(i => $"{i.id}:{i.useCount}:{i.expiresAt}"));
+        if (_inviteFingerprint == fingerprint) return;
+        _inviteFingerprint = fingerprint;
+        InviteLinksList.Children.Clear();
+        foreach (var invite in details.inviteLinks)
+        {
+            var panel = new StackPanel { Margin = new Thickness(0, 16, 0, 0) };
+            panel.Children.Add(new TextBlock { Text = invite.title, FontWeight = FontWeights.SemiBold, TextWrapping = TextWrapping.Wrap });
+            var uses = invite.maxUses is uint limit ? $"{invite.useCount} of {limit} joined" : $"{invite.useCount} joined";
+            if (invite.expiresAt is ulong expiry) uses += " · Expires " + DateTimeOffset.FromUnixTimeSeconds((long)expiry).LocalDateTime.ToShortDateString();
+            panel.Children.Add(new TextBlock { Text = uses, Margin = new Thickness(0, 4, 0, 8), TextWrapping = TextWrapping.Wrap });
+            var qr = new IrisChat.Chrome.QrCodeView { Text = invite.url, Visibility = Visibility.Collapsed };
+            panel.Children.Add(qr);
+            var buttons = new StackPanel { Orientation = Orientation.Horizontal };
+            var copy = new Button { Content = "Copy", Margin = new Thickness(0, 0, 8, 0) };
+            copy.Click += (_, _) => App.CurrentManager.CopyToClipboard(invite.url);
+            buttons.Children.Add(copy);
+            var show = new Button { Content = "Show code", Margin = new Thickness(0, 0, 8, 0) };
+            show.Click += (_, _) => { qr.Visibility = qr.Visibility == Visibility.Visible ? Visibility.Collapsed : Visibility.Visible; show.Content = qr.Visibility == Visibility.Visible ? "Hide code" : "Show code"; };
+            buttons.Children.Add(show);
+            var revoke = new Button { Content = "Revoke" };
+            revoke.Click += (_, _) => App.CurrentManager.RevokeGroupInvite(details.groupId, invite.id);
+            buttons.Children.Add(revoke);
+            panel.Children.Add(buttons);
+            InviteLinksList.Children.Add(panel);
+        }
+    }
+
+    private void OnCreateInvite(object sender, RoutedEventArgs e)
+    {
+        var details = App.CurrentManager.GroupDetails;
+        if (details == null) return;
+        uint?[] limits = { null, 1, 10, 100 };
+        ulong?[] expiry = { 30 * 86400, 7 * 86400, null };
+        App.CurrentManager.CreateGroupInvite(details.groupId, limits[InviteUses.SelectedIndex], expiry[InviteExpiry.SelectedIndex]);
     }
 
     private void OnAddMemberTextChanged(object sender, TextChangedEventArgs e)

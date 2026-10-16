@@ -479,6 +479,79 @@ impl ProtocolEngine {
         })
     }
 
+    /// Admission and its distinct-owner receipt share one durable checkpoint.
+    /// Force persistence even in a receive batch: never publish membership before
+    /// the use limit is durable. Retry after a crash cannot admit an extra owner.
+    pub fn admit_group_invite_member(
+        &mut self,
+        group_id: &str,
+        token: &str,
+        member: PublicKey,
+        max_uses: Option<u32>,
+    ) -> anyhow::Result<ProtocolGroupSendResult> {
+        anyhow::ensure!(
+            token.len() == 64 && token.bytes().all(|c| c.is_ascii_hexdigit()),
+            "Invalid invite token"
+        );
+        anyhow::ensure!(
+            max_uses.is_none_or(|n| (1..=10000).contains(&n)),
+            "Invalid invite limit"
+        );
+        self.with_state_checkpoint(|engine| {
+            engine.ensure_supported_group_protocol(group_id)?;
+            let group = engine
+                .group_manager
+                .group(group_id)
+                .ok_or_else(|| anyhow::anyhow!("Group unavailable"))?;
+            anyhow::ensure!(
+                group.admins.contains(&engine.local_owner)
+                    && group.members.contains(&engine.local_owner),
+                "Admin required"
+            );
+            let member_owner = ndr_owner(member);
+            let key = format!("{group_id}:{token}");
+            let used = engine.group_invite_uses.get(&key);
+            anyhow::ensure!(
+                !used.is_some_and(|owners| owners.contains(&member_owner)),
+                "Invite already used"
+            );
+            anyhow::ensure!(
+                max_uses.is_none_or(|limit| used.map_or(0, BTreeSet::len) < limit as usize),
+                "Invite is full"
+            );
+            anyhow::ensure!(!group.members.contains(&member_owner), "Already a member");
+            let mut rng = OsRng;
+            let mut ctx = ProtocolContext::new(NdrUnixSeconds(unix_now().get()), &mut rng);
+            let prepared = engine.group_manager.add_members(
+                &mut engine.session_manager,
+                &mut ctx,
+                group_id,
+                vec![member_owner],
+            )?;
+            let mut output = engine.protocol_group_send_from_prepared(&prepared, None)?;
+            output.snapshot = engine.group_manager.group(group_id);
+            engine
+                .group_invite_uses
+                .entry(key)
+                .or_default()
+                .insert(member_owner);
+            engine.persist_now()?;
+            Ok(output)
+        })
+    }
+
+    pub fn group_invite_use_count(&self, group_id: &str, token: &str) -> usize {
+        self.group_invite_uses
+            .get(&format!("{group_id}:{token}"))
+            .map_or(0, BTreeSet::len)
+    }
+
+    pub fn group_invite_used_by(&self, group_id: &str, token: &str, member: PublicKey) -> bool {
+        self.group_invite_uses
+            .get(&format!("{group_id}:{token}"))
+            .is_some_and(|owners| owners.contains(&ndr_owner(member)))
+    }
+
     pub fn remove_group_member(
         &mut self,
         group_id: &str,

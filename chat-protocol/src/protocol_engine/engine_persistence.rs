@@ -27,6 +27,7 @@ impl ProtocolEngine {
     fn persist_now(&mut self) -> anyhow::Result<()> {
         let state = ProtocolEnginePersistedState {
             version: PROTOCOL_ENGINE_STATE_VERSION,
+            group_invite_uses: self.group_invite_uses.clone(),
             session_manager: self.session_manager.snapshot(),
             group_manager: self.group_manager.snapshot(),
             verified_app_keys_owners: self.verified_app_keys_owners.clone(),

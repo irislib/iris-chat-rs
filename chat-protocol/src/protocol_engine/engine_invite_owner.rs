@@ -104,19 +104,14 @@ impl ProtocolEngine {
         );
         self.processed_private_invite_response_ids
             .push(response_event_id.to_string());
-        let excess = self
-            .processed_private_invite_response_ids
-            .len()
-            .saturating_sub(PROCESSED_PRIVATE_INVITE_RESPONSE_LIMIT);
-        if excess > 0 {
-            self.processed_private_invite_response_ids.drain(0..excess);
-        }
+        // Reusable links remain valid after many joins. Never evict a processed
+        // response: replaying it would reinstall an old ratchet session.
         self.invalidate_known_message_author_cache();
         // The proof can arrive before the private session is imported. Retry
         // messages now that both are present, even if the proof-only attempt
         // already moved them into backoff.
         self.wake_pending_protocol_for_owner(ndr_owner(owner_pubkey));
-        if let Err(error) = self.persist() {
+        if let Err(error) = self.persist_now() {
             self.restore_checkpoint(checkpoint);
             return Err(error);
         }
@@ -205,13 +200,7 @@ fn sanitize_invite_owner_persisted_state(state: &mut ProtocolEnginePersistedStat
             .verified_app_keys_owners
             .extend(exact_verified_owners.iter().copied());
     }
-    let excess = state
-        .processed_private_invite_response_ids
-        .len()
-        .saturating_sub(PROCESSED_PRIVATE_INVITE_RESPONSE_LIMIT);
-    if excess > 0 {
-        state.processed_private_invite_response_ids.drain(0..excess);
-    }
+
 }
 
 /// Verifies the exact signed AppKeys evidence accepted for direct-chat setup.

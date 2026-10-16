@@ -11,13 +11,13 @@ fn first_contact_send_queues_text_until_peer_protocol_state_is_ready() {
         &alice_device,
     );
     alice.pending_relay_publishes.clear();
-    alice.handle_action(AppAction::CreatePublicInvite);
+    publish_personal_invite_for_test(&mut alice);
     let invite_url = alice
         .state
         .public_invite
         .as_ref()
         .expect("alice invite")
-        .url
+        .legacy_url
         .clone();
 
     let mut bob = logged_in_test_core(
@@ -84,13 +84,13 @@ fn cold_app_key_first_direct_message_is_recipient_scoped() {
         &alice_owner,
         &alice_device,
     );
-    alice.handle_action(AppAction::CreatePublicInvite);
+    publish_personal_invite_for_test(&mut alice);
     let invite_url = alice
         .state
         .public_invite
         .as_ref()
         .expect("alice invite")
-        .url
+        .legacy_url
         .clone();
 
     let mut bob_acceptor = logged_in_test_core(

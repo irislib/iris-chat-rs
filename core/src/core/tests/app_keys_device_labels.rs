@@ -207,7 +207,7 @@ fn restored_owner_session_publishes_app_keys_snapshot_when_creating_public_invit
         "restored nsec login must not overwrite relay AppKeys before an explicit invite bootstrap"
     );
 
-    core.handle_action(AppAction::CreatePublicInvite);
+    publish_personal_invite_for_test(&mut core);
 
     let app_keys_events_after_invite = update_rx
         .try_iter()

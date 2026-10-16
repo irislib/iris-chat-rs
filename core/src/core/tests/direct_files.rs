@@ -652,11 +652,11 @@ fn direct_files_fresh_invite_peers_transfer_a_file_as_the_first_chat_content() {
     b.reconcile_device_sync_at_rendezvous_for_test(rendezvous);
     assert!(active_session_device_pubkeys(&a, bo.public_key()).is_empty());
     assert!(active_session_device_pubkeys(&b, ao.public_key()).is_empty());
-    a.handle_action(AppAction::CreatePublicInvite);
-    let invite = a.state.public_invite.as_ref().unwrap().url.clone();
+    publish_personal_invite_for_test(&mut a);
+    let invite = a.state.public_invite.as_ref().unwrap().legacy_url.clone();
     // Account startup normally publishes each device roster. Let the ordinary
     // invite action produce that signed self proof for the synthetic second account.
-    b.handle_action(AppAction::CreatePublicInvite);
+    publish_personal_invite_for_test(&mut b);
     b.handle_action(AppAction::AcceptInvite {
         invite_input: invite,
     });

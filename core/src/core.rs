@@ -115,6 +115,7 @@ mod group_membership;
 mod groups;
 mod identity;
 mod invites;
+mod issued_invites;
 mod lifecycle;
 mod mesh_pubsub;
 mod message_expiry;
@@ -658,6 +659,8 @@ pub struct AppCore {
     pending_device_link_signer: Option<device_link_signer::PendingDeviceLinkSigner>,
     device_approval_relay_urls: Vec<RelayUrl>,
     private_chat_invites: BTreeMap<String, Invite>,
+    issued_invites: BTreeMap<String, issued_invites::IssuedInvite>,
+    pending_invite_upload: Option<(String, String)>,
     open_invite_chat_on_join: bool,
     pending_private_invite_responses: BTreeMap<String, invites::PendingPrivateInviteResponseV1>,
     pending_private_invite_cleanup_retry: bool,

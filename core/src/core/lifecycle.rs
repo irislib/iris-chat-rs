@@ -91,6 +91,8 @@ impl AppCore {
                 COMPILED_DEVICE_APPROVAL_RELAY_URL.to_string(),
             ]),
             private_chat_invites: BTreeMap::new(),
+            issued_invites: BTreeMap::new(),
+            pending_invite_upload: None,
             open_invite_chat_on_join: true,
             pending_private_invite_responses: BTreeMap::new(),
             pending_private_invite_cleanup_retry: false,
@@ -242,6 +244,7 @@ impl AppCore {
                 InternalEvent::FollowUpdateReady { .. } => "FollowUpdateReady",
                 InternalEvent::UserDiscoveryFetchFinished { .. } => "UserDiscoveryFetchFinished",
                 InternalEvent::PrivateInviteResolved { .. } => "PrivateInviteResolved",
+                InternalEvent::PrivateInviteUploaded { .. } => "PrivateInviteUploaded",
                 InternalEvent::ProfileSearchRequested { .. } => "ProfileSearchRequested",
                 InternalEvent::ProfileSearchDebounceElapsed { .. } => {
                     "ProfileSearchDebounceElapsed"
@@ -777,6 +780,14 @@ impl AppCore {
             }
             InternalEvent::UserDiscoveryFetchFinished { token, result } => {
                 self.handle_user_discovery_fetch_finished(token, result);
+            }
+            InternalEvent::PrivateInviteUploaded {
+                request_id,
+                owner,
+                device,
+                result,
+            } => {
+                self.finish_invite_upload(request_id, owner, device, result);
             }
             InternalEvent::PrivateInviteResolved {
                 request_id,

@@ -33,6 +33,7 @@ pub(super) fn run(manager: &Rc<AppManager>, slot: &Content, header: &HeaderWidge
         })
         .collect();
     state.group_details = Some(GroupDetailsSnapshot {
+        invite_links: Vec::new(),
         group_id: "picker-test".into(),
         name: "People".into(),
         picture_url: None,

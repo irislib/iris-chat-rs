@@ -417,7 +417,7 @@ impl AppCore {
         self.rebuild_persist_and_emit_state();
     }
 
-    fn apply_local_group_snapshot(
+    pub(super) fn apply_local_group_snapshot(
         &mut self,
         previous: Option<&GroupSnapshot>,
         group: GroupSnapshot,

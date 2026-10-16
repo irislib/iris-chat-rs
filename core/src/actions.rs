@@ -117,6 +117,15 @@ pub enum AppAction {
         picture_filename: String,
     },
     CreatePublicInvite,
+    CreateGroupInvite {
+        group_id: String,
+        max_uses: Option<u32>,
+        expires_in_seconds: Option<u64>,
+    },
+    RevokeGroupInvite {
+        group_id: String,
+        invite_id: String,
+    },
     SetInviteOpenOnJoin {
         enabled: bool,
     },

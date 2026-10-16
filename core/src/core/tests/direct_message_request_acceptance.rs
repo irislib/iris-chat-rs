@@ -12,13 +12,13 @@ fn private_invite_capability_response_ignores_unknown_dm_setting_after_owner_ros
     );
     alice.pending_relay_publishes.clear();
     alice.preferences.accept_unknown_direct_messages = false;
-    alice.handle_action(AppAction::CreatePublicInvite);
+    publish_personal_invite_for_test(&mut alice);
     let invite_url = alice
         .state
         .public_invite
         .as_ref()
         .expect("alice invite")
-        .url
+        .legacy_url
         .clone();
 
     let mut bob = logged_in_test_core("private-invite-block-unknown-bob", &bob_owner, &bob_device);

@@ -6,7 +6,6 @@ const PENDING_RETRY_DELAY_SECS: u64 = 2;
 const PENDING_GROUP_FANOUT_RETRY_BATCH_SIZE: usize = 64;
 const PROCESSED_GROUP_SENDER_KEY_LIMIT: usize = 16_384;
 const ANSWERED_GROUP_SENDER_KEY_REPAIR_LIMIT: usize = 512;
-const PROCESSED_PRIVATE_INVITE_RESPONSE_LIMIT: usize = 128;
 
 fn group_chat_id(group_id: &str) -> String {
     format!("group:{group_id}")
@@ -35,6 +34,8 @@ struct ProtocolEnginePersistedState {
     invite_owner_app_keys_evidence: BTreeMap<NdrOwnerPubkey, ProtocolAppKeysEvidence>,
     #[serde(default)]
     processed_private_invite_response_ids: Vec<String>,
+    #[serde(default)]
+    group_invite_uses: BTreeMap<String, BTreeSet<NdrOwnerPubkey>>,
     #[serde(default)]
     pending_inbound: Vec<ProtocolPendingInbound>,
     #[serde(default)]
@@ -419,6 +420,7 @@ pub struct ProtocolEngine {
     verified_app_keys_owners: BTreeSet<NdrOwnerPubkey>,
     invite_owner_app_keys_evidence: BTreeMap<NdrOwnerPubkey, ProtocolAppKeysEvidence>,
     processed_private_invite_response_ids: Vec<String>,
+    group_invite_uses: BTreeMap<String, BTreeSet<NdrOwnerPubkey>>,
     local_app_keys_observed: bool,
     /// Ephemeral proof that this runtime holds the owner's secret key. This
     /// permits outbound recovery while a restored AppKeys roster is still
@@ -456,6 +458,7 @@ struct ProtocolEngineCheckpoint {
     verified_app_keys_owners: BTreeSet<NdrOwnerPubkey>,
     invite_owner_app_keys_evidence: BTreeMap<NdrOwnerPubkey, ProtocolAppKeysEvidence>,
     processed_private_invite_response_ids: Vec<String>,
+    group_invite_uses: BTreeMap<String, BTreeSet<NdrOwnerPubkey>>,
     local_app_keys_observed: bool,
     subscription_generation: u64,
 }

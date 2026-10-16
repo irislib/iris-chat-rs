@@ -45,6 +45,7 @@ pub fn render(group_id: &str, state: &AppState, manager: &Rc<AppManager>) -> gtk
     inner.append(&settings_card(group_id, details, state, manager));
     inner.append(&members_card(group_id, details, state, manager));
     if details.can_manage {
+        inner.append(&invite_links_card(group_id, details, state, manager));
         inner.append(&add_members_card(group_id, details, state, manager));
     }
     inner.append(&delete_chat_card(group_id, manager));
@@ -633,4 +634,78 @@ fn add_member_button_label(input_count: usize, busy: bool) -> String {
     } else {
         "Add".to_string()
     }
+}
+
+fn invite_links_card(
+    group_id: &str,
+    details: &GroupDetailsSnapshot,
+    state: &AppState,
+    manager: &Rc<AppManager>,
+) -> gtk::Widget {
+    let section = adw::PreferencesGroup::builder()
+        .title("Invite links")
+        .build();
+    let uses = adw::ComboRow::builder()
+        .title("Uses")
+        .model(&gtk::StringList::new(&["No limit", "1", "10", "100"]))
+        .build();
+    let expiry = adw::ComboRow::builder()
+        .title("Expires")
+        .model(&gtk::StringList::new(&["In 30 days", "In 7 days", "Never"]))
+        .build();
+    section.add(&uses);
+    section.add(&expiry);
+    let create = gtk::Button::with_label(if state.busy.creating_invite {
+        "Creating…"
+    } else {
+        "Create link"
+    });
+    create.add_css_class("suggested-action");
+    create.set_widget_name("groupInviteCreateButton");
+    create.set_sensitive(!state.busy.creating_invite);
+    let manager_create = manager.clone();
+    let id = group_id.to_owned();
+    create.connect_clicked(move |button| {
+        button.set_sensitive(false);
+        manager_create.dispatch(AppAction::CreateGroupInvite {
+            group_id: id.clone(),
+            max_uses: [None, Some(1), Some(10), Some(100)][uses.selected() as usize],
+            expires_in_seconds: [Some(30 * 86400), Some(7 * 86400), None]
+                [expiry.selected() as usize],
+        });
+    });
+    section.add(&create);
+    for invite in &details.invite_links {
+        let row = adw::ExpanderRow::builder().title(&invite.title).build();
+        let count = match invite.max_uses {
+            Some(limit) => format!("{} of {limit} joined", invite.use_count),
+            None => format!("{} joined", invite.use_count),
+        };
+        let date = invite
+            .expires_at
+            .and_then(|expiry| gtk::glib::DateTime::from_unix_local(expiry as i64).ok())
+            .and_then(|date| date.format("%x").ok())
+            .map(|date| format!(" · Expires {date}"))
+            .unwrap_or_default();
+        row.set_subtitle(&format!("{count}{date}"));
+        row.add_row(&crate::widgets::qr::build(&invite.url, 240));
+        let copy = gtk::Button::with_label("Copy");
+        let url = invite.url.clone();
+        copy.connect_clicked(move |_| crate::platform::clipboard::copy(&url));
+        row.add_action(&copy);
+        let revoke = gtk::Button::with_label("Revoke");
+        revoke.add_css_class("destructive-action");
+        let manager = manager.clone();
+        let group_id = group_id.to_owned();
+        let invite_id = invite.id.clone();
+        revoke.connect_clicked(move |_| {
+            manager.dispatch(AppAction::RevokeGroupInvite {
+                group_id: group_id.clone(),
+                invite_id: invite_id.clone(),
+            })
+        });
+        row.add_row(&revoke);
+        section.add(&row);
+    }
+    section.upcast()
 }

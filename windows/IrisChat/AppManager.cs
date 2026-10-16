@@ -526,6 +526,12 @@ public sealed partial class AppManager : INotifyPropertyChanged
     public void SetInviteOpenOnJoin(bool enabled) =>
         DispatchToRust(new AppAction.SetInviteOpenOnJoin(enabled));
 
+    public void CreateGroupInvite(string groupId, uint? maxUses, ulong? expiresInSeconds) =>
+        DispatchToRust(new AppAction.CreateGroupInvite(groupId, maxUses, expiresInSeconds));
+
+    public void RevokeGroupInvite(string groupId, string inviteId) =>
+        DispatchToRust(new AppAction.RevokeGroupInvite(groupId, inviteId));
+
     public void CreatePublicInvite() =>
         DispatchToRust(new AppAction.CreatePublicInvite());
 

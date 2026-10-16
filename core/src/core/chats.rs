@@ -1262,7 +1262,11 @@ impl AppCore {
             );
         }
         if runtime_rumor.kind == 10461 {
-            return true;
+            return self.receive_group_invite_request(
+                effective_sender_owner,
+                sender_device,
+                &runtime_rumor.content,
+            );
         }
         if let Some(handled) = self.receive_private_runtime_control(
             effective_sender_owner,

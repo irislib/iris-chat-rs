@@ -32,6 +32,7 @@ public partial class CreateInviteView : UserControl
     {
         var invite = App.CurrentManager.PublicInvite;
         var ready = invite != null;
+        InviteTitle.Text = invite?.title ?? "Chat with me";
         OpenOnJoin.IsChecked = invite?.openChatOnJoin ?? true;
         OpenOnJoin.Visibility = ready ? Visibility.Visible : Visibility.Collapsed;
 
