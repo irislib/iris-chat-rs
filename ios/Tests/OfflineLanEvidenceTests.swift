@@ -19,6 +19,13 @@ final class OfflineLanEvidenceTests: XCTestCase {
         ], httpURL: http)
     }
 
+    func testOnlyMinimalInitializingShapeCanBeRetried() {
+        XCTAssertTrue(OfflineLanReadEvidence.isInitializing(["schema": 1, "valid": false]))
+        XCTAssertFalse(OfflineLanReadEvidence.isInitializing([:]))
+        XCTAssertFalse(OfflineLanReadEvidence.isInitializing(["schema": 2, "valid": false]))
+        XCTAssertFalse(OfflineLanReadEvidence.isInitializing(["schema": 1, "valid": false, "isolation_valid": false]))
+    }
+
     func testLocalhostUSBCarrierAndWrongPeerCannotCountAsWiFi() throws {
         try sample().verifyPeers(expected: "expected-peer", wifi: wifi, required: true)
         for address in ["127.0.0.1:5000", "169.254.5.2:5000", "192.168.2.20:5000", "192.168.1.10:5000"] {

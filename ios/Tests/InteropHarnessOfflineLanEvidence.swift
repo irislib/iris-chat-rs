@@ -33,6 +33,11 @@ struct OfflineLanReadEvidence {
     let reads: [String: UInt64]
     let peers: [JsonObject]
 
+    static func isInitializing(_ raw: JsonObject) -> Bool {
+        Set(raw.keys) == Set(["schema", "valid"]) &&
+            raw["schema"] as? Int == 1 && raw["valid"] as? Bool == false
+    }
+
     init(_ raw: JsonObject, httpURL: String) throws {
         guard raw["schema"] as? Int == 1, raw["valid"] as? Bool == true,
               raw["isolation_valid"] as? Bool == true,
@@ -136,12 +141,33 @@ extension InteropHarnessTests {
     }
 
     func offlineLanEvidence(manager: AppManager, fixture: OfflineLanFixture, label: String) async throws -> OfflineLanReadEvidence {
-        let bundle = try jsonObjectFromString(await manager.supportBundleJsonAsync())
-        guard let raw = bundle["offline_lan_attachment"] as? JsonObject else {
-            throw HarnessError.unexpected("offline LAN diagnostic hook is not integrated")
+        var observed: Result<OfflineLanReadEvidence, Error>?
+        let query = Task { @MainActor in
+            while !Task.isCancelled {
+                do {
+                    let bundle = try jsonObjectFromString(await manager.supportBundleJsonAsync())
+                    guard !Task.isCancelled else { return }
+                    guard let raw = bundle["offline_lan_attachment"] as? JsonObject else {
+                        throw HarnessError.unexpected("offline LAN diagnostic hook is not integrated")
+                    }
+                    if OfflineLanReadEvidence.isInitializing(raw) {
+                        try await Task.sleep(nanoseconds: 200_000_000)
+                        continue
+                    }
+                    observed = .success(try OfflineLanReadEvidence(raw, httpURL: fixture.httpURL))
+                    return
+                } catch {
+                    observed = .failure(error)
+                    return
+                }
+            }
         }
-        let evidence = try OfflineLanReadEvidence(raw, httpURL: fixture.httpURL)
-        let encoded = try JSONSerialization.data(withJSONObject: raw, options: [.sortedKeys])
+        defer { query.cancel() }
+        let result: Result<OfflineLanReadEvidence, Error> = try await waitFor(
+            label: "offline LAN probe initialization", timeout: 10
+        ) { observed }
+        let evidence = try result.get()
+        let encoded = try JSONSerialization.data(withJSONObject: evidence.raw, options: [.sortedKeys])
         try encoded.write(to: fixture.directory.appendingPathComponent("\(label)-\(UUID().uuidString).json"), options: .atomic)
         status("offline_lan_\(label)", String(decoding: encoded, as: UTF8.self))
         status("offline_lan_\(label)_at_ms", String(Int64(Date().timeIntervalSince1970 * 1_000)))
