@@ -16,16 +16,25 @@ internal sealed class PasteLayoutProbe : IDisposable
     private DispatcherFrame? renderWait;
     private bool finished;
     private readonly bool heartbeatEnabled;
+    private readonly bool recordRenderingLifecycle;
+    private readonly bool oneShotRendering;
+    private bool renderingSubscribed;
 
     internal double ElapsedMs => elapsed.Elapsed.TotalMilliseconds;
     internal double? FirstRenderMs { get; private set; }
     internal double LongestDispatcherGapMs { get; private set; }
+    internal int RenderingCallbackCount { get; private set; }
+    internal double? LastRenderMs { get; private set; }
+    internal double? RenderingSubscriptionEndedMs { get; private set; }
 
-    internal PasteLayoutProbe(bool heartbeatEnabled = true)
+    internal PasteLayoutProbe(bool heartbeatEnabled = true, bool recordRenderingLifecycle = false, bool oneShotRendering = false)
     {
         this.heartbeatEnabled = heartbeatEnabled;
+        this.recordRenderingLifecycle = recordRenderingLifecycle;
+        this.oneShotRendering = oneShotRendering;
         if (heartbeatEnabled) heartbeat.Tick += OnHeartbeat;
         CompositionTarget.Rendering += OnRendering;
+        renderingSubscribed = true;
         if (heartbeatEnabled) heartbeat.Start();
     }
 
@@ -40,11 +49,27 @@ internal sealed class PasteLayoutProbe : IDisposable
 
     private void OnRendering(object? sender, EventArgs args)
     {
-        if (FirstRenderMs == null)
+        if (recordRenderingLifecycle)
+        {
+            var now = ElapsedMs;
+            RenderingCallbackCount++;
+            FirstRenderMs ??= now;
+            LastRenderMs = now;
+            if (oneShotRendering) EndRenderingSubscription();
+        }
+        else if (FirstRenderMs == null)
         {
             FirstRenderMs = ElapsedMs;
         }
         if (renderWait != null) renderWait.Continue = false;
+    }
+
+    private void EndRenderingSubscription()
+    {
+        if (!renderingSubscribed) return;
+        CompositionTarget.Rendering -= OnRendering;
+        renderingSubscribed = false;
+        if (recordRenderingLifecycle) RenderingSubscriptionEndedMs = ElapsedMs;
     }
 
     internal void WaitForFirstRender()
@@ -72,7 +97,7 @@ internal sealed class PasteLayoutProbe : IDisposable
             heartbeat.Stop();
             heartbeat.Tick -= OnHeartbeat;
         }
-        CompositionTarget.Rendering -= OnRendering;
+        EndRenderingSubscription();
         elapsed.Stop();
     }
 

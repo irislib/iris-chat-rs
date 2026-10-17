@@ -39,7 +39,13 @@ internal static class LargeTextPasteTests
             "off" => false,
             _ => throw new InvalidOperationException("Invalid target heartbeat diagnostic mode"),
         };
-        using var probe = new PasteLayoutProbe(heartbeatEnabled);
+        var oneShotRendering = Environment.GetEnvironmentVariable("IRIS_CLIPBOARD_TARGET_RENDERING") switch
+        {
+            null or "persistent" => false,
+            "one-shot" => true,
+            _ => throw new InvalidOperationException("Invalid target rendering diagnostic mode"),
+        };
+        using var probe = new PasteLayoutProbe(heartbeatEnabled, recordRenderingLifecycle: true, oneShotRendering: oneShotRendering);
         var elapsed = Stopwatch.StartNew();
         IReadOnlyDictionary<string, double>? nativePastePhases = null;
         PastePhaseDiagnostics.Observer = phases => nativePastePhases = phases;
@@ -82,6 +88,10 @@ internal static class LargeTextPasteTests
             longest_dispatcher_gap_ms = heartbeatEnabled ? (double?)probe.LongestDispatcherGapMs : null,
             target_heartbeat_enabled = heartbeatEnabled, heartbeat_metric_available = heartbeatEnabled,
             diagnostic_child_pid = Environment.ProcessId,
+            target_rendering_mode = oneShotRendering ? "one-shot" : "persistent",
+            rendering_callback_count = probe.RenderingCallbackCount,
+            last_render_ms = probe.LastRenderMs,
+            rendering_subscription_ended_ms = probe.RenderingSubscriptionEndedMs,
             post_edit_diagnostic = editPhases.Report(input),
             text_change_events = changes, subsequent_edit_budget_ms = 500, complete_operation_budget_ms = 5_000,
             boundary = "Native Paste Execute then SelectedText insertion before any dispatcher drain; complete-operation and subsequent-edit times include forced layout, drain, refreshed current-caret geometry and first WPF Rendering callback (not display scanout)."
