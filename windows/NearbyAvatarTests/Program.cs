@@ -50,6 +50,12 @@ internal static class Program
                 currentChat = manager.CurrentChat! with { displayName = "Alex", socialConnection = connection },
             };
             Apply.Invoke(manager, new object[] { new AppUpdate.FullState(state) });
+            if (args.Contains("--layout-only"))
+            {
+                VerifyNearbyRowGeometry(manager, window, output);
+                Console.WriteLine("PASS: Nearby row geometry for 0, 1, 8, 0 peers");
+                return 0;
+            }
             state = state with { rev = state.rev + 1, chatList = state.chatList.Select(c => c.chatId == Peer ? c with { socialConnection = connection } : c).ToArray() };
             Apply.Invoke(manager, new object[] { new AppUpdate.FullState(state) });
             Check(NearbyPeerNames.KnownChat(manager, $" {Peer.ToUpperInvariant()} ")?.socialConnection?.isFavorite == true, "Nearby avatars use the current private contact snapshot");

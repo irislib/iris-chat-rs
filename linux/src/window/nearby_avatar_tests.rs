@@ -74,6 +74,12 @@ pub fn run() {
     state.preferences.nearby_show_in_chat_list = false;
     state.rev += 1;
     manager.apply_update(AppUpdate::FullState(state.clone()));
+    if std::env::var_os("IRIS_NEARBY_LAYOUT_ONLY").is_some() {
+        install_nearby_css();
+        verify_nearby_row_geometry(&manager);
+        println!("PASS: Nearby row geometry for 0, 1, 8, 0 peers");
+        return;
+    }
     let connection = SocialConnectionSnapshot {
         is_favorite: true,
         badge: Some(SocialBadge::Following),
@@ -226,17 +232,7 @@ pub fn run() {
     );
     manager.apply_nearby_snapshot(nearby);
 
-    let css = gtk::CssProvider::new();
-    css.load_from_data(&format!(
-        "{}\n{}",
-        crate::widgets::social_badge::CSS,
-        crate::widgets::controls::CSS
-    ));
-    gtk::style_context_add_provider_for_display(
-        &gtk::gdk::Display::default().unwrap(),
-        &css,
-        gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
-    );
+    install_nearby_css();
     verify_nearby_row_geometry(&manager);
     let column = gtk::Box::new(gtk::Orientation::Vertical, 20);
     column.set_margin_top(24);
@@ -292,6 +288,20 @@ pub fn run() {
     }
     window.close();
     println!("PASS: GTK nearby avatar/header presence, removal, preferences, self exclusion and badge placement");
+}
+
+fn install_nearby_css() {
+    let css = gtk::CssProvider::new();
+    css.load_from_data(&format!(
+        "{}\n{}",
+        crate::widgets::social_badge::CSS,
+        crate::widgets::controls::CSS
+    ));
+    gtk::style_context_add_provider_for_display(
+        &gtk::gdk::Display::default().unwrap(),
+        &css,
+        gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+    );
 }
 
 fn verify_nearby_row_geometry(manager: &std::rc::Rc<AppManager>) {
