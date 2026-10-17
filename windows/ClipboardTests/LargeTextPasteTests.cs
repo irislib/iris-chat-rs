@@ -33,7 +33,13 @@ internal static class LargeTextPasteTests
         TextChangedEventHandler changed = (_, _) => changes++;
         input.TextChanged += changed;
         using var editPhases = new EditPhaseDiagnostics();
-        using var probe = new PasteLayoutProbe();
+        var heartbeatEnabled = Environment.GetEnvironmentVariable("IRIS_CLIPBOARD_TARGET_HEARTBEAT") switch
+        {
+            null or "on" => true,
+            "off" => false,
+            _ => throw new InvalidOperationException("Invalid target heartbeat diagnostic mode"),
+        };
+        using var probe = new PasteLayoutProbe(heartbeatEnabled);
         var elapsed = Stopwatch.StartNew();
         IReadOnlyDictionary<string, double>? nativePastePhases = null;
         PastePhaseDiagnostics.Observer = phases => nativePastePhases = phases;
@@ -72,7 +78,10 @@ internal static class LargeTextPasteTests
             paste_execute_ms = pasteExecuteMs, immediate_edit_ms = immediateEditMs,
             native_paste_phases_ms = nativePastePhases,
             complete_paste_and_edit_ms = completeMs, subsequent_edit_settle_ms = editSettleMs,
-            first_render_ms = probe.FirstRenderMs, longest_dispatcher_gap_ms = probe.LongestDispatcherGapMs,
+            first_render_ms = probe.FirstRenderMs,
+            longest_dispatcher_gap_ms = heartbeatEnabled ? (double?)probe.LongestDispatcherGapMs : null,
+            target_heartbeat_enabled = heartbeatEnabled, heartbeat_metric_available = heartbeatEnabled,
+            diagnostic_child_pid = Environment.ProcessId,
             post_edit_diagnostic = editPhases.Report(input),
             text_change_events = changes, subsequent_edit_budget_ms = 500, complete_operation_budget_ms = 5_000,
             boundary = "Native Paste Execute then SelectedText insertion before any dispatcher drain; complete-operation and subsequent-edit times include forced layout, drain, refreshed current-caret geometry and first WPF Rendering callback (not display scanout)."

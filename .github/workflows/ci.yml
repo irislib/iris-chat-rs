@@ -441,6 +441,10 @@ jobs:
         run: |
           dotnet run --project windows/ClipboardTests/ClipboardTests.csproj -c Release -- work/clipboard
           if ($LASTEXITCODE -ne 0) { throw 'Native clipboard tests failed' }
+      - name: Diagnostic fixed target heartbeat comparison
+        if: ${{ !cancelled() && steps.native-build.outcome == 'success' && inputs.scope == 'windows' }}
+        timeout-minutes: 16
+        run: ./scripts/windows-heartbeat-diagnostic.ps1
       - name: Exercise WPF keyboard navigation
         if: ${{ !cancelled() && steps.native-build.outcome == 'success' }}
         run: |
@@ -471,6 +475,18 @@ jobs:
             iris-chat-rs/work/direct-files-ui/native-transfer.json
             iris-chat-rs/work/direct-files-ui/direct-file-states.png
             iris-chat-rs/work/nearby-avatar/windows-nearby-avatars.png
+          retention-days: 14
+      - name: Upload heartbeat diagnostic comparison
+        if: ${{ always() && inputs.scope == 'windows' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-heartbeat-diagnostic
+          path: |
+            iris-chat-rs/work/heartbeat-comparison/*.json
+            iris-chat-rs/work/heartbeat-comparison/*/*.json
+            iris-chat-rs/work/heartbeat-comparison/*/*.log
+            iris-chat-rs/work/heartbeat-comparison/*/*.png
+            iris-chat-rs/work/heartbeat-comparison/*/generated-file-names.txt
           retention-days: 14
 
   cli-service:

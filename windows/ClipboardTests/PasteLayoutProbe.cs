@@ -15,16 +15,18 @@ internal sealed class PasteLayoutProbe : IDisposable
     private double lastHeartbeatMs;
     private DispatcherFrame? renderWait;
     private bool finished;
+    private readonly bool heartbeatEnabled;
 
     internal double ElapsedMs => elapsed.Elapsed.TotalMilliseconds;
     internal double? FirstRenderMs { get; private set; }
     internal double LongestDispatcherGapMs { get; private set; }
 
-    internal PasteLayoutProbe()
+    internal PasteLayoutProbe(bool heartbeatEnabled = true)
     {
-        heartbeat.Tick += OnHeartbeat;
+        this.heartbeatEnabled = heartbeatEnabled;
+        if (heartbeatEnabled) heartbeat.Tick += OnHeartbeat;
         CompositionTarget.Rendering += OnRendering;
-        heartbeat.Start();
+        if (heartbeatEnabled) heartbeat.Start();
     }
 
     private void OnHeartbeat(object? sender, EventArgs args) => RecordGap();
@@ -64,9 +66,12 @@ internal sealed class PasteLayoutProbe : IDisposable
     {
         if (finished) return;
         finished = true;
-        RecordGap();
-        heartbeat.Stop();
-        heartbeat.Tick -= OnHeartbeat;
+        if (heartbeatEnabled)
+        {
+            RecordGap();
+            heartbeat.Stop();
+            heartbeat.Tick -= OnHeartbeat;
+        }
         CompositionTarget.Rendering -= OnRendering;
         elapsed.Stop();
     }
