@@ -531,6 +531,7 @@ struct DesktopNearbyIrisRow: View {
     @ObservedObject var service: IrisNearbyService
     let onOpen: () -> Void
     let onOpenPeerProfile: (String) -> Void
+    private var rowHeight: CGFloat { 42 + 8 * 2 + 18 }
 
     var body: some View {
         let nearbyEnabled = manager.state.preferences.nearbyEnabled
@@ -547,6 +548,7 @@ struct DesktopNearbyIrisRow: View {
             ) {
                 onOpen()
             }
+            .frame(height: rowHeight, alignment: .top)
         } else {
             NearbyPeerStripRow(
                 manager: manager,
@@ -554,7 +556,7 @@ struct DesktopNearbyIrisRow: View {
                 avatarSize: 42,
                 horizontalPadding: 10,
                 verticalPadding: 8,
-                rowHeight: nil,
+                rowHeight: rowHeight,
                 active: active,
                 onOpenNearby: onOpen,
                 onOpenPeerProfile: onOpenPeerProfile

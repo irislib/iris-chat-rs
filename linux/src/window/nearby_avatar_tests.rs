@@ -227,12 +227,17 @@ pub fn run() {
     manager.apply_nearby_snapshot(nearby);
 
     let css = gtk::CssProvider::new();
-    css.load_from_data(crate::widgets::social_badge::CSS);
+    css.load_from_data(&format!(
+        "{}\n{}",
+        crate::widgets::social_badge::CSS,
+        crate::widgets::controls::CSS
+    ));
     gtk::style_context_add_provider_for_display(
         &gtk::gdk::Display::default().unwrap(),
         &css,
         gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
     );
+    verify_nearby_row_geometry(&manager);
     let column = gtk::Box::new(gtk::Orientation::Vertical, 20);
     column.set_margin_top(24);
     column.set_margin_bottom(24);
@@ -287,4 +292,53 @@ pub fn run() {
     }
     window.close();
     println!("PASS: GTK nearby avatar/header presence, removal, preferences, self exclusion and badge placement");
+}
+
+fn verify_nearby_row_geometry(manager: &std::rc::Rc<AppManager>) {
+    let original = manager.nearby_snapshot();
+    let window = adw::Window::builder()
+        .title("Nearby layout")
+        .default_width(320)
+        .default_height(180)
+        .build();
+    let mut baseline = None;
+    for count in [0, 1, 8, 0] {
+        manager.apply_nearby_snapshot(DesktopNearbySnapshot {
+            visible: true,
+            status: "Nearby".into(),
+            peers: (0..count)
+                .map(|index| DesktopNearbyPeerSnapshot {
+                    id: format!("peer-{index}"),
+                    name: format!("A long nearby display name {index}"),
+                    owner_pubkey_hex: None,
+                    picture_url: None,
+                    profile_event_id: None,
+                    last_seen_secs: 1,
+                })
+                .collect(),
+        });
+        let row = crate::screens::chat_list::nearby_row_for_test(manager);
+        let following = gtk::Label::new(Some("Following chat"));
+        following.set_size_request(-1, 60);
+        let column = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        column.set_valign(gtk::Align::Start);
+        column.append(&row);
+        column.append(&following);
+        window.set_content(Some(&column));
+        window.present();
+        pump_until(|| row.width() > 0 && following.height() > 0);
+        let bounds = row.compute_bounds(&column).unwrap();
+        let following_bounds = following.compute_bounds(&column).unwrap();
+        let geometry = (bounds.y(), bounds.height(), following_bounds.y());
+        if let Some(baseline) = baseline {
+            assert_eq!(
+                geometry, baseline,
+                "Nearby layout changed with {count} peers"
+            );
+        } else {
+            baseline = Some(geometry);
+        }
+    }
+    window.close();
+    manager.apply_nearby_snapshot(original);
 }

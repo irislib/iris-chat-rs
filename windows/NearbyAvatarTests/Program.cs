@@ -57,6 +57,7 @@ internal static class Program
             state = state with { rev = state.rev + 1, chatList = state.chatList.Select(c => c.chatId == Peer ? c with { socialConnection = connection with { isFavorite = false } } : c).ToArray() };
             Apply.Invoke(manager, new object[] { new AppUpdate.FullState(state) });
             Check(NearbyPeerNames.KnownChat(manager, Peer)?.socialConnection?.isFavorite == false, "Nearby favorite changes use the new snapshot");
+            VerifyNearbyRowGeometry(manager, window, output);
             var avatar = new Avatar { Label = "Alex", Size = 64, OwnerPubkeyHex = Peer, SocialConnection = connection };
             var own = new Avatar { Label = "You", Size = 48, OwnerPubkeyHex = manager.Account!.publicKeyHex };
             var unknown = new Avatar { Label = "Unknown", Size = 48, OwnerPubkeyHex = "other-person" };
@@ -125,6 +126,35 @@ internal static class Program
         Dispatcher.CurrentDispatcher.BeginInvoke(DispatcherPriority.Background, new Action(() => frame.Continue = false));
         Dispatcher.PushFrame(frame);
     }
+    private static void VerifyNearbyRowGeometry(AppManager manager, Window window, string output)
+    {
+        var shell = new DesktopShell(manager, manager.State.router.defaultScreen);
+        var build = typeof(DesktopShell).GetMethod("BuildNearbyRow", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        double? baselineHeight = null, baselineFollowingY = null;
+        var step = 0;
+        foreach (var count in new[] { 0, 1, 8, 0 })
+        {
+            var peers = Enumerable.Range(0, count).Select(i => new DesktopNearbyPeerSnapshot(
+                $"peer-{i}", $"A long nearby display name {i}", null, null, null, 1)).ToArray();
+            Apply.Invoke(manager, new object[] { new AppUpdate.NearbyPeersChanged(
+                new DesktopNearbySnapshot(true, "Nearby", peers), Array.Empty<string>(), Array.Empty<string>()) });
+            var row = (FrameworkElement)build.Invoke(shell, null)!;
+            var following = new TextBlock { Text = "Following chat", Height = 60 };
+            var stack = new StackPanel { Width = 320, VerticalAlignment = VerticalAlignment.Top };
+            stack.Children.Add(row); stack.Children.Add(following);
+            window.Content = stack; window.Show(); Pump(); window.UpdateLayout();
+            var followingY = following.TranslatePoint(new Point(), stack).Y;
+            Check(row.ActualHeight > 0, "Nearby row must be rendered");
+            if (baselineHeight.HasValue)
+            {
+                Check(Math.Abs(row.DesiredSize.Height - baselineHeight.Value) < 0.5, $"Nearby slot height changed with {count} peers");
+                Check(Math.Abs(followingY - baselineFollowingY!.Value) < 0.5, $"Following chat moved with {count} peers");
+            }
+            else { baselineHeight = row.DesiredSize.Height; baselineFollowingY = followingY; }
+            Save(stack, Path.Combine(output, $"windows-nearby-layout-{step++}-{count}.png"));
+        }
+    }
+
     private static void PumpUntil(Func<bool> ready) {
         var deadline = DateTime.UtcNow.AddSeconds(15);
         while (!ready()) { Pump(); if (DateTime.UtcNow >= deadline) throw new Exception("Core update timed out"); System.Threading.Thread.Sleep(2); }
