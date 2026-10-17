@@ -32,6 +32,7 @@ internal static class LargeTextPasteTests
         var changes = 0;
         TextChangedEventHandler changed = (_, _) => changes++;
         input.TextChanged += changed;
+        using var editPhases = new EditPhaseDiagnostics();
         using var probe = new PasteLayoutProbe();
         var elapsed = Stopwatch.StartNew();
         IReadOnlyDictionary<string, double>? nativePastePhases = null;
@@ -41,15 +42,26 @@ internal static class LargeTextPasteTests
         var pasteExecuteMs = elapsed.Elapsed.TotalMilliseconds;
         // Edit before any dispatcher drain: deferring expensive validation to
         // the next edit must not make the paste optimization appear to pass.
+        editPhases.Mark("before_edit");
         elapsed.Restart();
         input.SelectedText = "!";
         var immediateEditMs = elapsed.Elapsed.TotalMilliseconds;
-        input.UpdateLayout(); pump();
+        editPhases.Mark("selected_text");
+        input.UpdateLayout();
+        editPhases.Mark("first_layout");
+        pump();
+        editPhases.Mark("first_dispatcher_drain");
         _ = input.GetRectFromCharacterIndex(input.CaretIndex);
-        input.UpdateLayout(); pump();
+        editPhases.Mark("first_caret_geometry");
+        input.UpdateLayout();
+        editPhases.Mark("second_layout");
+        pump();
+        editPhases.Mark("second_dispatcher_drain");
         probe.WaitForFirstRender();
+        editPhases.Mark("first_render_wait");
         var completedCaret = input.GetRectFromCharacterIndex(input.CaretIndex);
         elapsed.Stop();
+        editPhases.Mark("final_caret_geometry");
         probe.Finish();
         var completeMs = probe.ElapsedMs;
         var editSettleMs = elapsed.Elapsed.TotalMilliseconds;
@@ -61,6 +73,7 @@ internal static class LargeTextPasteTests
             native_paste_phases_ms = nativePastePhases,
             complete_paste_and_edit_ms = completeMs, subsequent_edit_settle_ms = editSettleMs,
             first_render_ms = probe.FirstRenderMs, longest_dispatcher_gap_ms = probe.LongestDispatcherGapMs,
+            post_edit_diagnostic = editPhases.Report(input),
             text_change_events = changes, subsequent_edit_budget_ms = 500, complete_operation_budget_ms = 5_000,
             boundary = "Native Paste Execute then SelectedText insertion before any dispatcher drain; complete-operation and subsequent-edit times include forced layout, drain, refreshed current-caret geometry and first WPF Rendering callback (not display scanout)."
         }, new JsonSerializerOptions { WriteIndented = true }));
