@@ -225,6 +225,9 @@ final class ChatTimelineScrollObserverView: UIView {
         super.layoutSubviews()
         bindToEnclosingScrollView()
         timelineCoordinator?.applyPendingViewportResize()
+#if DEBUG
+        timelineCoordinator?.historyDiagnostic?.nextApplyOrigin = .nativeLayout
+#endif
         timelineCoordinator?.applyPendingHistoryViewportAnchor()
         scheduleLayoutNotification()
     }
@@ -239,6 +242,9 @@ final class ChatTimelineScrollObserverView: UIView {
             self.layoutNotificationScheduled = false
             guard self.observedScrollView != nil else { return }
             self.timelineCoordinator?.applyPendingViewportResize()
+#if DEBUG
+            self.timelineCoordinator?.historyDiagnostic?.nextApplyOrigin = .layoutTurn
+#endif
             self.timelineCoordinator?.applyPendingHistoryViewportAnchor()
             self.onLayout?()
         }
@@ -295,6 +301,16 @@ final class ChatTimelineScrollObserverView: UIView {
     @objc private func handleScrollPan(_ recognizer: UIPanGestureRecognizer) {
         guard let scrollView = observedScrollView else { return }
         let translation = recognizer.translation(in: scrollView)
+#if DEBUG
+        switch recognizer.state {
+        case .began: timelineCoordinator?.recordHistoryDiagnostic(.panBegan)
+        case .changed: timelineCoordinator?.recordHistoryDiagnostic(.panChanged)
+        case .ended, .cancelled, .failed:
+            timelineCoordinator?.recordHistoryDiagnostic(.panEnded)
+            timelineCoordinator?.scheduleHistoryDiagnosticExport(atPanEnd: true)
+        default: break
+        }
+#endif
         switch recognizer.state {
         case .began, .changed:
             let velocity = recognizer.velocity(in: scrollView)

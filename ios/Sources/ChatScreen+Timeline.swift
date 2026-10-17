@@ -141,6 +141,9 @@ extension ChatScreen {
 #if os(iOS)
             guard pendingPrependAnchorMessageId == firstMessageId,
                   pendingTimelineScroll == nil, manager.pendingScrollMessageId == nil else { return }
+#if DEBUG
+            timelineCoordinator.recordHistoryDiagnostic(.mergeWillPublish)
+#endif
             let ids = chat.messages.map(\.id)
             let range = renderWindow.range(in: ids)
             let visible = timelineCoordinator.measuredVisibleMessageRange(in: ids, renderedRange: range,

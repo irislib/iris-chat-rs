@@ -316,7 +316,17 @@ struct ChatScreen: View {
                                     for (id, height) in page.heights where rowHeightCache[id] != height {
                                         rowHeightCache[id] = height
                                     }
+#if DEBUG
+                                    if let diagnostic = timelineCoordinator.historyDiagnostic,
+                                       timelineCoordinator.latestPage.firstMessageID != page.firstMessageID
+                                        || timelineCoordinator.latestPage.lastMessageID != page.lastMessageID {
+                                        diagnostic.pageEpoch += 1
+                                    }
+#endif
                                     timelineCoordinator.latestPage = page
+#if DEBUG
+                                    timelineCoordinator.recordHistoryDiagnostic(.pagePublished)
+#endif
                                     if timelineCoordinator.historyViewportAnchor == nil,
                                        let boundary = pendingPrependAnchorMessageId,
                                        chat.messages.first?.id != boundary {

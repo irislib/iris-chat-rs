@@ -20,7 +20,7 @@ on:
         description: Checks to run (releases require all)
         type: choice
         default: all
-        options: [all, core, android, windows, apple, macos]
+        options: [all, core, android, windows, apple, macos, ios-pagination-diagnostic]
 
 permissions:
   contents: read
@@ -329,7 +329,7 @@ jobs:
           retention-days: 14
 
   ios:
-    if: ${{ inputs.scope == '' || inputs.scope == 'all' || inputs.scope == 'apple' }}
+    if: ${{ inputs.scope == '' || inputs.scope == 'all' || inputs.scope == 'apple' || inputs.scope == 'ios-pagination-diagnostic' }}
     name: iOS simulator build and composer tests
     runs-on: macos-15
     timeout-minutes: 75
@@ -377,6 +377,7 @@ jobs:
           key: ${{ steps.ios_cargo_cache.outputs.cache-primary-key }}
 
       - name: iOS device linking progress test
+        if: inputs.scope != 'ios-pagination-diagnostic'
         run: |
           mkdir -p work/clipboard
           xcodebuild -project ios/IrisChat.xcodeproj -scheme IrisChat \
@@ -386,6 +387,7 @@ jobs:
             -resultBundlePath work/clipboard/ios-device-link.xcresult test
 
       - name: iOS native composer, clipboard, and timeline tests
+        if: inputs.scope != 'ios-pagination-diagnostic'
         run: |
           xcodebuild -project ios/IrisChat.xcodeproj -scheme IrisChat \
             -destination "$(./scripts/ios-simulator-destination)" \
@@ -396,6 +398,10 @@ jobs:
             -only-testing:IrisChatUITests/IrisChatTimelineUITests/testSearchHitInSeededLongChatOpensInTimeline \
             -only-testing:IrisChatUITests/ChatPaginationUITests \
             -resultBundlePath work/clipboard/ios.xcresult test
+
+      - name: Three independent unchanged pagination diagnostics
+        if: inputs.scope == 'ios-pagination-diagnostic'
+        run: python3 scripts/diagnose_ios_pagination.py
 
       - name: Upload iOS test results
         if: always()

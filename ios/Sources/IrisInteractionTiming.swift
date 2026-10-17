@@ -4,6 +4,26 @@ import OSLog
 
 private let irisInteractionLogger = Logger(subsystem: "fi.siriusbusiness.irischat", category: "interaction")
 
+#if DEBUG && os(iOS)
+import Darwin
+
+func irisEmitAnonymousPaginationDiagnostic(_ text: String, runID: String) {
+    // Only configured anonymous reset fixtures can reach this path. One bounded
+    // sandbox-temporary export is retained by the diagnostic hosted workflow.
+    let path = FileManager.default.temporaryDirectory.appendingPathComponent("iris-pagination-" + runID + ".log")
+    do {
+        let data = Data(text.utf8)
+        guard data.count <= 2 * 1024 * 1024 else { return }
+        try data.write(to: path, options: .withoutOverwriting)
+        try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: path.path)
+        irisInteractionLogger.notice("iris.timeline_anchor_export bytes=\(data.count, privacy: .public)")
+    } catch {
+        irisInteractionLogger.error("iris.timeline_anchor_export failed")
+    }
+    text.withCString { _ = fputs($0, stderr) }
+}
+#endif
+
 protocol IrisInteractionMessage {
     var id: String { get }
     var body: String { get }
