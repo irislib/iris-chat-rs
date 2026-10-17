@@ -11,6 +11,7 @@ struct DesktopKeyboardChatList<Item, Row: View>: View {
     let onOpen: (String) -> Void
     @ViewBuilder let row: (Item) -> Row
     @Environment(\.desktopChatListFocusRequest) private var focusRequest
+    @ObservedObject private var keyboardFocus = IrisKeyboardFocusVisibility.shared
     @State private var focusedChatID: String?
     @State private var listFocused = false
     @State private var viewport = DesktopChatListViewport()
@@ -24,7 +25,7 @@ struct DesktopKeyboardChatList<Item, Row: View>: View {
                 row(item)
                     .environment(\.irisKeyboardButtonIsTabStop, false)
                     .overlay {
-                        if listFocused && focusedChatID == chatID {
+                        if listFocused && focusedChatID == chatID && keyboardFocus.visible {
                             RoundedRectangle(cornerRadius: 10)
                                 .strokeBorder(Color.accentColor, lineWidth: 2)
                                 .allowsHitTesting(false)

@@ -12,6 +12,27 @@ extension View {
 }
 
 #if os(macOS)
+import AppKit
+
+/// Mouse focus still works, but only keyboard navigation needs a focus outline.
+final class IrisKeyboardFocusVisibility: ObservableObject {
+    static let shared = IrisKeyboardFocusVisibility()
+    @Published private(set) var visible = false
+    private var monitor: Any?
+
+    private init() {
+        monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .leftMouseDown, .rightMouseDown, .otherMouseDown]) { [weak self] event in
+            let visible = event.type == .keyDown
+            if self?.visible != visible { self?.visible = visible }
+            return event
+        }
+    }
+
+    deinit {
+        if let monitor { NSEvent.removeMonitor(monitor) }
+    }
+}
+
 private struct IrisKeyboardButtonTabStopKey: EnvironmentKey {
     static let defaultValue = true
 }
@@ -29,6 +50,7 @@ struct IrisKeyboardButtonStyle<Visual: ButtonStyle>: PrimitiveButtonStyle {
     let visual: Visual
     @Environment(\.isEnabled) private var isEnabled
     @Environment(\.irisKeyboardButtonIsTabStop) private var isTabStop
+    @ObservedObject private var keyboardFocus = IrisKeyboardFocusVisibility.shared
     @FocusState private var focused: Bool
 
     func makeBody(configuration: Configuration) -> some View {
@@ -38,7 +60,7 @@ struct IrisKeyboardButtonStyle<Visual: ButtonStyle>: PrimitiveButtonStyle {
             .focusEffectDisabled()
             .focused($focused)
             .overlay {
-                if focused && isEnabled && isTabStop {
+                if focused && isEnabled && isTabStop && keyboardFocus.visible {
                     RoundedRectangle(cornerRadius: 6)
                         .strokeBorder(Color.accentColor, lineWidth: 2)
                         .allowsHitTesting(false)

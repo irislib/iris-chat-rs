@@ -15,6 +15,7 @@ private struct IrisCallControlFeedback: ViewModifier {
     let text: String
     let onDarkBackground: Bool
     @Environment(\.isEnabled) private var isEnabled
+    @ObservedObject private var keyboardFocus = IrisKeyboardFocusVisibility.shared
     @State private var hovered = false
     @FocusState private var focused: Bool
 
@@ -28,7 +29,7 @@ private struct IrisCallControlFeedback: ViewModifier {
             }
             .overlay {
                 RoundedRectangle(cornerRadius: 12)
-                    .strokeBorder(onDarkBackground ? Color.white : .accentColor, lineWidth: focused ? 2 : 0)
+                    .strokeBorder(onDarkBackground ? Color.white : .accentColor, lineWidth: focused && keyboardFocus.visible ? 2 : 0)
                     .allowsHitTesting(false)
             }
             .onHover { hovered = $0 }
