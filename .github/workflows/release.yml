@@ -23,12 +23,10 @@ env:
   RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
 
 jobs:
-  verify:
-    name: Verify release inputs and core gate
+  validate:
+    name: Validate release inputs
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
-    env:
-      CARGO_TARGET_DIR: ${{ github.workspace }}/cargo-target
+    timeout-minutes: 5
     defaults:
       run:
         working-directory: iris-chat-rs
@@ -84,6 +82,23 @@ jobs:
           }
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
+  verify:
+    name: Verify release core gate
+    needs: validate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/cargo-target
+    defaults:
+      run:
+        working-directory: iris-chat-rs
+    steps:
+      - name: Checkout validated release commit
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.validate.outputs.sha }}
+          path: iris-chat-rs
+
       - name: Install Rust and native dependencies
         run: |
           sudo apt-get update
@@ -111,17 +126,17 @@ jobs:
 
   mesh-resource:
     name: Relayless recovery and resource budgets
-    needs: verify
+    needs: validate
     uses: irislib/iris-stack/.github/workflows/product-lab.yml@e34fa190b41a3ced5148e92b103418004bdd0b65
     with:
       lab_rev: e34fa190b41a3ced5148e92b103418004bdd0b65
-      chat_rev: ${{ needs.verify.outputs.sha }}
+      chat_rev: ${{ needs.validate.outputs.sha }}
       drive_rev: 7cb74966ddaecf90fb91b8f36a44ecc4bbda7b02
       htree_version: 0.2.148
 
   build:
     name: Build release artifacts
-    needs: verify
+    needs: validate
     uses: ./.github/workflows/build-artifacts.yml
     with:
       ref: ${{ inputs.tag || github.ref_name }}
@@ -132,6 +147,7 @@ jobs:
   release:
     name: Create GitHub release
     needs:
+      - validate
       - verify
       - build
       - mesh-resource
