@@ -217,6 +217,9 @@ impl AppCore {
                 return;
             }
         };
+        // The scoped DEBUG fixture disables local rendezvous, not the blob
+        // service carried by its ordinary authenticated LAN endpoint.
+        let attachment_blob_service_enabled = options.same_host_hashtree || fixture_scope.is_some();
         self.reconcile_update_sources();
         let host_ble_requested = self.pending_host_ble.is_some() || self.host_ble_attached;
         let (mut config, device_sync_enabled) = match self.device_sync_config() {
@@ -637,7 +640,7 @@ impl AppCore {
 
         let local_attachments = self.ensure_attachment_service();
         let attachment_store = if let (true, Ok(local_attachments)) =
-            (options.same_host_hashtree, local_attachments)
+            (attachment_blob_service_enabled, local_attachments)
         {
             let result = match options.standalone_route {
                 Some(route) => self.runtime.block_on(
@@ -993,3 +996,6 @@ fn parse_local_rendezvous_addr(value: &str) -> Result<SocketAddrV4, String> {
 
 #[cfg(test)]
 mod local_rendezvous_tests;
+
+#[cfg(test)]
+mod offline_blob_tests;

@@ -132,11 +132,15 @@ extension InteropHarnessTests {
         // Call the production Rust downloader directly. AppManager's decoded
         // media cache cannot satisfy either the cold or restart assertion.
         let reference = attachment.nhash
-        let downloaded = await Task.detached(priority: .userInitiated) { () -> Data? in
+        let (downloaded, downloadError) = await Task.detached(priority: .userInitiated) { () -> (Data?, String?) in
             let result = downloadHashtreeAttachment(nhash: reference)
-            return result.dataBase64.flatMap { Data(base64Encoded: $0) }
+            return (result.dataBase64.flatMap { Data(base64Encoded: $0) }, result.error)
         }.value
-        guard let downloaded, downloaded.count == OfflineLanFixture.byteCount,
+        guard let downloaded else {
+            let detail = String((downloadError ?? "missing or invalid encoded data").prefix(256))
+            throw HarnessError.unexpected("attachment download unavailable: \(detail)")
+        }
+        guard downloaded.count == OfflineLanFixture.byteCount,
               sha256Hex(downloaded) == expected else {
             throw HarnessError.unexpected("downloaded attachment does not match the sender's plaintext")
         }
