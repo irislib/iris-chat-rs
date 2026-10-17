@@ -41,6 +41,7 @@ internal sealed class PasteLayoutProbe : IDisposable
         if (FirstRenderMs == null)
         {
             FirstRenderMs = ElapsedMs;
+            CompositionTarget.Rendering -= OnRendering;
         }
         if (renderWait != null) renderWait.Continue = false;
     }
