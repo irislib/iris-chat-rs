@@ -444,6 +444,7 @@ struct IrisImageViewer: View {
     @State private var loadedImages: [String: PlatformImage]
     @State private var sharedFileURL: URL?
     @State private var dragTranslation: CGFloat = 0
+    @State private var imageZoomed = false
 
     init(item: ImageViewerItem, onForwardText: @escaping (String) -> Void, onClose: @escaping () -> Void) {
         self.item = item
@@ -565,28 +566,31 @@ struct IrisImageViewer: View {
                     data: loadedData[attachment.htreeUrl],
                     image: loadedImages[attachment.htreeUrl]
                         ?? ChatAttachmentPreviewImageCache.image(for: attachment.htreeUrl),
-                    filename: attachment.filename
+                    filename: attachment.filename,
+                    zoomed: $imageZoomed
                 )
+                .id(attachment.htreeUrl)
             }
-            if item.attachments.count > 1 {
+            if item.attachments.count > 1 && !imageZoomed {
                 HStack {
                     chevronButton(systemName: "chevron.left", disabled: currentIndex == 0) {
-                        if currentIndex > 0 { currentIndex -= 1 }
+                        if !imageZoomed && currentIndex > 0 { currentIndex -= 1 }
                     }
                     Spacer()
                     chevronButton(systemName: "chevron.right", disabled: currentIndex >= item.attachments.count - 1) {
-                        if currentIndex < item.attachments.count - 1 { currentIndex += 1 }
+                        if !imageZoomed && currentIndex < item.attachments.count - 1 { currentIndex += 1 }
                     }
                 }
                 .padding(.horizontal, 18)
             }
         }
         .irisOnLeftArrowKey {
-            if currentIndex > 0 { currentIndex -= 1 }
+            if !imageZoomed && currentIndex > 0 { currentIndex -= 1 }
         }
         .irisOnRightArrowKey {
-            if currentIndex < item.attachments.count - 1 { currentIndex += 1 }
+            if !imageZoomed && currentIndex < item.attachments.count - 1 { currentIndex += 1 }
         }
+        .onChange(of: currentIndex) { _, _ in imageZoomed = false }
         #endif
     }
 
@@ -815,6 +819,7 @@ struct IrisImageViewerPage: View {
     let data: Data?
     let image: PlatformImage?
     let filename: String
+    var zoomed: Binding<Bool> = .constant(false)
     @State private var isCopying = false
     @State private var copyFailed = false
 
@@ -837,6 +842,11 @@ struct IrisImageViewerPage: View {
                     .tint(.white)
             }
         }
+        #if os(macOS)
+        .modifier(IrisDesktopImageZoom(
+            imageSize: image?.size ?? data.flatMap { NSImage(data: $0)?.size }, zoomed: zoomed
+        ))
+        #endif
         .contentShape(Rectangle())
         .contextMenu {
             Button("Copy Image", systemImage: "doc.on.doc") {
