@@ -71,7 +71,7 @@ iris-chat-protocol = { version = "=0.3.2", path = "../chat-protocol" }
 nostr = { version = "0.44.7", default-features = false, features = ["std", "nip44"] }
 nostr-sdk = { version = "0.44.1", default-features = false, features = ["nip44"] }
 nostr-pubsub = "=0.1.16"
-nostr-pubsub-reconcile = "=0.1.0"
+nostr-pubsub-reconcile = "=0.1.1"
 nostr-pubsub-fips = "=0.5.22"
 nostr-pubsub-relay = "=0.1.13"
 nostr-social-graph = "=0.1.4"

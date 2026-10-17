@@ -21,6 +21,7 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 - Preserve complete microphone batches through the Apple call sender while keeping audio queues bounded and honoring mute, call-end and account changes.
 - Add image zoom and bounded panning on Mac, with keyboard access and pinch support.
 - Show Mac focus outlines during keyboard navigation while keeping mouse interactions clear.
+- Update sync, TLS and QUIC dependencies to fix published security advisories.
 
 ### Apple
 
@@ -36,6 +37,7 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 - Reduce dropped audio during calls.
 - Zoom in on images and move around them on Mac.
 - Keep Mac controls clear of focus outlines when using a mouse.
+- Improve security when syncing and connecting to message servers.
 
 ### Zapstore
 
@@ -48,6 +50,7 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 - Send attachments when the upload server is unavailable, and view encrypted upload links in message details.
 - Improve message editing and notification cleanup across linked devices.
 - Keep chat settings in sync when linked browsers reconnect.
+- Improve security when syncing and connecting to message servers.
 
 ## v2026.10.15.1
 
