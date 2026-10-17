@@ -18,6 +18,9 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 - Expose mention-notification settings in the CLI and deliver complete service errors even when they exceed one socket write.
 - Recover device sync after linked browsers reload or connect simultaneously, preserving queued records and keeping one consistent connection direction.
 - Keep Linux chat-list and composer shortcuts working during navigation and pane animations.
+- Preserve complete microphone batches through the Apple call sender while keeping audio queues bounded and honoring mute, call-end and account changes.
+- Add image zoom and bounded panning on Mac, with keyboard access and pinch support.
+- Show Mac focus outlines during keyboard navigation while keeping mouse interactions clear.
 
 ### Apple
 
@@ -30,6 +33,9 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 - Send attachments when the upload server is unavailable, and view encrypted upload links in message details.
 - Improve message editing and notification cleanup across linked devices.
 - Keep chat settings in sync when linked browsers reconnect.
+- Reduce dropped audio during calls.
+- Zoom in on images and move around them on Mac.
+- Keep Mac controls clear of focus outlines when using a mouse.
 
 ### Zapstore
 
