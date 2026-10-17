@@ -20,7 +20,7 @@ on:
         description: Checks to run (releases require all)
         type: choice
         default: all
-        options: [all, core, android, windows, apple, macos]
+        options: [all, core, android, windows, apple, macos, windows-nearby-layout]
 
 permissions:
   contents: read
@@ -34,6 +34,71 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  windows-nearby-layout:
+    if: ${{ inputs.scope == 'windows-nearby-layout' }}
+    name: Windows nearby layout regression only
+    runs-on: windows-2025
+    timeout-minutes: 30
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/cargo-target
+      CARGO_BUILD_JOBS: 2
+      IRIS_BUILD_GIT_SHA: bc698fe9cbd2
+    defaults:
+      run:
+        shell: pwsh
+        working-directory: iris-chat-rs
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: iris-chat-rs
+          fetch-depth: 0
+      - name: Preserve diagnostic driver and select unchanged core
+        run: |
+          Copy-Item scripts/windows-nearby-layout-check.ps1 "$env:RUNNER_TEMP/windows-nearby-layout-check.ps1"
+          git checkout --detach bc698fe9cbd2058b247a82c56c04a791cb34a0ff
+          if ($LASTEXITCODE -ne 0) { throw 'Core source checkout failed' }
+      - name: Install matching Windows build tools
+        run: |
+          rustup toolchain install 1.99.1 --profile minimal
+          if ($LASTEXITCODE -ne 0) { throw 'Rust toolchain installation failed' }
+          rustup default 1.99.1
+          if ($LASTEXITCODE -ne 0) { throw 'Rust toolchain selection failed' }
+          choco install cmake nasm --no-progress -y
+          if ($LASTEXITCODE -ne 0) { throw 'Windows build tools installation failed' }
+      - name: Restore existing Windows Rust cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ${{ github.workspace }}/cargo-target
+          key: all-builds-windows-${{ hashFiles('iris-chat-rs/**/Cargo.lock', 'iris-chat-rs/windows/**/*.csproj') }}
+          restore-keys: all-builds-windows-
+      - name: Build unchanged native core and matching bindings once
+        run: |
+          New-Item -ItemType Directory -Force work/nearby-layout | Out-Null
+          rustc -vV | Out-File work/nearby-layout/rustc.txt
+          ./scripts/windows-build-local.ps1 rust *>&1 | Tee-Object work/nearby-layout/rust-build.log
+          if ($LASTEXITCODE -ne 0) { throw 'Native core build failed' }
+          ./scripts/windows-build-local.ps1 bindings *>&1 | Tee-Object work/nearby-layout/bindings.log
+          if ($LASTEXITCODE -ne 0) { throw 'Native bindings generation failed' }
+      - name: Verify baseline failure and fixed geometry
+        run: '& "$env:RUNNER_TEMP/windows-nearby-layout-check.ps1"'
+      - name: Preserve both outcomes and rendered states
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-nearby-layout-regression
+          path: |
+            iris-chat-rs/work/nearby-layout/*.json
+            iris-chat-rs/work/nearby-layout/*.txt
+            iris-chat-rs/work/nearby-layout/*.log
+            iris-chat-rs/work/nearby-layout/baseline/*.log
+            iris-chat-rs/work/nearby-layout/baseline/*.png
+            iris-chat-rs/work/nearby-layout/fixed/*.log
+            iris-chat-rs/work/nearby-layout/fixed/*.png
+          retention-days: 14
+
   rust:
     if: ${{ inputs.scope == '' || inputs.scope == 'all' || inputs.scope == 'core' }}
     name: Rust and repo checks
