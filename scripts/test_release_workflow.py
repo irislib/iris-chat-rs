@@ -177,7 +177,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
         pin = "e34fa190b41a3ced5148e92b103418004bdd0b65"
         self.assertIn(f"irislib/iris-stack/.github/workflows/product-lab.yml@{pin}", workflow)
         self.assertIn(f"lab_rev: {pin}", workflow)
-        self.assertIn("chat_rev: ${{ needs.verify.outputs.sha }}", workflow)
+        self.assertIn("chat_rev: ${{ needs.validate.outputs.sha }}", workflow)
         self.assertIn("drive_rev: 7cb74966ddaecf90fb91b8f36a44ecc4bbda7b02", workflow)
         self.assertIn("htree_version: 0.2.148", workflow)
         release = workflow.split("\n  release:\n", 1)[1]
@@ -185,6 +185,26 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("pattern: iris-*-${{ needs.build.outputs.artifact_suffix }}", release)
         builds = (ROOT / ".github/workflows/build-artifacts.yml").read_text()
         self.assertIn("value: ${{ jobs.metadata.outputs.version_name }}-${{ jobs.metadata.outputs.short_sha }}", builds)
+
+    def test_independent_release_work_starts_after_validation_and_all_gates_block_publish(self) -> None:
+        workflow = (ROOT / ".github/workflows/release.yml").read_text()
+        jobs = dict(re.findall(r"(?ms)^  ([\w-]+):\n(.*?)(?=^  [\w-]+:\n|\Z)",
+                               workflow.split("\njobs:\n", 1)[1]))
+        self.assertEqual(set(jobs), {"validate", "verify", "mesh-resource", "build", "release"})
+        self.assertNotIn("    needs:", jobs["validate"])
+        self.assertIn('echo "sha=$(git rev-parse HEAD)"', jobs["validate"])
+        self.assertIn("git merge-base --is-ancestor HEAD origin/main", jobs["validate"])
+        for name in ("verify", "mesh-resource", "build"):
+            with self.subTest(job=name):
+                self.assertEqual(re.findall(r"^    needs: (.+)$", jobs[name], re.MULTILINE), ["validate"])
+                self.assertNotIn("continue-on-error:", jobs[name])
+        self.assertIn("ref: ${{ needs.validate.outputs.sha }}", jobs["verify"])
+        self.assertIn("scripts/verify.sh fast", jobs["verify"])
+        publish = jobs["release"].split("    runs-on:", 1)[0]
+        self.assertEqual(re.findall(r"^      - (.+)$", publish, re.MULTILINE),
+                         ["validate", "verify", "build", "mesh-resource"])
+        self.assertNotIn("    if:", publish)
+        self.assertNotIn("continue-on-error:", jobs["release"])
 
     def test_release_builds_manifest_and_attests_every_file(self) -> None:
         workflow = (ROOT / ".github/workflows/release.yml").read_text()
