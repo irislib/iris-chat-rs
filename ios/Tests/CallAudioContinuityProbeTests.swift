@@ -73,9 +73,25 @@ final class CallAudioContinuityProbeTests: XCTestCase {
         XCTAssertEqual(probe.snapshot()["observationsComplete"] as? Bool, true)
         let oversized = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 8193))
         oversized.frameLength = 8193
-        probe.pcm(oversized, time: time, render: false)
+        probe.pcm(oversized, time: AVAudioTime(hostTime: 1_020_000_000), render: true)
         XCTAssertEqual(count(probe, .truncatedPCM), 1)
         XCTAssertEqual(probe.snapshot()["observationsComplete"] as? Bool, false)
+        _ = probe.finish()
+    }
+
+    func testSupported400msCaptureIsObservedWithoutTruncation() throws {
+        let probe = IrisCallAudioContinuityProbe()
+        try probe.begin(environment: env, startTimer: false)
+        let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 1))
+        let buffer = try XCTUnwrap(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 19_200))
+        buffer.frameLength = 19_200
+        let channel = try XCTUnwrap(buffer.floatChannelData?[0])
+        for index in 0..<19_200 { channel[index] = 0.1 }
+        probe.pcm(buffer, time: AVAudioTime(hostTime: 1_000_000_000), render: false)
+        XCTAssertEqual(count(probe, .captureFrames), 19_200)
+        XCTAssertEqual(count(probe, .captureSamples), 19_200)
+        XCTAssertEqual(count(probe, .truncatedPCM), 0)
+        XCTAssertEqual(probe.snapshot()["observationsComplete"] as? Bool, true)
         _ = probe.finish()
     }
 

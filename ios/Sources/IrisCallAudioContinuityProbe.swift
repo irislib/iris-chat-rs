@@ -131,7 +131,8 @@ final class IrisCallAudioContinuityProbe: @unchecked Sendable {
     }
 
     /// Called directly by existing capture and actual mainMixerNode taps. Scan
-    /// all samples only for <= 8192 frames / <= 2 noninterleaved float channels.
+    /// all samples only for <= 24576 capture / 8192 mixer frames and <= 2
+    /// noninterleaved float channels. Capture includes the supported400ms batch.
     /// Unsupported/truncated observations invalidate completeness, never guess.
     func pcm(_ buffer: AVAudioPCMBuffer, time: AVAudioTime, render: Bool) {
         guard enabled else { return }
@@ -149,7 +150,7 @@ final class IrisCallAudioContinuityProbe: @unchecked Sendable {
             if !lastRender.maximum(stamp) { event(.atomicObservationLost) }
         } else { event(.captureCallbacks); event(.captureFrames, Int(buffer.frameLength)) }
         let frames = Int(buffer.frameLength), channels = Int(buffer.format.channelCount)
-        guard frames > 0, frames <= 8192, (1...2).contains(channels),
+        guard frames > 0, frames <= (render ? 8192 : 24576), (1...2).contains(channels),
               !buffer.format.isInterleaved, let data = buffer.floatChannelData else {
             event(.truncatedPCM); return
         }
