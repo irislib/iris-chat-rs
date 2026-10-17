@@ -59,10 +59,10 @@ notice does not leave them ringing.
 These summaries persist on that device and are not sent to peers or synced to
 other devices. A video call answered with voice is recorded as a voice call.
 
-The native call interface is available on Android, iOS and macOS. Desktop
-browsers use iris-chat; the Linux and Windows native shells do not yet have
-capture or call controls. Phone integration uses iOS CallKit and Android
-self-managed Telecom with a foreground call service. Android uses a high-priority
+The native call interface is available on Android, iOS, macOS, Windows and
+Linux. Windows and Linux use the shared `desktop-media` engine for audio and
+video capture; browsers use iris-chat. Phone integration uses iOS CallKit and
+Android self-managed Telecom with a foreground call service. Android uses a high-priority
 CallStyle notification with system ringtone and full-screen intent; presentation
 respects the phone’s notification permission, ringer, and system settings. Telecom
 owns audio focus for these calls. Android dismisses the ended-call screen after
