@@ -16,6 +16,10 @@ mod nearby;
 mod timestamps;
 use nearby::nearby_row;
 #[cfg(feature = "ui-tests")]
+pub fn nearby_row_for_test(manager: &Rc<AppManager>) -> gtk::Widget {
+    nearby_row(manager)
+}
+#[cfg(feature = "ui-tests")]
 pub use timestamps::verify_ui as verify_timestamps_ui;
 use timestamps::Timestamps;
 
