@@ -217,8 +217,7 @@ impl AppCore {
                 return;
             }
         };
-        // The scoped DEBUG fixture disables local rendezvous, not the blob
-        // service carried by its ordinary authenticated LAN endpoint.
+        // Scoped DEBUG fixtures keep the LAN blob service without local rendezvous.
         let attachment_blob_service_enabled = options.same_host_hashtree || fixture_scope.is_some();
         self.reconcile_update_sources();
         let host_ble_requested = self.pending_host_ble.is_some() || self.host_ble_attached;
