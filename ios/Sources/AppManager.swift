@@ -800,7 +800,17 @@ final class AppManager: ObservableObject {
                 guard let self else { return }
                 let runner = RustDispatchRunner(rust: self.rust)
                 self.callMediaDispatch.send(action, allowed: allowed) { action in
+#if DEBUG
+                    if case .sendCallMedia(_, 1, _, _, _) = action { IrisCallAudioContinuityProbe.shared.event(.ffiAttempted) }
+                    do {
+                        try runner.dispatch(action: action)
+                        if case .sendCallMedia(_, 1, _, _, _) = action { IrisCallAudioContinuityProbe.shared.event(.ffiReturned) }
+                    } catch {
+                        if case .sendCallMedia(_, 1, _, _, _) = action { IrisCallAudioContinuityProbe.shared.event(.ffiFailed) }
+                    }
+#else
                     try? runner.dispatch(action: action)
+#endif
                 }
             }
         )

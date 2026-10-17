@@ -1,13 +1,18 @@
 import Foundation
 
 /// Coalesce a capture burst into one scheduled drain. Keep the earliest frames
-/// in order on overload: at most one maximum microphone callback (24 x 20ms)
-/// and four video frames. The caller checks age/permission before each dispatch.
+/// in order on overload: one draining batch plus one pending batch, each
+/// bounded to 24 audio / 4 video frames. The caller checks age/permission
+/// before each dispatch; buffering never extends a frame's deadline.
 final class IrisCallMediaHandoff<Element>: @unchecked Sendable {
     private let lock = NSLock()
     private var pending: [Element] = []
     private var audioCount = 0
     private var videoCount = 0
+#if DEBUG
+    var continuityEnqueued: IrisCallAudioContinuityProbe.Stage = .controllerEnqueued
+    var continuityFull: IrisCallAudioContinuityProbe.Stage = .controllerFull
+#endif
 
     /// True only when the caller must schedule a drain; never waits for it.
     func append(_ element: Element, kind: UInt8) -> Bool {
@@ -15,7 +20,15 @@ final class IrisCallMediaHandoff<Element>: @unchecked Sendable {
         defer { lock.unlock() }
         switch kind {
         case 1:
-            guard audioCount < 24 else { return false }
+            guard audioCount < 24 else {
+#if DEBUG
+                IrisCallAudioContinuityProbe.shared.event(continuityFull)
+#endif
+                return false
+            }
+#if DEBUG
+            IrisCallAudioContinuityProbe.shared.event(continuityEnqueued)
+#endif
             audioCount += 1
         case 2:
             guard videoCount < 4 else { return false }
@@ -50,6 +63,10 @@ final class IrisCallMediaDispatch {
          now: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) {
         self.queue = queue
         self.now = now
+#if DEBUG
+        pending.continuityEnqueued = .dispatchEnqueued
+        pending.continuityFull = .dispatchFull
+#endif
     }
 
     /// Invalidate the old core's work before account/core replacement begins.
@@ -74,7 +91,15 @@ final class IrisCallMediaDispatch {
         let work = { [weak self, now] in
             // allowed also retains the controller's original 100ms deadline;
             // the second queue cannot grant captured audio a fresh age budget.
-            guard let self, self.isCurrent(generation), now() < deadline, allowed() else { return }
+            guard let self, self.isCurrent(generation), now() < deadline, allowed() else {
+#if DEBUG
+                if kind == 1 {
+                    IrisCallAudioContinuityProbe.shared.event(.dispatchRejected)
+                    if now() >= deadline { IrisCallAudioContinuityProbe.shared.event(.dispatchDeadlineRejected) }
+                }
+#endif
+                return
+            }
             dispatch(action)
         }
         guard pending.append(work, kind: kind) else { return }

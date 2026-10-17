@@ -24,6 +24,9 @@ final class IrisCallAudio: IrisCallAudioHandling {
     private var configurationObserver: NSObjectProtocol?
     private var muted = true
     private var playoutBuffers: IrisCallAudioPlayoutQueue?
+    #if DEBUG
+    private var hasContinuityTap = false
+#endif
     private var loggedCapture = false
     private var loggedPlayback = false
     private var loggedPlayed = false
@@ -59,19 +62,40 @@ final class IrisCallAudio: IrisCallAudioHandling {
         let player = AVAudioPlayerNode()
         engine.attach(player)
         engine.connect(player, to: engine.mainMixerNode, format: wireFormat)
+#if DEBUG
+        if IrisCallAudioContinuityProbe.shared.enabled {
+            engine.mainMixerNode.installTap(onBus: 0, bufferSize: 960, format: nil) { buffer, time in
+                IrisCallAudioContinuityProbe.shared.pcm(buffer, time: time, render: true)
+            }
+            hasContinuityTap = true
+        }
+#endif
         var pending: [Int16] = []
         var pendingPermission: (() -> Bool)?
         let captureBufferFrames = AVAudioFrameCount(ceil(inputFormat.sampleRate * 0.1))
         input.installTap(onBus: 0, bufferSize: captureBufferFrames, format: inputFormat) { [weak self, codec] buffer, time in
             guard let self else { return }
+#if DEBUG
+            IrisCallAudioContinuityProbe.shared.pcm(buffer, time: time, render: false)
+#endif
             let timestamp = UInt64(max(0, (time.isHostTimeValid ? AVAudioTime.seconds(forHostTime: time.hostTime) :
                 ProcessInfo.processInfo.systemUptime) * 1_000_000))
             let allowed = self.permission(timestamp)
             if pendingPermission?() != true { pending.removeAll(keepingCapacity: true); converter.reset() }
             pendingPermission = allowed
-            guard allowed() else { pending.removeAll(keepingCapacity: true); return }
+            guard allowed() else {
+#if DEBUG
+                IrisCallAudioContinuityProbe.shared.event(.capturePermissionRejected)
+#endif
+                pending.removeAll(keepingCapacity: true); return
+            }
             let capacity = AVAudioFrameCount(ceil(Double(buffer.frameLength) * 48_000 / inputFormat.sampleRate)) + 32
-            guard let output = AVAudioPCMBuffer(pcmFormat: wireFormat, frameCapacity: capacity) else { return }
+            guard let output = AVAudioPCMBuffer(pcmFormat: wireFormat, frameCapacity: capacity) else {
+#if DEBUG
+                IrisCallAudioContinuityProbe.shared.event(.captureConversionRejected)
+#endif
+                return
+            }
             var supplied = false
             var error: NSError?
             converter.convert(to: output, error: &error) { _, status in
@@ -80,7 +104,12 @@ final class IrisCallAudio: IrisCallAudioHandling {
                 status.pointee = .haveData
                 return buffer
             }
-            guard error == nil, let samples = output.floatChannelData?[0] else { return }
+            guard error == nil, let samples = output.floatChannelData?[0] else {
+#if DEBUG
+                IrisCallAudioContinuityProbe.shared.event(.captureConversionRejected)
+#endif
+                return
+            }
             for index in 0..<Int(output.frameLength) {
                 let sample = samples[index].isFinite ? max(-1, min(1, samples[index])) : 0
                 pending.append(Int16(max(-32768, min(32767, Int(sample * 32768)))))
@@ -92,8 +121,21 @@ final class IrisCallAudio: IrisCallAudioHandling {
                 frames.append(frame)
             }
             self.captureQueue.submit(frames, timestampUs: timestamp) { [weak self, weak codec] frame, frameTimestamp in
-                guard let self, self.codec === codec, allowed(), let codec,
-                      let bytes = try? codec.encode(samples: frame), !bytes.isEmpty else { return }
+                guard let self, self.codec === codec, allowed(), let codec else {
+#if DEBUG
+                    IrisCallAudioContinuityProbe.shared.event(.encodePermissionRejected)
+#endif
+                    return
+                }
+                guard let bytes = try? codec.encode(samples: frame), !bytes.isEmpty else {
+#if DEBUG
+                    IrisCallAudioContinuityProbe.shared.event(.encodeRejected)
+#endif
+                    return
+                }
+#if DEBUG
+                IrisCallAudioContinuityProbe.shared.event(.encodedFrames)
+#endif
 #if DEBUG
                 if !self.loggedCapture { self.loggedCapture = true; NSLog("IrisCall first microphone frame encoded") }
 #endif
@@ -118,6 +160,9 @@ final class IrisCallAudio: IrisCallAudioHandling {
                         self.player?.stop()
                         engine.prepare()
                         try engine.start()
+#if DEBUG
+                        IrisCallAudioContinuityProbe.shared.event(.engineGenerations)
+#endif
                         self.playoutBuffers?.start()
                         self.player?.play()
                     } catch {
@@ -130,6 +175,9 @@ final class IrisCallAudio: IrisCallAudioHandling {
             }
             engine.prepare()
             try engine.start()
+#if DEBUG
+            IrisCallAudioContinuityProbe.shared.event(.engineGenerations)
+#endif
             self.engine = engine
             self.player = player
             playoutBuffers = IrisCallAudioPlayoutQueue(queue: queue) { [weak self] done in
@@ -141,6 +189,10 @@ final class IrisCallAudio: IrisCallAudioHandling {
             if let configurationObserver { NotificationCenter.default.removeObserver(configurationObserver) }
             configurationObserver = nil
             self.codec = nil
+#if DEBUG
+            if hasContinuityTap { engine.mainMixerNode.removeTap(onBus: 0); hasContinuityTap = false }
+            IrisCallAudioContinuityProbe.shared.event(.engineStopped)
+#endif
             input.removeTap(onBus: 0)
             engine.stop()
             throw error
@@ -178,6 +230,7 @@ final class IrisCallAudio: IrisCallAudioHandling {
         guard !data.isEmpty, data.count <= 1_275 else { return }
 #if DEBUG
         if !loggedPlayback { loggedPlayback = true; NSLog("IrisCall first remote audio queued") }
+        if codec != nil { IrisCallAudioContinuityProbe.shared.event(.receiveCodecPackets) }
 #endif
         codec?.queue(sequence: sequence, data: data)
     }
@@ -188,6 +241,9 @@ final class IrisCallAudio: IrisCallAudioHandling {
               let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 960),
               let channel = buffer.floatChannelData?[0] else { return false }
         let samples = codec.playout()
+#if DEBUG
+        IrisCallAudioContinuityProbe.shared.decoded(samples)
+#endif
         guard samples.count == 960 else { return false }
 #if DEBUG
         if !loggedPlayed && samples.contains(where: { $0 != 0 }) {
@@ -197,6 +253,9 @@ final class IrisCallAudio: IrisCallAudioHandling {
 #endif
         buffer.frameLength = 960
         for index in samples.indices { channel[index] = Float(samples[index]) / 32768 }
+#if DEBUG
+        IrisCallAudioContinuityProbe.shared.event(.scheduledFrames)
+#endif
         player.scheduleBuffer(buffer, completionCallbackType: .dataConsumed) { _ in completion() }
         return true
     }
@@ -206,6 +265,10 @@ final class IrisCallAudio: IrisCallAudioHandling {
         playoutBuffers = nil
         if let configurationObserver { NotificationCenter.default.removeObserver(configurationObserver) }
         configurationObserver = nil
+#if DEBUG
+        if hasContinuityTap { engine?.mainMixerNode.removeTap(onBus: 0); hasContinuityTap = false }
+        IrisCallAudioContinuityProbe.shared.event(.engineStopped)
+#endif
         engine?.inputNode.removeTap(onBus: 0)
         engine?.stop()
         player?.stop()

@@ -225,10 +225,23 @@ final class IrisCallMediaEngine: IrisCallMediaHandling {
     func receive(callID: String, kind: UInt8, sequence: UInt32, timestampUs: UInt64, keyFrame: Bool, data: Data) {
         guard kind == 1 || kind == 2, data.count <= (kind == 1 ? 1_275 : IrisH264Wire.maximumBytes) else { return }
         let slots = kind == 1 ? incomingAudioSlots : incomingVideoSlots
-        guard slots.wait(timeout: .now()) == .success else { return }
+#if DEBUG
+        if kind == 1 { IrisCallAudioContinuityProbe.shared.event(.receivePackets) }
+#endif
+        guard slots.wait(timeout: .now()) == .success else {
+#if DEBUG
+            if kind == 1 { IrisCallAudioContinuityProbe.shared.event(.receiveBusy) }
+#endif
+            return
+        }
         queue.async { [weak self] in
             defer { slots.signal() }
-            guard let self, self.session?.callID == callID else { return }
+            guard let self, self.session?.callID == callID else {
+#if DEBUG
+                if kind == 1 { IrisCallAudioContinuityProbe.shared.event(.receiveSessionRejected) }
+#endif
+                return
+            }
             if kind == 1 { self.audio?.receive(sequence: sequence, data: data); return }
             self.receiver?.receive(sequence: sequence, timestampUs: timestampUs, keyFrame: keyFrame, data: data)
         }

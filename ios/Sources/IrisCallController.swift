@@ -190,8 +190,21 @@ final class IrisCallController: NSObject, ObservableObject {
                                      keyFrame key: Bool, data: Data, captureAllowed: @escaping () -> Bool) {
         let ticket = sendGate.permission(callID: id, kind: kind)
         let deadline = mediaNow() + 0.1
-        let allowed = { [mediaNow] in mediaNow() < deadline && captureAllowed() && ticket() }
-        guard allowed() else { return }
+        let allowed = { [mediaNow] in
+            let timely = mediaNow() < deadline
+#if DEBUG
+            if kind == 1, !timely { IrisCallAudioContinuityProbe.shared.event(.controllerDeadlineChecksExpired) }
+#endif
+            return timely && captureAllowed() && ticket()
+        }
+        guard allowed() else {
+#if DEBUG
+            if kind == 1 {
+                IrisCallAudioContinuityProbe.shared.event(.controllerRejected)
+            }
+#endif
+            return
+        }
         let action = AppAction.sendCallMedia(callId: id, kind: kind, timestampUs: timestamp, keyFrame: key, data: data)
         guard outgoing.append((action, allowed), kind: kind) else { return }
         Task { @MainActor [weak self, outgoing] in
@@ -201,7 +214,14 @@ final class IrisCallController: NSObject, ObservableObject {
                       self.call?.callId == id, self.endingCallID != id,
                       self.call?.phase == "connected", self.audioActive,
                       kind == 1 ? !(self.pendingMuted ?? self.call?.muted ?? true) :
-                        (self.pendingVideo ?? self.call?.video ?? false) else { continue }
+                        (self.pendingVideo ?? self.call?.video ?? false) else {
+#if DEBUG
+                    if case .sendCallMedia(_, 1, _, _, _) = action {
+                        IrisCallAudioContinuityProbe.shared.event(.controllerRejected)
+                    }
+#endif
+                    continue
+                }
                 if let sendMedia = self.sendMedia { sendMedia(action, allowed) }
                 else if allowed() { self.dispatch(action) }
             }
@@ -647,6 +667,9 @@ extension IrisCallController: @preconcurrency CXProviderDelegate {
     }
 
     func provider(_ provider: CXProvider, didActivate audioSession: AVAudioSession) {
+#if DEBUG
+        IrisCallAudioContinuityProbe.shared.event(.sessionActivations)
+#endif
         audioActive = true
         toneAudioReady = true
         audioRouting?.refresh()
@@ -654,6 +677,9 @@ extension IrisCallController: @preconcurrency CXProviderDelegate {
     }
 
     func provider(_ provider: CXProvider, didDeactivate audioSession: AVAudioSession) {
+#if DEBUG
+        IrisCallAudioContinuityProbe.shared.event(.sessionDeactivations)
+#endif
         audioActive = false
         toneAudioReady = false
         updateHardware()

@@ -45,6 +45,9 @@ final class InteropHarnessTests: XCTestCase {
             throw XCTSkip("Interop harness runs only via scripts/run_ios_harness.py")
         }
         let action = try requiredEnv("IRIS_IOS_HARNESS_ACTION", env: env)
+#if DEBUG && os(iOS)
+        if action == "call_audio_continuity" { try validateAudioContinuityFixture(env) }
+#endif
         let runID = env["IRIS_IOS_HARNESS_RUN_ID"] ?? UUID().uuidString
         let useAppStorage = env["IRIS_IOS_HARNESS_USE_APP_STORAGE"] == "1"
         if let seeds = env["IRIS_IOS_HARNESS_FIPS_SEEDS"] {
@@ -115,6 +118,10 @@ final class InteropHarnessTests: XCTestCase {
         status("bootstrap_elapsed_ms", String(Int(bootstrapElapsed * 1000)))
 
         switch action {
+#if DEBUG && os(iOS)
+        case "call_audio_continuity":
+            try await runCallAudioContinuity(manager: manager, dataDir: dataDir, env: env)
+#endif
         case "offline_lan_attachment_prepare", "offline_lan_attachment_sender",
              "offline_lan_attachment_receiver", "offline_lan_attachment_reopen":
             guard let offlineLan else {
