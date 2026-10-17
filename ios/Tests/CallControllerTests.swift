@@ -841,12 +841,15 @@ final class CallControllerTests: XCTestCase {
         for batch in 0..<(600 / frameCount) {
             let batchReceived = expectation(description: "whole voiced callback \(batch)")
             queue.sync { received = batchReceived }
-            let frames = (0..<frameCount).map { frame in
-                (0..<960).map { sample in
-                    let time = Double((batch * frameCount + frame) * 960 + sample) / 48_000
-                    let phase = 2 * Double.pi * (160 * time + 6 * sin(time * 5))
-                    let envelope = 0.7 + 0.3 * sin(time * 13)
-                    return Int16((sin(phase) + 0.4 * sin(phase * 2) + 0.2 * sin(phase * 3)) * envelope * 9_000)
+            let frames: [[Int16]] = (0..<frameCount).map { (frame: Int) -> [Int16] in
+                (0..<960).map { (sample: Int) -> Int16 in
+                    let sampleIndex: Int = (batch * frameCount + frame) * 960 + sample
+                    let time: Double = Double(sampleIndex) / 48_000
+                    let phase: Double = 2 * Double.pi * (160 * time + 6 * sin(time * 5))
+                    let envelope: Double = 0.7 + 0.3 * sin(time * 13)
+                    let harmonics: Double = sin(phase) + 0.4 * sin(phase * 2) + 0.2 * sin(phase * 3)
+                    let amplitude: Double = harmonics * envelope * 9_000
+                    return Int16(amplitude)
                 }
             }
             capture.submit(frames, timestampUs: UInt64(batch * frameCount) * 20_000) { samples, timestamp in
