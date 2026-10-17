@@ -48,7 +48,8 @@ final class IrisCallController: NSObject, ObservableObject {
     private let dispatch: (AppAction) -> Void
     private let sendMedia: ((AppAction, @escaping () -> Bool) -> Void)?
     private nonisolated let sendGate = IrisCallSendGate()
-    private nonisolated let outgoingSlots = DispatchSemaphore(value: 4)
+    private nonisolated let outgoing = IrisCallMediaHandoff<(AppAction, () -> Bool)>()
+    private nonisolated let mediaNow: () -> TimeInterval
     private let showError: (String) -> Void
     private var audioActive = true
     private var toneAudioReady = true
@@ -96,20 +97,9 @@ final class IrisCallController: NSObject, ObservableObject {
     private lazy var media: IrisCallMediaHandling = {
         if let mediaForTesting { return mediaForTesting }
         let engine = IrisCallMediaEngine(
-            send: { [weak self, outgoingSlots, sendGate] id, kind, timestamp, key, data, captureAllowed in
-                guard outgoingSlots.wait(timeout: .now()) == .success else { return }
-                let ticket = sendGate.permission(callID: id, kind: kind)
-                let allowed = { captureAllowed() && ticket() }
-                Task { @MainActor in
-                    defer { outgoingSlots.signal() }
-                    guard let self, self.call?.callId == id, self.endingCallID != id,
-                          self.call?.phase == "connected", self.audioActive,
-                          kind == 1 ? !(self.pendingMuted ?? self.call?.muted ?? true) :
-                            (self.pendingVideo ?? self.call?.video ?? false) else { return }
-                    let action = AppAction.sendCallMedia(callId: id, kind: kind, timestampUs: timestamp, keyFrame: key, data: data)
-                    if let sendMedia = self.sendMedia { sendMedia(action, allowed) }
-                    else if allowed() { self.dispatch(action) }
-                }
+            send: { [weak self] id, kind, timestamp, key, data, captureAllowed in
+                self?.sendCapturedMedia(callID: id, kind: kind, timestampUs: timestamp,
+                                        keyFrame: key, data: data, captureAllowed: captureAllowed)
             },
             frame: { [localSurface, remoteSurface] id, local, pixel in
                 (local ? localSurface : remoteSurface).present(pixel, callID: id)
@@ -164,10 +154,12 @@ final class IrisCallController: NSObject, ObservableObject {
          sendMedia: ((AppAction, @escaping () -> Bool) -> Void)? = nil,
          mediaForTesting: IrisCallMediaHandling? = nil,
          tonesForTesting: IrisCallTones? = nil,
-         permissionAccess: IrisCallPermissions? = nil) {
+         permissionAccess: IrisCallPermissions? = nil,
+         mediaNow: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) {
         self.dispatch = dispatch
         self.showError = showError
         self.sendMedia = sendMedia
+        self.mediaNow = mediaNow
         self.mediaForTesting = mediaForTesting
         self.tones = tonesForTesting ?? (mediaForTesting == nil ? IrisCallTones() : nil)
         self.permissionAccess = permissionAccess ?? IrisCallPermissions()
@@ -192,6 +184,28 @@ final class IrisCallController: NSObject, ObservableObject {
         audioActive = false
         toneAudioReady = false
 #endif
+    }
+
+    nonisolated func sendCapturedMedia(callID id: String, kind: UInt8, timestampUs timestamp: UInt64,
+                                     keyFrame key: Bool, data: Data, captureAllowed: @escaping () -> Bool) {
+        let ticket = sendGate.permission(callID: id, kind: kind)
+        let deadline = mediaNow() + 0.1
+        let allowed = { [mediaNow] in mediaNow() < deadline && captureAllowed() && ticket() }
+        guard allowed() else { return }
+        let action = AppAction.sendCallMedia(callId: id, kind: kind, timestampUs: timestamp, keyFrame: key, data: data)
+        guard outgoing.append((action, allowed), kind: kind) else { return }
+        Task { @MainActor [weak self, outgoing] in
+            for (action, allowed) in outgoing.take() {
+                guard let self, allowed(),
+                      case .sendCallMedia(let id, let kind, _, _, _) = action,
+                      self.call?.callId == id, self.endingCallID != id,
+                      self.call?.phase == "connected", self.audioActive,
+                      kind == 1 ? !(self.pendingMuted ?? self.call?.muted ?? true) :
+                        (self.pendingVideo ?? self.call?.video ?? false) else { continue }
+                if let sendMedia = self.sendMedia { sendMedia(action, allowed) }
+                else if allowed() { self.dispatch(action) }
+            }
+        }
     }
 
     func start(chatID: String, video: Bool) {

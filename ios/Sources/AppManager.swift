@@ -791,20 +791,15 @@ final class AppManager: ObservableObject {
     // ObservableObject so views that only care about toasts or the desktop
     // updater don't re-render on every relay event that publishes `state`.
     let toasts = ToastCenter()
-    private let callMediaQueue = DispatchQueue(label: "iris.call.send", qos: .userInteractive)
-    private let callMediaSlots = DispatchSemaphore(value: 4)
+    private let callMediaDispatch = IrisCallMediaDispatch()
     lazy var calls: IrisCallController = {
         return IrisCallController(
             dispatch: { [weak self] in self?.dispatch($0) },
             showError: { [weak self] in self?.showToast($0) },
             sendMedia: { [weak self] action, allowed in
-                guard let self, self.callMediaSlots.wait(timeout: .now()) == .success else { return }
-                let slots = self.callMediaSlots
+                guard let self else { return }
                 let runner = RustDispatchRunner(rust: self.rust)
-                let deadline = ProcessInfo.processInfo.systemUptime + 0.1
-                self.callMediaQueue.async {
-                    defer { slots.signal() }
-                    guard ProcessInfo.processInfo.systemUptime < deadline, allowed() else { return }
+                self.callMediaDispatch.send(action, allowed: allowed) { action in
                     try? runner.dispatch(action: action)
                 }
             }
@@ -2724,6 +2719,7 @@ final class AppManager: ObservableObject {
         // Invalidate old snapshots and in-flight attachment work before yielding
         // to bridge/core shutdown, not after the replacement has been created.
         reconciliationGeneration &+= 1
+        callMediaDispatch.invalidate()
         let generation = reconciliationGeneration
         let previousRust = rust
         let files = LocalRustDataResetRunner(directory: dataDir, fileManager: fileManager)

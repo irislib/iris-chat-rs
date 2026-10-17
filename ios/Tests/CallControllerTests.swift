@@ -647,6 +647,231 @@ final class CallControllerTests: XCTestCase {
         XCTAssertFalse(gate.permission(callID: "call", kind: 1)())
     }
 
+    @MainActor
+    func test100msCaptureBatchSurvivesControllerAndCoreHandoffs() async throws {
+        try await assertCaptureBatchHandoff(frameCount: 5)
+    }
+
+    @MainActor
+    func test400msCaptureBatchSurvivesControllerAndCoreHandoffs() async throws {
+        try await assertCaptureBatchHandoff(frameCount: 20)
+    }
+
+    @MainActor
+    private func assertCaptureBatchHandoff(frameCount: Int) async throws {
+        let captureQueue = DispatchQueue(label: "test.call.capture.handoff")
+        let capture = IrisCallAudioCaptureQueue(queue: captureQueue)
+        let encoder = try CallAudioCodec()
+        let sendQueue = DispatchQueue(label: "test.call.core.handoff")
+        let sender = IrisCallMediaDispatch(queue: sendQueue)
+        let firstFrames = expectation(description: "initial frames dispatched")
+        firstFrames.expectedFulfillmentCount = 4
+        var timestamps: [UInt64] = [] // Read and written only on sendQueue.
+        let controller = IrisCallController(dispatch: { _ in }, showError: { XCTFail($0) },
+            sendMedia: { action, allowed in
+                sender.send(action, allowed: allowed) { action in
+                    if case .sendCallMedia(_, _, let timestamp, _, _) = action {
+                        timestamps.append(timestamp)
+                        if timestamps.count <= 4 { firstFrames.fulfill() }
+                    }
+                }
+            }, mediaForTesting: CallMediaProbe())
+        controller.update(connectedCall(id: "batch"))
+        let frames = (0..<frameCount).map { frame in
+            (0..<960).map { sample in
+                Int16(sin(Double(frame * 960 + sample) * 440 * 2 * Double.pi / 48_000) * 12_000)
+            }
+        }
+        capture.submit(frames, timestampUs: 1_000_000) { samples, timestamp in
+            do {
+                let data = try encoder.encode(samples: samples)
+                controller.sendCapturedMedia(callID: "batch", kind: 1, timestampUs: timestamp,
+                                             keyFrame: false, data: Data(data), captureAllowed: { true })
+            } catch { XCTFail("Opus capture failed: \(error)") }
+        }
+        // Keep MainActor occupied until the complete real capture callback has
+        // queued its encoded frames. No sleeps or microphone hardware needed.
+        captureQueue.sync {}
+        await fulfillment(of: [firstFrames], timeout: 2)
+        let delivered = sendQueue.sync { timestamps }
+        XCTAssertEqual(delivered, (0..<frameCount).map { 1_000_000 + UInt64($0) * 20_000 })
+    }
+
+    @MainActor
+    func testTwoHopsShareOriginal100msDeadline() async {
+        let clock = CallMediaTestClock()
+        let queue = DispatchQueue(label: "test.call.two.hops")
+        let sender = IrisCallMediaDispatch(queue: queue, now: clock.now)
+        let forwarded = expectation(description: "first hop")
+        let recovered = expectation(description: "fresh frame")
+        var delivered: [UInt64] = []
+        let controller = IrisCallController(dispatch: { _ in }, showError: { XCTFail($0) },
+            sendMedia: { action, allowed in
+                sender.send(action, allowed: allowed) { action in
+                    if case .sendCallMedia(_, _, let timestamp, _, _) = action {
+                        delivered.append(timestamp)
+                        recovered.fulfill()
+                    }
+                }
+                if case .sendCallMedia(_, _, 0, _, _) = action { forwarded.fulfill() }
+            }, mediaForTesting: CallMediaProbe(), mediaNow: clock.now)
+        controller.update(connectedCall(id: "call"))
+        queue.suspend()
+        controller.sendCapturedMedia(callID: "call", kind: 1, timestampUs: 0,
+                                     keyFrame: false, data: Data([1]), captureAllowed: { true })
+        clock.set(0.06)
+        await fulfillment(of: [forwarded], timeout: 2)
+        clock.set(0.12)
+        queue.resume()
+        queue.sync {}
+        XCTAssertTrue(delivered.isEmpty, "60ms + 60ms must expire against the original 100ms deadline")
+        controller.sendCapturedMedia(callID: "call", kind: 1, timestampUs: 1,
+                                     keyFrame: false, data: Data([1]), captureAllowed: { true })
+        await fulfillment(of: [recovered], timeout: 2)
+        XCTAssertEqual(queue.sync { delivered }, [1])
+    }
+
+    @MainActor
+    func testPendingCaptureCannotRegainPermissionAfterMuteHangupOrAccountReset() async {
+        for afterFirstHop in [false, true] {
+            for reason in ["mute", "hangup", "account", "capture"] {
+                let queue = DispatchQueue(label: "test.call.revoke")
+                let sender = IrisCallMediaDispatch(queue: queue, now: { 0 })
+                let captureGate = IrisCallSendGate()
+                captureGate.update(callID: "call", muted: false, video: false)
+                let captured = captureGate.permission(callID: "call", kind: 1)
+                let forwarded = expectation(description: "old frame forwarded")
+                let fresh = expectation(description: "fresh frame delivered")
+                var delivered: [UInt64] = []
+                let controller = IrisCallController(dispatch: { _ in }, showError: { XCTFail($0) },
+                    sendMedia: { action, allowed in
+                        sender.send(action, allowed: allowed) { action in
+                            if case .sendCallMedia(_, _, let timestamp, _, _) = action {
+                                delivered.append(timestamp)
+                                if timestamp == 1 { fresh.fulfill() }
+                            }
+                        }
+                        if case .sendCallMedia(_, _, 0, _, _) = action { forwarded.fulfill() }
+                    }, mediaForTesting: CallMediaProbe(), mediaNow: { 0 })
+                controller.update(connectedCall(id: "call"))
+                queue.suspend()
+                controller.sendCapturedMedia(callID: "call", kind: 1, timestampUs: 0,
+                                             keyFrame: false, data: Data([1]), captureAllowed: captured)
+                if afterFirstHop { await fulfillment(of: [forwarded], timeout: 2) }
+                var currentID = "call"
+                switch reason {
+                case "mute": controller.toggleMuted(); controller.toggleMuted()
+                case "hangup":
+                    controller.end()
+                    currentID = "next"
+                    controller.update(connectedCall(id: currentID))
+                case "account":
+                    controller.update(nil)
+                    sender.invalidate()
+                    controller.update(connectedCall(id: currentID), accountID: "new-account")
+                default:
+                    captureGate.update(callID: "call", muted: true, video: false)
+                    captureGate.update(callID: "call", muted: false, video: false)
+                }
+                controller.sendCapturedMedia(callID: currentID, kind: 1, timestampUs: 1,
+                                             keyFrame: false, data: Data([2]), captureAllowed: { true })
+                queue.resume()
+                await fulfillment(of: [fresh], timeout: 2)
+                XCTAssertEqual(queue.sync { delivered }, [1], "\(reason), after first hop: \(afterFirstHop)")
+                // The old frame must never reach the first hop after revocation.
+                if !afterFirstHop { forwarded.isInverted = true; await fulfillment(of: [forwarded], timeout: 0.01) }
+            }
+        }
+    }
+
+    @MainActor
+    func testConcurrentCaptureProducersRemainBoundedAndDoNotStarveAudio() async {
+        let queue = DispatchQueue(label: "test.call.concurrent")
+        let sender = IrisCallMediaDispatch(queue: queue, now: { 0 })
+        let received = expectation(description: "bounded frame drain")
+        received.expectedFulfillmentCount = 28
+        var counts: [UInt8: Int] = [:]
+        let controller = IrisCallController(dispatch: { _ in }, showError: { XCTFail($0) },
+            sendMedia: { action, allowed in
+                sender.send(action, allowed: allowed) { action in
+                    if case .sendCallMedia(_, let kind, _, _, _) = action {
+                        counts[kind, default: 0] += 1
+                        received.fulfill()
+                    }
+                }
+            }, mediaForTesting: CallMediaProbe(), mediaNow: { 0 })
+        controller.update(connectedCall(id: "call"))
+        DispatchQueue.concurrentPerform(iterations: 2_000) { index in
+            controller.sendCapturedMedia(callID: "call", kind: index.isMultiple(of: 2) ? 1 : 2,
+                                         timestampUs: UInt64(index), keyFrame: false,
+                                         data: Data([1]), captureAllowed: { true })
+        }
+        await fulfillment(of: [received], timeout: 2)
+        XCTAssertEqual(queue.sync { counts }, [1: 24, 2: 4])
+    }
+
+    @MainActor
+    func testRepeated100msCaptureBatchesKeepDecodedSpeechContinuous() async throws {
+        try await assertDecodedContinuity(frameCount: 5)
+    }
+
+    @MainActor
+    private func assertDecodedContinuity(frameCount: Int) async throws {
+        let captureQueue = DispatchQueue(label: "test.call.continuity.capture")
+        let capture = IrisCallAudioCaptureQueue(queue: captureQueue)
+        let encoder = try CallAudioCodec()
+        let decoder = try CallAudioCodec()
+        let queue = DispatchQueue(label: "test.call.continuity.send")
+        let sender = IrisCallMediaDispatch(queue: queue, now: { 0 })
+        var sequence: UInt32 = 0
+        var received: XCTestExpectation?
+        let controller = IrisCallController(dispatch: { _ in }, showError: { XCTFail($0) },
+            sendMedia: { action, allowed in
+                sender.send(action, allowed: allowed) { action in
+                    if case .sendCallMedia(_, _, _, _, let data) = action {
+                        decoder.queue(sequence: sequence, data: data)
+                        sequence += 1
+                        if Int(sequence).isMultiple(of: frameCount) { received?.fulfill() }
+                    }
+                }
+            }, mediaForTesting: CallMediaProbe(), mediaNow: { 0 })
+        controller.update(connectedCall(id: "continuous"))
+        var silentRun = 0
+        var maxSilentRun = 0
+        for batch in 0..<(600 / frameCount) {
+            let batchReceived = expectation(description: "whole voiced callback \(batch)")
+            queue.sync { received = batchReceived }
+            let frames = (0..<frameCount).map { frame in
+                (0..<960).map { sample in
+                    let time = Double((batch * frameCount + frame) * 960 + sample) / 48_000
+                    let phase = 2 * Double.pi * (160 * time + 6 * sin(time * 5))
+                    let envelope = 0.7 + 0.3 * sin(time * 13)
+                    return Int16((sin(phase) + 0.4 * sin(phase * 2) + 0.2 * sin(phase * 3)) * envelope * 9_000)
+                }
+            }
+            capture.submit(frames, timestampUs: UInt64(batch * frameCount) * 20_000) { samples, timestamp in
+                do {
+                    let bytes = try encoder.encode(samples: samples)
+                    controller.sendCapturedMedia(callID: "continuous", kind: 1, timestampUs: timestamp,
+                                                 keyFrame: false, data: Data(bytes), captureAllowed: { true })
+                } catch { XCTFail("Opus capture failed: \(error)") }
+            }
+            captureQueue.sync {}
+            await fulfillment(of: [batchReceived], timeout: 2)
+            // Model the real device's 20ms consumption between callbacks,
+            // through the production receiver codec (not a frame-count proxy).
+            for tick in 0..<frameCount {
+                let samples = decoder.playout()
+                if batch == 0 && tick < 3 { continue } // initial 60ms prime
+                silentRun = samples.allSatisfy { abs(Int($0)) <= 20 } ? silentRun + 1 : 0
+                maxSilentRun = max(maxSilentRun, silentRun)
+            }
+        }
+        print("capture continuity batch=\(frameCount * 20)ms longestUnexpectedSilence=\(maxSilentRun * 20)ms")
+        XCTAssertEqual(queue.sync { sequence }, UInt32(600))
+        XCTAssertEqual(maxSilentRun, 0, "voiced PCM must remain continuous after initial priming")
+    }
+
     private func connectedCall(id: String) -> CallSnapshot {
         CallSnapshot(outgoing: false, targetBitrateBps: 2_000_000, keyFrameGeneration: 0,
                      mediaConnected: true, maxBitrateBps: 2_000_000,
