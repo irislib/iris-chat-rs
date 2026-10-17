@@ -378,6 +378,106 @@ fn chat_read_sync_survives_restart_and_catches_up_an_offline_sibling() {
 }
 
 #[test]
+fn chat_read_sync_clears_badge_behind_own_replies_after_receiver_restart() {
+    for keep_unseen in [false, true] {
+        let mut pair = chat_read_sync_pair("read-sync-own-preview");
+        let peer = Keys::generate();
+        let chat = peer.public_key().to_hex();
+        if keep_unseen {
+            chat_read_sync_incoming(&mut pair.a, &peer, "not-viewed", 199);
+        }
+        chat_read_sync_incoming(&mut pair.a, &peer, "viewed-on-sibling", 200);
+        sync_chat_reads(&pair.a, &mut pair.b, &pair.a_device, true);
+        let unread_before = 1 + u64::from(keep_unseen);
+        assert_eq!(pair.b.threads[&chat].unread_count, unread_before);
+
+        pair.a
+            .mark_messages_seen(&chat, &["viewed-on-sibling".into()]);
+        for (id, time) in [("first-own-reply", 201), ("latest-own-reply", 202)] {
+            pair.a.push_outgoing_message_with_id(
+                id.into(),
+                &chat,
+                "Reply from another device".into(),
+                time,
+                None,
+                DeliveryState::Sent,
+            );
+        }
+        // Replies can arrive while the read update is missed. Their preview
+        // must neither add unread messages nor imply that older ones were read.
+        for bytes in pair.a.build_device_sync_packets_for_test(100, true) {
+            let mut packet: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            if packet["type"] == "snapshot" {
+                for chat in packet["chats"].as_array_mut().into_iter().flatten() {
+                    chat.as_object_mut().unwrap().remove("readState");
+                }
+            }
+            deliver_chat_read_packets(
+                &mut pair.b,
+                &pair.a_device,
+                &[serde_json::to_vec(&packet).unwrap()],
+            );
+        }
+        assert_eq!(pair.b.threads[&chat].unread_count, unread_before);
+        let latest = pair.b.threads[&chat].messages.last().unwrap();
+        assert_eq!(latest.id, "latest-own-reply");
+        assert!(latest.is_outgoing);
+        pair.b.persist_best_effort_inner();
+        drop(pair.b);
+
+        let mut receiver = logged_in_test_core_at_data_dir(
+            &pair.owner,
+            &pair.b_device,
+            pair._b_dir.path().to_string_lossy().into_owned(),
+        );
+        let persisted = receiver.load_persisted().unwrap().unwrap();
+        let preview = persisted
+            .threads
+            .iter()
+            .find(|t| t.chat_id == chat)
+            .unwrap();
+        assert_eq!(preview.messages.len(), 1);
+        assert_eq!(preview.messages[0].id, "latest-own-reply");
+        // Restore the inactive chat exactly as account restoration does: only
+        // the outgoing preview is loaded; unread incoming rows remain on disk.
+        receiver.threads.insert(
+            chat.clone(),
+            ThreadRecord {
+                chat_id: chat.clone(),
+                unread_count: preview.unread_count,
+                updated_at_secs: preview.updated_at_secs,
+                messages: preview
+                    .messages
+                    .iter()
+                    .map(super::chats::chat_message_from_persisted)
+                    .collect(),
+                draft: preview.draft.clone(),
+            },
+        );
+        configure_test_device_sync_profile(
+            &mut receiver,
+            &pair.owner,
+            &pair.b_device,
+            &pair.a_device,
+            None,
+        );
+        sync_chat_reads(&pair.a, &mut receiver, &pair.a_device, false);
+        let expected_unread = u64::from(keep_unseen);
+        assert_eq!(receiver.threads[&chat].unread_count, expected_unread);
+        assert_eq!(receiver.threads[&chat].messages.len(), 1);
+        let stored = receiver.app_store.load_thread(&chat, 100).unwrap().unwrap();
+        assert_eq!(stored.unread_count, expected_unread);
+        for message in &stored.messages {
+            assert_eq!(
+                matches!(message.delivery, PersistedDeliveryState::Seen),
+                message.id == "viewed-on-sibling",
+                "own-device reads must not change recipient receipts or unseen incoming rows"
+            );
+        }
+    }
+}
+
+#[test]
 fn chat_read_sync_merges_device_alias_progress_without_reviving_old_chat() {
     let mut pair = chat_read_sync_pair("read-sync-alias");
     let peer = Keys::generate();
