@@ -2,7 +2,7 @@
 
 Each release has channel-specific notes. The release tag must match the `##` heading exactly.
 
-## v2026.10.17
+## v2026.10.18
 
 ### GitHub
 
@@ -19,7 +19,10 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 - Recover device sync after linked browsers reload or connect simultaneously, preserving queued records and keeping one consistent connection direction.
 - Keep Linux chat-list and composer shortcuts working during navigation and pane animations.
 - Preserve complete microphone batches through the Apple call sender while keeping audio queues bounded and honoring mute, call-end and account changes.
-- Add image zoom and bounded panning on Mac, with keyboard access and pinch support.
+- Apply the intended microphone mute state before starting or restarting Apple call audio.
+- Keep desktop Nearby rows and the following chat list in place as peers appear and disappear.
+- Retain the 64 MiB limit for ordinary native attachments; use Send directly for larger one-to-one transfers, with a 100 GiB per-file limit.
+- Add image zoom and bounded panning on Mac.
 - Show Mac focus outlines during keyboard navigation while keeping mouse interactions clear.
 - Update sync, TLS and QUIC dependencies to fix published security advisories.
 
@@ -34,7 +37,8 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 - Send attachments when the upload server is unavailable, and view encrypted upload links in message details.
 - Improve message editing and notification cleanup across linked devices.
 - Keep chat settings in sync when linked browsers reconnect.
-- Reduce dropped audio during calls.
+- Reduce dropped audio during calls and preserve your mute setting when audio starts or resumes.
+- Keep the Mac chat list steady as Nearby people appear and disappear.
 - Zoom in on images and move around them on Mac.
 - Keep Mac controls clear of focus outlines when using a mouse.
 - Improve security when syncing and connecting to message servers.
