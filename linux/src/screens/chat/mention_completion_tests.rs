@@ -95,6 +95,8 @@ pub fn verify_ui(manager: Rc<crate::app_manager::AppManager>) {
     buffer.insert_at_cursor("@");
     buffer.end_user_action();
     pump_until(|| completion.root.is_visible());
+    // Visibility changes before GTK's next frame allocates the popover.
+    pump_until(|| completion.root.is_mapped() && completion.root.allocated_width() >= 220);
     assert!(
         input.has_focus(),
         "opening suggestions must keep editor focus"
@@ -107,7 +109,8 @@ pub fn verify_ui(manager: Rc<crate::app_manager::AppManager>) {
     );
     assert!(
         completion.root.allocated_width() >= 220,
-        "suggestions must leave room to read names and distinguish duplicate names"
+        "suggestions must leave room to read names and distinguish duplicate names: width={}",
+        completion.root.allocated_width()
     );
     super::completion_screenshots::save(&window, "linux-mention-suggestions");
     super::completion_screenshots::save_widget(
@@ -202,5 +205,7 @@ pub fn verify_ui(manager: Rc<crate::app_manager::AppManager>) {
     bubble.add_css_class("bubble-out");
     super::completion_screenshots::save(&window, "linux-outgoing-mentions-links");
     window.close();
-    println!("PASS: bare @, exact same-name identity, Unicode edits, keyboard acceptance, undo and dismissal");
+    println!(
+        "PASS: bare @, exact same-name identity, Unicode edits, keyboard acceptance, undo and dismissal"
+    );
 }
