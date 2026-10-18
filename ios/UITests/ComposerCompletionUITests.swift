@@ -34,6 +34,20 @@ final class ComposerCompletionUITests: IrisChatUITestCase {
         XCTAssertTrue(waitUntil(timeout: 5) { (input.value as? String) == "Hi @" }, "Native typing must survive the hosted composer update")
         let person = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'chatMentionCompletion-'")).firstMatch
         XCTAssertTrue(person.waitForExistence(timeout: 10), "Bare @ must immediately offer people in the group")
+        #if os(iOS)
+        // A keyboard update can still be presenting an intermediate frame after
+        // the suggestion becomes accessible. Compare settled geometry on both
+        // sides; keep the same one-point bound so a lasting shift still fails.
+        var mentionFrame = input.frame
+        var mentionLastChange = Date()
+        XCTAssertTrue(waitUntil(timeout: 5) {
+            let current = input.frame
+            if current != mentionFrame { mentionFrame = current; mentionLastChange = Date() }
+            return Date().timeIntervalSince(mentionLastChange) >= 0.5
+        }, "The mention editor frame must settle before comparing layout")
+        print("IRIS_COMPOSER_FRAMES before=\(editorFrame) after=\(mentionFrame) keyboard=\(app.keyboards.firstMatch.frame)")
+        capture(app, named: "group-mention-before-geometry-check")
+        #endif
         XCTAssertEqual(input.frame.minY, editorFrame.minY, accuracy: 1)
         XCTAssertEqual(input.frame.height, editorFrame.height, accuracy: 1)
         XCTAssertLessThanOrEqual(person.frame.maxY, input.frame.minY,
