@@ -14,6 +14,7 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 - Create and manage encrypted private personal and group invitations, including expiry, use limits and revocation. Preserve durable admission decisions across retries and restarts.
 - Sync chat acceptance through private request-decision events, including authenticated replies and reactions from linked devices, while preserving newer rejection and blocking decisions.
 - Keep encrypted attachments in a bounded local store so a temporary upload-server outage does not prevent sending. Retry replication in the background and serve available ciphertext to peers.
+- Recover recent accepted group messages from a restarted nearby member using their original signed, encrypted envelopes.
 - Show confirmed encrypted upload URLs in message details, with full clickable links and copying.
 - Expose mention-notification settings in the CLI and deliver complete service errors even when they exceed one socket write.
 - Recover device sync after linked browsers reload or connect simultaneously, preserving queued records and keeping one consistent connection direction.
@@ -34,6 +35,7 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 - Show readable attachment labels in notifications and the chat list.
 - Create and open private invitations to people and groups.
 - Keep accepted chats in sync across your devices.
+- Recover recent group messages from a nearby member after a restart.
 - Send attachments when the upload server is unavailable, and view encrypted upload links in message details.
 - Improve message editing and notification cleanup across linked devices.
 - Keep chat settings in sync when linked browsers reconnect.
@@ -51,6 +53,7 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 - Show readable attachment labels in notifications and the chat list.
 - Create and open private invitations to people and groups.
 - Keep accepted chats in sync across your devices.
+- Recover recent group messages from a nearby member after a restart.
 - Send attachments when the upload server is unavailable, and view encrypted upload links in message details.
 - Improve message editing and notification cleanup across linked devices.
 - Keep chat settings in sync when linked browsers reconnect.
