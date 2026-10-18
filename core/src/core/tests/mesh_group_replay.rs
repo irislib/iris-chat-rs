@@ -67,7 +67,8 @@ fn mesh_group_received_ciphertext_survives_provider_restart_with_sender_offline(
     let restart = |index: usize, keys: &Keys, path: String| {
         let mut core = logged_in_test_core_at_data_dir(&owners[index], keys, path);
         let (sender, receiver) = flume::unbounded();
-        core.core_sender = sender;
+        core.core_sender = sender.clone();
+        core.priority_sender = sender;
         core.start_session_inner(owners[index].public_key(), Some(owners[index].clone()),
             keys.clone(), true, true, true).unwrap();
         (core, receiver)
