@@ -72,7 +72,7 @@ impl ReadLease {
             // Blob links with matching lengths are leaves in Hashtree's reader.
             // Their hashes are pinned without loading/decrypting every file chunk.
             if matches!(reference.link, Some((LinkType::Blob, _)))
-                && self.store.blobs.blob_size_sync(&hash)? == expected_size
+                && state.blobs()?.blob_size_sync(&hash)? == expected_size
             {
                 continue;
             }

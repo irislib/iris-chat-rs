@@ -41,6 +41,12 @@ impl AppCore {
         // Lift the suspend gate even when not logged in so a re-foregrounded
         // unauthenticated app can process events again.
         self.suspended = false;
+        #[cfg(any(target_os = "ios", test))]
+        if let Some(service) = &self.attachment_service {
+            if let Err(error) = service.store.resume() {
+                self.push_debug_log("attachment.resume.error", error.to_string());
+            }
+        }
         self.foreground_background_ble();
         self.resume_remote_signer_events();
         self.expire_pending_signer_login();

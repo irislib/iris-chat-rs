@@ -17,7 +17,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.input.then
 import androidx.compose.foundation.text.input.TextFieldState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
@@ -232,7 +231,6 @@ internal fun ComposerBar(
     val windowWidth = with(density) { LocalWindowInfo.current.containerSize.width.toDp() }
     val showDesktopComposerTools = windowWidth >= 600.dp
     var showingEmojiPicker by remember { mutableStateOf(false) }
-    val emojiCompletion = rememberChatEmojiCompletion(draft)
     val mentionCompletion = rememberChatMentionCompletion(draft, mentionParticipants)
     val attachInteractionSource = remember { MutableInteractionSource() }
     val emojiInteractionSource = remember { MutableInteractionSource() }
@@ -265,7 +263,7 @@ internal fun ComposerBar(
                     .padding(horizontal = 12.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            if (sendAllowed && mentionParticipants.isNotEmpty()) {
+            if (sendAllowed && !showingEmojiPicker && mentionParticipants.isNotEmpty()) {
                 ChatMentionSuggestions(mentionCompletion)
             }
             if (selectedAttachments.isNotEmpty() && sendFilesDirectly) {
@@ -322,7 +320,6 @@ internal fun ComposerBar(
                 }
             }
 
-            if (!showingEmojiPicker) ChatEmojiCompletionSuggestions(emojiCompletion)
             if (showDesktopComposerTools && showingEmojiPicker) {
                 EmojiPickerRow(
                     enabled = !isBusy,
@@ -367,7 +364,7 @@ internal fun ComposerBar(
                                             indication = null,
                                         ) {
                                             haptics.press()
-                                            emojiCompletion.dismiss()
+                                            mentionCompletion.dismiss()
                                             showingEmojiPicker = !showingEmojiPicker
                                         }
                                         .testTag("chatEmojiButton"),
@@ -388,16 +385,14 @@ internal fun ComposerBar(
 
                         ChatMessageInput(
                             state = draft,
-                            inputTransformation = emojiCompletion.inputTransformation.then(mentionCompletion.inputTransformation),
+                            inputTransformation = mentionCompletion.inputTransformation,
                             modifier =
                                 (focusRequester?.let { Modifier.focusRequester(it) } ?: Modifier)
                                     .then(inputContentModifier)
-                                    .onPreviewKeyEvent { mentionCompletion.onKeyEvent(it) || emojiCompletion.onKeyEvent(it) }
+                                    .onPreviewKeyEvent { mentionCompletion.onKeyEvent(it) }
                                     .onFocusChanged {
                                         mentionCompletion.focused = it.isFocused
                                         if (!it.isFocused) mentionCompletion.dismiss()
-                                        emojiCompletion.focused = it.isFocused
-                                        if (!it.isFocused) emojiCompletion.dismiss()
                                     }
                                     .weight(1f)
                                     .heightIn(min = 44.dp, max = 132.dp)

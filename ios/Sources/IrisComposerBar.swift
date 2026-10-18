@@ -23,6 +23,7 @@ struct IrisComposerBar: View {
     @State private var showingEmojiPicker = false
     @StateObject private var emojiCompletion = IrisComposerEmojiCompletion()
     @StateObject private var mentionCompletion = IrisComposerMentionCompletion()
+    @State private var completionAvailableHeight: CGFloat = 240
     var mentionParticipants: [ChatParticipantSnapshot] = []
     @State private var isPreparingAttachments = false
     @State private var attachmentTask: Task<Void, Never>?
@@ -135,15 +136,6 @@ struct IrisComposerBar: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
 
-            if !mentionCompletion.results.isEmpty && !showingEmojiPicker {
-                IrisComposerMentionSuggestions(completion: mentionCompletion)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            if !emojiCompletion.results.isEmpty && !showingEmojiPicker {
-                IrisComposerEmojiSuggestions(completion: emojiCompletion)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-
             composerRow
                 .animation(.spring(response: 0.32, dampingFraction: 0.72), value: canSend)
                 .animation(.spring(response: 0.32, dampingFraction: 0.72), value: isSending)
@@ -155,6 +147,19 @@ struct IrisComposerBar: View {
         // No outer background — the elements still float as separate
         // glass discs over the timeline.
         .padding(.vertical, 6)
+        // Suggestions cover the timeline above the composer. They must never
+        // change its safe-area inset, the editor frame, or the scroll position.
+        .onGeometryChange(for: CGFloat.self) { geometry in
+            max(0, geometry.frame(in: .global).minY - geometry.safeAreaInsets.top - 8)
+        } action: { completionAvailableHeight = $0 }
+        .overlay(alignment: .topLeading) {
+            if !showingEmojiPicker {
+                completionSuggestions
+                    .padding(.horizontal, IrisLayout.usesDesktopChrome ? 14 : 8)
+                    .padding(.bottom, 8)
+                    .alignmentGuide(.top) { $0[.bottom] }
+            }
+        }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("chatComposerBar")
         .irisOnChange(of: draft) {
@@ -569,7 +574,9 @@ struct IrisComposerBar: View {
     #endif
 
     private func updateCompletions(_ context: IrisComposerCompletionContext) {
+        #if os(macOS)
         emojiCompletion.update(context)
+        #endif
         mentionCompletion.onInsert = { person, label, location in
             composerState.insertMention(label: label, token: person.token, owner: person.id, at: location)
             onDraftChange()
@@ -579,6 +586,20 @@ struct IrisComposerBar: View {
                 token: formatMessageMention(ownerPubkeyHex: person.ownerPubkeyHex, name: person.displayName))
         }
         mentionCompletion.update(context, candidates: candidates)
+    }
+
+    @ViewBuilder
+    private var completionSuggestions: some View {
+        if sendAllowed && !mentionCompletion.results.isEmpty {
+            IrisComposerMentionSuggestions(completion: mentionCompletion, availableHeight: completionAvailableHeight)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        #if os(macOS)
+        if mentionCompletion.results.isEmpty && !emojiCompletion.results.isEmpty {
+            IrisComposerEmojiSuggestions(completion: emojiCompletion)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        #endif
     }
 
     private func selectionDidChange(text: String, selection: NSRange) {

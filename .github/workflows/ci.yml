@@ -392,6 +392,7 @@ jobs:
             -parallel-testing-enabled NO \
             -only-testing:IrisChatTests \
             -only-testing:NotificationServiceTests \
+            -only-testing:IrisChatUITests/ComposerCompletionUITests \
             -only-testing:IrisChatUITests/ChatTimelineUITests/testReopeningLongChatLandsAtBottom \
             -only-testing:IrisChatUITests/IrisChatTimelineUITests/testSearchHitInSeededLongChatOpensInTimeline \
             -only-testing:IrisChatUITests/ChatPaginationUITests \

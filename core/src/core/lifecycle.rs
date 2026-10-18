@@ -529,6 +529,12 @@ impl AppCore {
             });
         }
 
+        #[cfg(any(target_os = "ios", test))]
+        if let Some(service) = &self.attachment_service {
+            if let Err(error) = service.store.suspend() {
+                self.push_debug_log("attachment.suspend.error", error.to_string());
+            }
+        }
         if let Err(error) = self.app_store.prepare_for_suspend() {
             self.push_debug_log("storage.suspend.error", error.to_string());
         }

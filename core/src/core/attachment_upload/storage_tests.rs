@@ -522,3 +522,97 @@ async fn replacing_all_failed_servers_rescues_pending_tree_and_keeps_receipts() 
         .unwrap();
     assert_eq!(count, 1, "old incomplete jobs are retired");
 }
+
+// A separate process is essential: POSIX does not report a process's own
+// record locks. Probe LMDB's environment lock even when no transaction is live.
+#[cfg(unix)]
+fn environment_lock_is_held(directory: &Path) -> bool {
+    let status = std::process::Command::new("python3")
+        .args([
+            "-c",
+            r#"import fcntl, os, sys
+with open(sys.argv[1], 'r+b') as f:
+    try:
+        fcntl.lockf(f, fcntl.LOCK_EX | fcntl.LOCK_NB, 1, 0, os.SEEK_SET)
+    except BlockingIOError:
+        sys.exit(42)
+"#,
+        ])
+        .arg(directory.join("blobs/lock.mdb"))
+        .status()
+        .expect("run independent file-lock observer");
+    assert!(
+        matches!(status.code(), Some(0 | 42)),
+        "lock observer failed: {status}"
+    );
+    status.code() == Some(42)
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn suspend_releases_idle_environment_lock_with_live_owners_and_preserves_data() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = AttachmentChunkStore::open(dir.path(), 8 * 1024 * 1024).unwrap();
+    let retained_owner = store.clone();
+    let bytes = b"cached ciphertext survives iOS suspension".to_vec();
+    let hash = hashtree_core::sha256(&bytes);
+    store.put(hash, bytes.clone()).await.unwrap();
+    assert!(environment_lock_is_held(dir.path()));
+    store.suspend().unwrap();
+    assert!(!environment_lock_is_held(dir.path()));
+    assert!(retained_owner.get(&hash).await.is_err());
+    assert!(retained_owner.put(hash, bytes.clone()).await.is_err());
+    assert!(store.begin(None).is_err());
+    assert!(
+        !environment_lock_is_held(dir.path()),
+        "late work must not reopen LMDB"
+    );
+    store.suspend().unwrap();
+    store.resume().unwrap();
+    assert!(environment_lock_is_held(dir.path()));
+    assert_eq!(retained_owner.get(&hash).await.unwrap(), Some(bytes));
+    store.close();
+    assert!(!environment_lock_is_held(dir.path()));
+    assert!(
+        store.resume().is_err(),
+        "logout must not revive an old account"
+    );
+}
+
+#[tokio::test]
+async fn suspended_dropped_upload_pins_are_reconciled_before_quota_eviction() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = AttachmentChunkStore::open(dir.path(), 8 * 1024 * 1024).unwrap();
+    let abandoned = store.begin(None).unwrap();
+    let old = vec![13; 1024 * 1024];
+    let old_hash = hashtree_core::sha256(&old);
+    abandoned.put(old_hash, old).await.unwrap();
+    store.suspend().unwrap();
+    drop(abandoned);
+    store.resume().unwrap();
+    for i in 0..8 {
+        let bytes = vec![20 + i; 1024 * 1024];
+        store
+            .put(hashtree_core::sha256(&bytes), bytes)
+            .await
+            .unwrap();
+    }
+    assert!(store.get(&old_hash).await.unwrap().is_none());
+}
+
+#[tokio::test]
+async fn logout_clears_a_suspended_cache_without_reopening_it_to_old_owners() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = AttachmentChunkStore::open(dir.path(), 8 * 1024 * 1024).unwrap();
+    let bytes = b"account-owned ciphertext".to_vec();
+    let hash = hashtree_core::sha256(&bytes);
+    store.put(hash, bytes).await.unwrap();
+    store.suspend().unwrap();
+    store.close_and_clear().unwrap();
+    store.close();
+    assert!(store.get(&hash).await.is_err());
+    assert!(store.resume().is_err());
+    drop(store);
+    let reopened = AttachmentChunkStore::open(dir.path(), 8 * 1024 * 1024).unwrap();
+    assert!(reopened.get(&hash).await.unwrap().is_none());
+}

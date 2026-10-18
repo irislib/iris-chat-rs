@@ -21,6 +21,31 @@ class ComposerMentionCompletionTest {
     private val second = "22".repeat(32)
     private val people = listOf(first, second).map { ChatParticipantSnapshot(null, it, "Alex", null, false) }
 
+    @Test fun largeGroupOffersPeopleBeyondFirstSixWithoutMovingEditor() {
+        val draft = TextFieldState()
+        val members = (1..12).map { ChatParticipantSnapshot(null, it.toString(16).padStart(64, '0'), "Person $it", null, false) }
+        compose.setContent {
+            IrisChatTheme(darkTheme = false) {
+                ComposerTestFrame {
+                    ComposerBar(draft, emptyList(), false, false, null,
+                        onDraftChange = {}, onAttach = {}, onRemoveAttachment = {}, onSend = {},
+                        mentionParticipants = members)
+                }
+            }
+        }
+        val field = compose.onNodeWithTag("chatMessageInput")
+        field.performClick()
+        val bounds = field.fetchSemanticsNode().boundsInRoot
+        field.performTextInput("@")
+        field.performKeyInput { repeat(11) { pressKey(Key.DirectionDown) } }
+        compose.onNodeWithTag("chatMention-${members.last().ownerPubkeyHex}").assertIsDisplayed().performClick()
+        compose.runOnIdle {
+            assertEquals(members.last().ownerPubkeyHex, messageMentions(draft.text.toString()).single().ownerPubkeyHex)
+        }
+        assertEquals(bounds, field.fetchSemanticsNode().boundsInRoot)
+        field.assertIsFocused()
+    }
+
     @Test fun bareAtSelectsExactPersonBeforeSendingAndRestoresIdentity() {
         val draft = TextFieldState("Hello ")
         var sent = 0
@@ -34,7 +59,10 @@ class ComposerMentionCompletionTest {
             }
         }
         val field = compose.onNodeWithTag("chatMessageInput")
-        field.performClick().performTextInput("@")
+        field.performClick()
+        val editorBounds = field.fetchSemanticsNode().boundsInRoot
+        field.performTextInput("@")
+        assertEquals(editorBounds, field.fetchSemanticsNode().boundsInRoot)
         compose.onNodeWithTag("chatMention-$first").assertIsDisplayed()
         captureComposerTest("mention-completion")
         compose.onNodeWithTag("chatMention-$second").performClick()
@@ -52,7 +80,7 @@ class ComposerMentionCompletionTest {
         field.performTextInput(":fire")
         field.performTextInput(":")
         compose.runOnIdle {
-            assertTrue(draft.text.toString().endsWith("🔥"))
+            assertTrue(draft.text.toString().endsWith(":fire:"))
             assertEquals(listOf(second, second), messageMentions(draft.text.toString()).map { it.ownerPubkeyHex })
         }
         compose.onNodeWithTag("chatSendButton").performClick()

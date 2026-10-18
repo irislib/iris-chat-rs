@@ -14,6 +14,7 @@ pub(super) const MAX_UPLOADS: usize = 32;
 
 struct State {
     db: Connection,
+    blobs: Option<LmdbBlobStore>,
     pins: HashMap<Hash, usize>,
     uploads: usize,
     readers: usize,
@@ -22,7 +23,8 @@ struct State {
 
 pub(in crate::core) struct AttachmentChunkStore {
     pub(in crate::core) id: u64,
-    blobs: LmdbBlobStore,
+    blob_directory: PathBuf,
+    map_budget: usize,
     data_budget: u64,
     state: Mutex<State>,
     pub(super) wake: tokio::sync::Notify,
@@ -56,7 +58,82 @@ fn error(value: impl std::fmt::Display) -> StoreError {
     StoreError::Other(format!("attachment storage: {value}"))
 }
 
+#[derive(Debug)]
+pub(super) struct StorageSuspended;
+impl std::fmt::Display for StorageSuspended {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("attachment storage is suspended")
+    }
+}
+impl std::error::Error for StorageSuspended {}
+
+impl State {
+    fn blobs(&self) -> anyhow::Result<&LmdbBlobStore> {
+        self.blobs.as_ref().ok_or_else(|| StorageSuspended.into())
+    }
+}
+
 impl AttachmentChunkStore {
+    #[cfg(any(target_os = "ios", test))]
+    pub(in crate::core) fn suspend(&self) -> anyhow::Result<()> {
+        // LMDB keeps a shared file lock for the lifetime of an environment,
+        // even with no transaction running. Drain operations under their usual
+        // mutex, then close the environment before iOS releases background time.
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| anyhow::anyhow!("attachment store mutex poisoned"))?;
+        let blobs = state.blobs.take();
+        let result = blobs.as_ref().map(|blobs| blobs.force_sync()).transpose();
+        drop(blobs);
+        result?;
+        Ok(())
+    }
+
+    fn reopen_locked(&self, state: &mut State) -> anyhow::Result<()> {
+        anyhow::ensure!(!state.closed, "attachment account is closed");
+        if state.blobs.is_none() {
+            state.blobs = Some(
+                LmdbBlobStore::with_exact_map_size_and_external_blob_options(
+                    &self.blob_directory,
+                    self.map_budget,
+                    None,
+                )?,
+            );
+            // Leases may be dropped while suspended. Reconcile their durable
+            // vetoes before admitting reads, writes, or quota eviction again.
+            let result = (|| {
+                for hash in state.blobs()?.scan_hashes_after(None, MAX_BLOCKS + 1)? {
+                    self.sync_pin(state, &hash)?;
+                }
+                state.blobs()?.force_sync()?;
+                Ok::<_, anyhow::Error>(())
+            })();
+            if result.is_err() {
+                state.blobs.take();
+            }
+            result?;
+        }
+        Ok(())
+    }
+
+    #[cfg(any(target_os = "ios", test))]
+    pub(in crate::core) fn resume(&self) -> anyhow::Result<()> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| anyhow::anyhow!("attachment store mutex poisoned"))?;
+        self.reopen_locked(&mut state)?;
+        self.wake.notify_one();
+        Ok(())
+    }
+
+    pub(super) fn is_suspended(&self) -> bool {
+        self.state
+            .lock()
+            .is_ok_and(|state| !state.closed && state.blobs.is_none())
+    }
+
     pub(super) fn open(directory: &Path, budget: u64) -> anyhow::Result<Arc<Self>> {
         anyhow::ensure!(budget >= 1024 * 1024, "attachment budget is too small");
         std::fs::create_dir_all(directory)?;
@@ -114,12 +191,14 @@ impl AttachmentChunkStore {
         );
         let store = Arc::new(Self {
             id: NEXT_ID.fetch_add(1, Ordering::Relaxed),
-            blobs,
+            blob_directory: directory.join("blobs"),
+            map_budget: map_budget as usize,
             // The fixed LMDB map is the physical bound; reserve internal COW,
             // indexes and pin pages rather than promise every map byte as data.
             data_budget: map_budget * 3 / 4,
             state: Mutex::new(State {
                 db,
+                blobs: Some(blobs),
                 pins: HashMap::new(),
                 uploads: 0,
                 readers: 0,
@@ -129,7 +208,7 @@ impl AttachmentChunkStore {
             readiness: tokio::sync::watch::channel(super::readiness::State::Pending).0,
         });
         let state = store.lock()?;
-        let hashes = store.blobs.scan_hashes_after(None, MAX_BLOCKS + 1)?;
+        let hashes = state.blobs()?.scan_hashes_after(None, MAX_BLOCKS + 1)?;
         anyhow::ensure!(
             hashes.len() <= MAX_BLOCKS,
             "attachment block count exceeds configured bound"
@@ -143,7 +222,7 @@ impl AttachmentChunkStore {
             if tracked {
                 store.sync_pin(&state, &hash)?;
             } else {
-                store.blobs.delete_sync(&hash)?;
+                state.blobs()?.delete_sync(&hash)?;
             }
         }
         // Unreleased earlier file-backed candidates are not adopted or erased.
@@ -154,7 +233,7 @@ impl AttachmentChunkStore {
                 "legacy attachment files require explicit migration"
             );
         }
-        store.blobs.force_sync()?;
+        state.blobs()?.force_sync()?;
         drop(state);
         Ok(store)
     }
@@ -165,6 +244,9 @@ impl AttachmentChunkStore {
             .lock()
             .map_err(|_| anyhow::anyhow!("attachment store mutex poisoned"))?;
         anyhow::ensure!(!state.closed, "attachment account is closed");
+        if state.blobs.is_none() {
+            return Err(StorageSuspended.into());
+        }
         Ok(state)
     }
 
@@ -187,17 +269,17 @@ impl AttachmentChunkStore {
         // put_locked restores the backend pin before exposing a newly cached
         // block; never leave durable pins for absent hashes after a crash.
         let desired =
-            u32::from((pending || state.pins.contains_key(hash)) && self.blobs.exists(hash)?);
-        let current = self.blobs.pin_count(hash);
+            u32::from((pending || state.pins.contains_key(hash)) && state.blobs()?.exists(hash)?);
+        let current = state.blobs()?.pin_count(hash);
         anyhow::ensure!(
             current <= MAX_UPLOADS as u32 + MAX_TREES as u32 + 2,
             "attachment pin count is invalid"
         );
         for _ in current..desired {
-            Self::immediate(self.blobs.pin(hash))?;
+            Self::immediate(state.blobs()?.pin(hash))?;
         }
         for _ in desired..current {
-            Self::immediate(self.blobs.unpin(hash))?;
+            Self::immediate(state.blobs()?.unpin(hash))?;
         }
         Ok(())
     }
@@ -212,27 +294,28 @@ impl AttachmentChunkStore {
             return Ok(None);
         }
         anyhow::ensure!(
-            self.blobs
+            state
+                .blobs()?
                 .blob_size_sync(hash)?
                 .is_none_or(|len| len <= MAX_ATTACHMENT_BYTES + 64),
             "invalid attachment block size"
         );
-        let Some(bytes) = self.blobs.get_sync(hash)? else {
+        let Some(bytes) = state.blobs()?.get_sync(hash)? else {
             return Ok(None);
         };
         anyhow::ensure!(
             hashtree_core::sha256(&bytes) == *hash,
             "corrupt attachment block"
         );
-        let accessed = self
-            .blobs
+        let accessed = state
+            .blobs()?
             .last_accessed_at_sync(hash)?
             .unwrap_or(0)
             .max(now())
             .saturating_add(1);
         // Read data remains valid if optional LRU bookkeeping runs out of map
         // space. Owned bytes outlive the lock and any later cache eviction.
-        let _ = self.blobs.touch_accessed_sync(hash, accessed);
+        let _ = state.blobs()?.touch_accessed_sync(hash, accessed);
         Ok(Some(bytes))
     }
 
@@ -275,16 +358,18 @@ impl AttachmentChunkStore {
         for key in &keys {
             self.sync_pin(state, &hashtree_core::from_hex(key)?)?;
         }
-        let bytes = self.blobs.stats()?.total_bytes;
+        let bytes = state.blobs()?.stats()?.total_bytes;
         // Eviction is the backend's LRU and rechecks durable pins in its writer
         // transaction. max_bytes is temporary: raw put must never evict behind
         // the application's pre-admission and read-protection rules.
-        self.blobs.set_max_bytes(bytes.saturating_sub(need).max(1));
-        let result = Self::immediate(self.blobs.evict_if_needed());
-        self.blobs.set_max_bytes(0);
+        state
+            .blobs()?
+            .set_max_bytes(bytes.saturating_sub(need).max(1));
+        let result = Self::immediate(state.blobs()?.evict_if_needed());
+        state.blobs()?.set_max_bytes(0);
         result?;
         for key in keys {
-            if !self.blobs.exists(&hashtree_core::from_hex(&key)?)? {
+            if !state.blobs()?.exists(&hashtree_core::from_hex(&key)?)? {
                 state
                     .db
                     .execute("DELETE FROM blocks WHERE hash=?1", [key])?;
@@ -319,22 +404,22 @@ impl AttachmentChunkStore {
             old.is_none(),
         )?;
         if old.is_some() {
-            self.blobs.delete_sync(&hash)?;
+            state.blobs()?.delete_sync(&hash)?;
         }
-        if let Err(error) = self.blobs.put_sync(hash, data) {
+        if let Err(error) = state.blobs()?.put_sync(hash, data) {
             // Fragmentation/COW can fill a fixed map before the logical charge.
             // One bounded extra LRU eviction is allowed, still honoring pins.
             if !error.to_string().contains("MDB_MAP_FULL") {
                 return Err(error.into());
             }
             self.evict_bytes(state, charged)?;
-            self.blobs.put_sync(hash, data)?;
+            state.blobs()?.put_sync(hash, data)?;
         }
-        self.blobs.force_sync()?;
+        state.blobs()?.force_sync()?;
         state.db.execute("INSERT INTO blocks(hash,allocated,accessed) VALUES(?1,?2,0) ON CONFLICT(hash) DO UPDATE SET allocated=excluded.allocated", params![key, charged])?;
         // Repairing a corrupt pending block deletes its old backend pin too.
         self.sync_pin(state, &hash)?;
-        self.blobs.force_sync()?;
+        state.blobs()?.force_sync()?;
         Ok(true)
     }
 
@@ -424,7 +509,9 @@ impl AttachmentChunkStore {
     pub(super) fn close(&self) {
         if let Ok(mut state) = self.state.lock() {
             state.closed = true;
+            state.blobs.take();
             self.readiness.send_replace(super::readiness::State::Closed);
+            self.wake.notify_one();
         }
     }
 
@@ -569,7 +656,11 @@ impl AttachmentChunkStore {
     }
 
     pub(super) fn close_and_clear(&self) -> anyhow::Result<()> {
-        let mut state = self.lock()?;
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| anyhow::anyhow!("attachment store mutex poisoned"))?;
+        self.reopen_locked(&mut state)?;
         state.closed = true;
         self.readiness.send_replace(super::readiness::State::Closed);
         state.db.execute(
@@ -583,9 +674,11 @@ impl AttachmentChunkStore {
         };
 
         for key in keys {
-            self.blobs.delete_sync(&hashtree_core::from_hex(&key)?)?;
+            state
+                .blobs()?
+                .delete_sync(&hashtree_core::from_hex(&key)?)?;
         }
-        self.blobs.force_sync()?;
+        state.blobs()?.force_sync()?;
         let tx = state.db.transaction()?;
         tx.execute("DELETE FROM trees", [])?;
         tx.execute("DELETE FROM blocks", [])?;
@@ -673,7 +766,7 @@ impl AttachmentChunkStore {
                 self.sync_pin(&state, hash)?;
             }
         }
-        self.blobs.force_sync()?;
+        state.blobs()?.force_sync()?;
         self.wake.notify_one();
         Ok(())
     }
@@ -687,7 +780,7 @@ fn unpin(store: &AttachmentChunkStore, hashes: impl Iterator<Item = Hash>) {
                 if *count == 0 {
                     state.pins.remove(&hash);
                 }
-                if !state.closed {
+                if !state.closed && state.blobs.is_some() {
                     let _ = store.sync_pin(&state, &hash);
                 }
             }
@@ -746,7 +839,7 @@ impl Store for AttachmentChunkStore {
         if protected || state.pins.contains_key(hash) {
             return Err(error("attachment block is protected"));
         }
-        self.blobs.delete_sync(hash)?;
+        state.blobs().map_err(error)?.delete_sync(hash)?;
         Ok(state
             .db
             .execute("DELETE FROM blocks WHERE hash=?1", [to_hex(hash)])

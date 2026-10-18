@@ -1,7 +1,7 @@
 Desktop media dependency notices
 ====================================
 
-OpenH264 (bundled by openh264-sys2 0.9.8)
+OpenH264 (bundled by openh264-sys2 0.9.9)
 https://github.com/cisco/openh264
 
 Copyright (c) 2013, Cisco Systems
@@ -28,7 +28,7 @@ ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-openh264 / openh264-sys2 Rust wrappers 0.9.8
+openh264 / openh264-sys2 Rust wrappers 0.9.9
 https://github.com/ralfbiedert/openh264-rs
 
 Copyright, Ralf Biedert

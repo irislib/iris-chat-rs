@@ -14,6 +14,26 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.*
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.ui.Alignment
+import to.iris.chat.ui.components.IrisAvatar
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Surface
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.IntRect
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.unit.LayoutDirection
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupPositionProvider
+import androidx.compose.ui.window.PopupProperties
 import androidx.compose.foundation.text.input.OutputTransformation
 import androidx.compose.foundation.text.input.TextFieldState
 import androidx.compose.material3.MaterialTheme
@@ -64,7 +84,7 @@ internal class ChatMentionCompletion(private val draft: TextFieldState) {
         get() = if (!focused || draft.composition != null || draft.text.toString() != activeText || activeText == dismissedText) null
             else mentionQuery(draft.text.toString(), draft.selection)
     val results: List<ChatParticipantSnapshot>
-        get() = token?.let { query -> participants.filter { it.displayName.contains(query.query, ignoreCase = true) }.take(6) }.orEmpty()
+        get() = token?.let { query -> participants.filter { it.displayName.contains(query.query, ignoreCase = true) } }.orEmpty()
     val inputTransformation = InputTransformation {
         activeText = asCharSequence().toString()
         dismissedText = null
@@ -123,19 +143,50 @@ internal fun rememberChatMentionCompletion(draft: TextFieldState, participants: 
 internal fun ChatMentionSuggestions(completion: ChatMentionCompletion) {
     val results = completion.results
     if (results.isEmpty()) return
-    Column(Modifier.fillMaxWidth().testTag("chatMentionSuggestions")) {
-        results.forEachIndexed { index, person ->
-            TextButton(onClick = { completion.insert(person) },
-                modifier = Modifier.fillMaxWidth().focusProperties { canFocus = false }
-                    .background(if (index == completion.selectedIndex) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f) else Color.Transparent)
-                    .testTag("chatMention-${person.ownerPubkeyHex}")) {
-                Column(Modifier.fillMaxWidth()) {
-                    Text(person.displayName, style = MaterialTheme.typography.bodyMedium)
-                    if (results.count { it.displayName == person.displayName } > 1) {
-                        Text(person.ownerPubkeyHex.take(8), style = MaterialTheme.typography.labelSmall)
+    // A non-focusable popup keeps the IME and editor in place. Its content
+    // overlays the conversation instead of increasing the bottom-bar inset.
+    Popup(
+        popupPositionProvider = remember { MentionPopupPositionProvider },
+        onDismissRequest = completion::dismiss,
+        properties = PopupProperties(focusable = false),
+    ) {
+        val listState = rememberLazyListState()
+        LaunchedEffect(completion.selectedIndex, results) {
+            listState.scrollToItem(completion.selectedIndex.coerceIn(results.indices))
+        }
+        Surface(shape = RoundedCornerShape(16.dp), shadowElevation = 6.dp) {
+            LazyColumn(
+                state = listState,
+                modifier = Modifier.widthIn(max = 420.dp).fillMaxWidth().heightIn(max = 240.dp)
+                    .padding(4.dp).testTag("chatMentionSuggestions"),
+            ) {
+                itemsIndexed(results, key = { _, person -> person.ownerPubkeyHex }) { index, person ->
+                    TextButton(
+                        onClick = { completion.insert(person) },
+                        modifier = Modifier.fillMaxWidth().focusProperties { canFocus = false }
+                            .background(if (index == completion.selectedIndex) MaterialTheme.colorScheme.primary.copy(alpha = 0.12f) else Color.Transparent)
+                            .testTag("chatMention-${person.ownerPubkeyHex}"),
+                    ) {
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                            IrisAvatar(ownerPubkeyHex = person.ownerPubkeyHex, label = person.displayName, size = 32.dp)
+                            Column {
+                                Text(person.displayName, style = MaterialTheme.typography.bodyMedium)
+                                if (results.count { it.displayName == person.displayName } > 1) {
+                                    Text(person.ownerPubkeyHex.take(8), style = MaterialTheme.typography.labelSmall)
+                                }
+                            }
+                        }
                     }
                 }
             }
         }
     }
+}
+
+internal object MentionPopupPositionProvider : PopupPositionProvider {
+    override fun calculatePosition(anchorBounds: IntRect, windowSize: IntSize,
+        layoutDirection: LayoutDirection, popupContentSize: IntSize): IntOffset = IntOffset(
+        anchorBounds.left.coerceIn(0, (windowSize.width - popupContentSize.width).coerceAtLeast(0)),
+        (anchorBounds.top - popupContentSize.height).coerceAtLeast(0),
+    )
 }

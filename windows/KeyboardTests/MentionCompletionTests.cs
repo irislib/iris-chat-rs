@@ -44,7 +44,11 @@ internal static class MentionCompletionTests
             composer.FocusInput(); Pump();
             var input = (TextBox)composer.FindName("Input");
             Check(input.IsKeyboardFocused, "Loaded mention composer receives keyboard focus");
+            var editorPosition = input.TranslatePoint(new Point(0, 0), composer);
+            var editorHeight = input.ActualHeight;
             input.AppendText("Hi @"); input.CaretIndex = input.Text.Length; Pump();
+            Check(input.TranslatePoint(new Point(0, 0), composer) == editorPosition && input.ActualHeight == editorHeight,
+                "Mention popup never moves or resizes the composer");
             CompletionScreenshots.Menu(composer, "_mentionCompletion", "windows-mention");
             Check(Press(input, Key.Down).Handled, "Keyboard chooses between same-name people");
             Check(Press(input, Key.Enter).Handled && sent == 0, "Accepting mention does not send");
@@ -69,6 +73,15 @@ internal static class MentionCompletionTests
             MentionEditingTests.Identities(saved, first);
             Pump();
             MentionEditingTests.Run(composer, input, first, second, () => saved, Pump);
+
+            var many = Enumerable.Range(1, 12).Select(i => new ChatParticipantSnapshot(null,
+                i.ToString("x").PadLeft(64, '0'), "Person " + i, null, false)).ToArray();
+            composer.MentionParticipants = many;
+            composer.RestoreDraft(""); composer.FocusInput(); Pump();
+            input.AppendText("@"); input.CaretIndex = 1; Pump();
+            for (var i = 0; i < 11; i++) Check(Press(input, Key.Down).Handled, "All group members are reachable");
+            Check(Press(input, Key.Enter).Handled, "Last group member can be chosen");
+            MentionEditingTests.Identities(saved, many.Last().ownerPubkeyHex);
 
             var bubble = new MessageBubble();
             bubble.Bind(new ChatMessageSnapshot("mention-preview", "chat", ChatMessageKind.User,

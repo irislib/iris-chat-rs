@@ -19,6 +19,7 @@ struct Context {
 struct State {
     input: glib::WeakRef<gtk::TextView>,
     root: glib::WeakRef<gtk::Box>,
+    scroll: glib::WeakRef<gtk::ScrolledWindow>,
     catalog: RefCell<Vec<Entry>>,
     inserted: Box<dyn Fn(i32, String, String)>,
     context: RefCell<Option<Context>>,
@@ -37,9 +38,39 @@ impl MentionCompletion {
         root.set_widget_name("chatMentionSuggestions");
         root.add_css_class("card");
         root.set_visible(false);
+        let scroll = gtk::ScrolledWindow::new();
+        scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
+        scroll.set_min_content_width(220);
+        scroll.set_max_content_height(240);
+        scroll.set_propagate_natural_height(true);
+        scroll.set_child(Some(&root));
+        let popup = gtk::Popover::new();
+        popup.set_position(gtk::PositionType::Top);
+        popup.set_autohide(false);
+        popup.set_has_arrow(false);
+        popup.set_focusable(false);
+        popup.set_child(Some(&scroll));
+        popup.set_parent(input);
+        let showing = popup.downgrade();
+        root.connect_visible_notify(move |root| {
+            if let Some(popup) = showing.upgrade() {
+                if root.is_visible() {
+                    popup.popup();
+                } else {
+                    popup.popdown();
+                }
+            }
+        });
+        let cleanup = popup.downgrade();
+        input.connect_destroy(move |_| {
+            if let Some(popup) = cleanup.upgrade() {
+                popup.unparent();
+            }
+        });
         let state = Rc::new(State {
             input: input.downgrade(),
             root: root.downgrade(),
+            scroll: scroll.downgrade(),
             catalog: RefCell::new(vec![]),
             inserted: Box::new(inserted),
             context: RefCell::new(None),
@@ -201,7 +232,6 @@ impl State {
             .borrow()
             .iter()
             .filter(|entry| entry.display_name.to_lowercase().contains(&query))
-            .take(6)
             .cloned()
             .collect();
         self.selected.set(0);
@@ -278,7 +308,14 @@ impl State {
             } else {
                 entry.display_name.clone()
             };
-            let button = gtk::Button::with_label(&label);
+            let button = gtk::Button::new();
+            let row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
+            row.append(&adw::Avatar::new(32, Some(&entry.display_name), true));
+            let name = gtk::Label::new(Some(&label));
+            name.set_xalign(0.0);
+            name.set_ellipsize(gtk::pango::EllipsizeMode::End);
+            row.append(&name);
+            button.set_child(Some(&row));
             button.add_css_class("flat");
             if index == self.selected.get() {
                 button.add_css_class("suggested-action");
@@ -293,5 +330,28 @@ impl State {
             root.append(&button);
         }
         root.set_visible(!results.is_empty());
+        let selected = root.first_child().and_then(|first| {
+            let mut row = first;
+            for _ in 0..self.selected.get() {
+                row = row.next_sibling()?;
+            }
+            Some(row.downgrade())
+        });
+        let scroll = self.scroll.clone();
+        let content = root.downgrade();
+        root.add_tick_callback(move |_, _| {
+            if let (Some(row), Some(root), Some(scroll)) = (
+                selected.as_ref().and_then(glib::WeakRef::upgrade),
+                content.upgrade(),
+                scroll.upgrade(),
+            ) {
+                if let Some(bounds) = row.compute_bounds(&root) {
+                    scroll
+                        .vadjustment()
+                        .clamp_page(bounds.y() as f64, (bounds.y() + bounds.height()) as f64);
+                }
+            }
+            glib::ControlFlow::Break
+        });
     }
 }

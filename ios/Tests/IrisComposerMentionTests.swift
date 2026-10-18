@@ -24,6 +24,29 @@ final class IrisComposerMentionTests: XCTestCase {
     }
 
     @MainActor
+    func testLargeGroupCanSelectBeyondTheFirstSixResultsAndFilterAgain() {
+        let model = IrisComposerMentionCompletion()
+        let candidates = (0..<12).map {
+            IrisMentionCandidate(id: "person-\($0)", name: "Person \($0)", token: "person-\($0)")
+        }
+        var chosen: IrisMentionCandidate?
+        model.onInsert = { person, _, _ in chosen = person }
+        func update(_ text: String) {
+            model.update(IrisComposerCompletionContext(text: text,
+                selection: NSRange(location: text.utf16.count, length: 0), hasMarkedText: false) { _, _ in true },
+                candidates: candidates)
+        }
+        update("@")
+        XCTAssertEqual(model.results.count, 12)
+        for _ in 0..<11 { XCTAssertTrue(model.handle(.next)) }
+        XCTAssertTrue(model.handle(.accept))
+        XCTAssertEqual(chosen?.id, "person-11")
+        update("@Person 2")
+        XCTAssertEqual(model.results.map(\.id), ["person-2"])
+        XCTAssertEqual(model.selectedIndex, 0)
+    }
+
+    @MainActor
     func testSelectionUsesIdentityWithDuplicateNames() {
         let model = IrisComposerMentionCompletion()
         var text = "@"

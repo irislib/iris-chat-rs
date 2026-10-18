@@ -476,7 +476,6 @@ impl Composer {
                 }
             },
         );
-        outer.append(&mention_completion.root);
         let mentions_for_key = mention_completion.clone();
         let emoji_completion = super::emoji_completion::EmojiCompletion::new(&input);
         outer.append(&emoji_completion.root);

@@ -20,6 +20,7 @@ internal sealed class ComposerMentionCompletion
     private bool _pending;
     private readonly Popup _popup;
     private readonly StackPanel _items = new();
+    private readonly ScrollViewer _scroll;
     private IReadOnlyList<ChatParticipantSnapshot> _people = Array.Empty<ChatParticipantSnapshot>();
     private List<ChatParticipantSnapshot> _results = new();
     private string? _snapshot, _dismissed;
@@ -29,7 +30,9 @@ internal sealed class ComposerMentionCompletion
     internal ComposerMentionCompletion(TextBox input, Func<bool> available, Action<int, string, string> inserted)
     {
         _input = input; _available = available; _inserted = inserted;
-        var border = new Border { CornerRadius = new CornerRadius(10), Padding = new Thickness(4), Child = _items };
+        _scroll = new ScrollViewer { Content = _items, MaxHeight = 240,
+            VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
+        var border = new Border { CornerRadius = new CornerRadius(16), Padding = new Thickness(4), Child = _scroll };
         border.SetResourceReference(Border.BackgroundProperty, "Panel");
         _popup = new Popup { PlacementTarget = input, Placement = PlacementMode.Top, StaysOpen = true, AllowsTransparency = true, Child = border };
         AutomationProperties.SetAutomationId(border, "chatMentionSuggestions");
@@ -74,7 +77,7 @@ internal sealed class ComposerMentionCompletion
         var token = Find(_input.Text, _input.CaretIndex, _input.SelectionLength);
         if (token == null) { _results.Clear(); _popup.IsOpen = false; return; }
         _snapshot = _input.Text; _token = token; _selection = 0;
-        _results = _people.Where(p => p.displayName.Contains(token.Value.query, StringComparison.CurrentCultureIgnoreCase)).Take(6).ToList();
+        _results = _people.Where(p => p.displayName.Contains(token.Value.query, StringComparison.CurrentCultureIgnoreCase)).ToList();
         Draw();
     }
     private void Draw()
@@ -84,7 +87,12 @@ internal sealed class ComposerMentionCompletion
         {
             var index = i; var person = _results[i];
             var duplicate = _results.Count(p => p.displayName == person.displayName) > 1;
-            var button = new Button { Content = person.displayName + (duplicate ? "  · " + person.ownerPubkeyHex[..8] : ""),
+            var row = new StackPanel { Orientation = Orientation.Horizontal };
+            row.Children.Add(new Avatar { OwnerPubkeyHex = person.ownerPubkeyHex, Label = person.displayName,
+                Size = 32, ShowsNearbyBadge = false, Margin = new Thickness(0, 0, 10, 0) });
+            row.Children.Add(new TextBlock { Text = person.displayName + (duplicate ? "  · " + person.ownerPubkeyHex[..8] : ""),
+                VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis });
+            var button = new Button { Content = row,
                 Focusable = false, Cursor = Cursors.Hand, HorizontalContentAlignment = HorizontalAlignment.Left,
                 MinWidth = 220, Padding = new Thickness(10, 7, 10, 7) };
             AutomationProperties.SetAutomationId(button, "chatMentionCompletion-" + person.ownerPubkeyHex);
@@ -94,6 +102,10 @@ internal sealed class ComposerMentionCompletion
             _items.Children.Add(button);
         }
         _popup.IsOpen = _results.Count > 0;
+        if (_results.Count > 0) {
+            _items.UpdateLayout();
+            ((FrameworkElement)_items.Children[_selection]).BringIntoView();
+        }
     }
     internal bool Handle(KeyEventArgs e)
     {

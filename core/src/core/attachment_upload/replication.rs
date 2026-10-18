@@ -169,6 +169,8 @@ impl AppCore {
     pub(in crate::core) fn ensure_attachment_service(
         &mut self,
     ) -> anyhow::Result<Arc<AttachmentChunkStore>> {
+        #[cfg(any(target_os = "ios", test))]
+        anyhow::ensure!(!self.suspended, "attachment storage is suspended");
         let account = self
             .logged_in
             .as_ref()
@@ -204,11 +206,18 @@ impl AppCore {
             let mut configured_servers = configured_servers;
             let mut checked_configuration = std::time::Instant::now();
             loop {
+                if worker_store.is_suspended() {
+                    worker_store.wake.notified().await;
+                    continue;
+                }
                 if checked_configuration.elapsed() >= Duration::from_secs(30) {
                     checked_configuration = std::time::Instant::now();
                     let current = bounded_servers(&blossom_servers_from_config().1);
                     if current != configured_servers {
-                        if worker_store.configure_pending(&current).is_err() {
+                        if let Err(error) = worker_store.configure_pending(&current) {
+                            if error.is::<local_store::StorageSuspended>() {
+                                continue;
+                            }
                             break;
                         }
                         configured_servers = current;
@@ -226,7 +235,12 @@ impl AppCore {
                             let _ = sender.send(CoreMsg::Internal(Box::new(
                                 InternalEvent::AttachmentReceiptsUpdated,
                             )));
-                        } else if worker_store.finish_replica(&root, &server, false).is_err() {
+                        } else if let Err(error) =
+                            worker_store.finish_replica(&root, &server, false)
+                        {
+                            if error.is::<local_store::StorageSuspended>() {
+                                continue;
+                            }
                             break;
                         }
                     }
@@ -234,6 +248,7 @@ impl AppCore {
                         _ = worker_store.wake.notified() => (),
                         _ = tokio::time::sleep(Duration::from_secs(30)) => (),
                     },
+                    Err(error) if error.is::<local_store::StorageSuspended>() => continue,
                     Err(_) => break,
                 }
             }

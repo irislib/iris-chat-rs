@@ -19,7 +19,7 @@ impl AttachmentChunkStore {
             )? != 0;
         }
         tx.commit()?;
-        self.blobs.force_sync()?;
+        state.blobs()?.force_sync()?;
         Ok(bound)
     }
 
@@ -61,15 +61,16 @@ impl AttachmentChunkStore {
         for hash in hashes {
             self.sync_pin(&state, &hash)?;
         }
-        self.blobs.force_sync()?;
+        state.blobs()?.force_sync()?;
         self.wake.notify_one();
         Ok(())
     }
 
     #[cfg(test)]
     pub(in crate::core) fn raw_put_for_test(&self, hash: Hash, bytes: &[u8]) {
-        self.blobs.delete_sync(&hash).unwrap();
-        self.blobs.put_sync(hash, bytes).unwrap();
-        self.blobs.force_sync().unwrap();
+        let state = self.lock().unwrap();
+        state.blobs().unwrap().delete_sync(&hash).unwrap();
+        state.blobs().unwrap().put_sync(hash, bytes).unwrap();
+        state.blobs().unwrap().force_sync().unwrap();
     }
 }

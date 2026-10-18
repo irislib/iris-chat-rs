@@ -11,7 +11,7 @@ import to.iris.chat.ui.theme.IrisChatTheme
 class ComposerEmojiCompletionTest {
     @get:Rule val compose = createComposeRule()
 
-    @Test fun typingOffersEmojiAndSelectionPreservesTheRestOfTheDraft() {
+    @Test fun typingColonKeepsMobileDraftLiteralAndDoesNotOfferEmoji() {
         val draft = TextFieldState("Hello ")
         var sent = 0
         compose.setContent {
@@ -24,11 +24,11 @@ class ComposerEmojiCompletionTest {
         }
         val field = compose.onNodeWithTag("chatMessageInput")
         field.performClick().performTextInput(":sm")
-        compose.onNodeWithTag("chatEmojiCompletion-smile").assertIsDisplayed()
+        compose.onNodeWithTag("chatEmojiCompletion-smile").assertDoesNotExist()
         captureComposerTest("emoji-completion")
-        compose.onNodeWithTag("chatEmojiCompletion-smile").performClick()
+        field.performTextInput("ile:")
         compose.runOnIdle {
-            assertEquals("Hello 😄 ", draft.text.toString())
+            assertEquals("Hello :smile:", draft.text.toString())
             assertEquals(0, sent)
         }
         field.assertIsFocused()
@@ -36,7 +36,7 @@ class ComposerEmojiCompletionTest {
         assertEquals(1, sent)
     }
 
-    @Test fun restoredDraftIsLiteralAndClosingColonCompletesAnExactCode() {
+    @Test fun restoredDraftAndClosingColonRemainLiteral() {
         val draft = TextFieldState(":sm")
         compose.setContent {
             IrisChatTheme(darkTheme = false) {
@@ -50,7 +50,7 @@ class ComposerEmojiCompletionTest {
         field.performTextClearance()
         field.performTextInput(":fire")
         field.performTextInput(":")
-        compose.runOnIdle { assertEquals("🔥", draft.text.toString()) }
+        compose.runOnIdle { assertEquals(":fire:", draft.text.toString()) }
         field.performTextClearance()
         field.performTextInput("https://iris.to/:sm 12:30")
         compose.runOnIdle { assertEquals("https://iris.to/:sm 12:30", draft.text.toString()) }

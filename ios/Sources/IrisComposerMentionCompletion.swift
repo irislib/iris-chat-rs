@@ -45,7 +45,7 @@ final class IrisComposerMentionCompletion: ObservableObject {
         }
         let previous = self.token
         self.token = token
-        results = Array(candidates.filter { token.query.isEmpty || $0.name.localizedCaseInsensitiveContains(token.query) }.prefix(6))
+        results = candidates.filter { token.query.isEmpty || $0.name.localizedCaseInsensitiveContains(token.query) }
         selectedIndex = previous?.query == token.query ? min(selectedIndex, max(0, results.count - 1)) : 0
     }
 
@@ -81,12 +81,16 @@ final class IrisComposerMentionCompletion: ObservableObject {
 struct IrisComposerMentionSuggestions: View {
     @Environment(\.irisPalette) private var palette
     @ObservedObject var completion: IrisComposerMentionCompletion
+    @ScaledMetric(relativeTo: .body) private var rowHeight = 52.0
+    var availableHeight: CGFloat = 240
     var body: some View {
-        VStack(spacing: 0) {
+        ScrollViewReader { proxy in
+        ScrollView(.vertical) {
+        LazyVStack(spacing: 0) {
             ForEach(Array(completion.results.enumerated()), id: \.element.id) { index, person in
                 Button { completion.insert(person) } label: {
                     HStack(spacing: 10) {
-                        Image(systemName: "person.fill").frame(width: 28)
+                        IrisAvatar(ownerPubkeyHex: person.id, label: person.name, size: 32, showsNearbyBadge: false)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(person.name).font(.callout).lineLimit(1)
                             if completion.results.filter({ $0.name == person.name }).count > 1 {
@@ -96,7 +100,8 @@ struct IrisComposerMentionSuggestions: View {
                         Spacer(minLength: 0)
                     }
                     .foregroundStyle(palette.textPrimary)
-                    .padding(.horizontal, 10).padding(.vertical, 7)
+                    .padding(.horizontal, 12).padding(.vertical, 6)
+                    .frame(minHeight: rowHeight)
                     .background(index == completion.selectedIndex ? palette.accent.opacity(0.14) : Color.clear)
                     .contentShape(Rectangle())
                 }
@@ -104,13 +109,27 @@ struct IrisComposerMentionSuggestions: View {
                 .accessibilityLabel(completion.results.filter { $0.name == person.name }.count > 1
                     ? "Mention \(person.name), \(String(person.id.prefix(8)))" : "Mention \(person.name)")
                 .accessibilityIdentifier("chatMentionCompletion-\(person.id)")
+                .id(index)
                 #if os(macOS)
                 .environment(\.irisKeyboardButtonIsTabStop, false)
                 #endif
             }
         }
-        .padding(4).frame(maxWidth: 340)
-        .background(palette.panel, in: RoundedRectangle(cornerRadius: 12))
+        }
+        // Leave part of the next row visible so larger groups are clearly scrollable.
+        .frame(height: min(min(CGFloat(completion.results.count), 4.5) * rowHeight, max(0, availableHeight - 8)))
+        .irisOnChange(of: completion.selectedIndex) { index in
+            proxy.scrollTo(index)
+        }
+        .irisOnChange(of: completion.results) { _ in
+            proxy.scrollTo(completion.selectedIndex)
+        }
+        }
+        .padding(4)
+        .frame(maxWidth: IrisLayout.usesDesktopChrome ? 340 : .infinity)
+        .background(palette.panel, in: RoundedRectangle(cornerRadius: 16))
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .shadow(color: .black.opacity(0.12), radius: 10, y: 3)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("chatMentionSuggestions")
     }

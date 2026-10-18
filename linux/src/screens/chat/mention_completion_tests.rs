@@ -62,12 +62,12 @@ pub fn verify_ui(manager: Rc<crate::app_manager::AppManager>) {
             })
             .collect(),
     );
-    root.append(&completion.root);
     root.append(&input);
     window.set_child(Some(&root));
     window.present();
     input.grab_focus();
     pump_until(|| input.has_focus());
+    let before = input.compute_bounds(&root).unwrap();
     buffer.begin_user_action();
     buffer.insert_at_cursor("👋 @");
     buffer.end_user_action();
@@ -93,6 +93,12 @@ pub fn verify_ui(manager: Rc<crate::app_manager::AppManager>) {
     buffer.insert_at_cursor("@");
     buffer.end_user_action();
     pump_until(|| completion.root.is_visible());
+    let after = input.compute_bounds(&root).unwrap();
+    assert_eq!(
+        before.y(),
+        after.y(),
+        "mention popup must not move the composer"
+    );
     super::completion_screenshots::save(&window, "linux-mention-suggestions");
     assert!(completion.handle_key(gdk::Key::Return, gdk::ModifierType::empty()));
     assert_eq!(text(&buffer), "👋 @Alex @Alex ");
@@ -131,6 +137,30 @@ pub fn verify_ui(manager: Rc<crate::app_manager::AppManager>) {
     pump_until(|| completion.root.is_visible());
     assert!(completion.handle_key(gdk::Key::Escape, gdk::ModifierType::empty()));
     assert_eq!(text(&buffer), "@A");
+    completion.set_people(
+        (1..=12)
+            .map(|index| iris_chat_core::ChatParticipantSnapshot {
+                social_connection: None,
+                owner_pubkey_hex: format!("{index:064x}"),
+                display_name: format!("Person {index}"),
+                picture_url: None,
+                is_local_owner: false,
+            })
+            .collect(),
+    );
+    buffer.set_text("");
+    buffer.begin_user_action();
+    buffer.insert_at_cursor("@");
+    buffer.end_user_action();
+    for _ in 0..11 {
+        assert!(completion.handle_key(gdk::Key::Down, gdk::ModifierType::empty()));
+    }
+    assert!(completion.handle_key(gdk::Key::Return, gdk::ModifierType::empty()));
+    assert_eq!(text(&buffer), "@Person 12 ");
+    assert_eq!(
+        iris_chat_core::message_mentions(draft.borrow().wire_text())[0].owner_pubkey_hex,
+        format!("{:064x}", 12)
+    );
     let token = iris_chat_core::format_message_mention(first, "Old name".into());
     let bubble = gtk::Box::new(gtk::Orientation::Vertical, 0);
     bubble.add_css_class("bubble-in");

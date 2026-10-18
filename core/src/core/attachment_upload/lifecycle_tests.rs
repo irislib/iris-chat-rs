@@ -47,6 +47,49 @@ fn message(nhash: &str) -> String {
 }
 
 #[test]
+fn attachment_app_suspension_keeps_storage_closed_until_foreground() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut core = fresh_core(dir.path());
+    login(&mut core, &nostr::Keys::generate());
+    let store = core.ensure_attachment_service().unwrap();
+    let bytes = b"cached ciphertext survives suspension".to_vec();
+    let hash = hashtree_core::sha256(&bytes);
+    core.runtime
+        .block_on(store.put(hash, bytes.clone()))
+        .unwrap();
+    for _ in 0..3 {
+        core.prepare_for_suspend();
+        assert!(store.is_suspended());
+        // A background event must not lazily reopen the environment while
+        // iOS is allowed to suspend this process with live store owners.
+        assert!(core.ensure_attachment_service().is_err());
+        assert!(core.runtime.block_on(store.get(&hash)).is_err());
+        core.handle_app_foregrounded();
+        assert!(!store.is_suspended());
+        assert!(Arc::ptr_eq(
+            &store,
+            &core.ensure_attachment_service().unwrap()
+        ));
+        assert_eq!(
+            core.runtime.block_on(store.get(&hash)).unwrap(),
+            Some(bytes.clone())
+        );
+    }
+}
+
+#[test]
+fn attachment_service_is_not_created_by_a_suspended_background_event() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut core = fresh_core(dir.path());
+    login(&mut core, &nostr::Keys::generate());
+    core.prepare_for_suspend();
+    assert!(core.ensure_attachment_service().is_err());
+    assert!(!dir.path().join("attachments/blobs/lock.mdb").exists());
+    core.handle_app_foregrounded();
+    assert!(core.ensure_attachment_service().is_ok());
+}
+
+#[test]
 fn attachment_logout_before_restore_clears_unopened_owned_store() {
     let dir = tempfile::tempdir().unwrap();
     let alice = nostr::Keys::generate();
