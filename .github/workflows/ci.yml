@@ -94,14 +94,14 @@ jobs:
 
       - name: Rust tests
         run: |
-          mkdir -p work/private-controls
-          IRIS_PRIVATE_CONTROL_FIXTURE_OUTPUT="$PWD/work/private-controls/native-private-controls.json" ./scripts/test_rust.sh
-          test -s work/private-controls/native-private-controls.json
-          git rev-parse HEAD > work/private-controls/source-commit.txt
-          cd work/private-controls
-          sha256sum native-private-controls.json > SHA256SUMS
+          # Diagnostic branch only. Changed replay regressions, with exact
+          # production source otherwise unchanged; this is not full CI.
+          cargo test --manifest-path core/Cargo.toml --locked --lib -- \
+            group_replay mesh_group_received_ciphertext_survives_provider_restart_with_sender_offline \
+            --test-threads=1 --nocapture
 
       - name: Upload native private-control interoperability fixture
+        if: ${{ false }} # Outside this focused diagnostic run.
         uses: actions/upload-artifact@v4
         with:
           name: native-private-control-fixture
@@ -110,6 +110,7 @@ jobs:
           retention-days: 14
 
       - name: Verify protocol package
+        if: ${{ false }} # Outside this focused diagnostic run.
         id: protocol-package
         run: |
           cargo package --manifest-path chat-protocol/Cargo.toml --locked
@@ -120,6 +121,7 @@ jobs:
           echo "archive=$CARGO_TARGET_DIR/package/$protocol_archive" >> "$GITHUB_OUTPUT"
 
       - name: Upload verified protocol package
+        if: ${{ false }} # Outside this focused diagnostic run.
         uses: actions/upload-artifact@v4
         with:
           name: verified-protocol-package
