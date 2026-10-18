@@ -33,43 +33,16 @@ struct State {
 }
 
 impl MentionCompletion {
-    pub fn new(input: &gtk::TextView, inserted: impl Fn(i32, String, String) + 'static) -> Self {
+    pub fn new(
+        input: &gtk::TextView,
+        anchor: &impl IsA<gtk::Widget>,
+        inserted: impl Fn(i32, String, String) + 'static,
+    ) -> Self {
         let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
         root.set_widget_name("chatMentionSuggestions");
         root.add_css_class("card");
         root.set_visible(false);
-        let scroll = gtk::ScrolledWindow::new();
-        scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
-        scroll.set_min_content_width(220);
-        scroll.set_max_content_height(240);
-        scroll.set_propagate_natural_height(true);
-        scroll.set_child(Some(&root));
-        let popup = gtk::Popover::new();
-        popup.set_position(gtk::PositionType::Top);
-        popup.set_autohide(false);
-        popup.set_has_arrow(false);
-        popup.set_focusable(false);
-        // Keyboard navigation belongs to the editor. Excluding the whole
-        // subtree also prevents popup() from focusing the first result row.
-        popup.set_can_focus(false);
-        popup.set_child(Some(&scroll));
-        popup.set_parent(input);
-        let showing = popup.downgrade();
-        root.connect_visible_notify(move |root| {
-            if let Some(popup) = showing.upgrade() {
-                if root.is_visible() {
-                    popup.popup();
-                } else {
-                    popup.popdown();
-                }
-            }
-        });
-        let cleanup = popup.downgrade();
-        input.connect_destroy(move |_| {
-            if let Some(popup) = cleanup.upgrade() {
-                popup.unparent();
-            }
-        });
+        let scroll = super::completion_popover::attach(input, &root, anchor);
         let state = Rc::new(State {
             input: input.downgrade(),
             root: root.downgrade(),

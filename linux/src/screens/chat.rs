@@ -17,6 +17,7 @@ use crate::widgets::clickable::PointerCursorExt;
 use crate::widgets::{audio_message, image_cache};
 
 mod chat_links;
+mod completion_popover;
 mod image_clipboard;
 mod mention_completion;
 mod mention_completion_logic;

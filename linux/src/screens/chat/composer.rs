@@ -460,6 +460,7 @@ impl Composer {
         let editing_for_insert = edit.state.clone();
         let mention_completion = super::mention_completion::MentionCompletion::new(
             &input,
+            &row,
             move |offset, label, token| {
                 let text = composer_buffer_text(&buffer_for_insert);
                 let byte = text
@@ -477,8 +478,7 @@ impl Composer {
             },
         );
         let mentions_for_key = mention_completion.clone();
-        let emoji_completion = super::emoji_completion::EmojiCompletion::new(&input);
-        outer.append(&emoji_completion.root);
+        let emoji_completion = super::emoji_completion::EmojiCompletion::new(&input, &row);
         key_controller.set_propagation_phase(gtk::PropagationPhase::Capture);
         let direct_for_enter = direct.clone();
         let sent = on_send.clone();

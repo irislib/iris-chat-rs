@@ -29,8 +29,7 @@ pub fn verify_ui() {
     let input = gtk::TextView::new();
     let buffer = input.buffer();
     buffer.set_enable_undo(true);
-    let completion = EmojiCompletion::new(&input);
-    root.append(&completion.root);
+    let completion = EmojiCompletion::new(&input, &root);
     root.append(&input);
     let button = gtk::Button::with_label("Action");
     button.show_pointer_cursor();
@@ -40,10 +39,33 @@ pub fn verify_ui() {
     input.grab_focus();
     pump_until(|| input.has_focus());
 
+    let before = input.compute_bounds(&root).unwrap();
     buffer.begin_user_action();
     buffer.insert_at_cursor("hi :sm");
     buffer.end_user_action();
     pump_until(|| completion.root.is_visible());
+    assert!(
+        input.has_focus(),
+        "emoji suggestions must retain editor focus"
+    );
+    let after = input.compute_bounds(&root).unwrap();
+    assert_eq!(
+        before.y(),
+        after.y(),
+        "emoji suggestions must not move the editor"
+    );
+    assert_eq!(
+        before.height(),
+        after.height(),
+        "emoji suggestions must not resize the editor"
+    );
+    super::completion_screenshots::save_widget(
+        &completion
+            .root
+            .ancestor(gtk::Popover::static_type())
+            .unwrap(),
+        "linux-emoji-popup",
+    );
     super::completion_screenshots::save(&window, "linux-emoji-suggestions");
     assert!(completion.handle_key(gdk::Key::Down, gdk::ModifierType::empty()));
     assert!(completion.handle_key(gdk::Key::Return, gdk::ModifierType::empty()));

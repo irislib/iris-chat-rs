@@ -258,14 +258,16 @@ jobs:
           rustup default "${{ matrix.toolchain }}"
 
       - name: Cache Cargo
-        uses: actions/cache@v4
+        id: cargo-cache
+        uses: actions/cache/restore@v4
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             ${{ github.workspace }}/cargo-target
-          key: linux-${{ runner.os }}-${{ matrix.toolchain }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock') }}
+          key: linux-${{ runner.os }}-${{ matrix.toolchain }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock') }}-${{ github.sha }}
           restore-keys: |
+            linux-${{ runner.os }}-${{ matrix.toolchain }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock') }}-
             linux-${{ runner.os }}-${{ matrix.toolchain }}-
 
       - name: Desktop media regression tests
@@ -277,6 +279,7 @@ jobs:
         run: |
           mkdir -p work/clipboard
           IRIS_CLIPBOARD_UI_SCREENSHOT="$PWD/work/clipboard/linux.png" \
+          IRIS_COMPLETION_SCREENSHOT_DIR="$PWD/work/clipboard/completion" \
           IRIS_KEYBOARD_SCREENSHOT="$PWD/work/clipboard/linux-keyboard.png" \
             dbus-run-session -- xvfb-run -a cargo test --manifest-path linux/Cargo.toml --locked --features ui-tests
 
@@ -287,6 +290,16 @@ jobs:
           name: linux-clipboard-tests-${{ matrix.toolchain }}
           path: iris-chat-rs/work/clipboard/
           retention-days: 14
+
+      - name: Retain compiled dependencies after test failures
+        if: ${{ always() && !cancelled() && steps.cargo-cache.outcome == 'success' && steps.cargo-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ${{ github.workspace }}/cargo-target
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
 
   macos:
     if: ${{ inputs.scope == '' || inputs.scope == 'all' || inputs.scope == 'apple' || inputs.scope == 'macos' }}

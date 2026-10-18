@@ -29,11 +29,12 @@ struct State {
 }
 
 impl EmojiCompletion {
-    pub fn new(input: &gtk::TextView) -> Self {
+    pub fn new(input: &gtk::TextView, anchor: &impl IsA<gtk::Widget>) -> Self {
         let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
         root.set_widget_name("chatEmojiSuggestions");
         root.add_css_class("card");
         root.set_visible(false);
+        super::completion_popover::attach(input, &root, anchor);
         let state = Rc::new(State {
             input: input.downgrade(),
             root: root.downgrade(),

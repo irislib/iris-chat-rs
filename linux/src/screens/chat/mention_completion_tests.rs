@@ -40,7 +40,7 @@ pub fn verify_ui(manager: Rc<crate::app_manager::AppManager>) {
     buffer.connect_changed(move |buffer| changed.borrow_mut().changed(&text(buffer)));
     let selected = draft.clone();
     let selected_buffer = buffer.clone();
-    let completion = MentionCompletion::new(&input, move |offset, label, wire| {
+    let completion = MentionCompletion::new(&input, &root, move |offset, label, wire| {
         let value = text(&selected_buffer);
         let byte = value
             .char_indices()
