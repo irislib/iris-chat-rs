@@ -71,14 +71,15 @@ jobs:
             ~/.cargo/git
             ${{ github.workspace }}/cargo-target
             ${{ github.workspace }}/iris-chat-rs/macos/.build/cargo-target
-          key: ${{ matrix.platform }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock', format('iris-chat-rs/{0}/project.yml', matrix.platform)) }}
+          key: ${{ matrix.platform }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock', format('iris-chat-rs/{0}/project.yml', matrix.platform)) }}-${{ inputs.commit }}
           restore-keys: |
+            ${{ matrix.platform }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock', format('iris-chat-rs/{0}/project.yml', matrix.platform)) }}-
             ${{ matrix.platform }}-${{ runner.os }}-${{ runner.arch }}-
       - name: Restore Swift intermediates
         uses: actions/cache/restore@v4
         with:
           path: ${{ github.workspace }}/iris-chat-rs/work/apple-validation/DerivedData
-          key: apple-swift-${{ matrix.platform }}-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}
+          key: apple-swift-${{ matrix.platform }}-${{ runner.os }}-${{ runner.arch }}-${{ inputs.commit }}
           restore-keys: |
             apple-swift-${{ matrix.platform }}-${{ runner.os }}-${{ runner.arch }}-
       - name: Build unsigned products without executing tests
@@ -147,9 +148,9 @@ jobs:
             ~/.cargo/git
             ${{ github.workspace }}/cargo-target
             ${{ github.workspace }}/iris-chat-rs/macos/.build/cargo-target
-          key: ${{ matrix.platform }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock', format('iris-chat-rs/{0}/project.yml', matrix.platform)) }}-${{ github.sha }}
+          key: ${{ matrix.platform }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock', format('iris-chat-rs/{0}/project.yml', matrix.platform)) }}-${{ inputs.commit }}
       - name: Save Swift intermediates for focused follow-up builds
         uses: actions/cache/save@v4
         with:
           path: ${{ github.workspace }}/iris-chat-rs/work/apple-validation/DerivedData
-          key: apple-swift-${{ matrix.platform }}-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}
+          key: apple-swift-${{ matrix.platform }}-${{ runner.os }}-${{ runner.arch }}-${{ inputs.commit }}
