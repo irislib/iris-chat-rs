@@ -7,6 +7,8 @@ use nostr_pubsub::{
 };
 use rusqlite::params;
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::TryLockError;
+use std::time::Duration;
 
 // Match the existing nearby outbox window. The wire byte cap also bounds disk
 // retention to less than 16 MiB of event bodies, independent of attachment size.
@@ -15,6 +17,8 @@ pub(in crate::core) const MAX_ENVELOPES: usize =
 const MAX_EVENT_BYTES: usize = nostr_pubsub_fips::FIPS_NOSTR_PUBSUB_MAX_FRAME_BYTES;
 const MAX_QUERY_ROWS: usize = 256;
 const MAX_QUERY_FILTERS: usize = 64;
+const STORAGE_WAIT: Duration = Duration::from_millis(100);
+const STORAGE_RETRY: Duration = Duration::from_millis(5);
 
 /// Current accepted groups and their permitted authors, computed using the
 /// production request/membership/block policy. Replacing the replay source on
@@ -46,9 +50,11 @@ impl GroupEnvelopeReplay {
         }
     }
 
-    fn read(&self, filters: &[Filter], limit: usize) -> anyhow::Result<QueryReport> {
+    /// `None` means the foreground is using storage. Keep acquisition inside a
+    /// synchronous helper so no connection guard can cross an async yield.
+    fn try_read(&self, filters: &[Filter], limit: usize) -> anyhow::Result<Option<QueryReport>> {
         if limit == 0 || filters.is_empty() || filters.len() > MAX_QUERY_FILTERS {
-            return Ok(QueryReport::default());
+            return Ok(Some(QueryReport::default()));
         }
         // A protocol subscription names ratchet authors; WANT names an event.
         // A wildcard must not turn this local store into a general event dump.
@@ -63,15 +69,19 @@ impl GroupEnvelopeReplay {
             .map(|key| key.to_hex())
             .collect();
         if (ids.is_empty() && authors.is_empty()) || ids.len() + authors.len() > MAX_QUERY_ROWS {
-            return Ok(QueryReport::default());
+            return Ok(Some(QueryReport::default()));
         }
         let rows = {
-            // Reuse the foreground connection so SQLite never races a second
-            // read connection against mobile rollback-journal writes.
-            let conn = self
-                .conn
-                .lock()
-                .map_err(|_| anyhow::anyhow!("group replay storage poisoned"))?;
+            // Reuse the foreground connection without blocking the replay
+            // worker behind it. A separate SQLite reader would race mobile
+            // rollback-journal writes and would need another busy policy.
+            let conn = match self.conn.try_lock() {
+                Ok(conn) => conn,
+                Err(TryLockError::WouldBlock) => return Ok(None),
+                Err(TryLockError::Poisoned(_)) => {
+                    anyhow::bail!("group replay storage poisoned")
+                }
+            };
             super::validate_account_storage(&conn, &self.owner)?;
             let blocked = super::blocked_message_intervals(&conn, &self.owner)?;
             let mut stmt = conn.prepare_cached(
@@ -147,7 +157,7 @@ impl GroupEnvelopeReplay {
                 break;
             }
         }
-        Ok(QueryReport { events })
+        Ok(Some(QueryReport { events }))
     }
 }
 
@@ -171,14 +181,27 @@ impl EventBus for GroupEnvelopeReplay {
         filters: Vec<Filter>,
         options: QueryOptions,
     ) -> nostr_pubsub::Result<QueryReport> {
-        self.read(
-            &filters,
-            options
-                .limit
-                .unwrap_or(crate::core::mesh_pubsub::MESH_REPLAY_EVENTS)
-                .min(crate::core::mesh_pubsub::MESH_REPLAY_EVENTS),
-        )
-        .map_err(|error| nostr_pubsub::PubsubError::Storage(error.to_string()))
+        let limit = options
+            .limit
+            .unwrap_or(crate::core::mesh_pubsub::MESH_REPLAY_EVENTS)
+            .min(crate::core::mesh_pubsub::MESH_REPLAY_EVENTS);
+        let deadline = tokio::time::Instant::now() + STORAGE_WAIT;
+        loop {
+            match self.try_read(&filters, limit) {
+                Ok(Some(report)) => return Ok(report),
+                Ok(None) => {}
+                Err(error) => return Err(nostr_pubsub::PubsubError::Storage(error.to_string())),
+            }
+            let now = tokio::time::Instant::now();
+            if now >= deadline {
+                return Err(nostr_pubsub::PubsubError::Storage(
+                    "group replay storage busy".into(),
+                ));
+            }
+            // Cancellation and the transport's query timeout remain effective
+            // even when foreground persistence holds the shared connection.
+            tokio::time::sleep_until((now + STORAGE_RETRY).min(deadline)).await;
+        }
     }
 }
 

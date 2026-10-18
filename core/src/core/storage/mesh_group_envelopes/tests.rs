@@ -74,7 +74,10 @@ impl Fixture {
     }
 
     fn query(&self, event: &Event) -> QueryReport {
-        self.replay.read(&[Filter::new().id(event.id)], 64).unwrap()
+        self.replay
+            .try_read(&[Filter::new().id(event.id)], 64)
+            .unwrap()
+            .unwrap()
     }
 }
 
@@ -131,13 +134,15 @@ fn group_replay_rejects_forgery_private_publication_wildcards_and_wrong_account(
     f.add(&event);
     assert!(f
         .replay
-        .read(&[Filter::new()], 64)
+        .try_read(&[Filter::new()], 64)
+        .unwrap()
         .unwrap()
         .events
         .is_empty());
     assert!(f
         .replay
-        .read(&[Filter::new().id(event.id)], 0)
+        .try_read(&[Filter::new().id(event.id)], 0)
+        .unwrap()
         .unwrap()
         .events
         .is_empty());
@@ -147,7 +152,8 @@ fn group_replay_rejects_forgery_private_publication_wildcards_and_wrong_account(
         BTreeMap::new(),
     );
     assert!(denied
-        .read(&[Filter::new().id(event.id)], 64)
+        .try_read(&[Filter::new().id(event.id)], 64)
+        .unwrap()
         .unwrap()
         .events
         .is_empty());
@@ -156,7 +162,7 @@ fn group_replay_rejects_forgery_private_publication_wildcards_and_wrong_account(
         Keys::generate().public_key().to_hex(),
         f.replay.groups.clone(),
     );
-    assert!(other.read(&[Filter::new().id(event.id)], 64).is_err());
+    assert!(other.try_read(&[Filter::new().id(event.id)], 64).is_err());
     let private = EventBuilder::new(Kind::Custom(37368), "private account setting")
         .sign_with_keys(&f.owner)
         .unwrap();
@@ -280,4 +286,55 @@ fn group_replay_respects_durable_block_intervals_after_unblock() {
         )
         .unwrap();
     assert!(f.query(&event).events.is_empty());
+}
+
+#[test]
+fn group_replay_storage_contention_is_cancellable_bounded_and_recovers() {
+    let f = Fixture::new();
+    let event = f.event("available after foreground persistence");
+    f.add(&event);
+    let conn = f.store.shared();
+    let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+    let (release_tx, release_rx) = std::sync::mpsc::channel();
+    // A real competing writer holds the same connection. The watchdog bounds
+    // failure even if a regression blocks this single-thread async executor.
+    let holder = std::thread::spawn(move || {
+        let _guard = conn.lock().unwrap();
+        ready_tx.send(()).unwrap();
+        let _ = release_rx.recv_timeout(Duration::from_secs(3));
+    });
+    ready_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_time()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let query = || {
+            f.replay.query(
+                vec![Filter::new().id(event.id)],
+                QueryOptions { limit: Some(64) },
+            )
+        };
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), query())
+                .await
+                .is_err(),
+            "transport cancellation must interrupt the storage wait"
+        );
+        let error = tokio::time::timeout(Duration::from_millis(500), query())
+            .await
+            .expect("the replay source must bound its own storage wait")
+            .expect_err("a held connection must report contention");
+        assert!(error.to_string().contains("group replay storage busy"));
+        release_tx.send(()).unwrap();
+        // Retry can recover while the holder is dropping its guard; there is
+        // no detached query or blocking worker left behind by cancellation.
+        let report = tokio::time::timeout(Duration::from_millis(500), query())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(report.events.len(), 1);
+        assert_eq!(report.events[0].event.as_event(), &event);
+    });
+    holder.join().unwrap();
 }
