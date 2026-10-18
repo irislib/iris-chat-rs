@@ -20,7 +20,7 @@ on:
         description: Checks to run (releases require all)
         type: choice
         default: all
-        options: [all, cli, core, android, windows, apple, ios, macos, linux, apple-products, ios-products, macos-products]
+        options: [all, cli, core, android, windows, windows-keyboard, apple, ios, macos, linux, apple-products, ios-products, macos-products]
 
 permissions:
   contents: read
@@ -427,7 +427,7 @@ jobs:
           retention-days: 14
 
   windows-ui:
-    if: ${{ inputs.scope == '' || inputs.scope == 'all' || inputs.scope == 'windows' }}
+    if: ${{ inputs.scope == '' || inputs.scope == 'all' || inputs.scope == 'windows' || inputs.scope == 'windows-keyboard' }}
     name: Windows native clipboard and composer tests
     runs-on: windows-2025
     timeout-minutes: 90
@@ -459,6 +459,7 @@ jobs:
         id: native-build
         run: ./scripts/windows-build-local.ps1 build
       - name: Exercise real WPF clipboard and draft lifecycle
+        if: ${{ inputs.scope != 'windows-keyboard' }}
         run: |
           dotnet run --project windows/ClipboardTests/ClipboardTests.csproj -c Release -- work/clipboard
           if ($LASTEXITCODE -ne 0) { throw 'Native clipboard tests failed' }
@@ -481,7 +482,7 @@ jobs:
           path: |
             iris-chat-rs/work/clipboard/*.png
             iris-chat-rs/work/clipboard/*timings.json
-            iris-chat-rs/work/keyboard/windows-keyboard.png
+            iris-chat-rs/work/keyboard/*.png
           retention-days: 14
       - name: Upload Windows transfer and nearby results
         if: ${{ always() && (inputs.scope == '' || inputs.scope == 'all') }}
