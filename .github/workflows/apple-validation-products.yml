@@ -8,7 +8,7 @@ on:
         required: true
         type: string
       platform:
-        description: Platform to build, or both
+        description: ios, macos, both, or ios-ui for the test runner alone
         required: false
         default: both
         type: string
@@ -19,7 +19,7 @@ on:
         required: true
         type: string
       platform:
-        description: Platform to build, or both
+        description: ios, macos, both, or ios-ui for the test runner alone
         required: false
         default: both
         type: string
@@ -39,7 +39,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        platform: ${{ fromJSON(inputs.platform == 'ios' && '["ios"]' || inputs.platform == 'macos' && '["macos"]' || '["ios","macos"]') }}
+        platform: ${{ fromJSON(inputs.platform == 'ios-ui' && '["ios-ui"]' || inputs.platform == 'ios' && '["ios"]' || inputs.platform == 'macos' && '["macos"]' || '["ios","macos"]') }}
     env:
       SOURCE_COMMIT: ${{ inputs.commit }}
       PLATFORM: ${{ matrix.platform }}
@@ -59,10 +59,13 @@ jobs:
           [[ "$SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
           test "$(git rev-parse HEAD)" = "$SOURCE_COMMIT"
           brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
-          rustup toolchain install stable --profile minimal
-          rustup default stable
-          rustup target add aarch64-apple-ios aarch64-apple-darwin
+          if [[ "$PLATFORM" != ios-ui ]]; then
+            rustup toolchain install stable --profile minimal
+            rustup default stable
+            rustup target add aarch64-apple-ios aarch64-apple-darwin
+          fi
       - name: Restore existing compiler cache
+        if: matrix.platform != 'ios-ui'
         id: cargo-cache
         uses: actions/cache/restore@v4
         with:
@@ -76,6 +79,7 @@ jobs:
             ${{ matrix.platform }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock', format('iris-chat-rs/{0}/project.yml', matrix.platform)) }}-
             ${{ matrix.platform }}-${{ runner.os }}-${{ runner.arch }}-
       - name: Restore Swift intermediates
+        if: matrix.platform != 'ios-ui'
         uses: actions/cache/restore@v4
         with:
           path: ${{ github.workspace }}/iris-chat-rs/work/apple-validation/DerivedData
@@ -86,6 +90,19 @@ jobs:
         run: |
           set -Eeuo pipefail
           mkdir -p work/apple-validation
+          if [[ "$PLATFORM" = ios-ui ]]; then
+            python3 scripts/prepare_ios_ui_runner.py
+            xcodegen generate --spec work/ios-ui-runner/project.yml
+            xcodebuild -project work/ios-ui-runner/IrisChatUIRunner.xcodeproj \
+              -scheme IrisChatUITests -destination 'generic/platform=iOS' \
+              -configuration Debug -derivedDataPath work/ios-ui-runner/DerivedData \
+              -jobs 2 ARCHS=arm64 ONLY_ACTIVE_ARCH=YES \
+              CODE_SIGNING_ALLOWED=NO build-for-testing
+            python3 scripts/prepare_ios_ui_runner.py --receipt
+            cp work/ios-ui-runner/ios-ui-runner.tar.gz work/apple-validation/
+            cp work/ios-ui-runner/build-receipt.json work/apple-validation/
+            exit 0
+          fi
           if [[ "$PLATFORM" = ios ]]; then
             IRIS_IOS_RUST_TARGETS=aarch64-apple-ios ./scripts/ios-build ios-xcframework
             ./scripts/ios-build ios-xcodeproj
@@ -137,10 +154,12 @@ jobs:
           name: ${{ matrix.platform }}-validation-${{ inputs.commit }}
           path: |
             iris-chat-rs/work/apple-validation/*-products.tar.gz
+            iris-chat-rs/work/apple-validation/ios-ui-runner.tar.gz
             iris-chat-rs/work/apple-validation/build-receipt.json
           if-no-files-found: error
           retention-days: 7
       - name: Save compiler cache for focused follow-up builds
+        if: matrix.platform != 'ios-ui'
         uses: actions/cache/save@v4
         with:
           path: |
@@ -150,6 +169,7 @@ jobs:
             ${{ github.workspace }}/iris-chat-rs/macos/.build/cargo-target
           key: ${{ matrix.platform }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock', format('iris-chat-rs/{0}/project.yml', matrix.platform)) }}-${{ inputs.commit }}
       - name: Save Swift intermediates for focused follow-up builds
+        if: matrix.platform != 'ios-ui'
         uses: actions/cache/save@v4
         with:
           path: ${{ github.workspace }}/iris-chat-rs/work/apple-validation/DerivedData
