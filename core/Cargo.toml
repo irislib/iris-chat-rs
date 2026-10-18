@@ -100,6 +100,11 @@ interprocess = { version = "2.4.4", default-features = false }
 [dev-dependencies]
 tempfile = "3"
 
+[target.'cfg(target_os = "ios")'.dependencies]
+# WebRTC's nix 0.26 still references Apple APIs removed from libc's iOS
+# bindings in 0.2.190. Keep the verified combination until upstream migrates.
+libc = "=0.2.186"
+
 [target.'cfg(windows)'.dependencies]
 widestring = "1.2"
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_System_Threading", "Win32_System_Pipes"] }
