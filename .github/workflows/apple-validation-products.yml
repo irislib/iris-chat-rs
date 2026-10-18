@@ -7,11 +7,21 @@ on:
         description: Exact source commit for unsigned device and VM test products
         required: true
         type: string
+      platform:
+        description: Platform to build, or both
+        required: false
+        default: both
+        type: string
   workflow_dispatch:
     inputs:
       commit:
         description: Exact source commit for unsigned device and VM test products
         required: true
+        type: string
+      platform:
+        description: Platform to build, or both
+        required: false
+        default: both
         type: string
 
 permissions:
@@ -29,7 +39,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        platform: [ios, macos]
+        platform: ${{ fromJSON(inputs.platform == 'ios' && '["ios"]' || inputs.platform == 'macos' && '["macos"]' || '["ios","macos"]') }}
     env:
       SOURCE_COMMIT: ${{ inputs.commit }}
       PLATFORM: ${{ matrix.platform }}

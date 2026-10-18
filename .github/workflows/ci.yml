@@ -20,7 +20,7 @@ on:
         description: Checks to run (releases require all)
         type: choice
         default: all
-        options: [all, core, android, windows, apple, macos, linux, apple-products]
+        options: [all, core, android, windows, apple, ios, macos, linux, apple-products, ios-products]
 
 permissions:
   contents: read
@@ -35,10 +35,11 @@ env:
 
 jobs:
   apple-validation-products:
-    if: ${{ inputs.scope == 'apple-products' }}
+    if: ${{ inputs.scope == 'apple-products' || inputs.scope == 'ios-products' }}
     uses: ./.github/workflows/apple-validation-products.yml
     with:
       commit: ${{ github.sha }}
+      platform: ${{ inputs.scope == 'ios-products' && 'ios' || 'both' }}
 
   rust:
     if: ${{ inputs.scope == '' || inputs.scope == 'all' || inputs.scope == 'core' }}
@@ -335,7 +336,7 @@ jobs:
           retention-days: 14
 
   ios:
-    if: ${{ inputs.scope == '' || inputs.scope == 'all' || inputs.scope == 'apple' }}
+    if: ${{ inputs.scope == '' || inputs.scope == 'all' || inputs.scope == 'apple' || inputs.scope == 'ios' }}
     name: iOS simulator build and composer tests
     runs-on: macos-15
     timeout-minutes: 75
