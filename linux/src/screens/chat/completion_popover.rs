@@ -5,6 +5,8 @@ pub(super) fn attach(
     root: &gtk::Box,
     anchor: &impl IsA<gtk::Widget>,
 ) -> gtk::ScrolledWindow {
+    // Keep names readable even when the ellipsized rows request a narrow size.
+    root.set_size_request(220, -1);
     let scroll = gtk::ScrolledWindow::new();
     scroll.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
     scroll.set_min_content_width(220);
