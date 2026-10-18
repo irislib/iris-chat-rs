@@ -94,12 +94,10 @@ jobs:
 
       - name: Rust tests
         run: |
-          mkdir -p work/private-controls
-          IRIS_PRIVATE_CONTROL_FIXTURE_OUTPUT="$PWD/work/private-controls/native-private-controls.json" ./scripts/test_rust.sh
-          test -s work/private-controls/native-private-controls.json
-          git rev-parse HEAD > work/private-controls/source-commit.txt
-          cd work/private-controls
-          sha256sum native-private-controls.json > SHA256SUMS
+          # Diagnostic branch only: preserve the full baseline result and
+          # isolate the corrected restart regression without repeating it.
+          cargo test --manifest-path core/Cargo.toml --locked --lib \
+            core::tests::mesh_group_received_ciphertext_survives_provider_restart_with_sender_offline -- --exact --nocapture
 
       - name: Upload native private-control interoperability fixture
         uses: actions/upload-artifact@v4
