@@ -189,6 +189,14 @@ impl AppCore {
         // Record the outer event on its message before exposing it to a
         // low-latency nearby transport. Otherwise a BLE receipt can race the
         // delivery-trace update and be permanently orphaned under bursts.
+        if let Some(chat) = self
+            .pending_relay_publishes
+            .get(&event_id)
+            .and_then(|pending| pending.chat_id.clone())
+            .filter(|chat| chat.starts_with("group:"))
+        {
+            self.retain_mesh_group_envelope(&event, &chat);
+        }
         self.emit_nearby_published_event(&event);
         let Some(relay_urls) = self
             .logged_in

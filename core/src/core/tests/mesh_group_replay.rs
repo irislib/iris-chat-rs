@@ -11,7 +11,9 @@ fn mesh_group_received_ciphertext_survives_provider_restart_with_sender_offline(
         .iter()
         .map(|owner| owner.public_key().to_hex())
         .collect::<Vec<_>>();
-    farm.devices[0].core.create_group("offline group replay", &members);
+    farm.devices[0]
+        .core
+        .create_group("offline group replay", &members);
     let group = farm.devices[0].core.groups.keys().next().unwrap().clone();
     let chat = group_chat_id(&group);
     farm.pump();
@@ -37,11 +39,20 @@ fn mesh_group_received_ciphertext_survives_provider_restart_with_sender_offline(
         .core
         .handle_internal(InternalEvent::MeshEvent(outer.clone()));
     assert!(farm.devices[1].core.threads[&chat]
-        .messages.iter().any(|message| message.id == message_id));
+        .messages
+        .iter()
+        .any(|message| message.id == message_id));
     assert!(!farm.devices[2].core.threads[&chat]
-        .messages.iter().any(|message| message.id == message_id));
-    assert!(!farm.devices[1].core.pending_relay_publishes.contains_key(&outer.id.to_hex()),
-        "B must not become the author or use A's outbox");
+        .messages
+        .iter()
+        .any(|message| message.id == message_id));
+    assert!(
+        !farm.devices[1]
+            .core
+            .pending_relay_publishes
+            .contains_key(&outer.id.to_hex()),
+        "B must not become the author or use A's outbox"
+    );
 
     for device in &mut farm.devices {
         device.core.preferences.nostr_relay_urls.clear();
@@ -69,20 +80,35 @@ fn mesh_group_received_ciphertext_survives_provider_restart_with_sender_offline(
         let (sender, receiver) = flume::unbounded();
         core.core_sender = sender.clone();
         core.priority_sender = sender;
-        core.start_session_inner(owners[index].public_key(), Some(owners[index].clone()),
-            keys.clone(), true, true, true).unwrap();
+        core.start_session_inner(
+            owners[index].public_key(),
+            Some(owners[index].clone()),
+            keys.clone(),
+            true,
+            true,
+            true,
+        )
+        .unwrap();
         (core, receiver)
     };
     let (mut b, b_rx) = restart(1, &b_keys, b_path);
     let (mut c, c_rx) = restart(2, &c_keys, c_path);
-    assert!(b.threads[&chat].messages.iter().any(|message| message.id == message_id));
-    assert!(!c.threads[&chat].messages.iter().any(|message| message.id == message_id));
+    assert!(b.threads[&chat]
+        .messages
+        .iter()
+        .any(|message| message.id == message_id));
+    assert!(!c.threads[&chat]
+        .messages
+        .iter()
+        .any(|message| message.id == message_id));
     let address = reserve_tcp_addr();
     b.reconcile_device_sync_with_isolated_websocket_for_test(WebSocketConfig {
-        bind_addr: Some(address.to_string()), ..Default::default()
+        bind_addr: Some(address.to_string()),
+        ..Default::default()
     });
     c.reconcile_device_sync_with_isolated_websocket_for_test(WebSocketConfig {
-        seed_urls: vec![format!("ws://{address}/fips")], ..Default::default()
+        seed_urls: vec![format!("ws://{address}/fips")],
+        ..Default::default()
     });
     assert!(!b.device_sync_has_sibling_tcp_for_test());
     assert!(!c.device_sync_has_sibling_tcp_for_test());
@@ -93,19 +119,30 @@ fn mesh_group_received_ciphertext_survives_provider_restart_with_sender_offline(
                 core.handle_message(message);
             }
         }
-        if let Some(message) = c.threads[&chat].messages.iter()
-            .find(|message| message.id == message_id) {
+        if let Some(message) = c.threads[&chat]
+            .messages
+            .iter()
+            .find(|message| message.id == message_id)
+        {
             break Some(message.clone());
         }
-        if Instant::now() >= deadline { break None; }
+        if Instant::now() >= deadline {
+            break None;
+        }
         std::thread::sleep(Duration::from_millis(20));
     };
     b.stop_device_sync_now();
     c.stop_device_sync_now();
     let received = received.expect("cold C must receive A's original ciphertext from restarted B");
     assert_eq!(received.body, body);
-    assert_eq!(received.source_event_id.as_deref(), Some(outer.id.to_hex().as_str()));
-    assert_eq!(received.author_owner_pubkey_hex.as_deref(), Some(owners[0].public_key().to_hex().as_str()));
+    assert_eq!(
+        received.source_event_id.as_deref(),
+        Some(outer.id.to_hex().as_str())
+    );
+    assert_eq!(
+        received.author_owner_pubkey_hex.as_deref(),
+        Some(owners[0].public_key().to_hex().as_str())
+    );
     assert!(!received.is_outgoing);
     assert!(c.event_transport_channels[&outer.id.to_hex()].contains("FIPS mesh"));
 }

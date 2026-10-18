@@ -7,7 +7,7 @@ use rusqlite::{params, Connection, Transaction};
 // Bump when a non-additive change to the schema lands and migrate
 // inside `ensure_schema` below. Greenfield: version 1 is the initial
 // shape and there is no previous JSON layout to migrate from.
-const SCHEMA_VERSION: u32 = 45;
+const SCHEMA_VERSION: u32 = 46;
 
 const INITIAL_SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS direct_file_transfers (
@@ -165,6 +165,33 @@ CREATE TABLE IF NOT EXISTS messages (
 
 CREATE INDEX IF NOT EXISTS messages_exact_read_idx ON messages(chat_id, id)
     WHERE is_outgoing = 0 AND delivery = 'seen' AND kind = 'user';
+
+-- Only original signed group ciphertext admitted by the core is retained here.
+-- Never populate this from message bodies, unsigned events, or protocol KV.
+CREATE TABLE IF NOT EXISTS mesh_group_envelopes (
+    sequence INTEGER PRIMARY KEY,
+    owner_pubkey_hex TEXT NOT NULL,
+    event_id TEXT NOT NULL,
+    event_author TEXT NOT NULL,
+    chat_id TEXT NOT NULL,
+    message_id TEXT NOT NULL,
+    event_json TEXT NOT NULL,
+    UNIQUE(owner_pubkey_hex, event_id)
+);
+CREATE INDEX IF NOT EXISTS mesh_group_envelopes_message_idx
+    ON mesh_group_envelopes(chat_id, message_id);
+CREATE INDEX IF NOT EXISTS mesh_group_envelopes_author_idx
+    ON mesh_group_envelopes(owner_pubkey_hex, event_author, sequence DESC);
+CREATE TRIGGER IF NOT EXISTS mesh_group_envelopes_delete AFTER DELETE ON messages BEGIN
+    DELETE FROM mesh_group_envelopes WHERE chat_id = old.chat_id AND message_id = old.id;
+END;
+-- Until a peer also has the authenticated mutation, do not serve an obsolete
+-- body or a retracted attachment from this cache.
+CREATE TRIGGER IF NOT EXISTS mesh_group_envelopes_edit
+    AFTER UPDATE OF body ON messages
+    WHEN old.body != new.body BEGIN
+    DELETE FROM mesh_group_envelopes WHERE chat_id = old.chat_id AND message_id = old.id;
+END;
 
 CREATE INDEX IF NOT EXISTS messages_chat_order_idx
     ON messages(chat_id, created_at_secs, id);

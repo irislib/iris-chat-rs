@@ -6,6 +6,7 @@
 
 mod account;
 mod connection;
+pub(in crate::core) mod mesh_group_envelopes;
 mod schema;
 mod store;
 mod store_pending_relay;

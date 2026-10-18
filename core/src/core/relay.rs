@@ -316,6 +316,20 @@ impl AppCore {
                         || !group_result.events.is_empty()
                         || !group_result.effects.is_empty()
                     {
+                        // Only the prefix decrypted from this exact signed
+                        // envelope can establish its replay permission. Queued
+                        // messages recovered by the same operation cannot.
+                        let replay_chats = group_result
+                            .events
+                            .iter()
+                            .take(group_result.source_event_count)
+                            .filter_map(|event| match event {
+                                GroupIncomingEvent::Message(message) => {
+                                    Some(group_chat_id(&message.group_id))
+                                }
+                                _ => None,
+                            })
+                            .collect::<std::collections::BTreeSet<_>>();
                         self.debug_event_counters.group_events += 1;
                         let should_remember_group_event = group_result.consumed
                             || !group_result.events.is_empty()
@@ -336,6 +350,9 @@ impl AppCore {
                         }
                         self.schedule_fast_protocol_retry_if_pending();
                         self.persist_best_effort();
+                        for chat in replay_chats {
+                            self.retain_mesh_group_envelope(&event, &chat);
+                        }
                         self.rebuild_state();
                         self.emit_state();
                         return;

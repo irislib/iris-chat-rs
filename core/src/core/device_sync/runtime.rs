@@ -787,6 +787,9 @@ impl AppCore {
             tasks,
             ..
         } = self.device_sync.take()?;
+        if let Some(client) = &pubsub {
+            let _ = client.set_replay_source(None);
+        }
         for task in tasks {
             task.abort();
         }

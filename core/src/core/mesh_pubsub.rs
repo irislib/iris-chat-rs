@@ -19,6 +19,7 @@ pub(super) struct MeshProtocolSubscriptions {
     outbox_cursor: Option<String>,
     retry_needed: bool,
     reconcile_pending: bool,
+    replay_source: Option<Arc<storage::mesh_group_envelopes::GroupEnvelopeReplay>>,
 }
 
 impl Default for MeshProtocolSubscriptions {
@@ -30,6 +31,7 @@ impl Default for MeshProtocolSubscriptions {
             outbox_cursor: None,
             retry_needed: false,
             reconcile_pending: false,
+            replay_source: None,
         }
     }
 }
@@ -98,6 +100,86 @@ impl MeshProtocolSubscriptions {
 }
 
 impl AppCore {
+    fn mesh_group_replay_groups(&self) -> storage::mesh_group_envelopes::AllowedGroups {
+        self.groups
+            .values()
+            .filter_map(|group| {
+                let chat = group_chat_id(&group.group_id);
+                if self.logged_in.is_none()
+                    || !self.threads.contains_key(&chat)
+                    || self.thread_is_message_request(&chat)
+                    || self.is_removed_from_group(&chat)
+                {
+                    return None;
+                }
+                let members = group
+                    .members
+                    .iter()
+                    .map(ToString::to_string)
+                    .filter(|owner| !self.is_owner_blocked(owner))
+                    .collect();
+                Some((chat, members))
+            })
+            .collect()
+    }
+
+    fn mesh_group_replay_source(
+        &self,
+    ) -> Option<Arc<storage::mesh_group_envelopes::GroupEnvelopeReplay>> {
+        let owner = self.logged_in.as_ref()?.owner_pubkey.to_hex();
+        Some(Arc::new(
+            storage::mesh_group_envelopes::GroupEnvelopeReplay::new(
+                self.app_store.shared(),
+                owner,
+                self.mesh_group_replay_groups(),
+            ),
+        ))
+    }
+
+    pub(super) fn retain_mesh_group_envelope(&mut self, event: &Event, chat: &str) {
+        let Some(owner) = self
+            .logged_in
+            .as_ref()
+            .map(|login| login.owner_pubkey.to_hex())
+        else {
+            return;
+        };
+        let groups = self.mesh_group_replay_groups();
+        let Some(members) = groups.get(chat) else {
+            return;
+        };
+        let event_id = event.id.to_hex();
+        let Some(message) = self.threads.get(chat).and_then(|thread| {
+            thread.messages.iter().find(|message| {
+                message.source_event_id.as_deref() == Some(event_id.as_str())
+                    && matches!(message.kind, ChatMessageKind::User)
+                    && !message.deleted_for_everyone
+                    && message.edit_history.is_empty()
+                    && message
+                        .author_owner_pubkey_hex
+                        .as_ref()
+                        .is_some_and(|sender| members.contains(sender))
+                    && message
+                        .author_owner_pubkey_hex
+                        .as_ref()
+                        .is_some_and(|sender| {
+                            self.block_allows_history(chat, sender, message.created_at_secs)
+                        })
+                    && message
+                        .expires_at_secs
+                        .is_none_or(|until| until > unix_now().get())
+            })
+        }) else {
+            return;
+        };
+        if let Err(error) = self
+            .app_store
+            .retain_group_envelope(&owner, chat, &message.id, event)
+        {
+            self.push_debug_log("mesh.group_replay.store", error.to_string());
+        }
+    }
+
     pub(super) fn reconcile_mesh_protocol_subscriptions(&mut self) {
         let Some(mesh) = self
             .device_sync
@@ -118,17 +200,37 @@ impl AppCore {
             .as_ref()
             .map(super::protocol::build_protocol_subscription_filters)
             .unwrap_or_default();
+        let replay_source = self.mesh_group_replay_source();
         let Some(mesh) = self.device_sync.as_mut() else {
             return;
         };
         let Some(client) = &mesh.pubsub else {
             return;
         };
-        let result = self.runtime.block_on(mesh.protocol_subscriptions.update(
-            client,
-            filters,
-            self.core_sender.clone(),
-        ));
+        let unchanged = match (&mesh.protocol_subscriptions.replay_source, &replay_source) {
+            (Some(old), Some(new)) => old.same_permissions(new),
+            (None, None) => true,
+            _ => false,
+        };
+        let installed = if unchanged {
+            Ok(())
+        } else {
+            client.set_replay_source(
+                replay_source
+                    .clone()
+                    .map(|source| source as Arc<dyn EventBus>),
+            )
+        };
+        let result = installed.and_then(|()| {
+            if !unchanged {
+                mesh.protocol_subscriptions.replay_source = replay_source;
+            }
+            self.runtime.block_on(mesh.protocol_subscriptions.update(
+                client,
+                filters,
+                self.core_sender.clone(),
+            ))
+        });
         mesh.protocol_subscriptions.retry_needed = result.is_err();
         if let Err(error) = result {
             self.push_debug_log("mesh.subscription.error", error.to_string());

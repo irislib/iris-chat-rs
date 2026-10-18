@@ -526,6 +526,7 @@ impl AppStore {
 }
 
 const TABLES_TO_CLEAR: &[&str] = &[
+    "mesh_group_envelopes",
     "direct_file_transfers",
     "pending_message_reads",
     "messages",

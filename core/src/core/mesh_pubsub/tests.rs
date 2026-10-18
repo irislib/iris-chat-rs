@@ -195,3 +195,109 @@ async fn fixture() -> (Arc<fips_core::FipsEndpoint>, FipsPubsubClient) {
         .unwrap();
     (endpoint, client)
 }
+
+#[test]
+fn attached_group_replay_preserves_normal_saves_and_revokes_changed_permissions() {
+    for change in ["block", "remove", "delete", "reject"] {
+        let owner = Keys::generate();
+        let peer = Keys::generate();
+        let (mut core, _, _dir) = crate::core::tests::logged_in_test_core_with_updates(
+            "group-replay-permissions",
+            &owner,
+            &Keys::generate(),
+        );
+        core.create_group("replay permissions", &[peer.public_key().to_hex()]);
+        let group = core.groups.keys().next().unwrap().clone();
+        let chat = group_chat_id(&group);
+        let event = EventBuilder::new(
+            Kind::Custom(MESSAGE_EVENT_KIND as u16),
+            "opaque signed group envelope",
+        )
+        .sign_with_keys(&peer)
+        .unwrap();
+        core.apply_runtime_text_message(
+            peer.public_key(),
+            Some(chat.clone()),
+            "decrypted message".into(),
+            unix_now().get(),
+            None,
+            Some("message".into()),
+            Some(event.id.to_hex()),
+        );
+        core.persist_app_state().unwrap();
+        core.retain_mesh_group_envelope(&event, &chat);
+        let (endpoint, client) = core.runtime.block_on(fixture());
+        let client = Arc::new(client);
+        let (tcp, _) = DeviceSyncTcpSender::test_channel(1, 1024);
+        core.install_device_sync_sender_for_test(endpoint.clone(), tcp, Vec::new());
+        core.device_sync.as_mut().unwrap().pubsub = Some(client.clone());
+        core.reconcile_mesh_protocol_subscriptions();
+        let attached = core
+            .device_sync
+            .as_ref()
+            .unwrap()
+            .protocol_subscriptions
+            .replay_source
+            .clone()
+            .unwrap();
+        let query =
+            |core: &AppCore, source: &Arc<storage::mesh_group_envelopes::GroupEnvelopeReplay>| {
+                core.runtime
+                    .block_on(source.query(
+                        vec![Filter::new().id(event.id)],
+                        nostr_pubsub::QueryOptions { limit: Some(1) },
+                    ))
+                    .unwrap()
+                    .events
+            };
+        assert_eq!(query(&core, &attached).len(), 1);
+        // A routine save/upsert must preserve the envelope. A changed source
+        // body or a deletion must not preserve it.
+        for _ in 0..3 {
+            core.persist_app_state().unwrap();
+        }
+        assert_eq!(query(&core, &attached).len(), 1);
+        core.reconcile_mesh_protocol_subscriptions();
+        assert!(
+            Arc::ptr_eq(
+                &attached,
+                core.device_sync
+                    .as_ref()
+                    .unwrap()
+                    .protocol_subscriptions
+                    .replay_source
+                    .as_ref()
+                    .unwrap()
+            ),
+            "unchanged permissions must not cancel in-flight replay queries"
+        );
+        match change {
+            "block" => core.set_user_blocked(&peer.public_key().to_hex(), true),
+            "remove" => core.remove_group_member(&group, &peer.public_key().to_hex()),
+            "delete" => core.delete_chat(&chat),
+            "reject" => {
+                let rejection = nostr_identity::build_private_setting(
+                    owner.public_key(), "requestDecision", &chat,
+                    &serde_json::json!({"chatId":chat,"decision":"rejected","updatedAtMs":unix_now_ms().saturating_add(1)}),
+                ).unwrap();
+                assert!(core.merge_private_setting(&rejection));
+            }
+            _ => unreachable!(),
+        }
+        // Some operations can stop the runtime completely; either outcome
+        // revokes its durable replay source.
+        if let Some(source) = core
+            .device_sync
+            .as_ref()
+            .and_then(|mesh| mesh.protocol_subscriptions.replay_source.as_ref())
+        {
+            assert!(
+                query(&core, source).is_empty(),
+                "{change} must revoke peer replay"
+            );
+        }
+        core.stop_device_sync_now();
+        core.runtime.block_on(client.shutdown_shared());
+        core.runtime.block_on(endpoint.shutdown()).unwrap();
+    }
+}
