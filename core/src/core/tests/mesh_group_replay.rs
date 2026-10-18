@@ -20,9 +20,12 @@ fn mesh_group_received_ciphertext_survives_provider_restart_with_sender_offline(
     for device in &mut farm.devices {
         device.core.accept_message_request(&chat);
     }
-    let (bootstrap_id, _) = farm.send(0, &chat, "sender key bootstrap");
+    // GroupScaleFarm's exact-count helper recognizes logical rows by this
+    // prefix; keep the bootstrap in that vocabulary before testing restart.
+    let bootstrap_body = "scale-sender-key-bootstrap";
+    let (bootstrap_id, _) = farm.send(0, &chat, bootstrap_body);
     farm.pump();
-    farm.assert_messages(&chat, &[(bootstrap_id, "sender key bootstrap".into())]);
+    farm.assert_messages(&chat, &[(bootstrap_id, bootstrap_body.into())]);
 
     farm.devices[2].online = false;
     let body = "attachment message while C is offline";
