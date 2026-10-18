@@ -20,13 +20,13 @@ on:
         description: Checks to run (releases require all)
         type: choice
         default: all
-        options: [all, core, android, windows, apple, macos]
+        options: [all, core, android, windows, apple, macos, apple-products]
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.ref }}-${{ inputs.scope || 'all' }}
   cancel-in-progress: true
 
 env:
@@ -34,6 +34,12 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  apple-validation-products:
+    if: ${{ inputs.scope == 'apple-products' }}
+    uses: ./.github/workflows/apple-validation-products.yml
+    with:
+      commit: ${{ github.sha }}
+
   rust:
     if: ${{ inputs.scope == '' || inputs.scope == 'all' || inputs.scope == 'core' }}
     name: Rust and repo checks

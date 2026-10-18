@@ -1,0 +1,118 @@
+name: Apple validation products
+
+on:
+  workflow_call:
+    inputs:
+      commit:
+        description: Exact source commit for unsigned device and VM test products
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: Exact source commit for unsigned device and VM test products
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: apple-validation-${{ inputs.commit }}
+  cancel-in-progress: false
+
+jobs:
+  products:
+    name: Unsigned ${{ matrix.platform }} test products
+    runs-on: macos-15
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [ios, macos]
+    env:
+      SOURCE_COMMIT: ${{ inputs.commit }}
+      PLATFORM: ${{ matrix.platform }}
+      CARGO_TARGET_DIR: ${{ github.workspace }}/cargo-target
+      CARGO_BUILD_JOBS: 2
+    defaults:
+      run:
+        working-directory: iris-chat-rs
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: iris-chat-rs
+          ref: ${{ inputs.commit }}
+      - name: Verify source and install build tools
+        run: |
+          set -Eeuo pipefail
+          [[ "$SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$SOURCE_COMMIT"
+          brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup target add aarch64-apple-ios aarch64-apple-darwin
+      - name: Restore existing compiler cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ${{ github.workspace }}/cargo-target
+            ${{ github.workspace }}/iris-chat-rs/macos/.build/cargo-target
+          key: ${{ matrix.platform }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock', format('iris-chat-rs/{0}/project.yml', matrix.platform)) }}
+          restore-keys: |
+            ${{ matrix.platform }}-${{ runner.os }}-${{ runner.arch }}-
+      - name: Build unsigned products without executing tests
+        run: |
+          set -Eeuo pipefail
+          mkdir -p work/apple-validation
+          if [[ "$PLATFORM" = ios ]]; then
+            IRIS_IOS_RUST_TARGETS=aarch64-apple-ios ./scripts/ios-build ios-xcframework
+            ./scripts/ios-build ios-xcodeproj
+            project=ios/IrisChat.xcodeproj
+            scheme=IrisChatPhysical
+            destination=generic/platform=iOS
+          else
+            IRIS_MACOS_RUST_TARGETS=aarch64-apple-darwin ./scripts/macos-build macos-xcframework
+            ./scripts/macos-build macos-xcodeproj
+            project=macos/IrisChatMac.xcodeproj
+            scheme=IrisChatMacUI
+            destination=platform=macOS,arch=arm64
+          fi
+          xcodebuild -project "$project" -scheme "$scheme" \
+            -destination "$destination" -configuration Debug \
+            -derivedDataPath work/apple-validation/DerivedData \
+            -jobs 2 ARCHS=arm64 ONLY_ACTIVE_ARCH=YES \
+            CODE_SIGNING_ALLOWED=NO build-for-testing
+          tar -czf "work/apple-validation/$PLATFORM-products.tar.gz" \
+            -C work/apple-validation/DerivedData/Build Products
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, subprocess
+          root = pathlib.Path('work/apple-validation')
+          archive = root / (os.environ['PLATFORM'] + '-products.tar.gz')
+          digest = hashlib.sha256()
+          with archive.open('rb') as stream:
+              for block in iter(lambda: stream.read(1024 * 1024), b''):
+                  digest.update(block)
+          proof = {
+              'commit': subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip(),
+              'tree': subprocess.check_output(['git', 'rev-parse', 'HEAD^{tree}'], text=True).strip(),
+              'platform': os.environ['PLATFORM'], 'architecture': 'arm64',
+              'configuration': 'Debug', 'signed': False, 'testsExecuted': False,
+              'releasePackage': False, 'archive': archive.name,
+              'archiveBytes': archive.stat().st_size,
+              'archiveSHA256': digest.hexdigest(),
+              'xcode': subprocess.check_output(['xcodebuild', '-version'], text=True).strip(),
+          }
+          (root / 'build-receipt.json').write_text(json.dumps(proof, indent=2) + '\n')
+          PY
+      - name: Retain source-bound test products
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.platform }}-validation-${{ inputs.commit }}
+          path: |
+            iris-chat-rs/work/apple-validation/*-products.tar.gz
+            iris-chat-rs/work/apple-validation/build-receipt.json
+          if-no-files-found: error
+          retention-days: 7

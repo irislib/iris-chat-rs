@@ -35,6 +35,16 @@ schemes:
     archive:
       config: Release
 
+  IrisChatPhysical:
+    build:
+      targets:
+        IrisChat: all
+    test:
+      config: Debug
+      debugEnabled: false
+      targets:
+        - IrisChatUITests
+
 targets:
   IrisChat:
     type: application
