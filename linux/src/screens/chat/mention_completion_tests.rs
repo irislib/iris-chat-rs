@@ -6,6 +6,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[track_caller]
 fn pump_until(mut ready: impl FnMut() -> bool) {
     let context = glib::MainContext::default();
     let deadline = Instant::now() + Duration::from_secs(5);
@@ -93,6 +94,7 @@ pub fn verify_ui(manager: Rc<crate::app_manager::AppManager>) {
     buffer.insert_at_cursor("@");
     buffer.end_user_action();
     pump_until(|| completion.root.is_visible());
+    assert!(input.has_focus(), "opening suggestions must keep editor focus");
     let after = input.compute_bounds(&root).unwrap();
     assert_eq!(
         before.y(),
@@ -100,6 +102,10 @@ pub fn verify_ui(manager: Rc<crate::app_manager::AppManager>) {
         "mention popup must not move the composer"
     );
     super::completion_screenshots::save(&window, "linux-mention-suggestions");
+    super::completion_screenshots::save_widget(
+        &completion.root.ancestor(gtk::Popover::static_type()).unwrap(),
+        "linux-mention-popup",
+    );
     assert!(completion.handle_key(gdk::Key::Return, gdk::ModifierType::empty()));
     assert_eq!(text(&buffer), "👋 @Alex @Alex ");
     let both = draft.borrow().wire_text();

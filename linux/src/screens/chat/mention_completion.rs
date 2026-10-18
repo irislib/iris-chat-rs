@@ -49,6 +49,9 @@ impl MentionCompletion {
         popup.set_autohide(false);
         popup.set_has_arrow(false);
         popup.set_focusable(false);
+        // Keyboard navigation belongs to the editor. Excluding the whole
+        // subtree also prevents popup() from focusing the first result row.
+        popup.set_can_focus(false);
         popup.set_child(Some(&scroll));
         popup.set_parent(input);
         let showing = popup.downgrade();

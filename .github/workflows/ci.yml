@@ -20,7 +20,7 @@ on:
         description: Checks to run (releases require all)
         type: choice
         default: all
-        options: [all, core, android, windows, apple, macos, apple-products]
+        options: [all, core, android, windows, apple, macos, linux, apple-products]
 
 permissions:
   contents: read
@@ -211,7 +211,7 @@ jobs:
           retention-days: 14
 
   linux:
-    if: ${{ inputs.scope == '' || inputs.scope == 'all' }}
+    if: ${{ inputs.scope == '' || inputs.scope == 'all' || inputs.scope == 'linux' }}
     name: Linux build and tests (Rust ${{ matrix.toolchain }})
     strategy:
       fail-fast: false
