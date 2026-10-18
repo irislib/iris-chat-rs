@@ -84,7 +84,7 @@ public partial class ChatRow : UserControl
             TimeText.Text = string.Empty;
         }
 
-        var draft = chat.draft.Trim();
+        var draft = Native.DisplayMessageMentions(chat.draft).Trim();
         PreviewText.Inlines.Clear();
         if (!chat.isTyping && draft.Length > 0)
         {

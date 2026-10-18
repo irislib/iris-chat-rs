@@ -52,7 +52,7 @@ struct ChatListRowContainer: View {
     }
 
     private var chatRow: some View {
-        let trimmedDraft = chat.draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedDraft = displayMessageMentions(text: chat.draft).trimmingCharacters(in: .whitespacesAndNewlines)
         let preview: String = {
             if chat.isTyping { return "Typing" }
             if !trimmedDraft.isEmpty { return "Draft: \(trimmedDraft)" }
@@ -612,7 +612,7 @@ struct ChatListTableView: UIViewRepresentable {
         }
 
         private func trimmedDraftPreview(for chat: ChatThreadSnapshot) -> String? {
-            let trimmedDraft = chat.draft.trimmingCharacters(in: .whitespacesAndNewlines)
+            let trimmedDraft = displayMessageMentions(text: chat.draft).trimmingCharacters(in: .whitespacesAndNewlines)
             return trimmedDraft.isEmpty ? nil : trimmedDraft
         }
     }

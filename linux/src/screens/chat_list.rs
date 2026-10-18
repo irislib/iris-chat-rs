@@ -638,7 +638,8 @@ fn row_for(
         manager,
     ));
 
-    let draft = chat.draft.trim();
+    let draft = iris_chat_core::display_message_mentions(chat.draft.clone());
+    let draft = draft.trim();
     let subtitle = if chat.is_typing {
         "Typing…".to_string()
     } else if !draft.is_empty() {

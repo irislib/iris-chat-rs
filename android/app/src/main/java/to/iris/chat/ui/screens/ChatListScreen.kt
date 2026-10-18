@@ -1078,7 +1078,7 @@ private fun ChatListSearchField(
 }
 
 internal fun ChatThreadSnapshot.chatListPreview(): String {
-    val draftPreview = draft.trim().replace(ChatPreviewWhitespace, " ")
+    val draftPreview = to.iris.chat.rust.displayMessageMentions(draft).trim().replace(ChatPreviewWhitespace, " ")
     return when {
         isTyping -> "Typing"
         draftPreview.isNotEmpty() -> "Draft: $draftPreview"

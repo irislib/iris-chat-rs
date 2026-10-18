@@ -77,6 +77,11 @@ final class ComposerCompletionUITests: IrisChatUITestCase {
         XCTAssertFalse(person.exists)
         XCTAssertEqual(input.frame.minY, editorFrame.minY, accuracy: 1)
         XCTAssertEqual(input.frame.height, editorFrame.height, accuracy: 1)
+        let draftPreview = app.descendants(matching: .any).matching(
+            NSPredicate(format: "identifier BEGINSWITH 'desktopChatPreview-'"))
+            .firstMatch
+        XCTAssertTrue(waitUntil(timeout: 5) { draftPreview.label == "Draft: Hi @ios tester" },
+                      "The chat-list preview must display the mention name without its wire address")
         #else
         person.tap()
         #endif

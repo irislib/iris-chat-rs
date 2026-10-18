@@ -80,6 +80,10 @@ internal static class DraftTests
         Check(Preview() == "Draft: Forest walk\nBring a map",
             "List trims the preview while storage retains the full draft; " + PreviewDiagnostic());
         Check(preview.Inlines.OfType<Run>().First().FontStyle == FontStyles.Italic, "Draft prefix is distinguished from message text");
+        var mentionDraft = "Hi " + Native.FormatMessageMention(own, "Alex") + " ";
+        row.Chat = row.Chat! with { draft = mentionDraft };
+        Check(Preview() == "Draft: Hi @Alex", "Draft preview shows the mention name without its wire address; " + PreviewDiagnostic());
+        Check(row.Chat.draft == mentionDraft, "Preview formatting preserves the saved mention identity");
         row.Chat = row.Chat! with { isTyping = true };
         Check(Preview() == "typing…", "Typing takes precedence over the saved draft; " + PreviewDiagnostic());
         row.Chat = row.Chat! with { isTyping = false, draft = "" };

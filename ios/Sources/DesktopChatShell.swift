@@ -590,7 +590,7 @@ struct DesktopSidebarChatRow: View, Equatable {
         if chat.isTyping {
             return Text("Typing")
         }
-        let draft = chat.draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        let draft = displayMessageMentions(text: chat.draft).trimmingCharacters(in: .whitespacesAndNewlines)
         if !draft.isEmpty {
             return Text("Draft: ").italic() + Text(draft)
         }
@@ -649,6 +649,7 @@ struct DesktopSidebarChatRow: View, Equatable {
 
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
                         preview
+                            .accessibilityIdentifier("desktopChatPreview-\(chat.chatId)")
                             .font(.system(.subheadline, design: .rounded))
                             .foregroundStyle(chat.unreadCount > 0 ? palette.textPrimary : palette.muted)
                             .lineLimit(2)
