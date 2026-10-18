@@ -52,7 +52,21 @@ final class ComposerCompletionUITests: IrisChatUITestCase {
         XCTAssertEqual(input.frame.height, editorFrame.height, accuracy: 1)
         XCTAssertLessThanOrEqual(person.frame.maxY, input.frame.minY,
                                  "Suggestions must remain above the editable text")
+        #if os(macOS)
+        // AppKit's embedded text view can report a false AX hit point. Verify
+        // the real editor interaction while suggestions are visible instead.
+        print("IRIS_COMPOSER_HIT_TEST frame=\(input.frame) hittable=\(input.isHittable)")
+        input.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+        assertKeyboardFocused(input)
+        app.typeKey("x", modifierFlags: [])
+        XCTAssertTrue(waitUntil(timeout: 5) { (input.value as? String) == "Hi @x" },
+                      "The visible mention panel must allow clicking and typing in the editor")
+        app.typeKey(XCUIKeyboardKey.delete, modifierFlags: [])
+        XCTAssertTrue(waitUntil(timeout: 5) { (input.value as? String) == "Hi @" })
+        XCTAssertTrue(person.waitForExistence(timeout: 5))
+        #else
         XCTAssertTrue(input.isHittable, "The mention panel must not cover the editor")
+        #endif
         capture(app, named: "group-mention-menu")
         person.tap()
         XCTAssertTrue((input.value as? String)?.contains("@") == true)
