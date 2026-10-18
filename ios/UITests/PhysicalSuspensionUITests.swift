@@ -42,7 +42,8 @@ final class PhysicalSuspensionUITests: IrisChatUITestCase {
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 15))
         XCTAssertTrue(input.waitForExistence(timeout: 10))
         XCTAssertEqual(input.value as? String, draft)
-        typeText(" and resume", into: input, app: app)
+        // Resume at the preserved insertion point instead of tapping into the draft.
+        input.typeText(" and resume")
         XCTAssertEqual(input.value as? String, draft + " and resume")
         let screenshot = XCTAttachment(screenshot: app.screenshot())
         screenshot.name = "physical-suspension-resumed-draft"

@@ -4,7 +4,10 @@ final class ComposerCompletionUITests: IrisChatUITestCase {
     func testGroupMentionOverlayKeepsComposerStableAndMobileColonsLiteral() {
         continueAfterFailure = false
         let app = launchCleanApp()
-        defer { app.terminate() }
+        defer {
+            capture(app, named: "group-completion-final-state")
+            app.terminate()
+        }
         createAccount(app)
         openSelfOnlyGroup(app)
         let input = editableElement(app, "chatMessageInput")
@@ -40,7 +43,13 @@ final class ComposerCompletionUITests: IrisChatUITestCase {
         person.tap()
         XCTAssertTrue((input.value as? String)?.contains("@") == true)
         XCTAssertFalse((input.value as? String)?.contains("nostr:") == true)
+        #if os(iOS)
+        // Keep typing at the insertion point established by the mention.
+        // Tapping the editor again moves the caret into the existing draft.
+        input.typeText(":sm")
+        #else
         typeText(":sm", into: input, app: app)
+        #endif
         let smile = app.buttons["chatEmojiCompletion-smile"]
         #if os(macOS)
         XCTAssertTrue(smile.waitForExistence(timeout: 10))
@@ -51,8 +60,9 @@ final class ComposerCompletionUITests: IrisChatUITestCase {
         #else
         XCTAssertFalse(smile.exists)
         XCTAssertTrue((input.value as? String)?.hasSuffix(":sm") == true)
-        typeText("ile:", into: input, app: app)
-        XCTAssertTrue((input.value as? String)?.hasSuffix(":smile:") == true)
+        input.typeText("ile:")
+        XCTAssertTrue((input.value as? String)?.hasSuffix(":smile:") == true,
+                      "The full colon shortcode must remain literal: \(input.value ?? "nil")")
         XCTAssertFalse(smile.exists)
         #endif
         capture(app, named: "group-mention-and-emoji-draft")
