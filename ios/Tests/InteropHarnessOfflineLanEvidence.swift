@@ -108,6 +108,11 @@ struct OfflineLanReadEvidence {
 
 extension InteropHarnessTests {
     func offlineLanWiFiAddresses() async throws -> [OfflineLanWiFiAddress] {
+        #if os(macOS)
+        if ProcessInfo.processInfo.environment["IRIS_LAN_TEST_BRIDGED_INTERFACE"] != nil {
+            return try await offlineLanBridgedEthernetAddresses()
+        }
+        #endif
         let names: [String] = await withCheckedContinuation { continuation in
             let monitor = NWPathMonitor(requiredInterfaceType: .wifi)
             monitor.pathUpdateHandler = { path in
@@ -143,6 +148,61 @@ extension InteropHarnessTests {
         status("offline_lan_wifi", String(decoding: try JSONEncoder().encode(result), as: UTF8.self))
         return result
     }
+
+    #if os(macOS)
+    func offlineLanBridgedEthernetAddresses() async throws -> [OfflineLanWiFiAddress] {
+        // Test-only bridge mode observes a real wired interface. It does not
+        // relabel Ethernet as Wi-Fi or change the system network configuration.
+        let environment = ProcessInfo.processInfo.environment
+        guard let interface = environment["IRIS_LAN_TEST_BRIDGED_INTERFACE"], !interface.isEmpty,
+              let address = environment["IRIS_LAN_TEST_BRIDGED_ADDRESS"], !address.isEmpty,
+              let netmask = environment["IRIS_LAN_TEST_BRIDGED_NETMASK"], !netmask.isEmpty else {
+            throw HarnessError.unexpected("explicit bridge interface, address and netmask are required")
+        }
+        let names: [String] = await withCheckedContinuation { continuation in
+            let monitor = NWPathMonitor(requiredInterfaceType: .wiredEthernet)
+            monitor.pathUpdateHandler = { path in
+                monitor.pathUpdateHandler = nil
+                monitor.cancel()
+                continuation.resume(returning: path.availableInterfaces.filter { $0.type == .wiredEthernet && $0.name == interface }.map(\.name))
+            }
+            monitor.start(queue: DispatchQueue(label: "iris.harness.offline-lan-vm-bridge"))
+        }
+        var first: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&first) == 0 else { throw HarnessError.unexpected("VM bridge interface query failed") }
+        defer { freeifaddrs(first) }
+        var pointer = first
+        var result: [OfflineLanWiFiAddress] = []
+        while let current = pointer {
+            let entry = current.pointee
+            pointer = entry.ifa_next
+            let name = String(cString: entry.ifa_name)
+            guard names.contains(name), let address = entry.ifa_addr, let mask = entry.ifa_netmask,
+                  address.pointee.sa_family == UInt8(AF_INET), entry.ifa_flags & UInt32(IFF_UP) != 0,
+                  entry.ifa_flags & UInt32(IFF_LOOPBACK | IFF_POINTOPOINT) == 0 else { continue }
+            func string(_ value: UnsafeMutablePointer<sockaddr>) -> String? {
+                var buffer = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+                guard getnameinfo(value, socklen_t(value.pointee.sa_len), &buffer, socklen_t(buffer.count),
+                                  nil, 0, NI_NUMERICHOST) == 0 else { return nil }
+                return String(cString: buffer)
+            }
+            if let ip = string(address), let netmask = string(mask) {
+                result.append(OfflineLanWiFiAddress(interface: name, address: ip, netmask: netmask))
+            }
+        }
+        guard result.count == 1, result[0].interface == interface,
+              result[0].address == address,
+              result[0].netmask == netmask else {
+            throw HarnessError.unexpected("pinned bridged Ethernet IPv4 interface unavailable")
+        }
+        let addresses = try JSONSerialization.jsonObject(with: JSONEncoder().encode(result))
+        let bridge: [String: Any] = ["schema": 1, "kind": "bridged_ethernet",
+                                    "interfaceType": "wiredEthernet", "addresses": addresses]
+        status("offline_lan_vm_bridge", String(decoding: try JSONSerialization.data(withJSONObject: bridge, options: [.sortedKeys]), as: UTF8.self))
+        return result
+    }
+
+    #endif
 
     func offlineLanEvidence(manager: AppManager, fixture: OfflineLanFixture, label: String) async throws -> OfflineLanReadEvidence {
         var observed: Result<OfflineLanReadEvidence, Error>?
