@@ -30,6 +30,7 @@ fn text(buffer: &gtk::TextBuffer) -> String {
 }
 pub fn verify_ui(manager: Rc<crate::app_manager::AppManager>) {
     let window = gtk::Window::new();
+    window.set_default_size(640, 400);
     let root = gtk::Box::new(gtk::Orientation::Vertical, 0);
     let input = gtk::TextView::new();
     let buffer = input.buffer();
@@ -103,6 +104,10 @@ pub fn verify_ui(manager: Rc<crate::app_manager::AppManager>) {
         before.y(),
         after.y(),
         "mention popup must not move the composer"
+    );
+    assert!(
+        completion.root.allocated_width() >= 220,
+        "suggestions must leave room to read names and distinguish duplicate names"
     );
     super::completion_screenshots::save(&window, "linux-mention-suggestions");
     super::completion_screenshots::save_widget(
