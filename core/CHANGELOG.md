@@ -2,10 +2,11 @@
 
 ## Unreleased
 
-- Adopt FIPS 0.4.105 and matching TCP, pubsub, and Hashtree transport libraries
+- Adopt FIPS 0.4.106 and matching TCP, pubsub, and Hashtree transport libraries
   for handshake recovery, tree-announcement retries, and DNS validation.
-- Use `nvpn-webrtc` and `nvpn-webrtc-ice` 0.17.2 to retain the ICE consent
-  and candidate-comparison fixes, preserving the compatible iOS dependencies.
+- Use `nvpn-webrtc` and `nvpn-webrtc-ice` 0.17.3 to retain the refreshed WebRTC
+  and mDNS behavior, ICE consent, candidate comparison and cleanup, and native
+  socket protection, preserving the compatible iOS dependencies.
 
 ## 0.1.44
 
