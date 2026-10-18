@@ -53,14 +53,14 @@ base64 = "0.22"
 clap = { version = "4", features = ["derive", "env"] }
 futures-util = "0.3"
 flume = "0.11"
-nvpn-fips-core = { version = "=0.4.95", features = ["webrtc-transport", "host-ble-transport"] }
-nvpn-fips-endpoint = { version = "=0.4.95" }
-nvpn-fips-tcp = { version = "=0.2.5" }
-nvpn-fips-tcp-endpoint = { version = "=0.2.30" }
+nvpn-fips-core = { version = "=0.4.105", features = ["webrtc-transport", "host-ble-transport"] }
+nvpn-fips-endpoint = { version = "=0.4.105" }
+nvpn-fips-tcp = { version = "=0.2.6" }
+nvpn-fips-tcp-endpoint = { version = "=0.2.40" }
 hashtree-blossom = { version = "=0.2.83", default-features = false, features = ["store"] }
 hashtree-config = "=0.2.83"
 hashtree-core = "=0.2.91"
-hashtree-fips-transport = "=0.4.28"
+hashtree-fips-transport = "=0.4.29"
 hashtree-index = "=0.2.85"
 hashtree-lmdb = "=0.2.90"
 hashtree-network = "=0.2.88"
@@ -70,9 +70,9 @@ hmac = "0.12"
 iris-chat-protocol = { version = "=0.3.2", path = "../chat-protocol" }
 nostr = { version = "0.44.7", default-features = false, features = ["std", "nip44"] }
 nostr-sdk = { version = "0.44.1", default-features = false, features = ["nip44"] }
-nostr-pubsub = "=0.1.16"
+nostr-pubsub = "=0.1.17"
 nostr-pubsub-reconcile = "=0.1.1"
-nostr-pubsub-fips = "=0.5.22"
+nostr-pubsub-fips = "=0.5.33"
 nostr-pubsub-relay = "=0.1.13"
 nostr-social-graph = "=0.1.4"
 nostr-identity = "=0.6.0"
@@ -108,7 +108,3 @@ libc = "=0.2.186"
 [target.'cfg(windows)'.dependencies]
 widestring = "1.2"
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_System_Threading", "Win32_System_Pipes"] }
-
-# Keep the ICE consent-check fix identical across native entry points.
-[patch.crates-io]
-webrtc-ice = { path = "vendor/webrtc-ice" }
