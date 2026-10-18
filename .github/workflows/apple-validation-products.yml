@@ -63,6 +63,7 @@ jobs:
           rustup default stable
           rustup target add aarch64-apple-ios aarch64-apple-darwin
       - name: Restore existing compiler cache
+        id: cargo-cache
         uses: actions/cache/restore@v4
         with:
           path: |
@@ -73,6 +74,13 @@ jobs:
           key: ${{ matrix.platform }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock', format('iris-chat-rs/{0}/project.yml', matrix.platform)) }}
           restore-keys: |
             ${{ matrix.platform }}-${{ runner.os }}-${{ runner.arch }}-
+      - name: Restore Swift intermediates
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ github.workspace }}/iris-chat-rs/work/apple-validation/DerivedData
+          key: apple-swift-${{ matrix.platform }}-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}
+          restore-keys: |
+            apple-swift-${{ matrix.platform }}-${{ runner.os }}-${{ runner.arch }}-
       - name: Build unsigned products without executing tests
         run: |
           set -Eeuo pipefail
@@ -95,6 +103,11 @@ jobs:
             -derivedDataPath work/apple-validation/DerivedData \
             -jobs 2 ARCHS=arm64 ONLY_ACTIVE_ARCH=YES \
             CODE_SIGNING_ALLOWED=NO build-for-testing
+          if [[ "$PLATFORM" = macos ]]; then
+            mkdir -p work/apple-validation/DerivedData/Build/Products/CLI
+            cp macos/.build/cargo-target/aarch64-apple-darwin/debug/iris \
+              work/apple-validation/DerivedData/Build/Products/CLI/iris
+          fi
           tar -czf "work/apple-validation/$PLATFORM-products.tar.gz" \
             -C work/apple-validation/DerivedData/Build Products
           python3 - <<'PY'
@@ -126,3 +139,17 @@ jobs:
             iris-chat-rs/work/apple-validation/build-receipt.json
           if-no-files-found: error
           retention-days: 7
+      - name: Save compiler cache for focused follow-up builds
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ${{ github.workspace }}/cargo-target
+            ${{ github.workspace }}/iris-chat-rs/macos/.build/cargo-target
+          key: ${{ matrix.platform }}-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock', format('iris-chat-rs/{0}/project.yml', matrix.platform)) }}-${{ github.sha }}
+      - name: Save Swift intermediates for focused follow-up builds
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ github.workspace }}/iris-chat-rs/work/apple-validation/DerivedData
+          key: apple-swift-${{ matrix.platform }}-${{ runner.os }}-${{ runner.arch }}-${{ github.sha }}

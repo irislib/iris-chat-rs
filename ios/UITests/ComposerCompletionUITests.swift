@@ -9,13 +9,33 @@ final class ComposerCompletionUITests: IrisChatUITestCase {
         openSelfOnlyGroup(app)
         let input = editableElement(app, "chatMessageInput")
         typeText("Hi ", into: input, app: app)
-        let editorFrame = input.frame
+        #if os(iOS)
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 10))
+        XCTAssertTrue(waitUntil(timeout: 5) {
+            input.frame.maxY <= app.keyboards.firstMatch.frame.minY
+        }, "The editor must be above the visible keyboard before measuring completion layout")
+        #endif
+        var editorFrame = input.frame
+        var lastChange = Date()
+        XCTAssertTrue(waitUntil(timeout: 5) {
+            let current = input.frame
+            if current != editorFrame { editorFrame = current; lastChange = Date() }
+            return Date().timeIntervalSince(lastChange) >= 0.5
+        }, "The keyboard transition must finish before measuring the editor")
+        capture(app, named: "group-editor-before-mention")
+        #if os(iOS)
+        input.typeText("@")
+        #else
         typeText("@", into: input, app: app)
+        #endif
         XCTAssertTrue(waitUntil(timeout: 5) { (input.value as? String) == "Hi @" }, "Native typing must survive the hosted composer update")
         let person = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'chatMentionCompletion-'")).firstMatch
         XCTAssertTrue(person.waitForExistence(timeout: 10), "Bare @ must immediately offer people in the group")
         XCTAssertEqual(input.frame.minY, editorFrame.minY, accuracy: 1)
         XCTAssertEqual(input.frame.height, editorFrame.height, accuracy: 1)
+        XCTAssertLessThanOrEqual(person.frame.maxY, input.frame.minY,
+                                 "Suggestions must remain above the editable text")
+        XCTAssertTrue(input.isHittable, "The mention panel must not cover the editor")
         capture(app, named: "group-mention-menu")
         person.tap()
         XCTAssertTrue((input.value as? String)?.contains("@") == true)

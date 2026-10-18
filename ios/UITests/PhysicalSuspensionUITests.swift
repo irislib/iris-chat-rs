@@ -9,7 +9,13 @@ final class PhysicalSuspensionUITests: IrisChatUITestCase {
             throw XCTSkip("Enable the reserved physical iPhone suspension test")
         }
         continueAfterFailure = false
-        let app = launchCleanApp()
+        // XCUIApplication.launch acquires a testmanagerd background assertion,
+        // even with the scheme debugger disabled. The device runner launches
+        // this isolated profile after this marker, without that assertion.
+        let app = XCUIApplication(bundleIdentifier: "fi.siriusbusiness.irischat")
+        print("IRIS_SUSPENSION_AWAITING_EXTERNAL_LAUNCH=\(Date().timeIntervalSince1970)")
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 40),
+                      "The device runner must launch the isolated profile outside XCTest")
         defer { app.terminate() }
         createAccount(app)
         openSelfOnlyGroup(app)
@@ -18,12 +24,12 @@ final class PhysicalSuspensionUITests: IrisChatUITestCase {
         typeText(draft, into: input, app: app)
         XCTAssertEqual(input.value as? String, draft)
 
-        // A signed-in snapshot opens the real attachment store. This scheme
-        // does not attach a debugger, which would prevent normal suspension.
+        // A signed-in snapshot opens the real attachment store. The process
+        // has neither a debugger nor an XCTest launch assertion.
         print("IRIS_SUSPENSION_READY=\(Date().timeIntervalSince1970)")
         XCUIApplication(bundleIdentifier: "com.apple.Preferences").activate()
         XCTAssertTrue(waitUntil(timeout: 45) { app.state == .runningBackgroundSuspended },
-                      "The app must really suspend before the observation begins")
+                      "The app must really suspend before the observation begins; state=\(app.state.rawValue)")
         let started = ProcessInfo.processInfo.systemUptime
         print("IRIS_SUSPENSION_ENTERED=\(Date().timeIntervalSince1970)")
         while ProcessInfo.processInfo.systemUptime - started < 135 {

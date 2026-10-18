@@ -154,10 +154,13 @@ struct IrisComposerBar: View {
         } action: { completionAvailableHeight = $0 }
         .overlay(alignment: .topLeading) {
             if !showingEmojiPicker {
-                completionSuggestions
-                    .padding(.horizontal, IrisLayout.usesDesktopChrome ? 14 : 8)
-                    .padding(.bottom, 8)
-                    .alignmentGuide(.top) { $0[.bottom] }
+                VStack(spacing: 0) {
+                    completionSuggestions
+                }
+                .padding(.horizontal, IrisLayout.usesDesktopChrome ? 14 : 8)
+                .padding(.bottom, 8)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(height: 0, alignment: .bottom)
             }
         }
         .accessibilityElement(children: .contain)
