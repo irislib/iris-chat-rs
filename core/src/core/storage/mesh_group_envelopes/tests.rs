@@ -21,9 +21,9 @@ impl Fixture {
             .shared()
             .lock()
             .unwrap()
-            .execute(
-                "INSERT INTO groups(group_id, group_json) VALUES ('test', '{}')",
-                [],
+            .execute_batch(
+                "INSERT INTO groups(group_id, group_json) VALUES ('test', '{}');
+                 INSERT INTO threads(chat_id) VALUES ('group:test');",
             )
             .unwrap();
         let groups = BTreeMap::from([(

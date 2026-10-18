@@ -144,5 +144,9 @@ fn mesh_group_received_ciphertext_survives_provider_restart_with_sender_offline(
         Some(owners[0].public_key().to_hex().as_str())
     );
     assert!(!received.is_outgoing);
-    assert!(c.event_transport_channels[&outer.id.to_hex()].contains("FIPS mesh"));
+    assert!(received
+        .delivery_trace
+        .transport_channels
+        .iter()
+        .any(|channel| channel.contains("FIPS mesh")));
 }
