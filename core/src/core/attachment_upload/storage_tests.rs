@@ -582,7 +582,9 @@ async fn suspend_releases_idle_environment_lock_with_live_owners_and_preserves_d
 #[tokio::test]
 async fn suspended_dropped_upload_pins_are_reconciled_before_quota_eviction() {
     let dir = tempfile::tempdir().unwrap();
-    let store = AttachmentChunkStore::open(dir.path(), 8 * 1024 * 1024).unwrap();
+    // Keep room for LMDB's COW pages while still exceeding the 12 MiB
+    // logical data quota. A 4 MiB map cannot reliably churn 1 MiB records.
+    let store = AttachmentChunkStore::open(dir.path(), 32 * 1024 * 1024).unwrap();
     let abandoned = store.begin(None).unwrap();
     let old = vec![13; 1024 * 1024];
     let old_hash = hashtree_core::sha256(&old);
@@ -590,7 +592,7 @@ async fn suspended_dropped_upload_pins_are_reconciled_before_quota_eviction() {
     store.suspend().unwrap();
     drop(abandoned);
     store.resume().unwrap();
-    for i in 0..8 {
+    for i in 0..32 {
         let bytes = vec![20 + i; 1024 * 1024];
         store
             .put(hashtree_core::sha256(&bytes), bytes)
