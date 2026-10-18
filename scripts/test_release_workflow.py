@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 from pathlib import Path
+import json
 import os
 import plistlib
 import sys
@@ -16,6 +17,90 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class ReleaseWorkflowTests(unittest.TestCase):
+    def test_linux_release_cache_tracks_container_and_real_target(self) -> None:
+        workflow = (ROOT / ".github/workflows/build-artifacts.yml").read_text()
+        linux = workflow.split("\n  linux:\n", 1)[1].split("\n  cli:\n", 1)[0]
+        prepare = linux.split("      - name: Prepare Linux build cache identity\n", 1)[1]
+        prepare = prepare.split("\n      - name:", 1)[0]
+        cache = linux.split("      - name: Cache Linux release dependencies\n", 1)[1]
+        cache = cache.split("\n      - name:", 1)[0]
+        self.assertIn("uses: actions/cache@v6", cache)
+        self.assertIn("path: ${{ env.APP_DIR }}/linux/target/release", cache)
+        for value in ("runner.os", "runner.arch", "steps.linux-cache.outputs.toolchain",
+                      "iris-chat-rs/linux/Cargo.lock", "iris-chat-rs/**/Cargo.toml",
+                      "iris-chat-rs/**/build.rs", "iris-chat-rs/linux/Dockerfile",
+                      "iris-chat-rs/linux/.dockerignore", "iris-chat-rs/linux/scripts/**",
+                      "iris-chat-rs/**/.cargo/config*", "iris-chat-rs/**/rust-toolchain*",
+                      "iris-chat-rs/scripts/linux-release", "iris-chat-rs/scripts/build_common.sh",
+                      "iris-chat-rs/scripts/docker_stage_common.sh"):
+            self.assertIn(value, cache)
+        key = next(line.split("key: ", 1)[1] for line in cache.splitlines() if "key: " in line)
+        restore = cache.split("restore-keys: ", 1)[1].strip()
+        self.assertEqual(key.rsplit("-${{ hashFiles('iris-chat-rs/linux/Cargo.lock') }}", 1)[0] + "-", restore)
+        self.assertNotIn("~/.cargo", cache)  # The container's Cargo home is not mounted.
+        self.assertNotIn("dist/", cache)
+        self.assertNotIn("cache-hit", linux)
+        self.assertIn("./scripts/linux-release --skip-docker-build", linux)
+        self.assertLess(linux.index("Prepare Linux build cache identity"), linux.index("Cache Linux release dependencies"))
+        self.assertLess(linux.index("Cache Linux release dependencies"), linux.index("Build and verify Linux artifacts"))
+        release = (ROOT / "scripts/linux-release").read_text()
+        self.assertIn('-v "$ROOT:/workspace/$REPO_BASENAME:cached"', release)
+        self.assertIn('cd "/workspace/$IRIS_REPO_BASENAME/linux"', release)
+        self.assertIn("cargo build --release", release)
+        self.assertIn("BIN_PATH=target/release/iris-chat", release)
+
+        # Run the actual workflow preparation with Docker replaced at its boundary.
+        script = textwrap.dedent(prepare.split("        run: |\n", 1)[1])
+        with tempfile.TemporaryDirectory() as directory:
+            temp = Path(directory)
+            docker = temp / "docker"
+            docker.write_text(textwrap.dedent("""\
+                #!/usr/bin/env python3
+                import json, os, sys
+                with open(os.environ['DOCKER_CALLS'], 'a') as log:
+                    log.write(json.dumps(sys.argv[1:]) + '\\n')
+                if sys.argv[1] == 'run':
+                    if os.environ.get('FAIL_DOCKER') == '1':
+                        sys.exit(37)
+                    print(os.environ['CONTAINER_IDENTITY'])
+                """))
+            docker.chmod(0o755)
+            keys = []
+            for index, identity in enumerate(("rustc-A cargo-A packages-A", "rustc-A cargo-A packages-A",
+                                              "rustc-B cargo-A packages-A", "rustc-A cargo-A packages-B")):
+                calls = temp / f"calls-{index}"
+                output = temp / f"output-{index}"
+                env_file = temp / f"env-{index}"
+                env = dict(os.environ, PATH=f"{temp}:{os.environ['PATH']}",
+                           DOCKER_CALLS=str(calls), CONTAINER_IDENTITY=identity,
+                           GITHUB_OUTPUT=str(output), GITHUB_ENV=str(env_file),
+                           IRIS_LINUX_BUILD_IMAGE="cache-fixture:ci", IRIS_LINUX_DOCKER_PLATFORM="linux/amd64",
+                           FAIL_DOCKER="0")
+                result = subprocess.run(["bash", "-c", script], cwd=ROOT, env=env,
+                                        capture_output=True, text=True, timeout=10)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                keys.append(output.read_text().strip())
+                self.assertRegex(keys[-1], r"^toolchain=[0-9a-f]{64}$")
+                self.assertEqual(env_file.read_text(), "IRIS_LINUX_BUILD_IMAGE=cache-fixture:ci\nIRIS_LINUX_DOCKER_PLATFORM=linux/amd64\n")
+                commands = [json.loads(line) for line in calls.read_text().splitlines()]
+                self.assertEqual(len(commands), 3)  # buildx probe, image build, identity query
+                self.assertEqual(commands[1][:3], ["buildx", "build", "--load"])
+                self.assertIn("INSTALL_CARGO_WATCH=0", commands[1])
+                self.assertEqual(commands[1][commands[1].index("-t") + 1], "cache-fixture:ci")
+                self.assertEqual(commands[2][:6], ["run", "--rm", "--platform", "linux/amd64", "--entrypoint", "/bin/bash"])
+                self.assertEqual(commands[2][6], "cache-fixture:ci")
+                for value in ("rustc -vV", "cargo -V", "dpkg-query -W", "sort"):
+                    self.assertIn(value, commands[2][-1])
+            self.assertEqual(keys[0], keys[1])
+            self.assertNotEqual(keys[0], keys[2])
+            self.assertNotEqual(keys[0], keys[3])
+            output.unlink()
+            env["FAIL_DOCKER"] = "1"
+            result = subprocess.run(["bash", "-c", script], cwd=ROOT, env=env,
+                                    capture_output=True, text=True, timeout=10)
+            self.assertEqual(result.returncode, 37)
+            self.assertFalse(output.exists())
+
     def test_tagged_platform_policy_skips_only_ios_build_and_rejects_apple_distribution(self) -> None:
         builds = (ROOT / ".github/workflows/build-artifacts.yml").read_text()
         metadata = builds.split("\n  metadata:\n", 1)[1].split("\n  android:\n", 1)[0]
