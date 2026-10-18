@@ -20,7 +20,7 @@ on:
         description: Checks to run (releases require all)
         type: choice
         default: all
-        options: [all, core, android, windows, apple, ios, macos, linux, apple-products, ios-products, macos-products]
+        options: [all, cli, core, android, windows, apple, ios, macos, linux, apple-products, ios-products, macos-products]
 
 permissions:
   contents: read
@@ -495,7 +495,7 @@ jobs:
           retention-days: 14
 
   cli-service:
-    if: ${{ inputs.scope == '' || inputs.scope == 'all' }}
+    if: ${{ inputs.scope == '' || inputs.scope == 'all' || inputs.scope == 'cli' }}
     name: CLI service (${{ matrix.os }})
     strategy:
       fail-fast: false

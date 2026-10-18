@@ -43,6 +43,7 @@ schemes:
       config: Debug
       debugEnabled: false
       targets:
+        - IrisChatTests
         - IrisChatUITests
 
 targets:
