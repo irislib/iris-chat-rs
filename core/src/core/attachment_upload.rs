@@ -47,6 +47,10 @@ pub(super) struct AttachmentBlobRuntime {
 }
 
 impl AttachmentBlobRuntime {
+    pub(in crate::core) fn update_store(&self) -> Arc<dyn Store> {
+        self.store.clone()
+    }
+
     pub(super) fn set_peers(&self, peers: Vec<fips_core::PeerIdentity>) {
         self.provider.set_explicit_peers(peers);
     }

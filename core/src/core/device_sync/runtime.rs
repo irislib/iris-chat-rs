@@ -727,6 +727,11 @@ impl AppCore {
 
         self.restore_device_history_progress();
         let sibling_count = config.siblings.len();
+        crate::update_announcements::register_update_blob_store(
+            attachment_store
+                .as_ref()
+                .map(|runtime| runtime.update_store()),
+        );
         self.device_sync = Some(DeviceSyncRuntime {
             key: runtime_key,
             peer_refresh_key,
@@ -774,6 +779,7 @@ impl AppCore {
     fn take_device_sync_shutdown(
         &mut self,
     ) -> Option<impl std::future::Future<Output = ()> + Send + 'static> {
+        crate::update_announcements::register_update_blob_store(None);
         self.register_update_sources(None);
         self.restore_device_history_progress();
         self.interrupt_direct_files();

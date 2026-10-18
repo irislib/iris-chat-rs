@@ -78,6 +78,7 @@ impl AppCore {
     pub(in crate::core) fn clear_update_sources(&mut self) {
         // Retain the last explicit server policy after providers expire, but
         // never retain an old account's client across logout or replacement.
+        crate::update_announcements::register_update_blob_store(None);
         self.update_sources.key = None;
         self.update_sources.relay = None;
         self.update_sources.providers.clear();

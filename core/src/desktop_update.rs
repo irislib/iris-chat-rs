@@ -189,7 +189,7 @@ async fn run_secure_update_async(operation: UpdateOperation) -> Result<IrisDeskt
     let (updater, mut check) = if let Some((resolver, check)) =
         cached.filter(|_| matches!(operation, UpdateOperation::Download { .. }))
     {
-        let updater = build_cached_update_downloader(resolver);
+        let updater = build_cached_update_downloader(resolver)?;
         (updater, check)
     } else {
         check_secure_update(

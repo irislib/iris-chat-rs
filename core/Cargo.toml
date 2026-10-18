@@ -65,7 +65,7 @@ hashtree-index = "=0.2.84"
 hashtree-lmdb = "=0.2.90"
 hashtree-network = "=0.2.88"
 hashtree-resolver = { version = "=0.2.86", features = ["nostr"] }
-hashtree-updater = { version = "=0.2.88", features = ["secure-nostr-blossom"] }
+hashtree-updater = { version = "=0.2.89", features = ["peer-storage"] }
 hmac = "0.12"
 iris-chat-protocol = { version = "=0.3.2", path = "../chat-protocol" }
 nostr = { version = "0.44.7", default-features = false, features = ["std", "nip44"] }

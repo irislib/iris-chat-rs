@@ -350,3 +350,79 @@ fn peer_retrieves_pending_ciphertext_after_store_reopen_without_http_servers() {
     runtime.block_on(consumer.shutdown()).unwrap();
     runtime.block_on(provider.shutdown()).unwrap();
 }
+
+#[test]
+fn software_update_blocks_use_attachment_peers_and_are_reshared() {
+    let executor = tokio::runtime::Runtime::new().unwrap();
+    executor.block_on(async {
+        let SocketAddr::V4(rendezvous) = reserve_udp_addr() else {
+            unreachable!()
+        };
+        let source_endpoint =
+            endpoint(rendezvous, reserve_udp_addr(), "update-source", Vec::new()).await;
+        let app_endpoint =
+            endpoint(rendezvous, reserve_udp_addr(), "update-chat", Vec::new()).await;
+        let origin = Arc::new(MemoryStore::new());
+        let bytes = b"verified public update block".to_vec();
+        let hash = hashtree_core::sha256(&bytes);
+        origin.put(hash, bytes.clone()).await.unwrap();
+        let source = TcpBlobTransport::bind_advertised_with_config(
+            source_endpoint.clone(),
+            origin,
+            TcpBlobTransportConfig::default(),
+            10,
+        )
+        .await
+        .unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let primary = AttachmentChunkStore::open(directory.path(), 8 * 1024 * 1024).unwrap();
+        let runtime = bind_same_host_attachment_store(
+            app_endpoint.clone(),
+            Arc::new(StoreBlobRoute::new(Arc::new(MemoryStore::new()))),
+            Vec::new(),
+            primary.clone(),
+        )
+        .await
+        .unwrap();
+        tokio::time::timeout(Duration::from_secs(8), async {
+            while !runtime
+                .provider
+                .discovered_provider_ids()
+                .unwrap()
+                .iter()
+                .any(|id| id == source_endpoint.npub())
+            {
+                tokio::time::sleep(Duration::from_millis(25)).await;
+            }
+        })
+        .await
+        .unwrap();
+        let updates = hashtree_updater::build_update_store(
+            runtime.update_store(),
+            None,
+            hashtree_updater::SecurePubsubBlossomConfig::default(),
+        )
+        .unwrap();
+        assert_eq!(updates.get(&hash).await.unwrap(), Some(bytes.clone()));
+        assert_eq!(primary.get(&hash).await.unwrap(), Some(bytes.clone()));
+        source.shutdown().await.unwrap();
+        source_endpoint.shutdown().await.unwrap();
+        let receiver_endpoint = endpoint(
+            rendezvous,
+            reserve_udp_addr(),
+            "update-third-peer",
+            Vec::new(),
+        )
+        .await;
+        let receiver = TcpBlobTransport::in_memory(receiver_endpoint.clone())
+            .await
+            .unwrap();
+        let peer = fips_core::PeerIdentity::from_npub(app_endpoint.npub()).unwrap();
+        assert_eq!(receiver.get(&hash, peer).await.unwrap(), Some(bytes));
+        receiver.shutdown().await.unwrap();
+        receiver_endpoint.shutdown().await.unwrap();
+        drop(updates);
+        drop(runtime);
+        app_endpoint.shutdown().await.unwrap();
+    });
+}

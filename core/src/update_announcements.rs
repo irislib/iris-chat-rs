@@ -10,11 +10,11 @@ use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::time::Duration;
 
 use fips_core::config::{TransportInstances, WebSocketConfig};
-use hashtree_blossom::{BlossomClient, BlossomStore};
-use hashtree_core::{HashTree, HashTreeConfig};
+use hashtree_core::{HashTree, HashTreeConfig, MemoryStore, Store};
 use hashtree_updater::{
-    HashtreeUpdater, NostrEventSubscriber, SecurePubsubBlossomConfig, UpdateCheck,
-    UpdateCheckOptions, UpdateError, UpdateEventCache, UpdateRef, UpdateTarget,
+    build_update_store, HashtreeUpdater, NostrEventSubscriber, SecurePubsubBlossomConfig,
+    UpdateCheck, UpdateCheckOptions, UpdateError, UpdateEventCache, UpdateRef, UpdateStore,
+    UpdateTarget,
 };
 use nostr::{Keys, ToBech32};
 use nostr_pubsub_fips::{FipsPubsubClient, FipsPubsubClientOptions};
@@ -28,12 +28,22 @@ const DEFAULT_BLOSSOM_READ_SERVERS: &[&str] = &[
 ];
 const UPDATE_MANIFEST_TIMEOUT: Duration = Duration::from_secs(8);
 type UpdateProvider = Arc<dyn NostrEventSubscriber>;
-pub type SecureUpdateUpdater = HashtreeUpdater<AvailableUpdateResolver, BlossomStore>;
+pub type SecureUpdateUpdater = HashtreeUpdater<AvailableUpdateResolver, UpdateStore>;
 struct RegisteredUpdateProviders {
     providers: Vec<Weak<dyn NostrEventSubscriber>>,
     relay_urls: Vec<String>,
 }
 static UPDATE_PROVIDERS: OnceLock<Mutex<Option<RegisteredUpdateProviders>>> = OnceLock::new();
+static UPDATE_BLOBS: OnceLock<Mutex<Option<Weak<dyn Store>>>> = OnceLock::new();
+
+/// Borrow the account-owned blob service; logout must release it normally.
+pub(crate) fn register_update_blob_store(store: Option<Arc<dyn Store>>) {
+    *UPDATE_BLOBS
+        .get_or_init(Mutex::default)
+        .lock()
+        .unwrap_or_else(|p| p.into_inner()) = store.as_ref().map(Arc::downgrade);
+}
+
 static UPDATE_EVENTS: OnceLock<Mutex<Option<(UpdateRef, UpdateEventCache)>>> = OnceLock::new();
 
 pub(crate) fn register_update_providers(providers: &[UpdateProvider], relay_urls: Vec<String>) {
@@ -134,24 +144,33 @@ fn build_update_updater(
     config: SecurePubsubBlossomConfig,
 ) -> Result<SecureUpdateUpdater, UpdateError> {
     let resolver = AvailableUpdateResolver::new(providers, config.manifest_timeout)?;
-    Ok(build_update_downloader(resolver, config))
+    build_update_downloader(resolver, config)
 }
 
 pub(crate) fn build_cached_update_downloader(
     resolver: AvailableUpdateResolver,
-) -> SecureUpdateUpdater {
+) -> Result<SecureUpdateUpdater, UpdateError> {
     build_update_downloader(resolver, secure_update_config())
 }
 
 fn build_update_downloader(
     resolver: AvailableUpdateResolver,
     config: SecurePubsubBlossomConfig,
-) -> SecureUpdateUpdater {
-    let blossom = BlossomClient::new_empty(Keys::generate())
-        .with_read_servers(config.blossom_read_servers)
-        .with_timeout(config.download_timeout);
-    let tree = HashTree::new(HashTreeConfig::new(Arc::new(BlossomStore::new(blossom))).public());
-    HashtreeUpdater::new(resolver, tree)
+) -> Result<SecureUpdateUpdater, UpdateError> {
+    let primary = UPDATE_BLOBS
+        .get_or_init(Mutex::default)
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .as_ref()
+        .and_then(Weak::upgrade)
+        .unwrap_or_else(|| Arc::new(MemoryStore::new()));
+    // The registered store already routes reads over the application's FIPS
+    // connection and caches verified blocks for other peers to request.
+    let store = build_update_store(primary, None, config)?;
+    Ok(HashtreeUpdater::new(
+        resolver,
+        HashTree::new(HashTreeConfig::new(store).public()),
+    ))
 }
 
 /// Keep the observed signed root between checks, without treating it as fresh.
