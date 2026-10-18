@@ -1,7 +1,7 @@
 # UI/UX Flows
 
 This document describes the current end-user flows in Iris Chat as implemented
-today across the shared Rust router plus the Android, iOS, and macOS shells.
+today across the shared Rust router and native mobile and desktop shells.
 
 It is intended to be the baseline for future streamlining work. When a user
 journey changes, update this document in the same branch.
@@ -443,6 +443,34 @@ Read history, send messages, and for groups, jump into group details.
 - If the user is already near the bottom, new messages keep the thread pinned
   to the latest message.
 - If the user has scrolled up, the app shows a jump-to-bottom affordance.
+
+### Composer consistency
+
+- Group mentions open with `@`. Suggestions float above the editor so opening,
+  filtering, choosing, or dismissing them does not move the composer or timeline.
+- Every matching member remains reachable in a bounded scrolling list. Rows show
+  a name and avatar, with an additional identifier for duplicate names.
+- Choosing a member preserves their identity through editing and undo. Desktop
+  arrow keys, Enter/Tab, and Escape work while focus remains in the editor.
+- Typing `:` on iOS, Android, or mobile web leaves ordinary text in place. Use the
+  system keyboard for emoji; desktop retains colon emoji completion.
+
+The intended flows are consistent; platform controls follow their native layout.
+The current source review identifies these existing differences:
+
+| Capability | iOS | Android | macOS / Windows / Linux | Web |
+|---|---|---|---|---|
+| Group mention suggestions | Floating list | Floating list | Floating list | Floating list |
+| Colon emoji completion | Off | Off | On | Desktop only |
+| Message voice recording | Available | Not implemented | Not implemented | Available |
+| Voice-message playback | Available | Available | Available | Available |
+| Ordinary attachment limit | 64 MiB | 64 MiB | 64 MiB | Larger uploads can exceed native download support |
+
+The table describes implemented surfaces, not device-test results. Voice recording
+on Android and desktop and larger cross-client attachments remain separate feature
+work. Do not imply that these platforms have identical capabilities or unlimited
+file support. Explicit one-to-one Send directly supports larger files using the
+separate bounded transfer path.
 
 ## Flow 11: Create Group
 
