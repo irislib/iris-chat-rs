@@ -597,10 +597,39 @@ jobs:
         working-directory: ${{ env.APP_DIR }}
     steps:
       - *checkout_build
+      - name: Prepare Linux build cache identity
+        id: linux-cache
+        run: |
+          set -Eeuo pipefail
+          source scripts/docker_stage_common.sh
+          image="${IRIS_LINUX_BUILD_IMAGE:-$(docker_linux_dev_image)}"
+          platform="${IRIS_LINUX_DOCKER_PLATFORM:-$(docker_default_platform)}"
+          docker_build_image "$platform" --build-arg INSTALL_CARGO_WATCH=0 \
+            -f linux/Dockerfile -t "$image" linux
+          identity="$(docker run --rm --platform "$platform" --entrypoint /bin/bash "$image" -lc '
+            set -Eeuo pipefail
+            rustc -vV
+            cargo -V
+            dpkg-query -W | LC_ALL=C sort
+          ')"
+          toolchain="$(printf '%s\n%s\n' "$platform" "$identity" | python3 -c 'import hashlib, sys; print(hashlib.sha256(sys.stdin.buffer.read()).hexdigest())')"
+          echo "toolchain=$toolchain" >> "$GITHUB_OUTPUT"
+          {
+            echo "IRIS_LINUX_BUILD_IMAGE=$image"
+            echo "IRIS_LINUX_DOCKER_PLATFORM=$platform"
+          } >> "$GITHUB_ENV"
+      # The container writes through the checkout bind mount, not the job's
+      # host CARGO_TARGET_DIR. Always rebuild/verify the tagged app after restore.
+      - name: Cache Linux release dependencies
+        uses: actions/cache@v6
+        with:
+          path: ${{ env.APP_DIR }}/linux/target/release
+          key: linux-release-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.linux-cache.outputs.toolchain }}-${{ hashFiles('iris-chat-rs/**/Cargo.toml', 'iris-chat-rs/**/build.rs', 'iris-chat-rs/**/.cargo/config*', 'iris-chat-rs/**/rust-toolchain*', 'iris-chat-rs/linux/Dockerfile', 'iris-chat-rs/linux/.dockerignore', 'iris-chat-rs/linux/scripts/**', 'iris-chat-rs/scripts/linux-release', 'iris-chat-rs/scripts/build_common.sh', 'iris-chat-rs/scripts/docker_stage_common.sh') }}-${{ hashFiles('iris-chat-rs/linux/Cargo.lock') }}
+          restore-keys: linux-release-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.linux-cache.outputs.toolchain }}-${{ hashFiles('iris-chat-rs/**/Cargo.toml', 'iris-chat-rs/**/build.rs', 'iris-chat-rs/**/.cargo/config*', 'iris-chat-rs/**/rust-toolchain*', 'iris-chat-rs/linux/Dockerfile', 'iris-chat-rs/linux/.dockerignore', 'iris-chat-rs/linux/scripts/**', 'iris-chat-rs/scripts/linux-release', 'iris-chat-rs/scripts/build_common.sh', 'iris-chat-rs/scripts/docker_stage_common.sh') }}-
       - name: Build and verify Linux artifacts
         run: |
           set -Eeuo pipefail
-          ./scripts/linux-release
+          ./scripts/linux-release --skip-docker-build
           deb="dist/linux/iris-chat-v${IRIS_APP_VERSION_NAME}-linux-x64.deb"
           archive="dist/linux/iris-chat-v${IRIS_APP_VERSION_NAME}-linux-x64.tar.gz"
           dpkg-deb --info "$deb" >/dev/null
