@@ -68,7 +68,18 @@ final class ComposerCompletionUITests: IrisChatUITestCase {
         XCTAssertTrue(input.isHittable, "The mention panel must not cover the editor")
         #endif
         capture(app, named: "group-mention-menu")
+        #if os(macOS)
+        // AX tries to scroll this already-visible overlay before clicking it.
+        // Click the rendered row and require the actual insertion instead.
+        person.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        XCTAssertTrue(waitUntil(timeout: 5) { (input.value as? String) == "Hi @ios tester " },
+                      "Clicking a visible suggestion must insert the chosen group member")
+        XCTAssertFalse(person.exists)
+        XCTAssertEqual(input.frame.minY, editorFrame.minY, accuracy: 1)
+        XCTAssertEqual(input.frame.height, editorFrame.height, accuracy: 1)
+        #else
         person.tap()
+        #endif
         XCTAssertTrue((input.value as? String)?.contains("@") == true)
         XCTAssertFalse((input.value as? String)?.contains("nostr:") == true)
         #if os(iOS)
@@ -82,7 +93,7 @@ final class ComposerCompletionUITests: IrisChatUITestCase {
         #if os(macOS)
         XCTAssertTrue(smile.waitForExistence(timeout: 10))
         capture(app, named: "group-emoji-menu")
-        smile.tap()
+        smile.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
         XCTAssertTrue(waitUntil(timeout: 5) { (input.value as? String)?.contains("😄") == true })
         XCTAssertFalse((input.value as? String)?.contains(":sm") == true)
         #else
