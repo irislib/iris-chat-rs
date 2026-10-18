@@ -10,11 +10,28 @@ import base64
 import json
 import os
 from pathlib import Path
+import plistlib
 import subprocess
 import sys
 
 import run_ios_harness as harness
 from native_lab import acquire, release
+
+
+def selected_products() -> Path:
+    """Use a reviewed hosted product set without rebuilding or copying it."""
+    explicit = os.environ.get("IRIS_LINK_TEST_XCTESTRUN")
+    source = Path(explicit) if explicit else harness.find_xctestrun(prefer_simulator=False)
+    if source is None or not source.is_absolute() or not source.is_file():
+        raise ValueError("Select existing physical iPhone development test products")
+    if source.suffix != ".xctestrun":
+        raise ValueError("The selected product must be an xctestrun file")
+    with source.open("rb") as stream:
+        config = plistlib.load(stream)
+    target = config.get("IrisChatTests", {})
+    if not target or "Debug-iphoneos" not in target.get("TestHostPath", ""):
+        raise ValueError("The selected products must contain the physical iPhone unit harness")
+    return source
 
 
 def main():
@@ -33,13 +50,12 @@ def main():
                and device.get("hardwareProperties", {}).get("platform") == "iOS"]
     if len(matches) != 1:
         raise ValueError("The selected identifier must match exactly one paired physical iPhone")
-    source = harness.find_xctestrun(prefer_simulator=False)
-    if source is None:
-        raise ValueError("Build the physical iPhone development test products first")
+    source = selected_products()
     lock, _ = acquire("ios-device:" + selected, stale_after=6 * 60 * 60)
     if lock is None:
         raise RuntimeError("The selected iPhone is reserved by another native test")
     launched = False
+    restored = False
     target = None
     try:
         env = {
@@ -70,10 +86,14 @@ def main():
                                     "--device", selected, "--terminate-existing",
                                     "fi.siriusbusiness.irischat"], stdout=log,
                                    stderr=subprocess.STDOUT, check=True, timeout=30)
+                restored = True
             if target is not None:
                 target.unlink(missing_ok=True)
         finally:
-            release(lock)
+            # A failed restoration needs owner attention; never advertise the
+            # phone as free while its ordinary app state is uncertain.
+            if not launched or restored:
+                release(lock)
 
 
 if __name__ == "__main__":
