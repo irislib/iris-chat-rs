@@ -1,6 +1,18 @@
 use super::*;
 
 impl AppCore {
+    pub(crate) fn device_sync_has_sibling_tcp_for_test(&self) -> bool {
+        self.device_sync
+            .as_ref()
+            .is_some_and(|runtime| runtime.tcp.is_some())
+    }
+
+    pub(in crate::core) fn device_sync_endpoint_for_test(&self) -> Option<Arc<FipsEndpoint>> {
+        self.device_sync
+            .as_ref()
+            .map(|runtime| runtime.endpoint.clone())
+    }
+
     pub(in crate::core) fn replace_device_sync_sender_for_test(
         &mut self,
         tcp: DeviceSyncTcpSender,

@@ -796,20 +796,6 @@ impl AppCore {
         Some(shutdown_shared_fips(endpoint, pubsub, recent_peers))
     }
 
-    #[cfg(test)]
-    pub(crate) fn device_sync_has_sibling_tcp_for_test(&self) -> bool {
-        self.device_sync
-            .as_ref()
-            .is_some_and(|runtime| runtime.tcp.is_some())
-    }
-
-    #[cfg(test)]
-    pub(in crate::core) fn device_sync_endpoint_for_test(&self) -> Option<Arc<FipsEndpoint>> {
-        self.device_sync
-            .as_ref()
-            .map(|runtime| runtime.endpoint.clone())
-    }
-
     fn same_host_endpoint_config(&self) -> Option<DeviceSyncConfig> {
         let logged_in = self.logged_in.as_ref()?;
         let owner_hex = logged_in.owner_pubkey.to_hex();
