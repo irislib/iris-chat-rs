@@ -20,7 +20,7 @@ on:
         description: Checks to run (releases require all)
         type: choice
         default: all
-        options: [all, core, android, windows, apple, ios, macos, linux, apple-products, ios-products]
+        options: [all, core, android, windows, apple, ios, macos, linux, apple-products, ios-products, macos-products]
 
 permissions:
   contents: read
@@ -35,11 +35,11 @@ env:
 
 jobs:
   apple-validation-products:
-    if: ${{ inputs.scope == 'apple-products' || inputs.scope == 'ios-products' }}
+    if: ${{ inputs.scope == 'apple-products' || inputs.scope == 'ios-products' || inputs.scope == 'macos-products' }}
     uses: ./.github/workflows/apple-validation-products.yml
     with:
       commit: ${{ github.sha }}
-      platform: ${{ inputs.scope == 'ios-products' && 'ios' || 'both' }}
+      platform: ${{ inputs.scope == 'ios-products' && 'ios' || inputs.scope == 'macos-products' && 'macos' || 'both' }}
 
   rust:
     if: ${{ inputs.scope == '' || inputs.scope == 'all' || inputs.scope == 'core' }}
