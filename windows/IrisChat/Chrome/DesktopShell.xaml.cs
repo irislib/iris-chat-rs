@@ -508,7 +508,7 @@ public partial class DesktopShell : UserControl
             Style = (Style)FindResource("GhostButton"),
             HorizontalContentAlignment = HorizontalAlignment.Stretch,
             Padding = new Thickness(0),
-            Margin = new Thickness(0, 0, 0, 4),
+            BorderThickness = new Thickness(0),
             Content = grid,
         };
         button.Click += OnNearby;

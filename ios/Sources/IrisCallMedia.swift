@@ -128,11 +128,12 @@ final class IrisCallMediaEngine: IrisCallMediaHandling {
                 return
             }
             do {
+                // Startup and device changes must use the requested mute state.
+                self.audio?.setMuted(muted)
 #if os(macOS)
                 try self.audio?.setDevices(self.audioDevices)
 #endif
                 try self.audio?.start()
-                self.audio?.setMuted(muted)
                 var useCamera = video && session.videoCapable
 #if os(macOS)
                 useCamera = useCamera && !self.screenSharing

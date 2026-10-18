@@ -28,14 +28,12 @@ pub(super) fn nearby_row(manager: &Rc<AppManager>) -> gtk::Widget {
     outer.set_hexpand(true);
     outer.set_size_request(-1, NEARBY_ROW_CONTENT_HEIGHT);
     outer.set_valign(gtk::Align::Start);
+    outer.append(&nearby_icon_button(manager, active, NEARBY_AVATAR_SIZE));
 
     if !peers.is_empty() {
-        outer.append(&nearby_icon_button(manager, active, NEARBY_AVATAR_SIZE));
         outer.append(&nearby_avatar_strip(peers, manager));
         return outer.upcast();
     }
-
-    outer.append(&nearby_icon(active, NEARBY_AVATAR_SIZE));
 
     let label = gtk::Label::new(Some(if !nearby_enabled {
         "Off"
@@ -50,17 +48,19 @@ pub(super) fn nearby_row(manager: &Rc<AppManager>) -> gtk::Widget {
     label.set_ellipsize(gtk::pango::EllipsizeMode::End);
     label.add_css_class("dim-label");
     label.set_hexpand(true);
-    outer.append(&label);
 
     let button = gtk::Button::new();
     button.add_css_class("flat");
+    button.add_css_class("nearby-preview-button");
     button.show_pointer_cursor();
-    button.set_child(Some(&outer));
+    button.set_hexpand(true);
+    button.set_child(Some(&label));
     let manager_for_click = manager.clone();
     button.connect_clicked(move |btn| {
         present_nearby_from_button(btn, manager_for_click.clone());
     });
-    button.upcast()
+    outer.append(&button);
+    outer.upcast()
 }
 
 fn nearby_icon_button(manager: &Rc<AppManager>, active: bool, size: i32) -> gtk::Button {
@@ -146,6 +146,7 @@ fn nearby_avatar_strip(
 
         let button = gtk::Button::new();
         button.add_css_class("flat");
+        button.add_css_class("nearby-preview-button");
         button.show_pointer_cursor();
         button.set_child(Some(&column));
         button.set_tooltip_text(Some(&name));

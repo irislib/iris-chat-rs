@@ -8,24 +8,89 @@ import XCTest
 
 private final class CallAudioProbe: IrisCallAudioHandling {
     var started = false
-    var muted = false
+    var muted = true
+    var muteStatesAtStart: [Bool] = []
+    var didStart: (() -> Void)?
     var error: Error?
     var startCount = 0
     var stopped: (() -> Void)?
-    func start() throws { if let error { throw error }; started = true; startCount += 1 }
+    func start() throws {
+        if let error { throw error }
+        muteStatesAtStart.append(muted)
+        started = true; startCount += 1
+        didStart?()
+    }
     func setMuted(_ muted: Bool) { self.muted = muted }
     func receive(sequence: UInt32, data: Data) {}
     func stop() { stopped?() }
 #if os(macOS)
     var selections: [IrisMacAudioDeviceSelection] = []
+    var muteStatesAtDeviceSelection: [Bool] = []
     func setDevices(_ selection: IrisMacAudioDeviceSelection) throws {
         if let error { throw error }
+        muteStatesAtDeviceSelection.append(muted)
         selections.append(selection)
     }
 #endif
 }
 
 final class CallMediaTests: XCTestCase {
+    func testAudioStartsWithRequestedMuteState() {
+        for requestedMuted in [false, true] {
+            let ready = expectation(description: "audio ready with requested mute state")
+            let stopped = expectation(description: "audio cleaned up")
+            let audio = CallAudioProbe()
+            audio.stopped = { stopped.fulfill() }
+            let engine = IrisCallMediaEngine(send: { _, _, _, _, _, _ in }, frame: { _, _, _ in },
+                connectionChanged: { _, _ in ready.fulfill() }, requestKeyFrame: { _ in },
+                failed: { _, message in XCTFail(message) }, audioForTesting: audio)
+            engine.start(.init(callID: "initial-mute", videoCapable: false))
+            engine.configure(callID: "initial-mute", muted: requestedMuted, video: false)
+            wait(for: [ready], timeout: 2)
+            XCTAssertEqual(audio.muteStatesAtStart, [requestedMuted],
+                           "Audio must start with the requested state, without a temporary opposite mute state")
+#if os(macOS)
+            XCTAssertEqual(audio.muteStatesAtDeviceSelection, [requestedMuted],
+                           "Selecting a device may restart audio and must receive the requested state first")
+#endif
+            engine.stop()
+            wait(for: [stopped], timeout: 2)
+            audio.stopped = nil
+        }
+    }
+
+    func testAudioResumeUsesLatestMuteStateBeforeRestart() {
+        for initiallyMuted in [false, true] {
+            let ready = expectation(description: "initial audio ready")
+            let suspended = expectation(description: "audio suspended")
+            let restarted = expectation(description: "audio restarted")
+            let cleaned = expectation(description: "audio cleaned up")
+            let audio = CallAudioProbe()
+            let engine = IrisCallMediaEngine(send: { _, _, _, _, _, _ in }, frame: { _, _, _ in },
+                connectionChanged: { _, _ in ready.fulfill() }, requestKeyFrame: { _ in },
+                failed: { _, message in XCTFail(message) }, audioForTesting: audio)
+            engine.start(.init(callID: "resume-mute", videoCapable: false))
+            engine.configure(callID: "resume-mute", muted: initiallyMuted, video: false)
+            wait(for: [ready], timeout: 2)
+            audio.stopped = { suspended.fulfill() }
+            engine.configure(callID: nil, muted: !initiallyMuted, video: false)
+            wait(for: [suspended], timeout: 2)
+            audio.stopped = { cleaned.fulfill() }
+            audio.didStart = { restarted.fulfill() }
+            engine.configure(callID: "resume-mute", muted: !initiallyMuted, video: false)
+            wait(for: [restarted], timeout: 2)
+            XCTAssertEqual(audio.muteStatesAtStart, [initiallyMuted, !initiallyMuted],
+                           "A restarted graph must use the latest intent, for mute and unmute alike")
+#if os(macOS)
+            XCTAssertEqual(audio.muteStatesAtDeviceSelection, [initiallyMuted, !initiallyMuted])
+#endif
+            engine.stop()
+            wait(for: [cleaned], timeout: 2)
+            audio.didStart = nil
+            audio.stopped = nil
+        }
+    }
+
 #if os(macOS)
     func testChangingAudioDevicesDoesNotRestartCallOrTransport() {
         let ready = expectation(description: "call ready")

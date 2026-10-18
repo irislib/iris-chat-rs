@@ -108,25 +108,37 @@ The release tag is the actual release date: `vYYYY.M.D`. If another immutable
 build is needed on the same date, use `.1`, `.2`, and so on. Never move or
 replace a published tag.
 
-Local checks are optional and should be chosen according to the release risk:
+Choose pre-release checks according to the changed components and release risk:
 
 ```bash
 just verify-fast
 ./scripts/test-release-gate --full
 ```
 
-The hosted release workflow runs the authoritative release gate.
+Pre-release validation can run locally, on hosted CI, or a combination of both.
+Keep the actual source revision, commands, toolchain, results, and artifact
+checksums with each result. A full successful native CI run is convenient
+coverage, but its execution location is not a release requirement.
 
-Release workflow and release-note edits run the short **Release checks**
-workflow. Changes limited to Markdown, `.github/workflows/release.yml`, and
+Reuse successful checks when the relevant production code, tests, dependencies,
+and build inputs are unchanged. Record the exact compared inputs and original
+tested revision; do not relabel an older result as a new build. Run focused
+regressions and the affected platform checks for changed inputs. A change to
+one desktop view does not require rebuilding unrelated mobile platforms or
+repeating unchanged device-link, web, and protocol checks. Shared-core changes
+need coverage for their affected consumers and physical paths. Preserve failed
+results; skipped checks and infrastructure failures do not count as passes.
+
+Release workflow and release-note edits use the short **Release checks**
+workflow or the equivalent local checks at the candidate revision. Changes
+limited to Markdown, `.github/workflows/release.yml`, and
 `scripts/test_release_workflow.py` do not restart the full native CI matrix.
-Before tagging, require all nine jobs to succeed in a full CI run from `main`
-with the default scope, or an explicitly selected `all` run. Skipped platform
-jobs do not qualify. Record the run ID and source commit, then compare that
-commit with the candidate: only the excluded paths above may differ. Any other
-difference requires a new full CI run. When Release checks applies, require it
-to succeed at the exact candidate commit and record that run ID too.
-The tagged release still runs every release and mesh resource gate.
+Before tagging, retain a coverage record connecting the final source to each
+required result, including any unchanged-input reuse. A focused pass does not
+stand in for unrelated platform coverage or a required physical-device check.
+
+The tagged GitHub release workflow remains the release builder and runs every
+release and mesh resource gate before publishing its signed, attested assets.
 
 Bluetooth changes also require a physical iPhone/Android check before release.
 `--on-device` checks LAN visibility; it does not exercise Bluetooth, and the

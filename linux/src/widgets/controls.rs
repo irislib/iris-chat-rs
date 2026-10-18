@@ -26,6 +26,12 @@ button.nearby-avatar-button {
     min-height: 0;
     padding: 0;
 }
+button.nearby-preview-button {
+    min-width: 0;
+    min-height: 0;
+    padding: 0;
+    border: 0;
+}
 button.reaction-chip {
     border-radius: 9999px;
     min-width: 0;
