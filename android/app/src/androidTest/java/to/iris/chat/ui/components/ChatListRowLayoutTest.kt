@@ -45,18 +45,22 @@ class ChatListRowLayoutTest {
             }
         }
         for (w in listOf(280, 352)) for (fontScale in listOf(1f, 1.5f)) {
-            compose.runOnIdle { width.value = w; scale.value = fontScale }
+            compose.runOnIdle {
+                width.value = w; scale.value = fontScale
+                preview.value = null; unread.value = 0
+            }
+            compose.mainClock.advanceTimeByFrame()
             compose.waitForIdle()
             val original = compose.onNodeWithTag("chat-row").fetchSemanticsNode().boundsInRoot
             val following = compose.onNodeWithTag("following-chat").fetchSemanticsNode().boundsInRoot.top
             assertTrue(original.height > 0)
-            for (text in listOf(null, "", "Short preview", "A preview that wraps onto another line. ".repeat(5),
+            for (text in listOf(null, "", "  \n  ", "Short preview", "A preview that wraps onto another line. ".repeat(5),
                 "One\nTwo\nThree", "Draft: A new draft", "typing…", "Hello 👋 🎉")) {
                 for (count in listOf(0L, 123L)) {
                     compose.runOnIdle { preview.value = text; unread.value = count }
                     compose.waitForIdle()
                     val actual = compose.onNodeWithTag("chat-row").fetchSemanticsNode().boundsInRoot
-                    assertEquals("Row height at width $w, font scale $fontScale", original.height, actual.height, 0.5f)
+                    assertEquals("Row height at width $w, font scale $fontScale, preview=$text, unread=$count", original.height, actual.height, 0.5f)
                     assertEquals("Following chat moved", following,
                         compose.onNodeWithTag("following-chat").fetchSemanticsNode().boundsInRoot.top, 0.5f)
                 }

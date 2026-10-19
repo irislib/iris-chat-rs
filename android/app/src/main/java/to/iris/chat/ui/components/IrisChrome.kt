@@ -837,6 +837,8 @@ fun IrisChatListRow(
     onLongClick: (() -> Unit)? = null,
 ) {
     val presentedTitle = personName(title, ownerPubkeyHex, explicitName)
+    val previewStyle = MaterialTheme.typography.bodyMedium
+    val previewHeight = with(LocalDensity.current) { previewStyle.lineHeight.toDp() * 2 }
     val palette = IrisTheme.palette
     val haptics = rememberIrisHapticFeedback()
     val interactionSource = remember { MutableInteractionSource() }
@@ -931,8 +933,8 @@ fun IrisChatListRow(
                 }
                 Text(
                     text = preview.orEmpty(),
-                    modifier = Modifier.weight(1f),
-                    style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.weight(1f).height(previewHeight),
+                    style = previewStyle,
                     color = palette.muted,
                     minLines = 2,
                     maxLines = 2,
