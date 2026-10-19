@@ -338,19 +338,21 @@ fun IrisAvatar(
     imageData: ByteArray? = null,
     showsNearbyBadge: Boolean = true,
 ) {
+    val profiles = LocalUserProfiles.current
     val isPerson = !ownerPubkeyHex.isNullOrBlank()
-    val profile = if (isPerson) LocalUserProfiles.current?.manager?.userProfile(ownerPubkeyHex!!) else null
+    val profile = if (isPerson) profiles?.manager?.userProfile(ownerPubkeyHex!!) else null
     val resolvedLabel = if (isPerson) profile?.name?.name
         ?: to.iris.chat.rust.presentPersonName("", ownerPubkeyHex.orEmpty(), null).name else label
     val resolvedPicture = if (isPerson) profile?.pictureUrl else imageUrl
     // New identity/photo/account must never render an old async image for one frame.
-    androidx.compose.runtime.key(LocalUserProfiles.current?.account, ownerPubkeyHex, resolvedPicture, LocalImagePreferences.current) {
+    androidx.compose.runtime.key(profiles?.account, ownerPubkeyHex, resolvedPicture, LocalImagePreferences.current) {
+        val profileData = if (isPerson && profiles != null) rememberNhashImageData(profiles.manager, resolvedPicture).value else null
         IrisAvatarImage(
             socialConnection = if (isPerson) profile?.socialConnection else socialConnection,
             ownerPubkeyHex = ownerPubkeyHex, label = resolvedLabel, modifier = modifier,
-            size = size, emphasize = emphasize, imageUrl = resolvedPicture,
+            size = size, emphasize = emphasize, imageUrl = if (isPerson && parseNhashUri(resolvedPicture) != null) null else resolvedPicture,
             imageRequest = if (isPerson) null else imageRequest,
-            imageData = if (isPerson) null else imageData, showsNearbyBadge = showsNearbyBadge,
+            imageData = if (isPerson) profileData else imageData, showsNearbyBadge = showsNearbyBadge,
         )
     }
 }

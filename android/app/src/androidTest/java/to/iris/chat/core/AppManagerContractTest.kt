@@ -5,7 +5,7 @@ import android.graphics.Bitmap
 import to.iris.chat.ui.components.IrisAvatarBitmapCache
 import to.iris.chat.ui.screens.SelectedImageThumbnailCache
 import to.iris.chat.ui.screens.ChatAttachmentPreviewBitmapCache
-import to.iris.chat.ui.screens.NhashImageDataCache
+import to.iris.chat.ui.components.NhashImageDataCache
 import android.content.ContextWrapper
 import java.io.File
 import android.os.SystemClock

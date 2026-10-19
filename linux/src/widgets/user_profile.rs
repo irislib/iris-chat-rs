@@ -88,3 +88,8 @@ pub fn name(manager: &AppManager, owner: &str) -> gtk::Label {
     });
     label
 }
+
+#[cfg(feature = "ui-tests")]
+mod tests;
+#[cfg(feature = "ui-tests")]
+pub use tests::verify_ui;

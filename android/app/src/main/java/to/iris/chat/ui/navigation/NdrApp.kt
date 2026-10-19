@@ -111,7 +111,7 @@ import to.iris.chat.ui.screens.SplashViewModel
 import to.iris.chat.ui.screens.AddDeviceScreen
 import to.iris.chat.ui.screens.WelcomeScreen
 import to.iris.chat.ui.screens.rememberNearbySnapshotState
-import to.iris.chat.ui.screens.rememberNhashImageData
+import to.iris.chat.ui.components.rememberNhashImageData
 
 @Composable
 fun NdrApp(

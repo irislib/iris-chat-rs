@@ -1,5 +1,7 @@
 package to.iris.chat.ui.screens
 
+import to.iris.chat.ui.components.rememberNhashImageData
+
 import android.content.Intent
 import android.graphics.Bitmap
 import android.net.Uri

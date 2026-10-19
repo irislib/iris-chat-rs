@@ -102,6 +102,7 @@ pub fn run_layout() {
         drain();
         manager.current_state().current_chat.is_some()
     });
+    crate::widgets::user_profile::verify_ui(manager.clone());
     crate::app_manager::verify_search_ui(manager.clone());
     crate::screens::chat_list::verify_timestamps_ui(manager.clone());
     eprintln!("Checking responsive layout");

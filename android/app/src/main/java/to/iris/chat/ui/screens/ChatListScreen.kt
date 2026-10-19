@@ -1,6 +1,7 @@
 package to.iris.chat.ui.screens
 
-import to.iris.chat.core.AccountImageSession
+import to.iris.chat.ui.components.rememberNhashImageData
+
 
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.snap
@@ -54,7 +55,6 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.text.input.ImeAction
@@ -73,7 +73,6 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlin.math.roundToInt
-import java.util.concurrent.ConcurrentHashMap
 import to.iris.chat.core.AppManager
 import to.iris.chat.nearby.IrisNearbyService
 import to.iris.chat.nearby.nearbyPeerChat
@@ -180,7 +179,6 @@ fun ChatListScreen(
                 title = "Chats",
                 leading = {
                     if (account != null) {
-                        val accountAvatarBytes by rememberNhashImageData(appManager, account.pictureUrl)
                         Box(
                             modifier =
                                 Modifier
@@ -196,24 +194,7 @@ fun ChatListScreen(
                                     },
                             contentAlignment = Alignment.Center,
                         ) {
-                            IrisAvatar(
-                                label = account.displayName,
-                                emphasize = true,
-                                size = 32.dp,
-                                imageRequest =
-                                    account.pictureUrl
-                                        ?.takeIf { it.startsWith("http://") || it.startsWith("https://") }
-                                        ?.let { url ->
-                                            imageLoadRequest(
-                                                originalSrc = url,
-                                                preferences = preferences,
-                                                width = 88u,
-                                                height = 88u,
-                                                square = true,
-                                            )
-                                        },
-                                imageData = accountAvatarBytes,
-                            )
+                            IrisAvatar(ownerPubkeyHex = account.publicKeyHex, emphasize = true, size = 32.dp)
                         }
                     }
                 },
@@ -967,55 +948,6 @@ private fun nearbyPeerResolvedName(
         knownDirectChatNames[owner]?.let { return it }
     }
     return peer.name.trim().ifEmpty { "Nearby" }
-}
-
-@Composable
-internal fun rememberNhashImageData(
-    appManager: AppManager,
-    pictureUrl: String?,
-) = produceState(
-    initialValue = parseNhashUri(pictureUrl)?.let { NhashImageDataCache.get(it) },
-    pictureUrl,
-) {
-    val nhash = parseNhashUri(pictureUrl)
-    if (nhash == null) {
-        value = null
-        return@produceState
-    }
-    NhashImageDataCache.get(nhash)?.let {
-        value = it
-        return@produceState
-    }
-    val generation = AccountImageSession.current()
-    val loaded = appManager.resolveHashtreePictureBytes(nhash)
-    if (AccountImageSession.isCurrent(generation)) {
-        loaded?.let { NhashImageDataCache.put(nhash, it, generation) }
-        value = loaded
-    }
-}
-
-internal object NhashImageDataCache {
-    private val images = ConcurrentHashMap<String, ByteArray>()
-    init { AccountImageSession.register { images.clear() } }
-
-    fun get(nhash: String): ByteArray? = images[nhash]
-
-    fun put(nhash: String, data: ByteArray, generation: Long) {
-        AccountImageSession.ifCurrent(generation) { images[nhash] = data }
-    }
-}
-
-internal fun parseNhashUri(value: String?): String? {
-    val trimmed = value?.trim().orEmpty()
-    val prefix = when {
-        trimmed.startsWith("htree://") -> "htree://"
-        trimmed.startsWith("nhash://") -> "nhash://"
-        else -> return null
-    }
-    return trimmed
-        .removePrefix(prefix)
-        .substringBefore("/")
-        .takeIf(String::isNotBlank)
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
