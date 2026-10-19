@@ -350,12 +350,16 @@ impl AppCore {
     }
 
     pub(super) fn owner_display_name(&self, owner_hex: &str) -> Option<String> {
-        let profile = self.owner_profiles.get(owner_hex)?;
+        let profile = self.owner_profiles.get(owner_hex);
         [
-            profile.nickname.as_deref(),
-            profile.contact_memory.accepted_name.as_deref(),
-            profile.display_name.as_deref(),
-            profile.name.as_deref(),
+            profile.and_then(|p| p.nickname.as_deref()),
+            profile.and_then(|p| p.contact_memory.accepted_name.as_deref()),
+            self.user_discovery
+                .users
+                .get(owner_hex)
+                .and_then(|p| p.petname.as_deref()),
+            profile.and_then(|p| p.display_name.as_deref()),
+            profile.and_then(|p| p.name.as_deref()),
         ]
         .into_iter()
         .flatten()

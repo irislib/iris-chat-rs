@@ -96,7 +96,7 @@ struct IrisComposerMentionSuggestions: View {
                     HStack(spacing: 10) {
                         IrisAvatar(ownerPubkeyHex: person.id, size: 32, showsNearbyBadge: false)
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(person.name).font(.callout).lineLimit(1)
+                            IrisUserName(ownerPubkeyHex: person.id).font(.callout).lineLimit(1)
                             if completion.results.filter({ $0.name == person.name }).count > 1 {
                                 Text(String(person.id.prefix(8))).font(.caption2).foregroundStyle(palette.muted)
                             }

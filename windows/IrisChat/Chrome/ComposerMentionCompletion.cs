@@ -86,12 +86,13 @@ internal sealed class ComposerMentionCompletion
         for (var i = 0; i < _results.Count; i++)
         {
             var index = i; var person = _results[i];
-            var duplicate = _results.Count(p => p.displayName == person.displayName) > 1;
             var row = new StackPanel { Orientation = Orientation.Horizontal };
-            row.Children.Add(new Avatar { OwnerPubkeyHex = person.ownerPubkeyHex, Label = person.displayName,
+            row.Children.Add(new Avatar { OwnerPubkeyHex = person.ownerPubkeyHex,
                 Size = 32, ShowsNearbyBadge = false, Margin = new Thickness(0, 0, 10, 0) });
-            row.Children.Add(new TextBlock { Text = person.displayName + (duplicate ? "  · " + person.ownerPubkeyHex[..8] : ""),
+            row.Children.Add(new UserName { OwnerPubkeyHex = person.ownerPubkeyHex,
                 VerticalAlignment = VerticalAlignment.Center, TextTrimming = TextTrimming.CharacterEllipsis });
+            if (_results.Count(p => p.displayName == person.displayName) > 1)
+                row.Children.Add(new TextBlock { Text = " · " + person.ownerPubkeyHex[..8], VerticalAlignment = VerticalAlignment.Center });
             var button = new Button { Content = row,
                 Focusable = false, Cursor = Cursors.Hand, HorizontalContentAlignment = HorizontalAlignment.Left,
                 MinWidth = 220, Padding = new Thickness(10, 7, 10, 7) };

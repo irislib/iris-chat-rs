@@ -168,9 +168,9 @@ internal fun ChatMentionSuggestions(completion: ChatMentionCompletion) {
                             .testTag("chatMention-${person.ownerPubkeyHex}"),
                     ) {
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-                            IrisAvatar(ownerPubkeyHex = person.ownerPubkeyHex, label = person.displayName, size = 32.dp)
+                            IrisAvatar(ownerPubkeyHex = person.ownerPubkeyHex, size = 32.dp, showsNearbyBadge = false)
                             Column {
-                                Text(person.displayName, style = MaterialTheme.typography.bodyMedium)
+                                to.iris.chat.ui.components.IrisUserName(person.ownerPubkeyHex, style = MaterialTheme.typography.bodyMedium)
                                 if (results.count { it.displayName == person.displayName } > 1) {
                                     Text(person.ownerPubkeyHex.take(8), style = MaterialTheme.typography.labelSmall)
                                 }

@@ -24,6 +24,20 @@ public partial class Avatar : UserControl
     private string? _loadingKey;
     private int _loadVersion;
     private AppManager? _preferencesManager;
+    private UserProfileSnapshot? _profile;
+    private (string?, ulong, string?)? _profileKey;
+
+    private bool IsPerson => !string.IsNullOrEmpty(OwnerPubkeyHex);
+    private void RefreshProfile()
+    {
+        var manager = _preferencesManager ?? (Application.Current is App app ? app.Manager : null);
+        var key = (manager?.Account?.publicKeyHex, manager?.ProfileRevision ?? 0, OwnerPubkeyHex);
+        if (_profileKey == key) return;
+        _profileKey = key;
+        _profile = IsPerson && manager?.Account != null ? manager.UserProfile(OwnerPubkeyHex!) : null;
+        UpdateLabel(); UpdateImage(); UpdateSocialBadge();
+    }
+
 
     public static readonly DependencyProperty LabelProperty =
         DependencyProperty.Register(nameof(Label), typeof(string), typeof(Avatar),
@@ -43,7 +57,7 @@ public partial class Avatar : UserControl
 
     public static readonly DependencyProperty OwnerPubkeyHexProperty =
         DependencyProperty.Register(nameof(OwnerPubkeyHex), typeof(string), typeof(Avatar),
-            new PropertyMetadata(null, (d, _) => ((Avatar)d).RefreshNearbyState()));
+            new PropertyMetadata(null, (d, _) => { var avatar = (Avatar)d; avatar.RefreshProfile(); avatar.RefreshNearbyState(); }));
 
     public static readonly DependencyProperty IsNearbyProperty =
         DependencyProperty.Register(nameof(IsNearby), typeof(bool), typeof(Avatar),
@@ -89,7 +103,7 @@ public partial class Avatar : UserControl
 
     private void UpdateSocialBadge()
     {
-        var connection = SocialConnection;
+        var connection = IsPerson ? _profile?.socialConnection : SocialConnection;
         FavoriteMark.Visibility = connection?.isFavorite == true ? Visibility.Visible : Visibility.Collapsed;
         SocialMark.Visibility = connection?.badge == null ? Visibility.Collapsed : Visibility.Visible;
         if (connection?.badge == null) return;
@@ -144,6 +158,7 @@ public partial class Avatar : UserControl
         _preferencesManager = Application.Current is App app ? app.Manager : null;
         if (_preferencesManager != null)
             _preferencesManager.PropertyChanged += OnPreferencesChanged;
+        RefreshProfile();
         UpdateImage();
         RefreshNearbyState();
     }
@@ -159,6 +174,7 @@ public partial class Avatar : UserControl
 
     private void OnPreferencesChanged(object? sender, PropertyChangedEventArgs e)
     {
+        if (e.PropertyName is nameof(AppManager.ProfileRevision) or nameof(AppManager.Account)) RefreshProfile();
         if (e.PropertyName == nameof(AppManager.Preferences)) UpdateImage();
         if (e.PropertyName is nameof(AppManager.Preferences) or nameof(AppManager.NearbySnapshot) or nameof(AppManager.Account))
             RefreshNearbyState();
@@ -192,19 +208,20 @@ public partial class Avatar : UserControl
 
     private void UpdateLabel()
     {
-        var label = Label ?? string.Empty;
+        var label = IsPerson ? _profile?.name.name
+            ?? Native.PresentPersonName("", OwnerPubkeyHex!, null).name : Label ?? string.Empty;
         Initials.Text = ComputeInitials(label);
         BackgroundBorder.Background = new SolidColorBrush(ColorFor(label));
     }
 
     private async void UpdateImage()
     {
-        var url = PictureUrl?.Trim();
+        var url = (IsPerson ? _profile?.pictureUrl : PictureUrl)?.Trim();
         var urls = string.IsNullOrEmpty(url) ? Array.Empty<string>() : ImageUrls(url);
         var preferences = Application.Current is App app ? app.Manager?.Preferences : null;
         var allowOriginalRedirects = preferences != null &&
             (!preferences.imageProxyEnabled || preferences.imageProxyFallbackEnabled);
-        var key = $"{allowOriginalRedirects}\n{string.Join("\n", urls)}";
+        var key = $"{_profileKey}\n{allowOriginalRedirects}\n{string.Join("\n", urls)}";
         if (_loadingKey == key) return;
         _loadingKey = key;
         var version = ++_loadVersion;

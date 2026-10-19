@@ -17,6 +17,7 @@ struct Context {
     token: Token,
 }
 struct State {
+    manager: RefCell<Option<std::rc::Weak<crate::app_manager::AppManager>>>,
     input: glib::WeakRef<gtk::TextView>,
     root: glib::WeakRef<gtk::Box>,
     scroll: glib::WeakRef<gtk::ScrolledWindow>,
@@ -33,6 +34,10 @@ struct State {
 }
 
 impl MentionCompletion {
+    pub fn bind_profiles(&self, manager: &Rc<crate::app_manager::AppManager>) {
+        *self.state.manager.borrow_mut() = Some(Rc::downgrade(manager));
+    }
+
     pub fn new(
         input: &gtk::TextView,
         anchor: &impl IsA<gtk::Widget>,
@@ -44,6 +49,7 @@ impl MentionCompletion {
         root.set_visible(false);
         let scroll = super::completion_popover::attach(input, &root, anchor);
         let state = Rc::new(State {
+            manager: RefCell::new(None),
             input: input.downgrade(),
             root: root.downgrade(),
             scroll: scroll.downgrade(),
@@ -286,11 +292,33 @@ impl State {
             };
             let button = gtk::Button::new();
             let row = gtk::Box::new(gtk::Orientation::Horizontal, 10);
-            row.append(&adw::Avatar::new(32, Some(&entry.display_name), true));
-            let name = gtk::Label::new(Some(&label));
+            let manager = self
+                .manager
+                .borrow()
+                .as_ref()
+                .and_then(std::rc::Weak::upgrade);
+            let name = if let Some(manager) = manager.as_ref() {
+                row.append(&crate::widgets::user_profile::avatar(
+                    manager,
+                    &entry.owner_pubkey_hex,
+                    32,
+                    false,
+                ));
+                let name = crate::widgets::user_profile::name(manager, &entry.owner_pubkey_hex);
+                name
+            } else {
+                row.append(&adw::Avatar::new(32, Some(&entry.display_name), true));
+                gtk::Label::new(Some(&label))
+            };
             name.set_xalign(0.0);
             name.set_ellipsize(gtk::pango::EllipsizeMode::End);
             row.append(&name);
+            if manager.is_some() && duplicate {
+                row.append(&gtk::Label::new(Some(&format!(
+                    " · {}",
+                    &entry.owner_pubkey_hex[..8]
+                ))));
+            }
             button.set_child(Some(&row));
             button.add_css_class("flat");
             if index == self.selected.get() {

@@ -131,6 +131,7 @@ fun NdrApp(
     val splashViewModel = remember { SplashViewModel(appManager) }
     val bootstrapState by splashViewModel.bootstrapState.collectAsStateWithLifecycle()
     val router by appManager.router.collectAsStateWithLifecycle()
+    val profileRevision by appManager.userDiscoveryRevision.collectAsStateWithLifecycle()
     val preferences by appManager.preferences.collectAsStateWithLifecycle()
     val messageFontSize by appManager.messageFontSize.size.collectAsStateWithLifecycle()
     val networkStatus by appManager.networkStatus.collectAsStateWithLifecycle()
@@ -187,6 +188,9 @@ fun NdrApp(
     CompositionLocalProvider(
         LocalIrisOfflineBannerState provides offlineBannerState,
         LocalImagePreferences provides preferences,
+        to.iris.chat.ui.components.LocalUserProfiles provides
+            to.iris.chat.ui.components.UserProfiles(appManager, profileRevision,
+                (bootstrapState as? AccountBootstrapState.LoggedIn)?.account?.publicKeyHex),
         LocalNearbyAvatarOwners provides nearbyAvatarOwners(
             shareNearbySnapshot, preferences.nearbyEnabled,
             (bootstrapState as? AccountBootstrapState.LoggedIn)?.account?.publicKeyHex,

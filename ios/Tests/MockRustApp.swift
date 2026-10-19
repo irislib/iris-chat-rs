@@ -6,6 +6,12 @@ import Foundation
 #endif
 
 final class MockRustApp: RustAppClient {
+    var userProfiles: [String: UserProfileSnapshot] = [:]
+    func userProfile(ownerPubkeyHex: String) -> UserProfileSnapshot {
+        userProfiles[ownerPubkeyHex] ?? UserProfileSnapshot(ownerPubkeyHex: ownerPubkeyHex,
+            name: presentPersonName(displayName: "", identity: ownerPubkeyHex, explicitName: nil),
+            pictureUrl: nil, socialConnection: nil)
+    }
     var currentState: AppState
     var supportBundleJson = "{\"ok\":true}"
     var peerDebug: PeerProfileDebugSnapshot?

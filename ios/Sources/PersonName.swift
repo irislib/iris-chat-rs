@@ -31,3 +31,28 @@ func explicitPersonName(nickname: String?, profileName: String?) -> String? {
 func fallbackProfileNameForIdentity(_ identity: String) -> String {
     presentPersonName(displayName: "", identity: identity, explicitName: nil).name
 }
+
+/// Identity-only person name. Groups and custom labels continue to use Text.
+struct IrisUserName: View {
+    let ownerPubkeyHex: String
+    var manager: AppManager? = nil
+    @Environment(\.irisAvatarContext) private var context
+
+    var body: some View {
+        if let profiles = context?.profiles ?? manager?.profiles {
+            IrisResolvedUserName(owner: ownerPubkeyHex, profiles: profiles)
+        } else {
+            Text(fallbackProfileNameForIdentity(ownerPubkeyHex)).italic()
+        }
+    }
+}
+
+private struct IrisResolvedUserName: View {
+    let owner: String
+    @ObservedObject var profiles: IrisProfileStore
+    var body: some View {
+        let profile = profiles[owner]
+        let label = Text(profile?.name ?? fallbackProfileNameForIdentity(owner))
+        if profile?.isFallback != false { label.italic() } else { label }
+    }
+}

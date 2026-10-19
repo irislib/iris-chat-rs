@@ -925,6 +925,7 @@ impl AppCore {
     }
 
     fn emit_state_inner(&mut self) {
+        self.refresh_user_profiles();
         // Skip the push if nothing user-visible changed since the last
         // emit. Compare every field except `rev`, which we own and bump
         // ourselves. On Android debug each FullState push triggers a

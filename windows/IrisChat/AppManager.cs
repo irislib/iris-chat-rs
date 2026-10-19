@@ -102,6 +102,10 @@ public sealed partial class AppManager : INotifyPropertyChanged
 
     // ────────────────────────────── projection ────────────────────────────────
 
+    // Direct memory read in Rust, independent of the actor/database queues.
+    internal UserProfileSnapshot UserProfile(string owner) => _ffi.UserProfile(owner);
+    public ulong ProfileRevision => _state.userDiscoveryRevision;
+
     public AppState State => _state;
     public CallController Calls { get; }
     internal void DispatchCall(AppAction action) => DispatchToRust(action);
@@ -1286,6 +1290,7 @@ public sealed partial class AppManager : INotifyPropertyChanged
     private void NotifyAll()
     {
         Notify(nameof(State));
+        Notify(nameof(ProfileRevision));
         Notify(nameof(BootstrapInFlight));
         Notify(nameof(ActiveScreen));
         Notify(nameof(CanNavigateBack));

@@ -130,6 +130,7 @@ mod persistence;
 mod private_contacts;
 mod private_device_labels;
 mod profile;
+mod profile_directory;
 pub(crate) use profile::{fallback_profile_name_for_identity, profile_name_for_identity};
 mod profile_helpers;
 mod profile_search;
@@ -678,6 +679,7 @@ pub struct AppCore {
     screen_stack: Vec<Screen>,
     next_message_id: u64,
     owner_profiles: BTreeMap<String, OwnerProfileRecord>,
+    profile_directory: profile_directory::ProfileDirectory,
     profile_metadata_fetch_inflight: HashSet<String>,
     app_keys: BTreeMap<String, KnownAppKeys>,
     direct_chat_capability_runtime: DirectChatCapabilityRuntime,

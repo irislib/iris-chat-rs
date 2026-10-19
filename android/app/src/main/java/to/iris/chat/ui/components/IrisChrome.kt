@@ -329,6 +329,36 @@ fun IrisTopBar(
 fun IrisAvatar(
     socialConnection: to.iris.chat.rust.SocialConnectionSnapshot? = null,
     ownerPubkeyHex: String? = null,
+    label: String = "",
+    modifier: Modifier = Modifier,
+    size: Dp = 40.dp,
+    emphasize: Boolean = false,
+    imageUrl: String? = null,
+    imageRequest: ImageLoadRequest? = null,
+    imageData: ByteArray? = null,
+    showsNearbyBadge: Boolean = true,
+) {
+    val isPerson = !ownerPubkeyHex.isNullOrBlank()
+    val profile = if (isPerson) LocalUserProfiles.current?.manager?.userProfile(ownerPubkeyHex!!) else null
+    val resolvedLabel = if (isPerson) profile?.name?.name
+        ?: to.iris.chat.rust.presentPersonName("", ownerPubkeyHex.orEmpty(), null).name else label
+    val resolvedPicture = if (isPerson) profile?.pictureUrl else imageUrl
+    // New identity/photo/account must never render an old async image for one frame.
+    androidx.compose.runtime.key(LocalUserProfiles.current?.account, ownerPubkeyHex, resolvedPicture, LocalImagePreferences.current) {
+        IrisAvatarImage(
+            socialConnection = if (isPerson) profile?.socialConnection else socialConnection,
+            ownerPubkeyHex = ownerPubkeyHex, label = resolvedLabel, modifier = modifier,
+            size = size, emphasize = emphasize, imageUrl = resolvedPicture,
+            imageRequest = if (isPerson) null else imageRequest,
+            imageData = if (isPerson) null else imageData, showsNearbyBadge = showsNearbyBadge,
+        )
+    }
+}
+
+@Composable
+private fun IrisAvatarImage(
+    socialConnection: to.iris.chat.rust.SocialConnectionSnapshot? = null,
+    ownerPubkeyHex: String? = null,
     label: String,
     modifier: Modifier = Modifier,
     size: Dp = 40.dp,

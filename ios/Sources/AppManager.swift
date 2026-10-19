@@ -292,6 +292,7 @@ final class FileAccountSecretStore: AccountSecretStore, PendingDeviceLinkSecretS
 
 protocol RustAppClient: AnyObject {
     func state() -> AppState
+    func userProfile(ownerPubkeyHex: String) -> UserProfileSnapshot
     func dispatch(action: AppAction) throws
     func acceptDirectFiles(chatId: String, transferId: String, destination: DirectFileDestination) throws
     func search(query: String, scopeChatId: String?, limit: UInt32) -> SearchResultSnapshot
@@ -308,6 +309,11 @@ protocol RustAppClient: AnyObject {
 }
 
 extension RustAppClient {
+    func userProfile(ownerPubkeyHex: String) -> UserProfileSnapshot {
+        UserProfileSnapshot(ownerPubkeyHex: ownerPubkeyHex,
+            name: presentPersonName(displayName: "", identity: ownerPubkeyHex, explicitName: nil),
+            pictureUrl: nil, socialConnection: nil)
+    }
     func setFipsBleEnabled(_ enabled: Bool, nearbyLanEnabled: Bool) {}
 }
 
@@ -352,6 +358,10 @@ final class LiveRustAppClient: RustAppClient {
 
     func state() -> AppState {
         ffi.stateSafely()
+    }
+
+    func userProfile(ownerPubkeyHex: String) -> UserProfileSnapshot {
+        ffi.userProfile(ownerPubkeyHex: ownerPubkeyHex)
     }
 
     func acceptDirectFiles(chatId: String, transferId: String, destination: DirectFileDestination) throws {
@@ -1004,6 +1014,7 @@ final class AppManager: ObservableObject {
         }
         self.state = initialState
         resolvedRust.listenForUpdates(reconciler: reconciler)
+        profiles.bind(resolvedRust)
         profiles.apply(initialState)
         let initialDeviceRevoked = initialState.account?.authorizationState == .revoked
         if !initialDeviceRevoked {
@@ -1432,14 +1443,11 @@ final class AppManager: ObservableObject {
     /// so keep them off the rendering thread and the chat-page queue.
     func search(_ query: String, scopeChatId: String? = nil, limit: UInt32 = 50) async -> SearchResultSnapshot {
         let runner = ChatPageLoadRunner(rust: rust)
-        let account = state.account?.publicKeyHex
-        let revision = state.rev
         let result: SearchResultSnapshot = await withCheckedContinuation { continuation in
             Self.searchQueue.async {
                 continuation.resume(returning: runner.search(query: query, scopeChatId: scopeChatId, limit: limit))
             }
         }
-        profiles.apply(result, account: account, replaceExisting: state.rev == revision)
         return result
     }
 
@@ -2759,6 +2767,7 @@ final class AppManager: ObservableObject {
             let nextReconciler = UpdateBridge(owner: self, generation: generation)
             reconciler = nextReconciler
             rust = nextRust
+            profiles.bind(nextRust)
             profileReadRunner = ProfileReadRunner(rust: nextRust)
             nextRust.listenForUpdates(reconciler: nextReconciler)
             localResetInFlight = false
@@ -2873,7 +2882,6 @@ final class AppManager: ObservableObject {
                 bluetoothPeerIds: bluetoothPeerIds,
                 lanPeerIds: lanPeerIds
             )
-            profiles.apply(snapshot)
         case .fullState(let nextState):
             applyFullState(nextState)
         }

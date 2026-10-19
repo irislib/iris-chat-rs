@@ -477,6 +477,7 @@ impl Composer {
                 }
             },
         );
+        mention_completion.bind_profiles(manager);
         let mentions_for_key = mention_completion.clone();
         let emoji_completion = super::emoji_completion::EmojiCompletion::new(&input, &row);
         key_controller.set_propagation_phase(gtk::PropagationPhase::Capture);

@@ -8,8 +8,22 @@ pub fn user_avatar(
     owner: &str,
     manager: &AppManager,
 ) -> gtk::Overlay {
-    let overlay = avatar(image, connection);
-    let size = (image.size() * 2 / 5).clamp(12, 24);
+    if owner.is_empty() {
+        return avatar(image, connection);
+    } // Group/custom image.
+    let root = super::user_profile::avatar(manager, owner, image.size(), true);
+    let overlay = gtk::Overlay::new();
+    overlay.set_child(Some(&root));
+    overlay
+}
+
+pub(super) fn add_nearby_badge(
+    overlay: &gtk::Overlay,
+    avatar_size: i32,
+    owner: &str,
+    manager: &AppManager,
+) {
+    let size = (avatar_size * 2 / 5).clamp(12, 24);
     let badge = gtk::Box::new(gtk::Orientation::Horizontal, 0);
     badge.add_css_class("nearby-avatar-badge");
     // GTK adds the CSS border outside the requested content size.
@@ -26,7 +40,6 @@ pub fn user_avatar(
     badge.append(&icon);
     manager.track_nearby_avatar_badge(owner, badge.upcast_ref());
     overlay.add_overlay(&badge);
-    overlay
 }
 
 pub fn avatar(avatar: &adw::Avatar, connection: Option<&SocialConnectionSnapshot>) -> gtk::Overlay {

@@ -21,3 +21,18 @@ fun explicitPersonName(owner: String?, state: AppState?): String? {
     val chat = state?.chatList?.firstOrNull { it.kind == ChatKind.DIRECT && it.chatId == owner }
     return explicitPersonName(chat?.nickname, chat?.profileName)
 }
+
+// A revision invalidates readers; all metadata/precedence stays in Rust.
+internal data class UserProfiles(val manager: to.iris.chat.core.AppManager, val revision: ULong, val account: String?)
+internal val LocalUserProfiles = androidx.compose.runtime.staticCompositionLocalOf<UserProfiles?> { null }
+
+@androidx.compose.runtime.Composable
+fun IrisUserName(
+    ownerPubkeyHex: String,
+    modifier: androidx.compose.ui.Modifier = androidx.compose.ui.Modifier,
+    style: androidx.compose.ui.text.TextStyle = androidx.compose.material3.MaterialTheme.typography.bodyMedium,
+) {
+    val profile = LocalUserProfiles.current?.manager?.userProfile(ownerPubkeyHex)
+    val name = profile?.name ?: presentPersonName("", ownerPubkeyHex, null)
+    androidx.compose.material3.Text(name.name, modifier = modifier, style = style, fontStyle = name.fontStyle)
+}

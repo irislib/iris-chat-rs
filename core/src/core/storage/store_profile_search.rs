@@ -6,6 +6,31 @@ use std::time::{SystemTime, UNIX_EPOCH};
 const MAX_PROFILE_SEARCH_CANDIDATES: i64 = 4_096;
 
 impl AppStore {
+    pub(crate) fn load_profile_directory_candidates(
+        &self,
+    ) -> anyhow::Result<std::collections::BTreeMap<String, ProfileSearchCandidate>> {
+        let conn = self
+            .conn
+            .lock()
+            .map_err(|_| anyhow::anyhow!("storage connection mutex poisoned"))?;
+        let mut statement = conn.prepare("SELECT owner_pubkey_hex, name, picture, created_at_secs FROM profile_search_candidates")?;
+        let rows = statement.query_map([], |row| {
+            let owner_pubkey_hex: String = row.get(0)?;
+            Ok((
+                owner_pubkey_hex.clone(),
+                ProfileSearchCandidate {
+                    owner_pubkey_hex,
+                    name: row.get(1)?,
+                    picture: row.get(2)?,
+                    created_at_secs: row.get::<_, i64>(3)? as u64,
+                    aliases: Vec::new(),
+                    nip05: None,
+                },
+            ))
+        })?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
     /// Cache globally discovered profiles in one transaction. Metadata older
     /// than the cached event is ignored; the result only reports changes to
     /// fields visible in search results.

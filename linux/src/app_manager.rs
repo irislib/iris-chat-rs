@@ -83,6 +83,7 @@ pub struct AppManager {
     nearby_update_rx: async_channel::Receiver<DesktopNearbySnapshot>,
     nearby_snapshot: RefCell<DesktopNearbySnapshot>,
     nearby_avatar_badges: RefCell<Vec<(String, glib::WeakRef<gtk::Widget>)>>,
+    user_profile_bindings: RefCell<Vec<crate::widgets::user_profile::Binding>>,
     local_state: RefCell<AppState>,
     last_rev_applied: Cell<u64>,
     bootstrap_in_flight: Cell<bool>,
@@ -239,6 +240,7 @@ impl AppManager {
             nearby_update_rx: nearby_rx,
             nearby_snapshot: RefCell::new(nearby_snapshot),
             nearby_avatar_badges: RefCell::new(Vec::new()),
+            user_profile_bindings: RefCell::new(Vec::new()),
             last_rev_applied: Cell::new(initial_state.rev),
             local_state: RefCell::new(initial_state),
             bootstrap_in_flight: Cell::new(persisted_restore_in_flight),
@@ -346,6 +348,17 @@ impl AppManager {
 
     pub fn app_data_dir(&self) -> &std::path::Path {
         &self.data_dir
+    }
+
+    pub fn user_profile(&self, owner: &str) -> iris_chat_core::UserProfileSnapshot {
+        self.ffi.user_profile(owner.to_owned())
+    }
+
+    pub(crate) fn track_user_profile(&self, mut binding: crate::widgets::user_profile::Binding) {
+        binding.refresh(self, &self.current_state());
+        let mut bindings = self.user_profile_bindings.borrow_mut();
+        bindings.retain(|binding| binding.is_alive());
+        bindings.push(binding);
     }
 
     pub fn current_state(&self) -> AppState {
@@ -530,6 +543,9 @@ impl AppManager {
                 }
                 self.last_rev_applied.set(rev);
                 *self.local_state.borrow_mut() = reconciled.clone();
+                self.user_profile_bindings
+                    .borrow_mut()
+                    .retain_mut(|binding| binding.refresh(self, &reconciled));
                 if reconciled.account.is_none() {
                     self.automatic_revocation_logout_in_flight.set(false);
                 }

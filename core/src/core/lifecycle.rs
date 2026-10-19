@@ -110,6 +110,7 @@ impl AppCore {
             screen_stack: Vec::new(),
             next_message_id: 1,
             owner_profiles: BTreeMap::new(),
+            profile_directory: Default::default(),
             profile_metadata_fetch_inflight: HashSet::new(),
             app_keys: BTreeMap::new(),
             direct_chat_capability_runtime: DirectChatCapabilityRuntime::default(),

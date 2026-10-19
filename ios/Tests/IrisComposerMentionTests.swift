@@ -211,7 +211,13 @@ final class IrisComposerMentionTests: XCTestCase {
             displayName: "Ada", pictureUrl: pictureUrl, isLocalOwner: false)]
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
-        let manager = AppManager(rust: MockRustApp(state: state), secretStore: InMemorySecretStore(),
+        let client = MockRustApp(state: state)
+        for person in candidates {
+            client.userProfiles[person.id] = UserProfileSnapshot(ownerPubkeyHex: person.id,
+                name: PersonNamePresentation(name: person.name, isFallback: false),
+                pictureUrl: person.id == "ada" ? pictureUrl : nil, socialConnection: nil)
+        }
+        let manager = AppManager(rust: client, secretStore: InMemorySecretStore(),
             pendingDeviceLinkSecretStore: InMemoryPendingDeviceLinkSecretStore(),
             desktopNotifications: NoopDesktopNotificationPoster(), dataDir: directory, environment: [:])
         func content(_ model: IrisComposerMentionCompletion) -> some View {
