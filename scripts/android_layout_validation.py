@@ -26,7 +26,8 @@ def sha(path):
 def payload(archive):
     return {item.filename: hashlib.sha256(archive.read(item)).hexdigest()
             for item in archive.infolist() if not item.is_dir()
-            and not item.filename.startswith(('META-INF/', 'lib/'))}
+            and not item.filename.startswith('lib/')
+            and not re.fullmatch(r'META-INF/(MANIFEST\.MF|[^/]+\.(SF|RSA|DSA|EC))', item.filename, re.I)}
 
 
 def prepare(seed_run):
