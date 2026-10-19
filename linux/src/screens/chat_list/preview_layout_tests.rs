@@ -18,8 +18,9 @@ pub fn verify_ui(manager: Rc<AppManager>) {
     window.set_child(Some(&root));
     let css = gtk::CssProvider::new();
     css.load_from_data(".preview-layout-large label { font-size: 24px; }");
+    let display = gtk::prelude::WidgetExt::display(&window);
     gtk::style_context_add_provider_for_display(
-        &window.display(),
+        &display,
         &css,
         gtk::STYLE_PROVIDER_PRIORITY_APPLICATION + 1,
     );
@@ -91,6 +92,6 @@ pub fn verify_ui(manager: Rc<AppManager>) {
         }
     }
     window.close();
-    gtk::style_context_remove_provider_for_display(&window.display(), &css);
+    gtk::style_context_remove_provider_for_display(&display, &css);
     println!("PASS: GTK preview/typing/draft/newline rows and following position stay stable at 3 widths and 2 font sizes");
 }
