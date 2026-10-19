@@ -718,12 +718,9 @@ struct ProfileEditorCard: View {
                 openProfilePicture(item)
             } label: {
                 IrisAvatar(
-                    label: label,
+                    ownerPubkeyHex: account.publicKeyHex,
                     size: 104,
                     emphasize: false,
-                    pictureUrl: account.pictureUrl,
-                    preferences: manager.state.preferences,
-                    manager: manager,
                     loadedImageIdentifier: "myProfileAvatarImage"
                 )
             }
@@ -732,12 +729,9 @@ struct ProfileEditorCard: View {
             .accessibilityIdentifier("myProfilePictureButton")
         } else {
             IrisAvatar(
-                label: label,
+                ownerPubkeyHex: account.publicKeyHex,
                 size: 104,
                 emphasize: false,
-                pictureUrl: account.pictureUrl,
-                preferences: manager.state.preferences,
-                manager: manager,
                 loadedImageIdentifier: "myProfileAvatarImage"
             )
         }

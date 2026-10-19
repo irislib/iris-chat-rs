@@ -417,12 +417,9 @@ struct DesktopChatSidebar: View {
                 ZStack {
                     Button(action: { manager.dispatch(.pushScreen(screen: .settings)) }) {
                         IrisAvatar(
-                            label: account.displayName.isEmpty ? fallbackProfileNameForIdentity(account.npub) : account.displayName,
+                            ownerPubkeyHex: account.publicKeyHex,
                             size: 42,
-                            emphasize: false,
-                            pictureUrl: account.pictureUrl,
-                            preferences: manager.state.preferences,
-                            manager: manager
+                            emphasize: false
                         )
                     }
                     .buttonStyle(.irisUnpressed)

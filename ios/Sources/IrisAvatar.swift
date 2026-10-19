@@ -211,6 +211,56 @@ func irisAvatarImageSource(
 }
 
 struct IrisAvatar: View {
+    @Environment(\.irisAvatarContext) private var context
+    private let appearance: IrisAvatarImage
+    private let manager: AppManager?
+
+    init(
+        socialConnection: SocialConnectionSnapshot? = nil,
+        ownerPubkeyHex: String? = nil,
+        label: String = "",
+        size: CGFloat = 42,
+        emphasize: Bool = false,
+        pictureUrl: String? = nil,
+        preferences: PreferencesSnapshot? = nil,
+        manager: AppManager? = nil,
+        loadedImageIdentifier: String? = nil,
+        showsNearbyBadge: Bool = true,
+        groupSenderColorKey: String? = nil
+    ) {
+        self.manager = manager
+        appearance = IrisAvatarImage(socialConnection: socialConnection, ownerPubkeyHex: ownerPubkeyHex,
+            label: label, size: size, emphasize: emphasize, pictureUrl: pictureUrl, preferences: preferences,
+            manager: manager, loadedImageIdentifier: loadedImageIdentifier, showsNearbyBadge: showsNearbyBadge,
+            groupSenderColorKey: groupSenderColorKey)
+    }
+
+    @ViewBuilder var body: some View {
+        if let owner = appearance.ownerPubkeyHex, !owner.isEmpty {
+            if let context = context ?? manager.map({ IrisAvatarContext(manager: $0) }) {
+                IrisUserAvatar(profiles: context.profiles, owner: owner, appearance: appearance, context: context)
+                    .id(owner)
+            } else {
+                appearance.forUser(owner, profile: nil, context: nil)
+            }
+        } else {
+            appearance
+        }
+    }
+}
+
+private struct IrisUserAvatar: View {
+    @ObservedObject var profiles: IrisProfileStore
+    let owner: String
+    let appearance: IrisAvatarImage
+    let context: IrisAvatarContext
+
+    var body: some View {
+        appearance.forUser(owner, profile: profiles[owner], context: context)
+    }
+}
+
+private struct IrisAvatarImage: View {
     @Environment(\.irisPalette) private var palette
     @Environment(\.colorScheme) private var colorScheme
 
@@ -227,6 +277,15 @@ struct IrisAvatar: View {
     let groupSenderColorKey: String?
 
     @State private var avatarImage: PlatformImage?
+    @State private var loadedSourceKey: String?
+
+    func forUser(_ owner: String, profile: IrisUserProfile?, context: IrisAvatarContext?) -> Self {
+        Self(socialConnection: profile?.socialConnection, ownerPubkeyHex: owner,
+             label: profile?.name ?? fallbackProfileNameForIdentity(owner), size: size,
+             emphasize: emphasize, pictureUrl: profile?.pictureUrl, preferences: context?.preferences,
+             manager: context?.manager, loadedImageIdentifier: loadedImageIdentifier,
+             showsNearbyBadge: showsNearbyBadge, groupSenderColorKey: groupSenderColorKey)
+    }
 
     init(
         socialConnection: SocialConnectionSnapshot? = nil,
@@ -258,6 +317,7 @@ struct IrisAvatar: View {
             pixelSize: size * 2
         )
         _avatarImage = State(initialValue: source.flatMap { IrisAvatarImageCache.image(for: $0.cacheKey) })
+        _loadedSourceKey = State(initialValue: source?.cacheKey)
     }
 
     var body: some View {
@@ -268,7 +328,7 @@ struct IrisAvatar: View {
                 } ?? (emphasize ? palette.accent : palette.panelAlt))
                 .overlay(Circle().stroke(palette.border, lineWidth: 1))
 
-            if let avatarImage {
+            if let avatarImage, loadedSourceKey == imageSourceKey {
                 Image(platformImage: avatarImage)
                     .resizable()
                     .scaledToFill()
@@ -322,11 +382,13 @@ struct IrisAvatar: View {
     private func loadAvatarImage() async {
         guard let source = imageSource else {
             avatarImage = nil
+            loadedSourceKey = nil
             return
         }
         let key = source.cacheKey
         if let cached = IrisAvatarImageCache.image(for: key) {
             avatarImage = cached
+            loadedSourceKey = key
             return
         }
 
@@ -349,10 +411,12 @@ struct IrisAvatar: View {
         guard !Task.isCancelled, imageSourceKey == key else { return }
         guard let image else {
             avatarImage = nil
+            loadedSourceKey = nil
             return
         }
         IrisAvatarImageCache.store(image, for: key)
         avatarImage = image
+        loadedSourceKey = key
     }
 
     private var avatarInitial: some View {

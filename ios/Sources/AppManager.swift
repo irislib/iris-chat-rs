@@ -752,8 +752,9 @@ final class AppManager: ObservableObject {
     private static let supportBundleQueue = DispatchQueue(label: "fi.siriusbusiness.irischat.support-bundle", qos: .utility)
 
     @Published private(set) var state: AppState {
-        didSet { recordInteractionState() }
+        didSet { profiles.apply(state); recordInteractionState() }
     }
+    let profiles = IrisProfileStore()
     let interactionTimingController: IrisInteractionTimingController
     var interactionTiming: IrisInteractionTiming? { interactionTimingController.timing }
     @Published private(set) var bootstrapInFlight = true
@@ -1003,6 +1004,7 @@ final class AppManager: ObservableObject {
         }
         self.state = initialState
         resolvedRust.listenForUpdates(reconciler: reconciler)
+        profiles.apply(initialState)
         let initialDeviceRevoked = initialState.account?.authorizationState == .revoked
         if !initialDeviceRevoked {
             syncCurrentDeviceLabelsIfNeeded(state: initialState)
@@ -1430,11 +1432,15 @@ final class AppManager: ObservableObject {
     /// so keep them off the rendering thread and the chat-page queue.
     func search(_ query: String, scopeChatId: String? = nil, limit: UInt32 = 50) async -> SearchResultSnapshot {
         let runner = ChatPageLoadRunner(rust: rust)
-        return await withCheckedContinuation { continuation in
+        let account = state.account?.publicKeyHex
+        let revision = state.rev
+        let result: SearchResultSnapshot = await withCheckedContinuation { continuation in
             Self.searchQueue.async {
                 continuation.resume(returning: runner.search(query: query, scopeChatId: scopeChatId, limit: limit))
             }
         }
+        profiles.apply(result, account: account, replaceExisting: state.rev == revision)
+        return result
     }
 
     private func loadInitialChatPageForActiveChat(in stack: [Screen]) {
@@ -2867,6 +2873,7 @@ final class AppManager: ObservableObject {
                 bluetoothPeerIds: bluetoothPeerIds,
                 lanPeerIds: lanPeerIds
             )
+            profiles.apply(snapshot)
         case .fullState(let nextState):
             applyFullState(nextState)
         }

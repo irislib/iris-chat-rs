@@ -32,6 +32,9 @@ struct IrisMentionQuery: Equatable {
 final class IrisComposerMentionCompletion: ObservableObject {
     @Published private(set) var results: [IrisMentionCandidate] = []
     @Published private(set) var selectedIndex = 0
+    var selectedCandidateID: String? {
+        results.indices.contains(selectedIndex) ? results[selectedIndex].id : nil
+    }
     private var context: IrisComposerCompletionContext?
     private var token: IrisMentionQuery?
     private var dismissedText: String?
@@ -65,7 +68,8 @@ final class IrisComposerMentionCompletion: ObservableObject {
         return true
     }
     func insert(_ person: IrisMentionCandidate) {
-        guard let context, let token, !context.hasMarkedText, !person.token.isEmpty else { return }
+        guard let context, let token, !context.hasMarkedText,
+              let person = results.first(where: { $0.id == person.id }), !person.token.isEmpty else { return }
         let tail = (context.text as NSString).substring(from: NSMaxRange(token.range))
         let space = tail.isEmpty || tail.first?.isWhitespace == false ? " " : ""
         let label = "@" + person.name
@@ -87,10 +91,10 @@ struct IrisComposerMentionSuggestions: View {
         ScrollViewReader { proxy in
         ScrollView(.vertical) {
         LazyVStack(spacing: 0) {
-            ForEach(Array(completion.results.enumerated()), id: \.element.id) { index, person in
+            ForEach(completion.results) { person in
                 Button { completion.insert(person) } label: {
                     HStack(spacing: 10) {
-                        IrisAvatar(ownerPubkeyHex: person.id, label: person.name, size: 32, showsNearbyBadge: false)
+                        IrisAvatar(ownerPubkeyHex: person.id, size: 32, showsNearbyBadge: false)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(person.name).font(.callout).lineLimit(1)
                             if completion.results.filter({ $0.name == person.name }).count > 1 {
@@ -102,14 +106,16 @@ struct IrisComposerMentionSuggestions: View {
                     .foregroundStyle(palette.textPrimary)
                     .padding(.horizontal, 12).padding(.vertical, 6)
                     .frame(minHeight: rowHeight)
-                    .background(index == completion.selectedIndex ? palette.accent.opacity(0.14) : Color.clear)
+                    .background(person.id == completion.selectedCandidateID ? palette.accent.opacity(0.14) : Color.clear)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.irisUnpressed)
                 .accessibilityLabel(completion.results.filter { $0.name == person.name }.count > 1
                     ? "Mention \(person.name), \(String(person.id.prefix(8)))" : "Mention \(person.name)")
                 .accessibilityIdentifier("chatMentionCompletion-\(person.id)")
-                .id(index)
+                // Use the same identity for rendering, scrolling and insertion.
+                // Position-based IDs let LazyVStack retain another person's row after filtering.
+                .id(person.id)
                 #if os(macOS)
                 .environment(\.irisKeyboardButtonIsTabStop, false)
                 #endif
@@ -118,11 +124,11 @@ struct IrisComposerMentionSuggestions: View {
         }
         // Leave part of the next row visible so larger groups are clearly scrollable.
         .frame(height: min(min(CGFloat(completion.results.count), 4.5) * rowHeight, max(0, availableHeight - 8)))
-        .irisOnChange(of: completion.selectedIndex) { index in
-            proxy.scrollTo(index)
+        .irisOnChange(of: completion.selectedIndex) { _ in
+            if let id = completion.selectedCandidateID { proxy.scrollTo(id) }
         }
         .irisOnChange(of: completion.results) { _ in
-            proxy.scrollTo(completion.selectedIndex)
+            if let id = completion.selectedCandidateID { proxy.scrollTo(id) }
         }
         }
         .padding(4)

@@ -872,12 +872,8 @@ struct ChatMessageRow: View, Equatable {
     private var groupSenderAvatar: some View {
         if showsGroupSenderAvatar {
             let avatar = IrisAvatar(
-                socialConnection: socialConnection,
                 ownerPubkeyHex: message.authorOwnerPubkeyHex,
-                label: message.author,
                 size: SignalConversationLayout.groupMessageAvatarSize,
-                pictureUrl: senderPictureUrl,
-                preferences: avatarPreferences,
                 manager: manager,
                 groupSenderColorKey: message.author
             )

@@ -191,18 +191,12 @@ struct GroupDetailsScreen: View {
                     )
 
                     ForEach(Array(details.members.enumerated()), id: \.element.ownerPubkeyHex) { index, member in
-                        let primary = primaryDisplayName(displayName: member.displayName, fallback: member.npub)
                         VStack(alignment: .leading, spacing: 10) {
                             let memberHeader = HStack(alignment: .top, spacing: 12) {
                                 IrisAvatar(
-                                    socialConnection: member.socialConnection,
                                     ownerPubkeyHex: member.ownerPubkeyHex,
-                                    label: primary,
                                     size: 38,
-                                    emphasize: member.isLocalOwner,
-                                    pictureUrl: member.pictureUrl,
-                                    preferences: manager.state.preferences,
-                                    manager: manager
+                                    emphasize: member.isLocalOwner
                                 )
 
                                 VStack(alignment: .leading, spacing: 6) {

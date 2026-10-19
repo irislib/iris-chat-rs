@@ -125,6 +125,7 @@ struct RootView: View {
             }
 #endif
         }
+        .environment(\.irisAvatarContext, IrisAvatarContext(manager: manager))
     }
 
     @ViewBuilder
@@ -133,7 +134,8 @@ struct RootView: View {
         UIKitRouteNavigationHost(
             routes: currentNavigationRoutes,
             makeContent: { route in
-                AnyView(screenChrome(for: route))
+                AnyView(screenChrome(for: route)
+                    .environment(\.irisAvatarContext, IrisAvatarContext(manager: manager)))
             },
             onStackChanged: { stack in
                 manager.dispatch(.updateScreenStack(stack: stack))
@@ -284,7 +286,7 @@ struct RootView: View {
         return AnyView(
             Button(action: { openSettings() }) {
                 IrisAvatar(
-                    label: account.displayName.isEmpty ? fallbackProfileNameForIdentity(account.npub) : account.displayName,
+                    ownerPubkeyHex: account.publicKeyHex,
                     size: 40,
                     // emphasize=false → background is the neutral panel
                     // tint, not brand purple. With emphasize on, the
@@ -292,9 +294,6 @@ struct RootView: View {
                     // through the loaded picture, which read as a weird
                     // purple flash on tap.
                     emphasize: false,
-                    pictureUrl: account.pictureUrl,
-                    preferences: manager.state.preferences,
-                    manager: manager,
                     loadedImageIdentifier: "chatListProfileAvatarImage"
                 )
             }
