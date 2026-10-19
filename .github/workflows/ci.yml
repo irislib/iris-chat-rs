@@ -20,7 +20,7 @@ on:
         description: Checks to run (releases require all)
         type: choice
         default: all
-        options: [all, cli, core, android, windows, windows-keyboard, apple, ios, macos, linux, apple-products, ios-products, macos-products, ios-ui-runner, macos-ui-runner]
+        options: [all, cli, core, android, windows, windows-keyboard, apple, ios, ios-unit, macos, linux, apple-products, ios-products, macos-products, ios-ui-runner, macos-ui-runner]
 
 permissions:
   contents: read
@@ -349,7 +349,7 @@ jobs:
           retention-days: 14
 
   ios:
-    if: ${{ inputs.scope == '' || inputs.scope == 'all' || inputs.scope == 'apple' || inputs.scope == 'ios' }}
+    if: ${{ inputs.scope == '' || inputs.scope == 'all' || inputs.scope == 'apple' || inputs.scope == 'ios' || inputs.scope == 'ios-unit' }}
     name: iOS simulator build and composer tests
     runs-on: macos-15
     timeout-minutes: 75
@@ -384,6 +384,7 @@ jobs:
             ios-${{ runner.os }}-${{ runner.arch }}-
 
       - name: iOS simulator build
+        id: ios-build
         run: ./scripts/ios-build ios-build-sim
 
       - name: Save successful iOS compiler cache
@@ -397,6 +398,7 @@ jobs:
           key: ${{ steps.ios_cargo_cache.outputs.cache-primary-key }}
 
       - name: iOS device linking progress test
+        if: inputs.scope != 'ios-unit'
         run: |
           mkdir -p work/clipboard
           xcodebuild -project ios/IrisChat.xcodeproj -scheme IrisChat \
@@ -406,16 +408,23 @@ jobs:
             -resultBundlePath work/clipboard/ios-device-link.xcresult test
 
       - name: iOS native composer, clipboard, and timeline tests
+        if: ${{ !cancelled() && steps.ios-build.outcome == 'success' }}
+        env:
+          IOS_VALIDATION_SCOPE: ${{ inputs.scope }}
         run: |
+          selectors=(-only-testing:IrisChatTests -only-testing:NotificationServiceTests)
+          if [[ "$IOS_VALIDATION_SCOPE" != ios-unit ]]; then
+            selectors+=(
+              -only-testing:IrisChatUITests/ComposerCompletionUITests
+              -only-testing:IrisChatUITests/ChatTimelineUITests/testReopeningLongChatLandsAtBottom
+              -only-testing:IrisChatUITests/IrisChatTimelineUITests/testSearchHitInSeededLongChatOpensInTimeline
+              -only-testing:IrisChatUITests/ChatPaginationUITests
+            )
+          fi
           xcodebuild -project ios/IrisChat.xcodeproj -scheme IrisChat \
             -destination "$(./scripts/ios-simulator-destination)" \
             -parallel-testing-enabled NO \
-            -only-testing:IrisChatTests \
-            -only-testing:NotificationServiceTests \
-            -only-testing:IrisChatUITests/ComposerCompletionUITests \
-            -only-testing:IrisChatUITests/ChatTimelineUITests/testReopeningLongChatLandsAtBottom \
-            -only-testing:IrisChatUITests/IrisChatTimelineUITests/testSearchHitInSeededLongChatOpensInTimeline \
-            -only-testing:IrisChatUITests/ChatPaginationUITests \
+            "${selectors[@]}" \
             -resultBundlePath work/clipboard/ios.xcresult test
 
       - name: Upload iOS test results

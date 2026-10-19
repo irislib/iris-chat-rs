@@ -17,6 +17,19 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class ReleaseWorkflowTests(unittest.TestCase):
+    def test_ios_units_run_independently_after_successful_build(self) -> None:
+        workflow = (ROOT / ".github/workflows/ci.yml").read_text()
+        ios = workflow.split("\n  ios:\n", 1)[1].split("\n  windows-ui:\n", 1)[0]
+        self.assertIn("id: ios-build", ios)
+        self.assertIn("inputs.scope == 'ios-unit'", ios)
+        progress = ios.split("      - name: iOS device linking progress test\n", 1)[1]
+        self.assertTrue(progress.startswith("        if: inputs.scope != 'ios-unit'\n"))
+        units = ios.split("      - name: iOS native composer, clipboard, and timeline tests\n", 1)[1]
+        self.assertTrue(units.startswith("        if: ${{ !cancelled() && steps.ios-build.outcome == 'success' }}\n"))
+        self.assertIn("selectors=(-only-testing:IrisChatTests -only-testing:NotificationServiceTests)", units)
+        self.assertIn('if [[ "$IOS_VALIDATION_SCOPE" != ios-unit ]]; then', units)
+        self.assertIn('-only-testing:IrisChatUITests/ComposerCompletionUITests', units)
+
     def test_linux_release_cache_tracks_container_and_real_target(self) -> None:
         workflow = (ROOT / ".github/workflows/build-artifacts.yml").read_text()
         linux = workflow.split("\n  linux:\n", 1)[1].split("\n  cli:\n", 1)[0]
