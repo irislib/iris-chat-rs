@@ -12,6 +12,10 @@ use crate::screens::confirm_delete_chat;
 use crate::widgets::clickable::PointerCursorExt;
 use crate::widgets::image_cache;
 
+#[cfg(feature = "ui-tests")]
+mod preview_layout_tests;
+#[cfg(feature = "ui-tests")]
+pub use preview_layout_tests::verify_ui as verify_preview_layout_ui;
 mod nearby;
 mod timestamps;
 use nearby::nearby_row;
@@ -652,9 +656,13 @@ fn row_for(
     };
     row.set_title_lines(1);
     row.set_subtitle_lines(1);
-    row.set_subtitle(&escape(
-        &subtitle.split_whitespace().collect::<Vec<_>>().join(" "),
-    ));
+    let subtitle = subtitle.split_whitespace().collect::<Vec<_>>().join(" ");
+    // Keep the subtitle line present even for an empty/whitespace-only message.
+    row.set_subtitle(&escape(if subtitle.is_empty() {
+        "\u{a0}"
+    } else {
+        &subtitle
+    }));
 
     let suffix = gtk::Box::new(gtk::Orientation::Vertical, 4);
     suffix.set_valign(gtk::Align::Center);

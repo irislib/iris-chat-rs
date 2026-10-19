@@ -77,6 +77,8 @@ fn header() -> HeaderWidgets {
 pub fn run_layout() {
     let data = tempfile::tempdir().unwrap();
     std::env::set_var("IRIS_UI_TEST_RUN_ID", "linux-layout-regression");
+    std::env::set_var("IRIS_DEMO_RELAYS", "ws://127.0.0.1:9");
+    std::env::set_var("IRIS_FIPS_WEBSOCKET_SEED_URLS", "");
     std::env::set_var("IRIS_UI_TEST_DATA_DIR", data.path());
     std::env::set_var("XDG_CONFIG_HOME", data.path().join("config"));
     std::env::set_var("XDG_DATA_HOME", data.path().join("data"));
@@ -103,6 +105,7 @@ pub fn run_layout() {
         manager.current_state().current_chat.is_some()
     });
     crate::widgets::user_profile::verify_ui(manager.clone());
+    crate::screens::chat_list::verify_preview_layout_ui(manager.clone());
     crate::app_manager::verify_search_ui(manager.clone());
     crate::screens::chat_list::verify_timestamps_ui(manager.clone());
     eprintln!("Checking responsive layout");

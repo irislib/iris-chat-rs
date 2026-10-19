@@ -27,6 +27,9 @@ fn find_badge(widget: &gtk::Widget, class: &str) -> Option<gtk::Widget> {
         if widget.has_css_class(class) {
             return Some(widget);
         }
+        if let Some(found) = find_badge(&widget, class) {
+            return Some(found);
+        }
         child = widget.next_sibling();
     }
     None
@@ -111,6 +114,27 @@ pub fn run() {
     state.rev += 1;
     manager.apply_update(AppUpdate::FullState(state.clone()));
     assert!(manager.contact_social_connection(PEER).is_none());
+    let core_connection = connection.clone();
+    manager.set_profile_reader(move |owner| iris_chat_core::UserProfileSnapshot {
+        owner_pubkey_hex: owner.into(),
+        name: iris_chat_core::present_person_name(
+            if owner == PEER {
+                "Ada".into()
+            } else {
+                String::new()
+            },
+            owner.into(),
+            (owner == PEER).then(|| "Ada".into()),
+        ),
+        picture_url: None,
+        social_connection: (owner == PEER).then(|| core_connection.clone()),
+    });
+    let profile_name = crate::widgets::user_profile::name(&manager, PEER);
+    assert_eq!(
+        profile_name.text(),
+        "Ada",
+        "name comes from the profile reader, not view metadata"
+    );
     let avatar = crate::widgets::social_badge::user_avatar(
         &adw::Avatar::new(64, Some("Alex"), true),
         Some(&connection),
@@ -184,7 +208,7 @@ pub fn run() {
     group.kind = iris_chat_core::ChatKind::Group;
     let group_header = build_chat_header_avatar(&group, &state, &manager);
     assert!(
-        !badge(&group_header, "nearby-avatar-badge").is_visible(),
+        find_badge(&group_header, "nearby-avatar-badge").is_none_or(|badge| !badge.is_visible()),
         "group never inherits a user badge even if IDs coincide"
     );
     let own = crate::widgets::social_badge::user_avatar(

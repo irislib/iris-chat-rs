@@ -649,7 +649,7 @@ struct DesktopSidebarChatRow: View, Equatable {
                             .accessibilityIdentifier("desktopChatPreview-\(chat.chatId)")
                             .font(.system(.subheadline, design: .rounded))
                             .foregroundStyle(chat.unreadCount > 0 ? palette.textPrimary : palette.muted)
-                            .lineLimit(2)
+                            .lineLimit(2, reservesSpace: true)
 
                         Spacer(minLength: 6)
 

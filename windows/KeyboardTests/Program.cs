@@ -133,6 +133,7 @@ internal static class Program
             var image = new RenderTargetBitmap((int)window.ActualWidth, (int)window.ActualHeight, 96, 96, PixelFormats.Pbgra32);
             image.Render(window); var encoder = new PngBitmapEncoder(); encoder.Frames.Add(BitmapFrame.Create(image));
             using (var file = File.Create(Path.Combine(output, "windows-keyboard.png"))) encoder.Save(file);
+            ChatRowLayoutTests.Run(window, chat, output);
             GroupingTests.Run();
             MessageActionsTests.Run(window);
             DraftTests.Run(window, manager);

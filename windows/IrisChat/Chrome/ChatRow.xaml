@@ -64,7 +64,7 @@
                                Margin="8,0,0,0"
                                VerticalAlignment="Center" />
                 </Grid>
-                <TextBlock x:Name="PreviewText"
+                <chrome:TwoLinePreview x:Name="PreviewText"
                            Foreground="{StaticResource TextMuted}"
                            FontSize="13"
                            TextTrimming="CharacterEllipsis"

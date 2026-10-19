@@ -8,6 +8,8 @@ use attachment_drafts::AttachmentDrafts;
 mod history;
 #[path = "app_manager/notifications.rs"]
 mod notifications;
+#[path = "app_manager/user_profiles.rs"]
+mod user_profiles;
 #[cfg(feature = "ui-tests")]
 pub use history::verify_ui as verify_history_ui;
 #[path = "app_manager/search.rs"]
@@ -74,6 +76,8 @@ pub struct SearchUiState {
 
 pub struct AppManager {
     ffi: Arc<FfiApp>,
+    #[cfg(feature = "ui-tests")]
+    profile_reader: RefCell<Option<user_profiles::ProfileReader>>,
     history_paging: RefCell<history::Paging>,
     update_rx: async_channel::Receiver<AppUpdate>,
     update_tx_ui: async_channel::Sender<AppUpdate>,
@@ -231,6 +235,8 @@ impl AppManager {
 
         let manager = Self {
             ffi,
+            #[cfg(feature = "ui-tests")]
+            profile_reader: RefCell::new(None),
             history_paging: RefCell::new(history::Paging::default()),
             update_rx: rx,
             update_tx_ui,
@@ -348,17 +354,6 @@ impl AppManager {
 
     pub fn app_data_dir(&self) -> &std::path::Path {
         &self.data_dir
-    }
-
-    pub fn user_profile(&self, owner: &str) -> iris_chat_core::UserProfileSnapshot {
-        self.ffi.user_profile(owner.to_owned())
-    }
-
-    pub(crate) fn track_user_profile(&self, mut binding: crate::widgets::user_profile::Binding) {
-        binding.refresh(self, &self.current_state());
-        let mut bindings = self.user_profile_bindings.borrow_mut();
-        bindings.retain(|binding| binding.is_alive());
-        bindings.push(binding);
     }
 
     pub fn current_state(&self) -> AppState {

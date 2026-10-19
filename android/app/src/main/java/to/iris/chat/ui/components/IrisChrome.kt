@@ -842,8 +842,8 @@ fun IrisChatListRow(
     val interactionSource = remember { MutableInteractionSource() }
     // Signal-Android spec: 48dp avatar, BodyLarge title in onSurface,
     // BodyMedium preview in secondary tint, BodyMedium time in
-    // tertiary tint, 16dp side gutter, 10dp top/bottom padding so the
-    // row sits at the 84dp min-height when the preview is one line.
+    // tertiary tint, 16dp side gutter and 10dp top/bottom padding.
+    // Reserve two preview lines, including empty/typing/draft states.
     Row(
         modifier =
             modifier
@@ -921,48 +921,43 @@ fun IrisChatListRow(
                     )
                 }
             }
-            if (preview != null || previewLeading != null || (lastMessageMine && lastDelivery != null) || unreadCount > 0) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    if (previewLeading != null) {
-                        previewLeading()
-                    }
-                    if (preview != null) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                if (previewLeading != null) {
+                    previewLeading()
+                }
+                Text(
+                    text = preview.orEmpty(),
+                    modifier = Modifier.weight(1f),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = palette.muted,
+                    minLines = 2,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                if (lastMessageMine && lastDelivery != null) {
+                    DeliveryGlyph(lastDelivery)
+                }
+                if (unreadCount > 0) {
+                    Surface(
+                        color = palette.accent,
+                        contentColor = MaterialTheme.colorScheme.onPrimary,
+                        shape = PillShape,
+                    ) {
                         Text(
-                            text = preview,
-                            modifier = Modifier.weight(1f),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = palette.muted,
-                            maxLines = 2,
-                            overflow = TextOverflow.Ellipsis,
+                            text = if (unreadCount > 99) "99+" else unreadCount.toString(),
+                            modifier =
+                                Modifier
+                                    .heightIn(min = 18.dp)
+                                    .widthIn(min = 18.dp)
+                                    .padding(horizontal = 6.dp, vertical = 1.dp),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onPrimary,
+                            textAlign = TextAlign.Center,
                         )
-                    } else {
-                        Spacer(modifier = Modifier.weight(1f))
-                    }
-                    if (lastMessageMine && lastDelivery != null) {
-                        DeliveryGlyph(lastDelivery)
-                    }
-                    if (unreadCount > 0) {
-                        Surface(
-                            color = palette.accent,
-                            contentColor = MaterialTheme.colorScheme.onPrimary,
-                            shape = PillShape,
-                        ) {
-                            Text(
-                                text = if (unreadCount > 99) "99+" else unreadCount.toString(),
-                                modifier =
-                                    Modifier
-                                        .heightIn(min = 18.dp)
-                                        .widthIn(min = 18.dp)
-                                        .padding(horizontal = 6.dp, vertical = 1.dp),
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onPrimary,
-                                textAlign = TextAlign.Center,
-                            )
-                        }
                     }
                 }
             }
