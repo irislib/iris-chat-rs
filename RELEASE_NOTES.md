@@ -2,6 +2,33 @@
 
 Each release has channel-specific notes. The release tag must match the `##` heading exactly.
 
+## v2026.10.19
+
+### GitHub
+
+- Disable colon emoji completion on iOS and Android; retain it on desktop. Mobile web follows the same behavior.
+- Float mention suggestions above the composer without moving the editor or conversation. Keep suggestions scrollable, readable, and selectable by touch, mouse, or keyboard as appropriate.
+- Show readable mention names in desktop draft previews while preserving the selected person's identity.
+- Release iOS storage transactions before suspension to address the reported background termination, and resume with the draft intact.
+- Update compatible networking dependencies, including FIPS 0.4.106 with connection retry fixes and the refreshed WebRTC dependency set.
+- Reuse unchanged validation products and focused test coverage, and cache Linux release build inputs to reduce repeated compilation.
+- Preserve group messages in web storage before showing them as sent; keep the draft available if saving fails.
+
+### Apple
+
+- Keep mention suggestions above your message without shifting the conversation.
+- Use the iPhone keyboard for emoji; typing a colon now stays as text.
+- Show people's names in Mac draft previews when you mention them.
+- Fix a crash when the iPhone app moves into the background and keep your draft when you return.
+- Improve connection retry handling and update networking dependencies.
+
+### Zapstore
+
+- Keep mention suggestions above your message without shifting the conversation.
+- Use your keyboard for emoji; typing a colon now stays as text.
+- Keep mention suggestions readable and easy to select.
+- Improve connection retry handling and update networking dependencies.
+
 ## v2026.10.18
 
 ### GitHub
