@@ -472,7 +472,7 @@ jobs:
         if: ${{ !cancelled() && steps.native-build.outcome == 'success' && (inputs.scope == '' || inputs.scope == 'all') }}
         run: ./scripts/windows-build-local.ps1 direct-file-tests
       - name: Exercise WPF nearby avatars and chat headers
-        if: ${{ !cancelled() && steps.native-build.outcome == 'success' && (inputs.scope == '' || inputs.scope == 'all') }}
+        if: ${{ !cancelled() && steps.native-build.outcome == 'success' && (inputs.scope == '' || inputs.scope == 'all' || inputs.scope == 'windows') }}
         run: ./scripts/windows-build-local.ps1 nearby-avatar-tests
       - name: Upload Windows clipboard results
         if: always()

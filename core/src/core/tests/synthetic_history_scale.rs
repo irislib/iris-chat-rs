@@ -250,6 +250,7 @@ fn synthetic_history_app(
     slot.shared_state = core.shared_state.clone();
     core.core_sender = slot.background_tx.clone();
     core.priority_sender = slot.foreground_tx.clone();
+    core.set_shared_user_profiles(slot.shared_user_profiles.clone());
     crate::set_shared_db(&slot.shared_db, Some(core.shared_db()));
     let supervisor = crate::CoreSupervisor {
         data_dir: core.data_dir.to_string_lossy().into_owned(),
@@ -260,6 +261,7 @@ fn synthetic_history_app(
         background_rx: slot.background_rx.clone(),
         shared_state: slot.shared_state.clone(),
         shared_db: slot.shared_db.clone(),
+        shared_user_profiles: slot.shared_user_profiles.clone(),
         queue_metrics: slot.queue_metrics.clone(),
         recovery: slot.recovery.clone(),
     };

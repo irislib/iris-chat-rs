@@ -33,7 +33,12 @@ internal static class Program
         var resources = XDocument.Load(Path.Combine(AppContext.BaseDirectory, "App.xaml")).Descendants(xaml + "ResourceDictionary").Single();
         resources.SetAttributeValue(XNamespace.Xmlns + "x", "http://schemas.microsoft.com/winfx/2006/xaml");
         app.Resources = (ResourceDictionary)XamlReader.Parse(resources.ToString());
-        var manager = new AppManager(Path.Combine(output, "data"), new SilentNotifications(), Path.Combine(output, "secret.json"));
+        // A fake core reader is the sole profile source. Deliberately stale
+        // view fields must not override it; revisions model core notifications.
+        var profileConnection = new SocialConnectionSnapshot(SocialBadge.Following, 1, 0, "Following", true);
+        var profile = new UserProfileSnapshot(Peer, Native.PresentPersonName("Ada", Peer, "Ada"), null, profileConnection);
+        var manager = new AppManager(Path.Combine(output, "data"), new SilentNotifications(), Path.Combine(output, "secret.json"),
+            owner => owner == Peer ? profile : new UserProfileSnapshot(owner, Native.PresentPersonName("", owner, null), null, null));
         typeof(App).GetProperty(nameof(App.Manager))!.SetValue(app, manager);
         var window = new Window { Title = "Nearby avatars", Width = 700, Height = 650,
             Background = (Brush)app.FindResource("Background") };
@@ -65,6 +70,7 @@ internal static class Program
             Check(NearbyPeerNames.KnownChat(manager, Peer)?.socialConnection?.isFavorite == false, "Nearby favorite changes use the new snapshot");
             VerifyNearbyRowGeometry(manager, window, output);
             var avatar = new Avatar { Label = "Alex", Size = 64, OwnerPubkeyHex = Peer, SocialConnection = connection };
+            var profileName = new UserName { OwnerPubkeyHex = Peer };
             var own = new Avatar { Label = "You", Size = 48, OwnerPubkeyHex = manager.Account!.publicKeyHex };
             var unknown = new Avatar { Label = "Unknown", Size = 48, OwnerPubkeyHex = "other-person" };
             var group = new ChatRow { Chat = manager.ChatList.First(c => c.chatId == Peer) with { kind = ChatKind.Group } };
@@ -73,8 +79,13 @@ internal static class Program
             column.Children.Add(chat);
             var examples = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 20, 0, 12) };
             foreach (var item in new[] { avatar, own, unknown }) { item.Margin = new Thickness(12); examples.Children.Add(item); }
-            column.Children.Add(examples); column.Children.Add(group);
+            column.Children.Add(profileName); column.Children.Add(examples); column.Children.Add(group);
             window.Content = column; window.Show(); Pump();
+            Check(profileName.Text == "Ada", "UserName reads the profile by identity");
+            Check(((TextBlock)avatar.FindName("Initials")).Text == "A", "Avatar uses the core name");
+            avatar.PictureUrl = "https://example.invalid/stale-view-photo.png";
+            Check(((Border)avatar.FindName("ImageHost")).Visibility == Visibility.Collapsed,
+                "Caller-provided photo cannot override an empty core photo");
             var mark = (Border)avatar.FindName("NearbyMark");
             var social = (Border)avatar.FindName("SocialMark");
             var header = (Avatar)chat.FindName("HeaderAvatar");
@@ -92,10 +103,19 @@ internal static class Program
             Check(favorite.HorizontalAlignment == HorizontalAlignment.Left && favorite.VerticalAlignment == VerticalAlignment.Top,
                 "Favorite mark uses a separate corner");
             avatar.SocialConnection = connection with { isFavorite = false };
+            Check(favorite.Visibility == Visibility.Visible, "Caller badge data cannot override the core profile");
+            profile = profile with { name = Native.PresentPersonName("Bea", Peer, "Bea"),
+                socialConnection = profileConnection with { isFavorite = false } };
+            Apply.Invoke(manager, new object[] { new AppUpdate.FullState(manager.State with {
+                rev = manager.State.rev + 1, userDiscoveryRevision = manager.State.userDiscoveryRevision + 1 }) });
+            Check(profileName.Text == "Bea" && ((TextBlock)avatar.FindName("Initials")).Text == "B",
+                "Name and avatar update from the same core revision");
             Check(favorite.Visibility == Visibility.Collapsed && social.Visibility == Visibility.Visible && mark.Visibility == Visibility.Visible,
-                "Unfavoriting leaves public and nearby badges unchanged");
-            avatar.SocialConnection = connection;
-            Check(favorite.Visibility == Visibility.Visible, "Favorite updates on an existing avatar");
+                "Core unfavoriting leaves public and nearby badges unchanged");
+            profile = profile with { socialConnection = profileConnection };
+            Apply.Invoke(manager, new object[] { new AppUpdate.FullState(manager.State with {
+                rev = manager.State.rev + 1, userDiscoveryRevision = manager.State.userDiscoveryRevision + 1 }) });
+            Check(favorite.Visibility == Visibility.Visible, "Core favorite updates on an existing avatar");
             Check(mark.HorizontalAlignment == HorizontalAlignment.Right && mark.VerticalAlignment == VerticalAlignment.Bottom,
                 "Nearby mark anchors bottom-right");
             Check(social.VerticalAlignment == VerticalAlignment.Top, "Verified mark remains at top");

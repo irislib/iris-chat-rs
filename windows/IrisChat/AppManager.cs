@@ -35,6 +35,7 @@ public sealed partial class AppManager : INotifyPropertyChanged
     public event PropertyChangedEventHandler? PropertyChanged;
 
     private readonly FfiApp _ffi;
+    private readonly Func<string, UserProfileSnapshot> _readUserProfile;
     private readonly WindowsCredentialStore _secretStore;
     private readonly WindowsCredentialStore _pendingDeviceLinkSecretStore;
     private readonly IDesktopNotificationPoster _notifier;
@@ -69,7 +70,8 @@ public sealed partial class AppManager : INotifyPropertyChanged
     private PendingNavigationOverride? _pendingNavigationOverride;
     private string? _lastSyncedDeviceLabelsKey;
 
-    public AppManager(string dataDir, IDesktopNotificationPoster? notifier = null, string? testSecretPath = null)
+    public AppManager(string dataDir, IDesktopNotificationPoster? notifier = null, string? testSecretPath = null,
+        Func<string, UserProfileSnapshot>? profileReader = null)
     {
         _dataDir = dataDir;
         _secretStore = new WindowsCredentialStore(filePath: testSecretPath);
@@ -84,6 +86,7 @@ public sealed partial class AppManager : INotifyPropertyChanged
 
         var version = typeof(AppManager).Assembly.GetName().Version?.ToString(3) ?? "0.1.0";
         _ffi = new FfiApp(dataDir, "", version);
+        _readUserProfile = profileReader ?? _ffi.UserProfile;
         _state = SafeState();
         Calls = new CallController(this);
         _lastRevApplied = _state.rev;
@@ -101,10 +104,6 @@ public sealed partial class AppManager : INotifyPropertyChanged
     }
 
     // ────────────────────────────── projection ────────────────────────────────
-
-    // Direct memory read in Rust, independent of the actor/database queues.
-    internal UserProfileSnapshot UserProfile(string owner) => _ffi.UserProfile(owner);
-    public ulong ProfileRevision => _state.userDiscoveryRevision;
 
     public AppState State => _state;
     public CallController Calls { get; }
