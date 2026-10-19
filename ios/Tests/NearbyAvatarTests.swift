@@ -112,6 +112,9 @@ final class NearbyAvatarTests: XCTestCase {
         ]
         state.router = Router(defaultScreen: .chatList, screenStack: [.chat(chatId: chatId)])
         let rust = MockRustApp(state: state)
+        rust.userProfiles["alice"] = UserProfileSnapshot(ownerPubkeyHex: "alice",
+            name: PersonNamePresentation(name: "Alice", isFallback: false), pictureUrl: nil,
+            socialConnection: social)
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
         let manager = AppManager(rust: rust, secretStore: InMemorySecretStore(), pendingDeviceLinkSecretStore: InMemoryPendingDeviceLinkSecretStore(), desktopNotifications: NoopDesktopNotificationPoster(), dataDir: directory, environment: [:])
@@ -134,14 +137,16 @@ final class NearbyAvatarTests: XCTestCase {
         try await waitForSenderPhoto(in: window, visible: false)
 
         state.rev += 1
-        state.currentChat?.participants[0].pictureUrl = pictureURL
+        state.userDiscoveryRevision += 1
+        rust.userProfiles["alice"]?.pictureUrl = pictureURL
         rust.emit(.fullState(state))
         try await waitForSenderPhoto(in: window, visible: true)
         attach(window, name: "ios-group-sender-profile-photo")
         XCTAssertEqual(manager.state.currentChat?.messages, state.currentChat?.messages)
 
         state.rev += 1
-        state.currentChat?.participants[0].pictureUrl = nil
+        state.userDiscoveryRevision += 1
+        rust.userProfiles["alice"]?.pictureUrl = nil
         rust.emit(.fullState(state))
         try await waitForSenderPhoto(in: window, visible: false)
         attach(window, name: "ios-group-sender-profile-photo-removed")

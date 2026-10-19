@@ -32,8 +32,8 @@ def api(path):
     return json.loads(subprocess.check_output(['gh', 'api', path], text=True))
 
 
-def run(command):
-    subprocess.run([str(value) for value in command], check=True, timeout=120)
+def run(command, cwd=None):
+    subprocess.run([str(value) for value in command], check=True, timeout=120, cwd=cwd)
 
 
 def digest(path):
@@ -72,7 +72,7 @@ def main():
         if directory.exists(): shutil.rmtree(directory)
     bindings.mkdir(parents=True); headers.mkdir(parents=True); framework.parent.mkdir(parents=True, exist_ok=True)
     run([binary, 'generate', '--library', dynamic, '--language', 'swift', '--out-dir', bindings,
-         '--config', root/'core/uniffi.toml'])
+         '--config', root/'core/uniffi.toml'], cwd=root/'core')
     for pattern in ['*.h', '*.modulemap']:
         matches = list(bindings.glob(pattern)); assert len(matches) == 1
         shutil.copy2(matches[0], headers/('module.modulemap' if pattern.endswith('modulemap') else matches[0].name))

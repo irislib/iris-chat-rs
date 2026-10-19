@@ -436,7 +436,8 @@ jobs:
         run: |
           selectors=(-only-testing:IrisChatTests -only-testing:NotificationServiceTests)
           if [[ -n "$IOS_CORE_SEED_RUN" ]]; then
-            selectors=(-only-testing:IrisChatTests/IrisProfileStoreTests -only-testing:IrisChatTests/ChatListRowLayoutTests)
+            selectors=(-only-testing:IrisChatTests/IrisProfileStoreTests -only-testing:IrisChatTests/ChatListRowLayoutTests
+              -only-testing:IrisChatTests/NearbyAvatarTests/testGroupMessageSenderAvatarUpdatesInsideEquatableRow)
           fi
           if [[ "$IOS_VALIDATION_SCOPE" != ios-unit ]]; then
             selectors+=(
