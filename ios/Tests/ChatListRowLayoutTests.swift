@@ -10,7 +10,7 @@ import UIKit
 
 @MainActor
 final class ChatListRowLayoutTests: XCTestCase {
-    private let previews = ["", "Short preview", String(repeating: "A preview that wraps onto another line. ", count: 5), "One\nTwo\nThree", "Hello 👋 🎉"]
+    private let previews = ["", "Short preview", String(repeating: "A preview that wraps onto another line. ", count: 5), "One\nTwo\nThree", "Hello 👋 🎉", "  \n  "]
 
     private func height<V: View>(_ view: V, width: CGFloat, type: DynamicTypeSize, screenshot: String? = nil) throws -> CGFloat {
         let renderer = ImageRenderer(content: IrisTheme {

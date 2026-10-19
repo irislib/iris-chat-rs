@@ -166,7 +166,8 @@ struct IrisChatRow: View {
         if let draftPreview {
             return Text("Draft: ").italic() + Text(draftPreview)
         }
-        return Text(preview)
+        // Empty Text ignores reservesSpace, including at larger text sizes.
+        return Text(preview.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "\u{a0}" : preview)
     }
 }
 

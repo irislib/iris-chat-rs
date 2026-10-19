@@ -591,7 +591,9 @@ struct DesktopSidebarChatRow: View, Equatable {
         if !draft.isEmpty {
             return Text("Draft: ").italic() + Text(draft)
         }
-        return Text(chat.lastMessagePreview ?? chat.subtitle ?? "No messages yet")
+        let message = chat.lastMessagePreview ?? chat.subtitle ?? "No messages yet"
+        // Empty Text ignores reservesSpace; a blank glyph keeps the preview slot.
+        return Text(message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "\u{a0}" : message)
     }
 
     var body: some View {
