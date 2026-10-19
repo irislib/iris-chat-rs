@@ -432,9 +432,10 @@ jobs:
         if: ${{ !cancelled() && steps.ios-build.outcome == 'success' }}
         env:
           IOS_VALIDATION_SCOPE: ${{ inputs.scope }}
+          IOS_CORE_SEED_RUN: ${{ inputs.ios_core_seed_run }}
         run: |
           selectors=(-only-testing:IrisChatTests -only-testing:NotificationServiceTests)
-          if [[ -n "${{ inputs.ios_core_seed_run }}" ]]; then
+          if [[ -n "$IOS_CORE_SEED_RUN" ]]; then
             selectors=(-only-testing:IrisChatTests/IrisProfileStoreTests -only-testing:IrisChatTests/ChatListRowLayoutTests)
           fi
           if [[ "$IOS_VALIDATION_SCOPE" != ios-unit ]]; then
