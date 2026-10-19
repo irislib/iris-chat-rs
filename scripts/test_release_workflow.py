@@ -29,6 +29,11 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("selectors=(-only-testing:IrisChatTests -only-testing:NotificationServiceTests)", units)
         self.assertIn('if [[ "$IOS_VALIDATION_SCOPE" != ios-unit ]]; then', units)
         self.assertIn('-only-testing:IrisChatUITests/ComposerCompletionUITests', units)
+        cached = ios.split('python3 scripts/reuse_ios_core_cache.py --producer-run "$IOS_CORE_SEED_RUN"', 1)[1]
+        cached = cached.split('          else\n', 1)[0]
+        self.assertIn('source scripts/build_common.sh', cached)
+        self.assertIn('load_release_env "$PWD"', cached)
+        self.assertLess(cached.index('resolve_shared_build_metadata "$PWD"'), cached.index('xcodegen generate'))
 
     def test_linux_release_cache_tracks_container_and_real_target(self) -> None:
         workflow = (ROOT / ".github/workflows/build-artifacts.yml").read_text()
