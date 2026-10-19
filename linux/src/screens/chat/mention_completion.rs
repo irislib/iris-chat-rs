@@ -304,8 +304,7 @@ impl State {
                     32,
                     false,
                 ));
-                let name = crate::widgets::user_profile::name(manager, &entry.owner_pubkey_hex);
-                name
+                crate::widgets::user_profile::name(manager, &entry.owner_pubkey_hex)
             } else {
                 row.append(&adw::Avatar::new(32, Some(&entry.display_name), true));
                 gtk::Label::new(Some(&label))
