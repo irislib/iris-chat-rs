@@ -2,6 +2,27 @@
 
 Each release has channel-specific notes. The release tag must match the `##` heading exactly.
 
+## v2026.10.20
+
+### GitHub
+
+- Keep chat-list rows and following conversations in place when previews change between empty, short and wrapped text, drafts or typing indicators across the native apps.
+- Resolve identity-backed avatars and names through the shared core profile directory on iOS, macOS, Android, Windows and Linux. Refresh profile changes without relying on stale row metadata.
+- Keep mention suggestions tied to the matching person as the query changes and display their current avatar and name.
+- Reuse verified core build inputs for focused Apple interface tests, while retaining the source and cache provenance of the original build.
+
+### Apple
+
+- Keep the chat list steady when message previews wrap or change.
+- Show the right person, name and avatar in mention suggestions.
+- Refresh people's names and photos consistently throughout the app.
+
+### Zapstore
+
+- Keep the chat list steady when message previews wrap or change.
+- Show current names and avatars in mention suggestions.
+- Refresh people's names and photos consistently throughout the app.
+
 ## v2026.10.19
 
 ### GitHub
