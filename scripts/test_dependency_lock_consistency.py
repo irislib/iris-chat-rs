@@ -12,16 +12,16 @@ EXPECTED = {
     "hashtree-blossom": "0.2.83",
     "hashtree-resolver": "0.2.86",
     "hashtree-updater": "0.2.89",
-    "nvpn-fips-core": "0.4.95",
-    "nvpn-fips-endpoint": "0.4.95",
-    "nvpn-fips-tcp": "0.2.5",
-    "nvpn-fips-tcp-endpoint": "0.2.30",
+    "nvpn-fips-core": "0.4.106",
+    "nvpn-fips-endpoint": "0.4.106",
+    "nvpn-fips-tcp": "0.2.6",
+    "nvpn-fips-tcp-endpoint": "0.2.41",
     "hashtree-config": "0.2.83",
     "hashtree-core": "0.2.91",
-    "hashtree-fips-transport": "0.4.28",
+    "hashtree-fips-transport": "0.4.29",
     "hashtree-network": "0.2.88",
-    "nostr-pubsub": "0.1.16",
-    "nostr-pubsub-fips": "0.5.22",
+    "nostr-pubsub": "0.1.17",
+    "nostr-pubsub-fips": "0.5.34",
     "nostr-pubsub-relay": "0.1.13",
     "nostr-pubsub-social-graph": "0.2.3",
     "nostr-social-graph": "0.1.4",
@@ -64,29 +64,25 @@ def local_protocol_issues(root: Path) -> list[str]:
 
 
 class DependencyLockConsistencyTests(unittest.TestCase):
-    def test_native_roots_use_the_same_vendored_ice_fix(self):
-        vendor = ROOT / "core" / "vendor" / "webrtc-ice"
-        provenance = (vendor / "UPSTREAM.toml").read_text(encoding="utf-8")
-        self.assertIn('version = "0.17.1"', provenance)
-        self.assertIn(
-            'crate_sha256 = "23ede72a36e5dda685814c389b2b34ac60b3ed000a81789e93626e27180eb785"',
-            provenance,
-        )
-        for license_name in ("LICENSE-MIT", "LICENSE-APACHE"):
-            self.assertTrue((vendor / license_name).is_file())
+    def test_native_roots_use_the_same_published_ice_fix(self):
+        # This published archive contains the consent/candidate fixes formerly
+        # carried by the local patch, plus the refreshed WebRTC foundation.
+        expected_checksum = "95267a504a7516e22699364101a64f48cf733a41ca4f6a087bd7d39194073ebd"
         for consumer in ("core", "linux"):
             with self.subTest(consumer=consumer):
                 manifest = (ROOT / consumer / "Cargo.toml").read_text(encoding="utf-8")
-                patch = re.search(r"(?ms)^\[patch\.crates-io\]\s*\n(.*?)(?=^\[|\Z)", manifest)
-                self.assertIsNotNone(patch, "Every native Cargo root must apply the ICE patch")
-                dependency = re.search(r'(?m)^webrtc-ice\s*=\s*\{\s*path\s*=\s*"([^"]+)"\s*\}', patch.group(1))
-                self.assertIsNotNone(dependency)
-                self.assertEqual((ROOT / consumer / dependency.group(1)).resolve(), vendor.resolve())
-                entries = [block for block in (ROOT / consumer / "Cargo.lock").read_text().split("[[package]]")
-                           if re.search(r'(?m)^name = "webrtc-ice"$', block)]
-                self.assertEqual(len(entries), 1, "Do not ship a second unpatched ICE version")
-                self.assertRegex(entries[0], r'(?m)^version = "0\.17\.1"$')
-                self.assertNotRegex(entries[0], r"(?m)^(source|checksum) =", "ICE must resolve to the local patch")
+                self.assertNotRegex(manifest, r"(?m)^webrtc-ice\s*=", "Do not reintroduce the inactive old patch")
+                lock = ROOT / consumer / "Cargo.lock"
+                versions = package_versions(lock)
+                self.assertNotIn("webrtc-ice", versions, "Do not ship a second ICE implementation")
+                self.assertEqual(versions.get("nvpn-webrtc-ice"), {"0.17.3"})
+                self.assertEqual(versions.get("nvpn-webrtc"), {"0.17.3"})
+                self.assertEqual(versions.get("nvpn-mdns-sd"), {"0.19.2"})
+                entries = [block for block in lock.read_text().split("[[package]]")
+                           if re.search(r'(?m)^name = "nvpn-webrtc-ice"$', block)]
+                self.assertEqual(len(entries), 1)
+                self.assertIn(f'checksum = "{expected_checksum}"', entries[0])
+                self.assertIn('source = "registry+https://github.com/rust-lang/crates.io-index"', entries[0])
 
     def test_local_protocol_manifests_and_locks_match_package_version(self):
         self.assertEqual(local_protocol_issues(ROOT), [])
@@ -138,17 +134,17 @@ class DependencyLockConsistencyTests(unittest.TestCase):
 
     def test_core_manifest_pins_gated_fips_stack_exactly(self):
         manifest = (ROOT / "core" / "Cargo.toml").read_text(encoding="utf-8")
-        self.assertRegex(manifest, r'(?m)^nvpn-fips-core = \{ version = "=0\.4\.95",', "fips-core must stay on the gated release")
-        self.assertRegex(manifest, r'(?m)^nvpn-fips-endpoint = \{ version = "=0\.4\.95" \}$', "fips-endpoint must stay on the gated release")
-        self.assertRegex(manifest, r'(?m)^nvpn-fips-tcp = \{ version = "=0\.2\.5" \}$', "fips-tcp must stay on the gated release")
-        self.assertRegex(manifest, r'(?m)^nvpn-fips-tcp-endpoint = \{ version = "=0\.2\.30" \}$', "fips-tcp-endpoint must stay on the gated release")
+        self.assertRegex(manifest, r'(?m)^nvpn-fips-core = \{ version = "=0\.4\.106",', "fips-core must stay on the gated release")
+        self.assertRegex(manifest, r'(?m)^nvpn-fips-endpoint = \{ version = "=0\.4\.106" \}$', "fips-endpoint must stay on the gated release")
+        self.assertRegex(manifest, r'(?m)^nvpn-fips-tcp = \{ version = "=0\.2\.6" \}$', "fips-tcp must stay on the gated release")
+        self.assertRegex(manifest, r'(?m)^nvpn-fips-tcp-endpoint = \{ version = "=0\.2\.41" \}$', "fips-tcp-endpoint must stay on the gated release")
         self.assertRegex(manifest, r'(?m)^hashtree-config = "=0\.2\.83"$', "Hashtree config must stay on the gated release")
         self.assertRegex(manifest, r'(?m)^hashtree-core = "=0\.2\.91"$', "Hashtree core must stay on the gated release")
-        self.assertRegex(manifest, r'(?m)^hashtree-fips-transport = "=0\.4\.28"$', "Hashtree/FIPS transport must stay on the gated release")
+        self.assertRegex(manifest, r'(?m)^hashtree-fips-transport = "=0\.4\.29"$', "Hashtree/FIPS transport must stay on the gated release")
         self.assertRegex(manifest, r'(?m)^hashtree-network = "=0\.2\.88"$', "Hashtree network must stay on the gated release")
         self.assertRegex(manifest, r'(?m)^nostr-identity = "=0\.6\.0"$', "nostr-identity must stay on the gated release")
-        self.assertRegex(manifest, r'(?m)^nostr-pubsub = "=0\.1\.16"$', "nostr-pubsub must stay on the gated release")
-        self.assertRegex(manifest, r'(?m)^nostr-pubsub-fips = "=0\.5\.22"$', "nostr-pubsub-fips must stay on the gated release")
+        self.assertRegex(manifest, r'(?m)^nostr-pubsub = "=0\.1\.17"$', "nostr-pubsub must stay on the gated release")
+        self.assertRegex(manifest, r'(?m)^nostr-pubsub-fips = "=0\.5\.34"$', "nostr-pubsub-fips must stay on the gated release")
         self.assertRegex(manifest, r'(?m)^nostr-pubsub-relay = "=0\.1\.13"$', "nostr-pubsub-relay must stay on the gated release")
 
     def test_linux_build_inherits_the_pinned_core_manifest(self):

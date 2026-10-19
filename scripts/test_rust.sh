@@ -34,11 +34,9 @@ PY
     export IRIS_DEVICE_APPROVAL_RELAY_URL="ws://127.0.0.1:${approval_port}"
 fi
 
-# Dependency unit tests are not included by the app's ordinary test command.
-cargo test --manifest-path "${ROOT_DIR}/core/vendor/webrtc-ice/Cargo.toml" \
-    --locked --lib agent::agent_idle_regression_test
-cargo test --manifest-path "${ROOT_DIR}/core/vendor/webrtc-ice/Cargo.toml" \
-    --locked --lib candidate::candidate_equality_test
+# The published ICE archive now carries the consent/candidate fixes. Its exact
+# checksum is pinned by test_dependency_lock_consistency.py; the package's own
+# release checks cover those regressions. Do not compile the inactive old vendor.
 
 # Prefer cargo-nextest when available: it runs test binaries in parallel
 # (cargo test runs them serially), which makes a big difference for the
