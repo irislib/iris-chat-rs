@@ -30,7 +30,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}-${{ inputs.scope || 'all' }}
+  group: ci-${{ github.workflow }}-${{ github.ref }}-${{ inputs.scope || 'all' }}-${{ inputs.ios_core_seed_run || 'full' }}
   cancel-in-progress: true
 
 env:
@@ -434,6 +434,9 @@ jobs:
           IOS_VALIDATION_SCOPE: ${{ inputs.scope }}
         run: |
           selectors=(-only-testing:IrisChatTests -only-testing:NotificationServiceTests)
+          if [[ -n "${{ inputs.ios_core_seed_run }}" ]]; then
+            selectors=(-only-testing:IrisChatTests/IrisProfileStoreTests -only-testing:IrisChatTests/ChatListRowLayoutTests)
+          fi
           if [[ "$IOS_VALIDATION_SCOPE" != ios-unit ]]; then
             selectors+=(
               -only-testing:IrisChatUITests/ComposerCompletionUITests
