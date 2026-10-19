@@ -17,10 +17,14 @@ on:
   workflow_dispatch:
     inputs:
       scope:
-        description: Checks to run (releases require all)
+        description: Checks to run; retain exact source-bound coverage for unchanged components
         type: choice
         default: all
         options: [all, cli, core, android, windows, windows-keyboard, apple, ios, ios-unit, macos, linux, apple-products, ios-products, macos-products, ios-ui-runner, macos-ui-runner]
+      ios_core_seed_run:
+        description: Optional exact successful core build/cache producer for Swift-only unit validation
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -353,6 +357,9 @@ jobs:
     name: iOS simulator build and composer tests
     runs-on: macos-15
     timeout-minutes: 75
+    permissions:
+      contents: read
+      actions: read
     env:
       CARGO_TARGET_DIR: ${{ github.workspace }}/cargo-target
     defaults:
@@ -385,7 +392,21 @@ jobs:
 
       - name: iOS simulator build
         id: ios-build
-        run: ./scripts/ios-build ios-build-sim
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IOS_CORE_SEED_RUN: ${{ inputs.ios_core_seed_run }}
+          IOS_CORE_CACHE_HIT: ${{ steps.ios_cargo_cache.outputs.cache-hit }}
+          IOS_CORE_CACHE_KEY: ${{ steps.ios_cargo_cache.outputs.cache-primary-key }}
+        run: |
+          if [[ -n "$IOS_CORE_SEED_RUN" ]]; then
+            test "${{ inputs.scope }}" = ios-unit
+            python3 scripts/reuse_ios_core_cache.py --producer-run "$IOS_CORE_SEED_RUN"
+            (cd ios && xcodegen generate --spec project.yml)
+            xcodebuild -project ios/IrisChat.xcodeproj -scheme IrisChat \
+              -destination "$(./scripts/ios-simulator-destination)" -jobs 2 build
+          else
+            ./scripts/ios-build ios-build-sim
+          fi
 
       - name: Save successful iOS compiler cache
         if: steps.ios_cargo_cache.outputs.cache-hit != 'true'
