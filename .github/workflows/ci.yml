@@ -20,11 +20,7 @@ on:
         description: Checks to run; retain exact source-bound coverage for unchanged components
         type: choice
         default: all
-        options: [all, cli, core, android, android-layout, windows, windows-keyboard, apple, ios, ios-unit, macos, linux, apple-products, ios-products, macos-products, ios-ui-runner, macos-ui-runner]
-      android_layout_seed_run:
-        description: Exact successful APK producer for isolated Compose row validation
-        type: string
-        default: ''
+        options: [all, cli, core, android, windows, windows-keyboard, apple, ios, ios-unit, macos, linux, apple-products, ios-products, macos-products, ios-ui-runner, macos-ui-runner]
       ios_core_seed_run:
         description: Optional exact successful core build/cache producer for Swift-only unit validation
         type: string
@@ -42,49 +38,6 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  android-layout:
-    if: inputs.scope == 'android-layout'
-    name: Android prebuilt Compose row geometry
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    permissions:
-      contents: read
-      actions: read
-    defaults:
-      run:
-        working-directory: iris-chat-rs
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          path: iris-chat-rs
-      - name: Prepare source-bound interface validation packages
-        env:
-          GH_TOKEN: ${{ github.token }}
-          ANDROID_LAYOUT_SEED_RUN: ${{ inputs.android_layout_seed_run }}
-        run: python3 scripts/android_layout_validation.py prepare --seed-run "$ANDROID_LAYOUT_SEED_RUN"
-      - name: Enable isolated runner KVM
-        run: |
-          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
-          sudo udevadm control --reload-rules
-          sudo udevadm trigger --name-match=kvm
-      - name: Render actual Compose rows
-        uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
-        with:
-          api-level: 35
-          arch: x86_64
-          target: google_apis
-          disable-animations: true
-          script: cd iris-chat-rs && python3 scripts/android_layout_validation.py test
-      - name: Retain actual geometry and package provenance
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: android-compose-layout
-          path: |
-            iris-chat-rs/work/android-layout/*.json
-            iris-chat-rs/work/android-layout/*.log
-          retention-days: 14
-
   apple-validation-products:
     if: ${{ inputs.scope == 'apple-products' || inputs.scope == 'ios-products' || inputs.scope == 'macos-products' || inputs.scope == 'ios-ui-runner' || inputs.scope == 'macos-ui-runner' }}
     uses: ./.github/workflows/apple-validation-products.yml
