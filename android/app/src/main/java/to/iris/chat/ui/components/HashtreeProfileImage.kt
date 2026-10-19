@@ -3,6 +3,7 @@ package to.iris.chat.ui.components
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.produceState
 import java.util.concurrent.ConcurrentHashMap
+import to.iris.chat.core.AccountImageSession
 import to.iris.chat.core.AppManager
 
 @Composable
