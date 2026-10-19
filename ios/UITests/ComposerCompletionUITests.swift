@@ -77,10 +77,16 @@ final class ComposerCompletionUITests: IrisChatUITestCase {
         XCTAssertFalse(person.exists)
         XCTAssertEqual(input.frame.minY, editorFrame.minY, accuracy: 1)
         XCTAssertEqual(input.frame.height, editorFrame.height, accuracy: 1)
-        let draftPreview = app.descendants(matching: .any).matching(
-            NSPredicate(format: "identifier BEGINSWITH 'desktopChatPreview-'"))
+        // macOS exposes a button's text children as one accessible row label.
+        // Check the actual chat row rather than an elided child Text element.
+        let draftRow = app.buttons.matching(
+            NSPredicate(format: "identifier BEGINSWITH 'chatRow-group:'"))
             .firstMatch
-        XCTAssertTrue(waitUntil(timeout: 5) { draftPreview.label == "Draft: Hi @ios tester" },
+        capture(app, named: "group-readable-mention-draft")
+        XCTAssertTrue(waitUntil(timeout: 5) {
+            draftRow.exists && draftRow.label.hasSuffix("Draft: Hi @ios tester")
+                && !draftRow.label.contains("nostr:")
+        },
                       "The chat-list preview must display the mention name without its wire address")
         #else
         person.tap()
