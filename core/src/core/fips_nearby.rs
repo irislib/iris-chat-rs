@@ -2,6 +2,9 @@ use super::*;
 use crate::{DesktopNearbyPeerSnapshot, DesktopNearbySnapshot};
 use fips_core::transport::ble::host::HostBleIo;
 use fips_core::PeerIdentity as FipsPeerIdentity;
+use std::collections::BTreeSet;
+mod private_targets;
+pub(in crate::core) use private_targets::is_private_transport_event;
 
 pub(super) const FIPS_NEARBY_PORT: u16 = 7370;
 pub(super) const FIPS_NEARBY_SCOPE: &str = "iris-chat-nearby-v1";
@@ -154,6 +157,9 @@ struct FipsNearbyOutboxEntry {
     payload: Vec<u8>,
     sent_links: VecDeque<FipsNearbyOutboxLink>,
     acknowledged_peers: VecDeque<String>,
+    // None is public bootstrap/gossip. Private envelopes have exact live
+    // recipients, including an empty set while an invite mapping is unavailable.
+    recipient_targets: Option<BTreeSet<String>>,
 }
 
 impl FipsNearbyOutboxEntry {
@@ -174,7 +180,18 @@ pub(super) struct FipsNearbyOutbox {
 }
 
 impl FipsNearbyOutbox {
+    #[cfg(test)]
     pub(super) fn insert(&mut self, event_id: String, payload: Vec<u8>) {
+        let targets = private_targets::encoded_private_targets(&payload);
+        self.insert_for_targets(event_id, payload, targets);
+    }
+
+    pub(super) fn insert_for_targets(
+        &mut self,
+        event_id: String,
+        payload: Vec<u8>,
+        recipient_targets: Option<BTreeSet<String>>,
+    ) {
         let (sent_links, acknowledged_peers) = self
             .entries
             .iter()
@@ -190,6 +207,7 @@ impl FipsNearbyOutbox {
             payload,
             sent_links,
             acknowledged_peers,
+            recipient_targets,
         });
     }
 
@@ -198,7 +216,11 @@ impl FipsNearbyOutbox {
         self.entries
             .iter()
             .filter(|entry| {
-                !entry.acknowledged_by(peer_npub)
+                entry
+                    .recipient_targets
+                    .as_ref()
+                    .is_none_or(|targets| targets.contains(peer_npub))
+                    && !entry.acknowledged_by(peer_npub)
                     && !entry.sent_links.iter().any(|link| {
                         link.peer_npub == peer_npub
                             && link.link_id == link_id
@@ -243,21 +265,29 @@ impl FipsNearbyOutbox {
         }
     }
 
-    pub(super) fn acknowledge(&mut self, peer_npub: &str, event_id: &str) {
+    pub(super) fn acknowledge(&mut self, peer_npub: &str, event_id: &str) -> bool {
         let Some(entry) = self
             .entries
             .iter_mut()
             .find(|entry| entry.event_id == event_id)
         else {
-            return;
+            return false;
         };
+        if entry
+            .recipient_targets
+            .as_ref()
+            .is_some_and(|targets| !targets.contains(peer_npub))
+        {
+            return false;
+        }
         if entry.acknowledged_by(peer_npub) {
-            return;
+            return true;
         }
         while entry.acknowledged_peers.len() >= FIPS_NEARBY_OUTBOX_MAX_LINKS_PER_EVENT {
             entry.acknowledged_peers.pop_front();
         }
         entry.acknowledged_peers.push_back(peer_npub.to_owned());
+        true
     }
 
     fn acknowledged_by(&self, peer_npub: &str, event_id: &str) -> bool {
@@ -325,13 +355,15 @@ impl AppCore {
         if !self.private_publication_allowed(event) {
             return;
         }
-        if !self.preferences.nearby_enabled || !self.preferences.nearby_mailbag_enabled {
-            return;
-        }
         let Some(runtime) = self.device_sync.as_ref() else {
             return;
         };
-        if !runtime.nearby_enabled {
+        let recipient_targets = self.private_nearby_targets(event);
+        if recipient_targets.is_none()
+            && (!runtime.nearby_enabled
+                || !self.preferences.nearby_enabled
+                || !self.preferences.nearby_mailbag_enabled)
+        {
             return;
         }
         let endpoint = runtime.endpoint.clone();
@@ -339,7 +371,11 @@ impl AppCore {
             return;
         };
         if let Ok(mut outbox) = runtime.nearby_outbox.write() {
-            outbox.insert(event.id.to_string(), payload.clone());
+            outbox.insert_for_targets(
+                event.id.to_string(),
+                payload.clone(),
+                recipient_targets.clone(),
+            );
         }
         let outbox = runtime.nearby_outbox.clone();
         let event_id = event.id.to_string();
@@ -355,6 +391,11 @@ impl AppCore {
             .flat_map(|known| known.devices.iter())
             .filter(|device| device.identity_pubkey_hex != local_hex)
             .filter_map(|device| fips_peer_from_hex(&device.identity_pubkey_hex))
+            .filter(|device| {
+                recipient_targets
+                    .as_ref()
+                    .is_none_or(|targets| targets.contains(&device.npub()))
+            })
             .collect::<Vec<_>>();
         self.runtime.spawn(async move {
             if cancelled.load(std::sync::atomic::Ordering::Acquire) {
@@ -364,7 +405,13 @@ impl AppCore {
                 .into_iter()
                 .map(|peer| (peer.npub(), peer))
                 .collect::<BTreeMap<_, _>>();
-            if let Ok(peers) = endpoint.peers().await {
+            if let Some(allowed) = &recipient_targets {
+                for npub in allowed {
+                    if let Ok(identity) = FipsPeerIdentity::from_npub(npub) {
+                        targets.insert(npub.to_string(), identity);
+                    }
+                }
+            } else if let Ok(peers) = endpoint.peers().await {
                 for peer in peers.into_iter().filter(|peer| peer.connected) {
                     if let Ok(identity) = FipsPeerIdentity::from_npub(&peer.npub) {
                         targets.insert(peer.npub, identity);
@@ -506,6 +553,7 @@ impl AppCore {
                     return;
                 };
                 if event.id.to_string() != event_id
+                    || !self.accepts_private_nearby_event(&event)
                     || !self.handle_relay_event_with_channel(event, "FIPS nearby")
                 {
                     return;
@@ -535,10 +583,15 @@ impl AppCore {
                 let Some(source) = fips_peer_from_hex(source_pubkey_hex) else {
                     return;
                 };
-                if let Some(runtime) = self.device_sync.as_ref() {
-                    if let Ok(mut outbox) = runtime.nearby_outbox.write() {
-                        outbox.acknowledge(&source.npub(), &event_id);
-                    }
+                let acknowledged = self.device_sync.as_ref().is_some_and(|runtime| {
+                    runtime
+                        .nearby_outbox
+                        .write()
+                        .map(|mut outbox| outbox.acknowledge(&source.npub(), &event_id))
+                        .unwrap_or(false)
+                });
+                if !acknowledged {
+                    return;
                 }
                 let changed = self.add_transport_channel_for_event_id(&event_id, "FIPS nearby");
                 self.push_debug_log(

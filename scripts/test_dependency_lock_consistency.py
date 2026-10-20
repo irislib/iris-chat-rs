@@ -20,8 +20,8 @@ EXPECTED = {
     "hashtree-core": "0.2.91",
     "hashtree-fips-transport": "0.4.29",
     "hashtree-network": "0.2.88",
-    "nostr-pubsub": "0.1.17",
-    "nostr-pubsub-fips": "0.5.34",
+    "nostr-pubsub": "0.1.18",
+    "nostr-pubsub-fips": "0.5.36",
     "nostr-pubsub-relay": "0.1.13",
     "nostr-pubsub-social-graph": "0.2.3",
     "nostr-social-graph": "0.1.4",
@@ -143,8 +143,8 @@ class DependencyLockConsistencyTests(unittest.TestCase):
         self.assertRegex(manifest, r'(?m)^hashtree-fips-transport = "=0\.4\.29"$', "Hashtree/FIPS transport must stay on the gated release")
         self.assertRegex(manifest, r'(?m)^hashtree-network = "=0\.2\.88"$', "Hashtree network must stay on the gated release")
         self.assertRegex(manifest, r'(?m)^nostr-identity = "=0\.6\.0"$', "nostr-identity must stay on the gated release")
-        self.assertRegex(manifest, r'(?m)^nostr-pubsub = "=0\.1\.17"$', "nostr-pubsub must stay on the gated release")
-        self.assertRegex(manifest, r'(?m)^nostr-pubsub-fips = "=0\.5\.34"$', "nostr-pubsub-fips must stay on the gated release")
+        self.assertRegex(manifest, r'(?m)^nostr-pubsub = "=0\.1\.18"$', "nostr-pubsub must stay on the gated release")
+        self.assertRegex(manifest, r'(?m)^nostr-pubsub-fips = "=0\.5\.36"$', "nostr-pubsub-fips must stay on the gated release")
         self.assertRegex(manifest, r'(?m)^nostr-pubsub-relay = "=0\.1\.13"$', "nostr-pubsub-relay must stay on the gated release")
 
     def test_linux_build_inherits_the_pinned_core_manifest(self):

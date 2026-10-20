@@ -3,7 +3,8 @@ use crate::update_announcements::{
     secure_update_ref, trusted_update_publisher, websocket_seed_urls,
 };
 use fips_core::config::{
-    BleConfig, NostrDiscoveryPolicy, PeerConfig, TransportInstances, UdpConfig, WebSocketConfig,
+    BleConfig, NostrDiscoveryPolicy, NostrPeerfindingSource, PeerConfig, TransportInstances,
+    UdpConfig, WebSocketConfig,
 };
 use fips_core::{Config, WebRtcConfig};
 use hashtree_core::BlobRoute;
@@ -12,6 +13,7 @@ use std::net::SocketAddrV4;
 
 mod connection_monitor;
 mod peer_snapshot;
+mod private_provider;
 const SAME_HOST_HASHTREE_ENV: &str = "IRIS_CHAT_SAME_HOST_HASHTREE";
 const LOCAL_RENDEZVOUS_ADDR_ENV: &str = "IRIS_CHAT_FIPS_LOCAL_RENDEZVOUS_ADDR";
 const WEBSOCKET_SEED_URLS_ENV: &str = "IRIS_FIPS_WEBSOCKET_SEED_URLS";
@@ -260,12 +262,32 @@ impl AppCore {
             max_replay_events: super::super::mesh_pubsub::MESH_REPLAY_EVENTS,
             ..FipsPubsubClientOptions::default()
         };
-        pubsub_options.routed_peers = super::settings::routed_peer_ids(
-            &config.siblings,
-            &config.peers,
+        pubsub_options.routed_peers = private_provider::approved_providers(
+            &options.additional_peers,
+            &options.routed_peers,
             update_publisher.as_deref(),
             pubsub_options.max_connected_peers,
         );
+        let private_providers = Arc::new(super::super::mesh_pubsub::PrivateMeshProviders::new(
+            options.additional_peers.clone(),
+            options.websocket.clone(),
+            private_provider::approved_providers(
+                &options.additional_peers,
+                &options.routed_peers,
+                None,
+                pubsub_options.max_connected_peers,
+            ),
+            config
+                .relay_urls
+                .iter()
+                .filter_map(|url| RelayUrl::parse(url).ok())
+                .collect(),
+        ));
+        let peer_advert_authors = config
+            .peers
+            .iter()
+            .filter_map(|peer| PublicKey::from_hex(&peer.pubkey().to_string()).ok())
+            .collect::<Vec<_>>();
         let nearby_enabled = host_ble_requested || config.nearby_ip_enabled;
         let discovery_scope = if nearby_enabled || !config.peers.is_empty() {
             super::super::fips_nearby::FIPS_NEARBY_SCOPE.to_string()
@@ -364,6 +386,8 @@ impl AppCore {
                 runtime.key = runtime_key;
                 runtime.peer_refresh_key = peer_refresh_key;
                 runtime.siblings = config.siblings.clone();
+                runtime.private_providers = Some(private_providers);
+                runtime.peer_advert_authors = peer_advert_authors;
                 if let Some(pubsub) = &runtime.pubsub {
                     if let Err(error) = pubsub.set_routed_peers(pubsub_options.routed_peers) {
                         crate::perflog!("fips.pubsub.peer_refresh error={error}");
@@ -459,6 +483,9 @@ impl AppCore {
             // This also enables signed, in-band transport upgrades over an
             // existing FIPS route. An empty relay list stays entirely local.
             fips_config.node.discovery.nostr.enabled = true;
+            // External advert ingestion preserves in-band FIPS signaling while
+            // preventing a device-signed advert and peer query sharing a relay.
+            fips_config.node.discovery.nostr.peerfinding_source = NostrPeerfindingSource::External;
             fips_config.node.discovery.nostr.advertise = true;
             fips_config.node.discovery.nostr.advert_relays = config.relay_urls.clone();
             fips_config.node.discovery.nostr.app = discovery_scope.clone();
@@ -557,7 +584,9 @@ impl AppCore {
             }
         };
         self.host_ble_attached = attaching_ble;
-        let nearby_receiver = if nearby_enabled {
+        // Exact-recipient live delivery remains available independently of
+        // public nearby discovery and mailbag forwarding preferences.
+        let nearby_receiver = if nearby_enabled || !config.peers.is_empty() {
             match self.runtime.block_on(
                 endpoint.register_service_receiver(super::super::fips_nearby::FIPS_NEARBY_PORT),
             ) {
@@ -612,19 +641,30 @@ impl AppCore {
                 None
             }
         };
-        let update_pubsub = match self
-            .runtime
-            .block_on(FipsPubsubClient::start_with_reputation(
-                endpoint.clone(),
-                pubsub_options,
-                super::settings::pubsub_policy_options(),
-            )) {
-            Ok(client) => Some(Arc::new(client)),
-            Err(error) => {
-                self.push_debug_log("update.pubsub.start.error", error.to_string());
-                None
+        let update_pubsub =
+            match self
+                .runtime
+                .block_on(FipsPubsubClient::start_receive_only_with_public_authors(
+                    endpoint.clone(),
+                    pubsub_options,
+                    self.mesh_public_service_authors(),
+                )) {
+                Ok(client) => Some(Arc::new(client)),
+                Err(error) => {
+                    self.push_debug_log("update.pubsub.start.error", error.to_string());
+                    None
+                }
+            };
+        if webrtc_enabled {
+            if let (Some(pubsub), Some(login)) = (&update_pubsub, &self.logged_in) {
+                tasks.push(self.runtime.spawn(private_provider::publish_own_adverts(
+                    endpoint.clone(),
+                    pubsub.clone(),
+                    login.client.clone(),
+                    login.relay_urls.clone(),
+                )));
             }
-        };
+        }
         self.register_update_sources(update_pubsub.as_ref());
         #[cfg(feature = "stack-fixture")]
         if let (Some(pubsub), Some(logged_in)) = (&update_pubsub, &self.logged_in) {
@@ -679,16 +719,24 @@ impl AppCore {
             Vec::new()
         }));
         let mut initial_nearby_outbox = super::super::fips_nearby::FipsNearbyOutbox::default();
-        if nearby_enabled {
+        {
             for event in self
                 .pending_relay_publishes
                 .values()
                 .rev()
                 .take(super::super::fips_nearby::FIPS_NEARBY_OUTBOX_MAX_EVENTS)
                 .filter_map(|pending| serde_json::from_str::<Event>(&pending.event_json).ok())
+                .filter(|event| self.private_publication_allowed(event))
+                .filter(|event| {
+                    nearby_enabled || super::super::fips_nearby::is_private_transport_event(event)
+                })
             {
                 if let Some(payload) = super::super::fips_nearby::encode_fips_nearby_event(&event) {
-                    initial_nearby_outbox.insert(event.id.to_string(), payload);
+                    initial_nearby_outbox.insert_for_targets(
+                        event.id.to_string(),
+                        payload,
+                        self.private_nearby_targets(&event),
+                    );
                 }
             }
         }
@@ -748,6 +796,8 @@ impl AppCore {
             nearby_outbox,
             _attachment_blobs: attachment_store,
             pubsub: update_pubsub,
+            private_providers: Some(private_providers),
+            peer_advert_authors,
             protocol_subscriptions: super::super::mesh_pubsub::MeshProtocolSubscriptions::default(),
             recent_peers,
             tasks,
@@ -886,107 +936,8 @@ impl AppCore {
     }
 }
 
-fn configure_fips_lan(config: &mut Config, enabled: bool) {
-    config.node.discovery.lan.enabled = enabled;
-    config.transports.udp = if enabled {
-        TransportInstances::Single(UdpConfig {
-            bind_addr: Some("0.0.0.0:0".to_string()),
-            advertise_on_nostr: Some(false),
-            public: Some(false),
-            outbound_only: Some(false),
-            accept_connections: Some(true),
-            ..UdpConfig::default()
-        })
-    } else {
-        TransportInstances::default()
-    };
-}
-
-async fn run_recent_peer_observer(
-    endpoint: Arc<FipsEndpoint>,
-    recent_peers: Arc<RwLock<DeviceSyncRecentPeers>>,
-) {
-    loop {
-        let peers = match peer_snapshot::query(|| endpoint.peers()).await {
-            Ok(peers) => peers,
-            Err(_) => return,
-        };
-        if let Ok(mut recent_peers) = recent_peers.write() {
-            if let Err(error) =
-                recent_peers.observe_and_flush_if_due(&peers, crate::perflog::now_ms())
-            {
-                crate::perflog!("fips_recent_peers.observe error={error}");
-            }
-        }
-        sleep(RECENT_PEERS_OBSERVE_INTERVAL).await;
-    }
-}
-
-async fn shutdown_shared_fips(
-    endpoint: Arc<FipsEndpoint>,
-    pubsub: Option<Arc<FipsPubsubClient>>,
-    recent_peers: Option<Arc<RwLock<DeviceSyncRecentPeers>>>,
-) {
-    if let Some(pubsub) = pubsub {
-        pubsub.shutdown_shared().await;
-    }
-    if let (Some(recent_peers), Ok(peers)) = (recent_peers, endpoint.peers().await) {
-        if let Ok(mut recent_peers) = recent_peers.write() {
-            if let Err(error) = recent_peers.observe_and_flush(&peers, crate::perflog::now_ms()) {
-                crate::perflog!("fips_recent_peers.shutdown error={error}");
-            }
-        }
-    }
-    let _ = endpoint.shutdown().await;
-}
-
-fn same_host_hashtree_enabled() -> bool {
-    same_host_hashtree_setting(std::env::var(SAME_HOST_HASHTREE_ENV).ok().as_deref())
-}
-
-fn same_host_hashtree_setting(value: Option<&str>) -> bool {
-    !value.is_some_and(|value| {
-        matches!(
-            value.trim().to_ascii_lowercase().as_str(),
-            "0" | "false" | "no" | "off"
-        )
-    })
-}
-
-fn configured_websocket_seeds() -> Option<WebSocketConfig> {
-    let configured = std::env::var(WEBSOCKET_SEED_URLS_ENV).ok();
-    let seed_urls = websocket_seed_urls(configured.as_deref());
-    let bind_addr = std::env::var("IRIS_CHAT_FIPS_WEBSOCKET_BIND_ADDR")
-        .ok()
-        .filter(|value| !value.trim().is_empty());
-    (!seed_urls.is_empty() || bind_addr.is_some()).then_some(WebSocketConfig {
-        bind_addr,
-        seed_urls,
-        ..WebSocketConfig::default()
-    })
-}
-
-fn configured_local_rendezvous_addr() -> Result<Option<SocketAddrV4>, String> {
-    let Some(value) = std::env::var(LOCAL_RENDEZVOUS_ADDR_ENV)
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-    else {
-        return Ok(None);
-    };
-    parse_local_rendezvous_addr(&value).map(Some)
-}
-
-fn parse_local_rendezvous_addr(value: &str) -> Result<SocketAddrV4, String> {
-    let address = value.trim().parse::<SocketAddrV4>().map_err(|error| {
-        format!("{LOCAL_RENDEZVOUS_ADDR_ENV} must be an IPv4 loopback address: {error}")
-    })?;
-    if !address.ip().is_loopback() || address.port() == 0 {
-        return Err(format!(
-            "{LOCAL_RENDEZVOUS_ADDR_ENV} must be a non-zero IPv4 loopback address"
-        ));
-    }
-    Ok(address)
-}
+mod environment;
+use environment::*;
 
 #[cfg(test)]
 mod local_rendezvous_tests;

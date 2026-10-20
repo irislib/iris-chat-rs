@@ -3,6 +3,8 @@ fn relay_publish_burst_does_not_replay_acknowledged_nearby_backlog() {
     let transport_keys = Keys::generate();
     let owner = Keys::generate();
     let device = Keys::generate();
+    let recipient = Keys::generate().public_key();
+    let recipient_npub = recipient.to_bech32().unwrap();
     let mut core = logged_in_test_core("nearby-publish-burst", &owner, &device);
     let mut config = fips_core::Config::new();
     config.node.control.enabled = false;
@@ -28,7 +30,7 @@ fn relay_publish_burst_does_not_replay_acknowledged_nearby_backlog() {
     core.relay_transport_runtime.publish_drain_started_at = Some(Instant::now());
     let event = EventBuilder::new(Kind::Custom(1060), "earlier control")
         .tag(nostr::Tag::parse(["v", "2"]).unwrap())
-        .tag(nostr::Tag::public_key(Keys::generate().public_key()))
+        .tag(nostr::Tag::public_key(recipient))
         .sign_with_keys(&transport_keys)
         .unwrap();
     assert!(core.publish_runtime_event(event.clone(), APPCORE_PROTOCOL_LABEL, None));
@@ -36,16 +38,16 @@ fn relay_publish_burst_does_not_replay_acknowledged_nearby_backlog() {
     outbox
         .write()
         .unwrap()
-        .acknowledge("test-peer", &event.id.to_hex());
+        .acknowledge(&recipient_npub, &event.id.to_hex());
     for index in 0..20 {
         let next = EventBuilder::new(Kind::Custom(1060), format!("new control {index}"))
             .tag(nostr::Tag::parse(["v", "2"]).unwrap())
-            .tag(nostr::Tag::public_key(Keys::generate().public_key()))
+            .tag(nostr::Tag::public_key(recipient))
             .sign_with_keys(&transport_keys)
             .unwrap();
         assert!(core.publish_runtime_event(next, APPCORE_PROTOCOL_LABEL, None));
     }
-    let pending = outbox.read().unwrap().pending_for_link("test-peer", 1);
+    let pending = outbox.read().unwrap().pending_for_link(&recipient_npub, 1);
     assert_eq!(
         pending.len(),
         20,
@@ -67,7 +69,7 @@ fn relay_publish_burst_does_not_replay_acknowledged_nearby_backlog() {
         outbox
             .read()
             .unwrap()
-            .pending_for_link("test-peer", 1)
+            .pending_for_link(&recipient_npub, 1)
             .len(),
         20,
         "server persistence retries must not resend to a peer that acknowledged the event"
@@ -78,8 +80,8 @@ fn relay_publish_burst_does_not_replay_acknowledged_nearby_backlog() {
             .unwrap()
             .pending_for_link("later-peer", 1)
             .len(),
-        21,
-        "server persistence retries must retain events for later peers"
+        0,
+        "private retries must never send another recipient's envelope to a later peer"
     );
     core.runtime.block_on(endpoint.shutdown()).unwrap();
 }

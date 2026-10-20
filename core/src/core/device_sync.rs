@@ -61,9 +61,20 @@ pub(super) struct DeviceSyncRuntime {
     pub(super) nearby_outbox: Arc<RwLock<super::fips_nearby::FipsNearbyOutbox>>,
     _attachment_blobs: Option<Arc<super::attachment_upload::AttachmentBlobRuntime>>,
     pub(super) pubsub: Option<Arc<FipsPubsubClient>>,
+    pub(super) private_providers: Option<Arc<super::mesh_pubsub::PrivateMeshProviders>>,
+    pub(super) peer_advert_authors: Vec<PublicKey>,
     pub(super) protocol_subscriptions: super::mesh_pubsub::MeshProtocolSubscriptions,
     recent_peers: Option<Arc<RwLock<DeviceSyncRecentPeers>>>,
     tasks: Vec<JoinHandle<()>>,
+}
+
+impl DeviceSyncRuntime {
+    pub(super) fn endpoint_peer_advert_filters(&self) -> Vec<Filter> {
+        self.peer_advert_authors
+            .iter()
+            .map(|author| Filter::new().kind(Kind::Custom(37195)).author(*author))
+            .collect()
+    }
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(

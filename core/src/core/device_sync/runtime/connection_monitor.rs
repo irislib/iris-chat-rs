@@ -51,10 +51,7 @@ pub(super) async fn run(
                 .then_with(|| left.transport_type.cmp(&right.transport_type))
         });
         report_links(&core_sender, generation, &mut reported_links, current_links);
-        for peer in peers
-            .into_iter()
-            .filter(|peer| nearby_enabled && peer.connected)
-        {
+        for peer in peers.into_iter().filter(|peer| peer.connected) {
             let Ok(identity) = FipsPeerIdentity::from_npub(&peer.npub) else {
                 continue;
             };
@@ -62,7 +59,11 @@ pub(super) async fn run(
             let initialized = if initialized_links.get(&peer.npub) == Some(&initialization) {
                 true
             } else {
-                let payloads = current_bootstrap.clone();
+                let payloads = if nearby_enabled {
+                    current_bootstrap.clone()
+                } else {
+                    Vec::new()
+                };
                 let sent = if payloads.is_empty() {
                     true
                 } else {

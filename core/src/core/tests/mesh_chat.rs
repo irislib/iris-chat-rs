@@ -138,7 +138,7 @@ fn mesh_subscriptions_wait_for_the_outermost_catchup_batch() {
 }
 
 #[test]
-fn encrypted_chat_crosses_uninterested_fips_transit_without_relays_or_sibling_sync() {
+fn encrypted_chat_crosses_fips_transit_by_direct_recipient_route_without_message_providers() {
     use fips_core::config::{TransportInstances, WebSocketConfig};
     let alice_owner = Keys::generate();
     let alice_device = Keys::generate();
@@ -252,17 +252,15 @@ fn encrypted_chat_crosses_uninterested_fips_transit_without_relays_or_sibling_sy
             }
         }
         let ready = [&alice, &bob].into_iter().all(|core| {
-            core.device_sync
-                .as_ref()
-                .and_then(|mesh| mesh.pubsub.as_ref())
-                .is_some_and(|client| client.connected_peer_count().unwrap_or(0) > 0)
+            core.device_sync.as_ref().is_some_and(|mesh| runtime.block_on(mesh.endpoint.peers())
+                .unwrap().iter().any(|peer| peer.connected && peer.npub == transit.npub()))
         });
         if ready {
             break;
         }
         assert!(
             std::time::Instant::now() < deadline,
-            "routed Chat pubsub did not connect"
+            "live endpoint did not connect to the transit route"
         );
         std::thread::sleep(Duration::from_millis(20));
     }
@@ -293,14 +291,14 @@ fn encrypted_chat_crosses_uninterested_fips_transit_without_relays_or_sibling_sy
         }
         assert!(
             std::time::Instant::now() < deadline,
-            "encrypted Chat message did not decrypt through pubsub"
+            "encrypted Chat message did not decrypt through the direct recipient route"
         );
         std::thread::sleep(Duration::from_millis(20));
     }
     assert!(bob
         .event_transport_channels
         .values()
-        .any(|channel| channel.contains("FIPS mesh")));
+        .any(|channel| channel.contains("FIPS nearby")));
     for core in [&alice, &bob] {
         let endpoint = core.device_sync_endpoint_for_test().unwrap();
         let direct = runtime

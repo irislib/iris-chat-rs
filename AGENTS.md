@@ -4,6 +4,8 @@ Private communication must preserve metadata privacy as well as forward secrecy.
 Private relay publishing must use separate send-only connections with fresh
 anonymous authentication. Never reuse account-authenticated or receiving
 connections, including on retries or authentication failure.
+Use a separate anonymous scope for each public author queried during private
+peer discovery; do not send contact or group-member batches in one context.
 The same boundary applies to FIPS providers and nearby forwarding: a provider
 must not learn a public sender identity together with a recipient tag or a
 peer-discovery filter. Payload encryption alone does not hide those fields.

@@ -1,4 +1,4 @@
-//! A bounded peer-readable cache, separate from decrypted message/identity state.
+//! Bounded local ciphertext history. Identified mesh clients never export it.
 use super::{AppStore, SharedConnection};
 use crate::core::{identity::unix_now, MESSAGE_EVENT_KIND};
 use nostr::{Event, Filter, JsonUtil};
@@ -32,12 +32,7 @@ pub(in crate::core) struct GroupEnvelopeReplay {
 }
 
 impl GroupEnvelopeReplay {
-    pub(in crate::core) fn same_permissions(&self, other: &Self) -> bool {
-        std::sync::Arc::ptr_eq(&self.conn, &other.conn)
-            && self.owner == other.owner
-            && self.groups == other.groups
-    }
-
+    #[cfg(test)]
     pub(in crate::core) fn new(
         conn: SharedConnection,
         owner: String,

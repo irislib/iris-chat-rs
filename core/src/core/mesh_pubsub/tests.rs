@@ -197,7 +197,7 @@ async fn fixture() -> (Arc<fips_core::FipsEndpoint>, FipsPubsubClient) {
 }
 
 #[test]
-fn attached_group_replay_preserves_normal_saves_and_revokes_changed_permissions() {
+fn identified_mesh_never_attaches_retained_private_group_replay() {
     for change in ["block", "remove", "delete", "reject"] {
         let owner = Keys::generate();
         let peer = Keys::generate();
@@ -236,14 +236,14 @@ fn attached_group_replay_preserves_normal_saves_and_revokes_changed_permissions(
         core.install_device_sync_sender_for_test(endpoint.clone(), tcp, Vec::new());
         core.device_sync.as_mut().unwrap().pubsub = Some(client.clone());
         core.reconcile_mesh_protocol_subscriptions();
-        let attached = core
+        assert!(core
             .device_sync
             .as_ref()
             .unwrap()
             .protocol_subscriptions
             .replay_source
-            .clone()
-            .unwrap();
+            .is_none());
+        let attached = core.mesh_group_replay_source().unwrap();
         let query =
             |core: &AppCore, source: &Arc<storage::mesh_group_envelopes::GroupEnvelopeReplay>| {
                 core.runtime
@@ -263,17 +263,13 @@ fn attached_group_replay_preserves_normal_saves_and_revokes_changed_permissions(
         assert_eq!(query(&core, &attached).len(), 1);
         core.reconcile_mesh_protocol_subscriptions();
         assert!(
-            Arc::ptr_eq(
-                &attached,
-                core.device_sync
-                    .as_ref()
-                    .unwrap()
-                    .protocol_subscriptions
-                    .replay_source
-                    .as_ref()
-                    .unwrap()
-            ),
-            "unchanged permissions must not cancel in-flight replay queries"
+            core.device_sync
+                .as_ref()
+                .unwrap()
+                .protocol_subscriptions
+                .replay_source
+                .is_none(),
+            "normal saves must not attach private replay to an identified provider client"
         );
         match change {
             "block" => core.set_user_blocked(&peer.public_key().to_hex(), true),

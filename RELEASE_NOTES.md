@@ -7,6 +7,7 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 ### GitHub
 
 - Publish private messages and call wake-ups on separate send-only connections, using fresh anonymous relay authentication and no account-authenticated fallback. Keep peer discovery separate from the account's receiving connection.
+- Isolate FIPS message-provider publishing and each peer lookup from live device identities. Deliver private nearby traffic only to its intended recipient, and keep unsent copies queued when a provider has not accepted them.
 - Use private per-session responder keys so public invitations cannot identify the sender of encrypted replies.
 - Sign call wakeups with fresh anonymous keys and authenticate callers only after decrypting the double-ratchet offer. Remove caller identity lists from notification subscriptions.
 - Deliver every group message and membership update through separate double-ratchet envelopes for each recipient. Remove public group rosters, shared group broadcasts and shared-key subscriptions from all network carriers.

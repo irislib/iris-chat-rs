@@ -3945,9 +3945,9 @@ dependencies = [
 
 [[package]]
 name = "nostr-pubsub"
-version = "0.1.17"
+version = "0.1.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cbbd3fc8e3b9c8ee4fd00b22abb3f01b44fde2998ba8ba9b45051f9b7b5c473b"
+checksum = "afd77c862de316d52c9996a406ba7f5b3614e9574666021a01ac733986a8def4"
 dependencies = [
  "async-trait",
  "nostr",
@@ -3958,9 +3958,9 @@ dependencies = [
 
 [[package]]
 name = "nostr-pubsub-fips"
-version = "0.5.34"
+version = "0.5.36"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "835fe4d5cd9678a2daab5ac59a372b55bd403e67e90a16211bab343c24e4df7c"
+checksum = "e1174be2f83634962210fd81d78966dd7154f0e3c1b72e7b07b2238d50bece34"
 dependencies = [
  "async-trait",
  "nostr",
@@ -3969,6 +3969,7 @@ dependencies = [
  "nvpn-fips-core",
  "nvpn-fips-tcp",
  "nvpn-fips-tcp-endpoint",
+ "serde_json",
  "tokio",
 ]
 

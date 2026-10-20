@@ -5,6 +5,8 @@ use nostr_pubsub::{
     SubscriptionDeliveryStatus, VerifiedEvent,
 };
 use nostr_pubsub_fips::FipsPubsubClient;
+mod privacy;
+pub(in crate::core) use privacy::PrivateMeshProviders;
 
 pub(super) const MESH_REPLAY_EVENTS: usize = 64;
 const OUTBOX_BATCH: usize = 16;
@@ -20,6 +22,7 @@ pub(super) struct MeshProtocolSubscriptions {
     retry_needed: bool,
     reconcile_pending: bool,
     replay_source: Option<Arc<storage::mesh_group_envelopes::GroupEnvelopeReplay>>,
+    discovery: privacy::PrivateMeshDiscovery,
 }
 
 impl Default for MeshProtocolSubscriptions {
@@ -32,6 +35,7 @@ impl Default for MeshProtocolSubscriptions {
             retry_needed: false,
             reconcile_pending: false,
             replay_source: None,
+            discovery: privacy::PrivateMeshDiscovery::default(),
         }
     }
 }
@@ -123,6 +127,7 @@ impl AppCore {
             .collect()
     }
 
+    #[cfg(test)]
     fn mesh_group_replay_source(
         &self,
     ) -> Option<Arc<storage::mesh_group_envelopes::GroupEnvelopeReplay>> {
@@ -200,30 +205,54 @@ impl AppCore {
             .as_ref()
             .map(super::protocol::build_protocol_subscription_filters)
             .unwrap_or_default();
-        let replay_source = self.mesh_group_replay_source();
+        let (mut filters, mut discovery) = self.split_private_discovery_filters(filters);
+        // Sibling keys can change without replacing the live endpoint. Keep
+        // public author lookups anonymous unless explicitly local at startup.
+        let own_authors = self.mesh_public_service_authors();
+        filters.retain(|filter| {
+            let sensitive = filter.kinds.as_ref().is_some_and(|kinds| {
+                kinds
+                    .iter()
+                    .any(|kind| matches!(kind.as_u16(), 0 | 10002 | 10050 | 30078 | 37368 | 37195))
+            });
+            if sensitive
+                && filter.authors.as_ref().is_some_and(|authors| {
+                    authors.iter().any(|author| !own_authors.contains(author))
+                })
+            {
+                if let Some(authors) = &filter.authors {
+                    for author in authors {
+                        let mut scoped = filter.clone();
+                        scoped.authors = Some(std::collections::BTreeSet::from([*author]));
+                        discovery.push(scoped);
+                    }
+                }
+                false
+            } else {
+                true
+            }
+        });
+        if let Some(mesh) = &self.device_sync {
+            discovery.extend(mesh.endpoint_peer_advert_filters());
+        }
         let Some(mesh) = self.device_sync.as_mut() else {
             return;
         };
         let Some(client) = &mesh.pubsub else {
             return;
         };
-        let unchanged = match (&mesh.protocol_subscriptions.replay_source, &replay_source) {
-            (Some(old), Some(new)) => old.same_permissions(new),
-            (None, None) => true,
-            _ => false,
-        };
-        let installed = if unchanged {
-            Ok(())
-        } else {
-            client.set_replay_source(
-                replay_source
-                    .clone()
-                    .map(|source| source as Arc<dyn EventBus>),
-            )
-        };
-        let result = installed.and_then(|()| {
-            if !unchanged {
-                mesh.protocol_subscriptions.replay_source = replay_source;
+        // An identified client must never serve another recipient's durable
+        // envelopes, even in response to an exact-ID query after a restart.
+        let result = client.set_replay_source(None).and_then(|()| {
+            mesh.protocol_subscriptions.replay_source = None;
+            if let Some(providers) = &mesh.private_providers {
+                mesh.protocol_subscriptions.discovery.update(
+                    providers.clone(),
+                    discovery,
+                    mesh.endpoint.clone(),
+                    self.core_sender.clone(),
+                    &self.runtime,
+                );
             }
             self.runtime.block_on(mesh.protocol_subscriptions.update(
                 client,
@@ -275,17 +304,28 @@ impl AppCore {
             return;
         };
         let cancelled = self.publication_task_token(&event.as_event().id.to_hex());
+        let providers = mesh.private_providers.clone();
         self.runtime.spawn(async move {
             let _permit = permit;
             if cancelled.load(std::sync::atomic::Ordering::Acquire) {
                 return;
             }
-            let result = tokio::time::timeout(
-                Duration::from_secs(2),
-                client.publish(event, EventSource::local_index("iris-chat")),
-            )
-            .await;
-            if !matches!(result, Ok(Ok(_))) {
+            let private = super::fips_nearby::is_private_transport_event(event.as_event());
+            let result = if private {
+                match providers {
+                    Some(providers) => providers.publish(event, cancelled).await,
+                    None => Err("private providers unavailable".into()),
+                }
+            } else {
+                tokio::time::timeout(
+                    Duration::from_secs(2),
+                    client.publish(event, EventSource::local_index("iris-chat")),
+                )
+                .await
+                .map_err(|error| error.to_string())
+                .and_then(|result| result.map(|_| ()).map_err(|error| error.to_string()))
+            };
+            if result.is_err() {
                 crate::perflog!("mesh.publish deferred");
             }
         });
