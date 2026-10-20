@@ -84,6 +84,10 @@ public partial class RootView : UserControl
 
     private FrameworkElement BuildScreenChrome(Screen screen, bool desktop)
     {
+        // Settings owns the window so its navigation and forms remain usable
+        // at the minimum width, without a second (chat) navigation pane.
+        if (screen is Screen.Settings) return new SettingsView();
+
         if (desktop)
         {
             return new DesktopShell(_manager!, screen);

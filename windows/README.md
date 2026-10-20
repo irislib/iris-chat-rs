@@ -99,7 +99,9 @@ dotnet run --project windows/ThemeTests/ThemeTests.csproj -c Release -- work/the
 This uses an isolated offline profile, materializes styles before selecting the
 light palette, and checks all 13 settings pages, navigation, onboarding, chat and
 attachment controls in both palettes. It also checks existing controls after
-live theme changes. Enabled text must have at least 4.5:1 contrast; interface
+live theme changes. Settings checks cover arrow/Tab navigation, returning to the
+chat list, saving profile edits, notification switches, and all categories at
+1100×720, 720×540, and 150% zoom. Enabled text must have at least 4.5:1 contrast; interface
 icons must have at least 3:1. Avatar initials and badges are included; uploaded
 image pixels are not evaluated. Screenshots
 for visual review are saved to `work/themes/` and uploaded by Windows CI.

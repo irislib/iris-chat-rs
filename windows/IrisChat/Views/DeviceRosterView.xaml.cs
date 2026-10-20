@@ -23,6 +23,19 @@ public partial class DeviceRosterView : UserControl
         Unloaded += (_, _) => App.CurrentManager.PropertyChanged -= OnChanged;
     }
 
+    public bool IsEmbedded
+    {
+        get => PageTitle.Visibility == Visibility.Collapsed;
+        set
+        {
+            PageTitle.Visibility = value ? Visibility.Collapsed : Visibility.Visible;
+            PageContent.Margin = new Thickness(value ? 0 : 32);
+            PageContent.MaxWidth = value ? double.PositiveInfinity : 640;
+            AddBlock.CornerRadius = value ? new CornerRadius(6) : (CornerRadius)FindResource("SectionRadius");
+            PageScroll.VerticalScrollBarVisibility = value ? ScrollBarVisibility.Disabled : ScrollBarVisibility.Auto;
+        }
+    }
+
     private void OnChanged(object? sender, PropertyChangedEventArgs e) => Refresh();
 
     private void Refresh()
@@ -71,11 +84,11 @@ public partial class DeviceRosterView : UserControl
             Text = d.displayName,
             Foreground = (Brush)Application.Current.Resources["TextPrimary"],
             FontWeight = FontWeights.SemiBold,
+            TextTrimming = TextTrimming.CharacterEllipsis,
         };
-        var title = new StackPanel
-        {
-            Orientation = Orientation.Horizontal,
-        };
+        var title = new Grid();
+        title.ColumnDefinitions.Add(new ColumnDefinition());
+        title.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         title.Children.Add(primary);
         if (!d.isCurrentDevice)
         {
@@ -92,6 +105,7 @@ public partial class DeviceRosterView : UserControl
                 ToolTip = connectionLabel,
             };
             AutomationProperties.SetName(connection, connectionLabel);
+            Grid.SetColumn(connection, 1);
             title.Children.Add(connection);
         }
         info.Children.Add(title);
@@ -101,6 +115,7 @@ public partial class DeviceRosterView : UserControl
             Foreground = (Brush)Application.Current.Resources["TextMuted"],
             FontSize = 12,
             Text = StatusText(d),
+            TextWrapping = TextWrapping.Wrap,
             Margin = new Thickness(0, 2, 0, 0),
         };
         info.Children.Add(meta);
@@ -133,7 +148,7 @@ public partial class DeviceRosterView : UserControl
         return new Border
         {
             Background = (Brush)Application.Current.Resources["Panel"],
-            CornerRadius = new CornerRadius(14),
+            CornerRadius = new CornerRadius(IsEmbedded ? 6 : 14),
             Padding = new Thickness(14, 10, 14, 10),
             Margin = new Thickness(0, 0, 0, 8),
             Child = grid,

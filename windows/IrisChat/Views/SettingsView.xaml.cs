@@ -5,6 +5,7 @@ using System.Linq;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Input;
 using System.Windows.Media;
 using IrisChat.Bindings;
 
@@ -21,11 +22,22 @@ public partial class SettingsView : UserControl
     private bool _suppressToggleDispatch;
     private string _selectedPage = "Profile";
     private bool _profileQrVisible;
+    private string? _profileName;
+    private string? _profileAbout;
 
     public SettingsView()
     {
         InitializeComponent();
-        UpdateSettingsPageVisibility();
+        SettingsNavigation.SelectedIndex = 0;
+        PreviewKeyDown += (_, e) =>
+        {
+            if (e.Key == Key.BrowserBack || (e.Key == Key.System && e.SystemKey == Key.Left
+                && Keyboard.Modifiers == ModifierKeys.Alt))
+            {
+                App.CurrentManager.NavigateBack();
+                e.Handled = true;
+            }
+        };
         Loaded += (_, _) =>
         {
             App.CurrentManager.PropertyChanged += OnChanged;
@@ -43,10 +55,14 @@ public partial class SettingsView : UserControl
         {
             ProfileAvatar.Label = string.IsNullOrEmpty(account.displayName) ? "Iris user" : account.displayName;
             ProfileAvatar.PictureUrl = account.pictureUrl;
-            if (!ProfileNameInput.IsKeyboardFocused)
+            // Refresh untouched fields, preserving edits even when another
+            // category has focus. The next snapshot acknowledges saved values.
+            if (_profileName == null || ProfileNameInput.Text == _profileName)
                 ProfileNameInput.Text = account.displayName;
-            if (!ProfileAboutInput.IsKeyboardFocused)
+            if (_profileAbout == null || ProfileAboutInput.Text == _profileAbout)
                 ProfileAboutInput.Text = account.about ?? string.Empty;
+            _profileName = account.displayName;
+            _profileAbout = account.about ?? string.Empty;
             NpubText.Text = "Signed in";
             ProfileQrName.Text = string.IsNullOrEmpty(account.displayName) ? "User ID" : account.displayName;
             ProfileQr.Text = _profileQrVisible ? IrisChatProfileUrl(account.npub) : null;
@@ -132,7 +148,7 @@ public partial class SettingsView : UserControl
             identity.Children.Add(new TextBlock { Text = person.Name, TextTrimming = TextTrimming.CharacterEllipsis });
             identity.Children.Add(new TextBlock { Text = person.UserId, TextTrimming = TextTrimming.CharacterEllipsis, Style = (Style)FindResource("MutedText") });
             row.Children.Add(identity);
-            var unblock = new Button { Content = "Unblock", Style = (Style)FindResource("GhostButton"), VerticalAlignment = VerticalAlignment.Center };
+            var unblock = new Button { Content = "Unblock", Style = (Style)FindResource("SettingsButton"), VerticalAlignment = VerticalAlignment.Center };
             System.Windows.Automation.AutomationProperties.SetName(unblock, $"Unblock {person.Name}");
             unblock.Click += (_, _) => App.CurrentManager.SetUserBlocked(person.Id, false);
             Grid.SetColumn(unblock, 1);
@@ -141,13 +157,29 @@ public partial class SettingsView : UserControl
         }
     }
 
-    private void OnSettingsMenuClick(object sender, RoutedEventArgs e)
+    private void OnBack(object sender, RoutedEventArgs e) => App.CurrentManager.NavigateBack();
+
+    private void OnSettingsSizeChanged(object sender, SizeChangedEventArgs e)
     {
-        if (sender is FrameworkElement { Tag: string page })
-        {
-            _selectedPage = page;
-            UpdateSettingsPageVisibility();
-        }
+        var compact = ActualWidth < 760;
+        NavigationColumn.Width = new GridLength(compact ? 72 : 240);
+        SettingsNavigation.Tag = compact ? "Compact" : null;
+        PageContent.Margin = compact ? new Thickness(16, 20, 16, 24) : new Thickness(32, 20, 32, 32);
+    }
+
+    private void OnSettingsSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (SettingsNavigation.SelectedItem is not ListBoxItem { Tag: string page } item) return;
+        _selectedPage = page;
+        PageTitle.Text = System.Windows.Automation.AutomationProperties.GetName(item);
+        UpdateSettingsPageVisibility();
+        PageScroll.ScrollToTop();
+    }
+
+    private void OnWindowsColors(object sender, RoutedEventArgs e)
+    {
+        if (!PlatformDocumentOpener.OpenUrl("ms-settings:colors"))
+            App.CurrentManager.ShowToast("Could not open Windows color settings");
     }
 
     private void UpdateSettingsPageVisibility()
@@ -206,6 +238,8 @@ public partial class SettingsView : UserControl
             var text = new TextBlock
             {
                 Text = url,
+                TextTrimming = TextTrimming.CharacterEllipsis,
+                ToolTip = url,
                 Foreground = (Brush)Application.Current.Resources["TextPrimary"],
                 FontSize = 13,
                 VerticalAlignment = VerticalAlignment.Center,
@@ -215,7 +249,7 @@ public partial class SettingsView : UserControl
 
             var remove = new Button
             {
-                Style = (Style)FindResource("GhostButton"),
+                Style = (Style)FindResource("SettingsButton"),
                 Content = new TextBlock
                 {
                     Text = "Remove",

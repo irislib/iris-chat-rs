@@ -65,11 +65,11 @@ internal static class Program
                         $"{pair.Key} stays live after {theme} theme selection");
                 Check(originalBrushes["TextPrimary"].Color == (Color)ColorConverter.ConvertFromString(light ? "#FF0F1419" : "#FFFFFFFF"),
                     $"{theme} primary text follows Windows palette");
-                var menus = Descendants<Button>(settings).Where(button => button.Tag is string).ToArray();
+                var menus = Descendants<ListBoxItem>(settings).Where(item => item.Tag is string).ToArray();
                 Check(menus.Length == 13, "Every settings page is included");
                 foreach (var menu in menus)
                 {
-                    menu.RaiseEvent(new RoutedEventArgs(Button.ClickEvent)); Pump();
+                    menu.IsSelected = true; Pump();
                     Contrast.CheckTree(window, $"{theme} settings {menu.Tag}");
                     Save(window, Path.Combine(output, $"{theme}-settings-{menu.Tag}.png"));
                 }
@@ -99,22 +99,15 @@ internal static class Program
                 Contrast.CheckTree(window, theme + " messages after return theme change");
                 Console.WriteLine($"PASS: {theme} sidebar, onboarding, new chat/group, invites, devices, message/attachment controls and live switching");
             }
+            manager.OpenChat(manager.CurrentChat!.chatId);
+            PumpUntil(() => manager.ActiveScreen is Screen.Chat);
             manager.Push(new Screen.Settings());
             PumpUntil(() => manager.ActiveScreen is Screen.Settings);
             var main = new MainWindow(data) { Width = 1366, Height = 900 };
             try
             {
                 main.Show(); Pump();
-                var notifications = Descendants<Button>(main).Single(button => Equals(button.Tag, "Notifications"));
-                notifications.RaiseEvent(new RoutedEventArgs(Button.ClickEvent)); Pump();
-                foreach (var light in new[] { true, false })
-                {
-                    SetPalette(light); Pump();
-                    var theme = light ? "light" : "dark";
-                    Contrast.CheckTree(main, theme + " full main window and notifications navigation");
-                    Save(main, Path.Combine(output, theme + "-main-settings.png"));
-                }
-                Console.WriteLine("PASS: production main window, sidebar and Notifications navigation in light/dark themes");
+                SettingsChecks.Run(main, manager, output);
             }
             finally { main.Close(); }
             var systemLight = (bool)typeof(App).GetMethod("UsesWindowsLightAppTheme", BindingFlags.NonPublic | BindingFlags.Static)!.Invoke(null, null)!;
@@ -155,15 +148,16 @@ internal static class Program
         Dispatcher.PushFrame(frame);
         foreach (Window window in Application.Current.Windows) window.UpdateLayout();
     }
-    private static void PumpUntil(Func<bool> predicate)
+    internal static void PumpUntil(Func<bool> predicate)
     {
         var deadline = DateTime.UtcNow.AddSeconds(30);
         while (!predicate()) { if (DateTime.UtcNow > deadline) throw new TimeoutException(); Pump(); }
     }
-    private static void Save(Window window, string path)
+    internal static void Save(Window window, string path)
     {
-        var bitmap = new RenderTargetBitmap((int)window.ActualWidth, (int)window.ActualHeight, 96, 96, PixelFormats.Pbgra32);
-        bitmap.Render(window);
+        var content = (FrameworkElement)window.Content;
+        var bitmap = new RenderTargetBitmap((int)Math.Ceiling(content.ActualWidth), (int)Math.Ceiling(content.ActualHeight), 96, 96, PixelFormats.Pbgra32);
+        bitmap.Render(content);
         var png = new PngBitmapEncoder(); png.Frames.Add(BitmapFrame.Create(bitmap));
         using var stream = File.Create(path); png.Save(stream);
     }
