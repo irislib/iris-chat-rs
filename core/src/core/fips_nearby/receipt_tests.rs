@@ -45,6 +45,7 @@ fn unrelated_nearby_receipt_preserves_delivery_to_a_late_peer() {
     let unrelated = Keys::generate();
     let late = Keys::generate();
     let event = EventBuilder::new(Kind::GiftWrap, "opaque message for the later peer")
+        .tag(Tag::parse(["v", "2"]).unwrap())
         .tag(Tag::public_key(late.public_key()))
         .sign_with_keys(&Keys::generate())
         .unwrap();

@@ -1,5 +1,5 @@
 #[test]
-fn direct_receive_after_restart_tries_new_session_after_stale_same_invite_session() {
+fn direct_receive_after_restart_keeps_same_invite_sessions_unlinkable() {
     let owner = Keys::generate();
     let device = Keys::generate();
     let peer_owner = Keys::generate();
@@ -63,7 +63,16 @@ fn direct_receive_after_restart_tries_new_session_after_stale_same_invite_sessio
             )
             .unwrap();
     }
-    assert_eq!(replies[0].pubkey, replies[1].pubkey);
+    assert_ne!(
+        replies[0].pubkey, replies[1].pubkey,
+        "independent acceptances must not share a publicly linkable reply author"
+    );
+    for reply in &replies {
+        assert_ne!(
+            reply.pubkey.to_hex(),
+            invite.inviter_ephemeral_public_key.to_string()
+        );
+    }
 
     // Exercise the shipped native dependency and persisted protocol engine,
     // including the signed owner/device proof required to accept the reply.

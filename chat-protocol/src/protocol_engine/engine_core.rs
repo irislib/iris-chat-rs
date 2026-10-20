@@ -24,6 +24,7 @@ impl ProtocolEngine {
             group_manager: GroupEventManager::new(local_owner),
             pending_inbound: Vec::new(),
             pending_group_fanouts: Vec::new(),
+            ready_group_publications: BTreeMap::new(),
             pending_local_sibling_sends: Vec::new(),
             held_direct_chats: BTreeSet::new(),
             pending_remote_sends: Vec::new(),
@@ -111,6 +112,7 @@ impl ProtocolEngine {
             group_manager,
             pending_inbound: state.pending_inbound,
             pending_group_fanouts: state.pending_group_fanouts,
+            ready_group_publications: state.ready_group_publications,
             pending_local_sibling_sends: state.pending_local_sibling_sends,
             held_direct_chats: BTreeSet::new(),
             pending_remote_sends: state.pending_remote_sends,
@@ -128,8 +130,7 @@ impl ProtocolEngine {
             local_app_keys_observed: state.verified_app_keys_owners.contains(&local_owner),
             verified_app_keys_owners: state.verified_app_keys_owners,
             invite_owner_app_keys_evidence: state.invite_owner_app_keys_evidence,
-            processed_private_invite_response_ids: state
-                .processed_private_invite_response_ids,
+            processed_private_invite_response_ids: state.processed_private_invite_response_ids,
             group_invite_uses: state.group_invite_uses,
             local_owner_authenticated: false,
             subscription_generation: state.subscription_generation,
@@ -166,10 +167,7 @@ impl ProtocolEngine {
             .rev()
         {
             let keep = if pending.inner_event_id.is_none()
-                && matches!(
-                    &pending.fanout,
-                    GroupPendingFanout::LocalSiblings { .. }
-                )
+                && matches!(&pending.fanout, GroupPendingFanout::LocalSiblings { .. })
             {
                 seen_groups.insert(pending.group_id.clone())
             } else {
@@ -211,8 +209,7 @@ impl ProtocolEngine {
     }
 
     pub fn debug_snapshot(&self) -> ProtocolEngineDebugSnapshot {
-        let pending_group_sender_key_retry_count =
-            self.pending_group_sender_key_retry_count();
+        let pending_group_sender_key_retry_count = self.pending_group_sender_key_retry_count();
         let pending_group_sender_key_unmapped_count = self
             .pending_group_sender_key_messages
             .len()
@@ -276,12 +273,10 @@ impl ProtocolEngine {
             .into_iter()
             .find(|user| user.owner_pubkey == self.local_owner)
             .is_some_and(|user| {
-                user.roster.as_ref().is_some_and(|roster| {
-                    roster.get_device(&device_pubkey).is_some()
-                }) && user
-                    .devices
-                    .iter()
-                    .any(|device| {
+                user.roster
+                    .as_ref()
+                    .is_some_and(|roster| roster.get_device(&device_pubkey).is_some())
+                    && user.devices.iter().any(|device| {
                         device.device_pubkey == device_pubkey
                             && device.authorized
                             && !device.is_stale
@@ -367,6 +362,7 @@ impl ProtocolEngine {
         !self.pending_decrypted_deliveries.is_empty()
             || !self.pending_inbound.is_empty()
             || !self.pending_group_fanouts.is_empty()
+            || !self.ready_group_publications.is_empty()
             || !self.pending_local_sibling_sends.is_empty()
             || !self.pending_remote_sends.is_empty()
             || !self.pending_group_pairwise_payloads.is_empty()
@@ -520,7 +516,11 @@ impl ProtocolEngine {
                 {
                     continue;
                 }
-                for session in device.active_session.iter().chain(&device.inactive_sessions) {
+                for session in device
+                    .active_session
+                    .iter()
+                    .chain(&device.inactive_sessions)
+                {
                     collect_expected_sender_pubkeys(session, &mut authors);
                     // Match NDR Session::can_send without cloning a ratchet to query it.
                     if session.their_next_nostr_public_key.is_some()
@@ -589,7 +589,10 @@ impl ProtocolEngine {
     }
 
     pub fn group_sender_event_pubkeys_for_owner(&self, owner: PublicKey) -> Vec<PublicKey> {
-        self.group_manager.snapshot().sender_keys.into_iter()
+        self.group_manager
+            .snapshot()
+            .sender_keys
+            .into_iter()
             .filter(|record| record.sender_owner == ndr_owner(owner))
             .filter_map(|record| public_device(record.sender_event_pubkey).ok())
             .collect()
@@ -624,7 +627,8 @@ impl ProtocolEngine {
     }
 
     pub fn is_group_sender_key_candidate_with_local_group_context(&self, event: &Event) -> bool {
-        if !protocol_event_has_tag(event, "header") || self.group_manager.snapshot().groups.is_empty()
+        if !protocol_event_has_tag(event, "header")
+            || self.group_manager.snapshot().groups.is_empty()
         {
             return false;
         }
@@ -867,9 +871,10 @@ impl ProtocolEngine {
                                     device.device_pubkey,
                                     Some(roster),
                                 )
-                                && roster.devices().iter().any(|entry| {
-                                    entry.device_pubkey == device.device_pubkey
-                                })
+                                && roster
+                                    .devices()
+                                    .iter()
+                                    .any(|entry| entry.device_pubkey == device.device_pubkey)
                         })
                         .count(),
                 )
@@ -882,10 +887,7 @@ impl ProtocolEngine {
         owner_pubkey: PublicKey,
         device_pubkey: PublicKey,
     ) -> bool {
-        self.has_verified_device_owner_claim(
-            ndr_owner(owner_pubkey),
-            ndr_device(device_pubkey),
-        )
+        self.has_verified_device_owner_claim(ndr_owner(owner_pubkey), ndr_device(device_pubkey))
     }
 
     fn owner_device_binding_is_verified_in_roster(
@@ -926,74 +928,5 @@ impl ProtocolEngine {
         self.pending_group_fanouts
             .iter()
             .any(|pending| pending.inner_event_id.as_deref() == Some(message_id))
-    }
-
-    fn state_checkpoint(&self) -> ProtocolEngineCheckpoint {
-        ProtocolEngineCheckpoint {
-            session_manager: self.session_manager.clone(),
-            group_manager: self.group_manager.clone(),
-            pending_inbound: self.pending_inbound.clone(),
-            pending_group_fanouts: self.pending_group_fanouts.clone(),
-            pending_local_sibling_sends: self.pending_local_sibling_sends.clone(),
-            pending_remote_sends: self.pending_remote_sends.clone(),
-            pending_group_pairwise_payloads: self.pending_group_pairwise_payloads.clone(),
-            pending_group_sender_key_messages: self.pending_group_sender_key_messages.clone(),
-            pending_group_sender_key_repairs: self.pending_group_sender_key_repairs.clone(),
-            processed_group_sender_key_messages: self.processed_group_sender_key_messages.clone(),
-            group_sender_key_retry: self.group_sender_key_retry.borrow().clone(),
-            answered_group_sender_key_repairs: self.answered_group_sender_key_repairs.clone(),
-            pending_decrypted_deliveries: self.pending_decrypted_deliveries.clone(),
-            group_roster_fact_histories: self.group_roster_fact_histories.clone(),
-            verified_app_keys_owners: self.verified_app_keys_owners.clone(),
-            invite_owner_app_keys_evidence: self.invite_owner_app_keys_evidence.clone(),
-            processed_private_invite_response_ids: self
-                .processed_private_invite_response_ids
-                .clone(),
-            group_invite_uses: self.group_invite_uses.clone(),
-            local_app_keys_observed: self.local_app_keys_observed,
-            subscription_generation: self.subscription_generation,
-        }
-    }
-
-    fn restore_checkpoint(&mut self, checkpoint: ProtocolEngineCheckpoint) {
-        self.group_invite_uses = checkpoint.group_invite_uses;
-        self.session_manager = checkpoint.session_manager;
-        self.group_manager = checkpoint.group_manager;
-        self.pending_inbound = checkpoint.pending_inbound;
-        self.pending_group_fanouts = checkpoint.pending_group_fanouts;
-        self.pending_local_sibling_sends = checkpoint.pending_local_sibling_sends;
-        self.pending_remote_sends = checkpoint.pending_remote_sends;
-        self.pending_group_pairwise_payloads = checkpoint.pending_group_pairwise_payloads;
-        self.pending_group_sender_key_messages = checkpoint.pending_group_sender_key_messages;
-        self.pending_group_sender_key_repairs = checkpoint.pending_group_sender_key_repairs;
-        self.processed_group_sender_key_messages = checkpoint.processed_group_sender_key_messages;
-        self.group_sender_key_retry.replace(checkpoint.group_sender_key_retry);
-        self.answered_group_sender_key_repairs = checkpoint.answered_group_sender_key_repairs;
-        self.pending_decrypted_deliveries = checkpoint.pending_decrypted_deliveries;
-        self.group_roster_fact_histories = checkpoint.group_roster_fact_histories;
-        self.verified_app_keys_owners = checkpoint.verified_app_keys_owners;
-        self.invite_owner_app_keys_evidence = checkpoint.invite_owner_app_keys_evidence;
-        self.processed_private_invite_response_ids =
-            checkpoint.processed_private_invite_response_ids;
-        self.local_app_keys_observed = checkpoint.local_app_keys_observed;
-        self.subscription_generation = checkpoint.subscription_generation;
-        self.invalidate_known_message_author_cache();
-    }
-
-    fn with_state_checkpoint<T>(
-        &mut self,
-        operation: impl FnOnce(&mut Self) -> anyhow::Result<T>,
-    ) -> anyhow::Result<T> {
-        let checkpoint = self.state_checkpoint();
-        match operation(self) {
-            Ok(value) => {
-                self.invalidate_known_message_author_cache();
-                Ok(value)
-            }
-            Err(error) => {
-                self.restore_checkpoint(checkpoint);
-                Err(error)
-            }
-        }
     }
 }

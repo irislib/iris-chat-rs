@@ -1255,6 +1255,13 @@ impl AppCore {
                 &runtime_rumor.content,
             );
         }
+        if let Some(applied) = self.receive_private_group_wake(
+            effective_sender_owner,
+            &runtime_rumor,
+            outer_event_id.clone(),
+        ) {
+            return applied;
+        }
         if runtime_rumor.kind == 10461 {
             return self.receive_group_invite_request(
                 effective_sender_owner,

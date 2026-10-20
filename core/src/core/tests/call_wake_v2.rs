@@ -92,12 +92,7 @@ fn install_call_ratchet_for_test(
     b.persist_best_effort();
 }
 
-fn ratcheted_call_wake_for_test(
-    a: &mut AppCore,
-    recipient: &Keys,
-    sender: &Keys,
-    id: &str,
-) -> Event {
+fn ratcheted_call_wake_for_test(a: &mut AppCore, recipient: &Keys, id: &str) -> Event {
     let owner = a.logged_in.as_ref().unwrap().owner_pubkey;
     let signal = serde_json::json!({"v":3,"type":"offer","call_id":id,"video":true,"muted":false,"codec":"opus-h264-v3"});
     let rumor = EventBuilder::new(Kind::from(21112), signal.to_string()).build(owner);
@@ -119,7 +114,7 @@ fn ratcheted_call_wake_for_test(
         .clone();
     EventBuilder::new(
         Kind::from(21111),
-        serde_json::json!({"type":"call-wake","v":2,"events":[encrypted]}).to_string(),
+        serde_json::json!({"type":"call-wake","v":3,"events":[encrypted]}).to_string(),
     )
     .tags(
         encrypted
@@ -128,12 +123,12 @@ fn ratcheted_call_wake_for_test(
             .copied()
             .map(nostr::Tag::public_key),
     )
-    .sign_with_keys(sender)
+    .sign_with_keys(&Keys::generate())
     .unwrap()
 }
 
 #[test]
-fn call_wake_v2_cold_preview_preserves_ratchet_and_foreground_enforces_contact_policy() {
+fn call_wake_v3_cold_preview_preserves_ratchet_and_foreground_enforces_contact_policy() {
     let ao = Keys::generate();
     let ad = Keys::generate();
     let bo = Keys::generate();
@@ -142,9 +137,14 @@ fn call_wake_v2_cold_preview_preserves_ratchet_and_foreground_enforces_contact_p
     let (mut b, _, _bdir) = logged_in_test_core_with_updates("wake-v2-b", &bo, &bd);
     install_call_ratchet_for_test(&mut a, &mut b, &ao, &bo, &ad, &bd);
     let id = "00112233445566778899aabbccddeeff";
-    let event = ratcheted_call_wake_for_test(&mut a, &bo, &ad, id);
+    let event = ratcheted_call_wake_for_test(&mut a, &bo, id);
     assert!(!event.content.contains(id));
     assert!(!event.content.contains("opus-h264-v3"));
+    for sender_identity in [ao.public_key(), ad.public_key()] {
+        assert!(!event.as_json().contains(&sender_identity.to_hex()));
+    }
+    assert_ne!(event.pubkey, ad.public_key());
+
     let payload = serde_json::json!({"event":event}).to_string();
     let resolve = |core: &AppCore| {
         calls::push::resolve_call_push_invite(
@@ -183,7 +183,11 @@ fn call_wake_v2_cold_preview_preserves_ratchet_and_foreground_enforces_contact_p
             "cold preview never advances durable ratchet"
         );
     }
-    let forged = EventBuilder::new(event.kind, &event.content)
+    // An anonymous wrapper is transport only: caller authentication must fail
+    // when the encrypted message is forged, even with valid outer signatures.
+    let mut forged_content: serde_json::Value = serde_json::from_str(&event.content).unwrap();
+    forged_content["events"][0]["content"] = "forged ciphertext".into();
+    let forged = EventBuilder::new(event.kind, forged_content.to_string())
         .tags(event.tags.clone())
         .sign_with_keys(&Keys::generate())
         .unwrap();
@@ -192,7 +196,10 @@ fn call_wake_v2_cold_preview_preserves_ratchet_and_foreground_enforces_contact_p
     b.handle_action(AppAction::AppBackgrounded);
     b.receive_call_push(&event);
     assert_eq!(b.state.call.as_ref().unwrap().call_id, id);
-    assert!(!b.app_in_foreground, "a call push resumes receiving without making the hidden UI visible");
+    assert!(
+        !b.app_in_foreground,
+        "a call push resumes receiving without making the hidden UI visible"
+    );
     b.handle_action(AppAction::EndCall { call_id: id.into() });
     b.receive_call_push(&event);
     assert!(b.calls.active.is_none());
@@ -241,7 +248,7 @@ fn first_call_wake_fetches_acked_bootstrap_and_reordered_ciphertext_recovers_wit
     b.persist_best_effort();
     let inline = EventBuilder::new(
         Kind::from(21111),
-        serde_json::json!({"type":"call-wake","v":2,"events":[response,encrypted]}).to_string(),
+        serde_json::json!({"type":"call-wake","v":3,"events":[response,encrypted]}).to_string(),
     )
     .tag(nostr::Tag::public_key(bd.public_key()))
     .sign_with_keys(&ad)
@@ -348,7 +355,7 @@ fn read_call_wake_http_for_test(stream: &mut std::net::TcpStream) -> Event {
 }
 
 #[test]
-fn call_wake_v2_discovers_earlier_unread_bootstrap_after_sender_restart() {
+fn call_wake_v3_discovers_earlier_unread_bootstrap_after_sender_restart() {
     let ao = Keys::generate();
     let ad = Keys::generate();
     let bo = Keys::generate();
@@ -395,7 +402,7 @@ fn call_wake_v2_discovers_earlier_unread_bootstrap_after_sender_restart() {
     restored.authenticate_local_owner_for_sending(&ao).unwrap();
     a.protocol_engine = Some(restored);
     let id = "aabbccddeeff00112233445566778899";
-    let wake = ratcheted_call_wake_for_test(&mut a, &bo, &ad, id);
+    let wake = ratcheted_call_wake_for_test(&mut a, &bo, id);
     let envelope: serde_json::Value = serde_json::from_str(&wake.content).unwrap();
     assert!(envelope.get("bootstrapEventId").is_none());
     let payload = serde_json::json!({"event":wake}).to_string();

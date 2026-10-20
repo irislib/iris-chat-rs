@@ -39,14 +39,16 @@ async fn block_carrier_endpoint(
     )
 }
 
-fn queue_block_carrier_events(core: &mut AppCore, device: &Keys, target: &str) -> Vec<Event> {
+fn queue_block_carrier_events(core: &mut AppCore, _device: &Keys, target: &str) -> Vec<Event> {
+    let transport_keys = Keys::generate();
     let other = Keys::generate().public_key().to_hex();
     [target, &other, "group:shared"]
         .into_iter()
         .enumerate()
         .map(|(index, chat)| {
             let event = EventBuilder::new(Kind::Custom(1060), format!("queued {index}"))
-                .sign_with_keys(device)
+                .tag(nostr::Tag::parse(["v", "2"]).unwrap())
+                .sign_with_keys(&transport_keys)
                 .unwrap();
             assert!(core.publish_runtime_event(
                 event.clone(),

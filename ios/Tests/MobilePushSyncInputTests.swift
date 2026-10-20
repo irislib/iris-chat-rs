@@ -6,7 +6,7 @@ final class MobilePushSyncInputTests: XCTestCase {
     func testSilentAuthorChangeRefreshesSubscription() {
         var state = buildLargeTestAppState(directChatCount: 0, groupChatCount: 0, messagesInCurrentChat: 0)
         state.mobilePush = MobilePushSyncSnapshot(
-            callDevicePubkeyHex: nil, callAuthorPubkeys: [],
+            callDevicePubkeyHex: nil,
             ownerPubkeyHex: "owner", messageAuthorPubkeys: ["author"],
             delayedMessageAuthors: [],
             backgroundMessageAuthorPubkeys: [], inviteResponsePubkeys: [], sessions: []

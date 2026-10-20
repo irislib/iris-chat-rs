@@ -35,17 +35,36 @@ fn mentions_group_push_and_foreground_use_identity_and_respect_mute_choice() {
             .unwrap()
             .known_group_sender_event_pubkeys();
         let events = sorted_pending_events_for_test(&farm.devices[0].core);
-        let event = events
+        let broadcast = events
             .iter()
             .find(|event| authors.contains(&event.pubkey))
             .expect("group ciphertext")
             .clone();
         let receiver = &farm.devices[1];
+        let event = events
+            .iter()
+            .find(|event| {
+                event.kind.as_u16() as u32 == MESSAGE_EVENT_KIND
+                    && event.tags.public_keys().copied().collect::<Vec<_>>()
+                        == vec![receiver.keys.public_key()]
+                    && farm.devices[0]
+                        .core
+                        .pending_relay_publishes
+                        .get(&event.id.to_hex())
+                        .is_some_and(|pending| pending.chat_id.as_deref() == Some(chat.as_str()))
+            })
+            .expect("recipient-specific private group wake")
+            .clone();
         let push = receiver.core.build_mobile_push_sync_snapshot();
-        assert_eq!(
+        assert!(
+            !push
+                .message_author_pubkeys
+                .contains(&broadcast.pubkey.to_hex()),
+            "shared group authors must never enter notification subscriptions"
+        );
+        assert!(
             push.message_author_pubkeys.contains(&event.pubkey.to_hex()),
-            enabled,
-            "muted-group subscription must retain mentions only when enabled"
+            "private transport stays subscribed; mention policy is applied after decryption"
         );
         let payload =
             serde_json::json!({"event":event,"title":"Iris Chat","body":"New message"}).to_string();
@@ -264,34 +283,80 @@ fn mentions_coalesced_synced_reads_cannot_hide_a_new_mention() {
         core.active_chat_id = None;
         let mention = crate::format_message_mention(owner.public_key().to_hex(), "You".into());
         for id in ["old-one", "old-two"] {
-            core.push_incoming_message_from(chat, Some(id.into()), mention.clone(), 100, None,
-                None, Some(sender.public_key().to_hex()), None);
+            core.push_incoming_message_from(
+                chat,
+                Some(id.into()),
+                mention.clone(),
+                100,
+                None,
+                None,
+                Some(sender.public_key().to_hex()),
+                None,
+            );
         }
         core.rebuild_persist_and_emit_state();
         let before = core.state.chat_list.clone();
         core.enter_batch();
-        assert!(core.apply_chat_read_state(chat, ChatReadState {
-            updated_at_ms: unix_now().get() * 1000,
-            device_id: Keys::generate().public_key().to_hex(),
-            seen_messages: ["old-one", "old-two"].into_iter().take(read_count)
-                .map(|id| (id.into(), MessageReadState { created_at_secs: 100, expires_at_secs: None }))
-                .collect(),
-            ..Default::default()
-        }));
+        assert!(core.apply_chat_read_state(
+            chat,
+            ChatReadState {
+                updated_at_ms: unix_now().get() * 1000,
+                device_id: Keys::generate().public_key().to_hex(),
+                seen_messages: ["old-one", "old-two"]
+                    .into_iter()
+                    .take(read_count)
+                    .map(|id| (
+                        id.into(),
+                        MessageReadState {
+                            created_at_secs: 100,
+                            expires_at_secs: None
+                        }
+                    ))
+                    .collect(),
+                ..Default::default()
+            }
+        ));
         core.rebuild_persist_and_emit_state();
-        core.push_incoming_message_from(chat, Some("new-mention".into()), mention, 101, None,
-            None, Some(sender.public_key().to_hex()), None);
+        core.push_incoming_message_from(
+            chat,
+            Some("new-mention".into()),
+            mention,
+            101,
+            None,
+            None,
+            Some(sender.public_key().to_hex()),
+            None,
+        );
         core.rebuild_persist_and_emit_state();
         core.exit_batch();
         let after = core.state.chat_list.clone();
-        assert_eq!(after[0].unread_count, before[0].unread_count + 1 - read_count as u64);
-        let candidates = notifications::decide_notifications(&before, &after, &core.preferences, false, None);
+        assert_eq!(
+            after[0].unread_count,
+            before[0].unread_count + 1 - read_count as u64
+        );
+        let candidates =
+            notifications::decide_notifications(&before, &after, &core.preferences, false, None);
         assert_eq!(candidates.len(), 1);
         assert_eq!(candidates[0].message_id.as_deref(), Some("new-mention"));
-        core.push_incoming_message_from(chat, Some("ordinary".into()), "Later ordinary".into(), 102,
-            None, None, Some(sender.public_key().to_hex()), None);
+        core.push_incoming_message_from(
+            chat,
+            Some("ordinary".into()),
+            "Later ordinary".into(),
+            102,
+            None,
+            None,
+            Some(sender.public_key().to_hex()),
+            None,
+        );
         core.rebuild_persist_and_emit_state();
-        assert!(notifications::decide_notifications(&after, &core.state.chat_list, &core.preferences, false, None).is_empty());
+        assert!(notifications::decide_notifications(
+            &after,
+            &core.state.chat_list,
+            &core.preferences,
+            false,
+            None
+        )
+        .is_empty());
     }
 }
 

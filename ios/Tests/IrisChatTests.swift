@@ -136,7 +136,7 @@ func makeAppState(
     blockedPeople: [FollowedUserSearchResult] = [],
     currentChat: CurrentChatSnapshot? = nil,
     mobilePush: MobilePushSyncSnapshot = MobilePushSyncSnapshot(
-            callDevicePubkeyHex: nil, callAuthorPubkeys: [],
+            callDevicePubkeyHex: nil,
         ownerPubkeyHex: nil,
         messageAuthorPubkeys: [],
         delayedMessageAuthors: [],
@@ -650,7 +650,7 @@ final class IrisChatTests: XCTestCase {
         var gate = IosStateSideEffectGate()
         let chatList = makeLargeChatList(replacingFirstWith: makeChatThread(unreadCount: 0))
         let push = MobilePushSyncSnapshot(
-            callDevicePubkeyHex: nil, callAuthorPubkeys: [],
+            callDevicePubkeyHex: nil,
             ownerPubkeyHex: "owner",
             messageAuthorPubkeys: ["author-1"],
             delayedMessageAuthors: [],
@@ -670,7 +670,7 @@ final class IrisChatTests: XCTestCase {
     func testIosStateSideEffectGateTracksPushSecretAvailability() {
         var gate = IosStateSideEffectGate()
         let push = MobilePushSyncSnapshot(
-            callDevicePubkeyHex: nil, callAuthorPubkeys: [],
+            callDevicePubkeyHex: nil,
             ownerPubkeyHex: "owner",
             messageAuthorPubkeys: ["author-1"],
             delayedMessageAuthors: [],

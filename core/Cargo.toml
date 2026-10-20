@@ -76,7 +76,7 @@ nostr-pubsub-fips = "=0.5.34"
 nostr-pubsub-relay = "=0.1.13"
 nostr-social-graph = "=0.1.4"
 nostr-identity = "=0.6.0"
-nostr-double-ratchet = "0.0.170"
+nostr-double-ratchet = "0.0.171"
 nostr-double-ratchet-pairwise-codec = "0.0.168"
 qrcode = { version = "0.14", default-features = false }
 rand = "0.8"

@@ -9,6 +9,7 @@ include!("protocol_engine/engine_test_support.rs");
 include!("protocol_engine/engine_state_helpers.rs");
 include!("protocol_engine/engine_fact_ingest.rs");
 include!("protocol_engine/engine_sends.rs");
+include!("protocol_engine/engine_group_wakes.rs");
 include!("protocol_engine/engine_local_sibling_sends.rs");
 include!("protocol_engine/engine_pending_retirement.rs");
 include!("protocol_engine/engine_remote_sends.rs");
@@ -35,6 +36,8 @@ mod tests {
     include!("protocol_engine/own_mutation_admission_tests.rs");
     include!("protocol_engine/pending_retirement_tests.rs");
     include!("protocol_engine/remote_send_tests.rs");
+    include!("protocol_engine/metadata_privacy_tests.rs");
+    include!("protocol_engine/group_wake_tests.rs");
     include!("protocol_engine/remote_roster_tests.rs");
     include!("protocol_engine/session_readiness_tests.rs");
     include!("protocol_engine/receive_session_fallback_tests.rs");

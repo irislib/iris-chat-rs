@@ -48,7 +48,7 @@ class AndroidMobilePushRuntime(
         val owner = state.mobilePush.ownerPubkeyHex?.trim()?.ifEmpty { null }
         val ownerSecret = ownerNsec?.trim()?.ifEmpty { null }
         callDevicePubkeyHex = state.mobilePush.callDevicePubkeyHex
-        val authors = if (forCalls) state.mobilePush.callAuthorPubkeys else state.mobilePush.messageAuthorPubkeys
+        val authors = if (forCalls) emptyList() else state.mobilePush.messageAuthorPubkeys
         val delayedAuthors = if (forCalls) emptyList() else state.mobilePush.delayedMessageAuthors
         val backgroundAuthors = if (forCalls) emptyList() else state.mobilePush.backgroundMessageAuthorPubkeys
         val inviteResponses = if (forCalls) emptyList() else state.mobilePush.inviteResponsePubkeys
@@ -75,7 +75,7 @@ class AndroidMobilePushRuntime(
 
         val storageKeyName = (mobilePushSubscriptionIdKey(PLATFORM_KEY) + if (forCalls) ".calls" else "")
         val storageKey = stringPreferencesKey(storageKeyName)
-        if (!enabled || ownerSecret == null || (authors.isEmpty() && inviteResponses.isEmpty() && delayedAuthors.isEmpty())) {
+        if (!enabled || ownerSecret == null || (if (forCalls) callDevicePubkeyHex == null else authors.isEmpty() && inviteResponses.isEmpty() && delayedAuthors.isEmpty())) {
             val disabled = disableStoredSubscription(ownerSecret, storageKey, serverOverride)
             if (disabled) {
                 lastSyncSignature = signature
@@ -173,7 +173,7 @@ class AndroidMobilePushRuntime(
         val request =
             if (forCalls) buildCallPushSubscriptionRequest(
                 ownerNsec = ownerNsec, devicePubkeyHex = callDevicePubkeyHex ?: return false,
-                authorPubkeys = authors, subscriptionId = subscriptionId, platformKey = PLATFORM_KEY,
+                subscriptionId = subscriptionId, platformKey = PLATFORM_KEY,
                 pushToken = pushToken, apnsTopic = null, isRelease = !BuildConfig.DEBUG,
                 serverUrlOverride = serverOverride,
             ) ?: return false else buildMobilePushUpdateSubscriptionRequest(
@@ -213,7 +213,7 @@ class AndroidMobilePushRuntime(
         val request =
             if (forCalls) buildCallPushSubscriptionRequest(
                 ownerNsec = ownerNsec, devicePubkeyHex = callDevicePubkeyHex ?: return false,
-                authorPubkeys = authors, subscriptionId = null, platformKey = PLATFORM_KEY,
+                subscriptionId = null, platformKey = PLATFORM_KEY,
                 pushToken = pushToken, apnsTopic = null, isRelease = !BuildConfig.DEBUG,
                 serverUrlOverride = serverOverride,
             ) ?: return false else buildMobilePushCreateSubscriptionRequest(

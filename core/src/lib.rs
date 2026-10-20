@@ -1810,7 +1810,6 @@ mod ffi_hardening_tests;
 pub fn build_call_push_subscription_request(
     owner_nsec: String,
     device_pubkey_hex: String,
-    author_pubkeys: Vec<String>,
     subscription_id: Option<String>,
     platform_key: String,
     push_token: String,
@@ -1822,7 +1821,6 @@ pub fn build_call_push_subscription_request(
         crate::core::build_call_push_subscription_request(
             owner_nsec,
             device_pubkey_hex,
-            author_pubkeys,
             subscription_id,
             platform_key,
             push_token,

@@ -322,6 +322,9 @@ impl AppCore {
     }
 
     pub(super) fn publish_fips_nearby(&self, event: &Event) {
+        if !self.private_publication_allowed(event) {
+            return;
+        }
         if !self.preferences.nearby_enabled || !self.preferences.nearby_mailbag_enabled {
             return;
         }

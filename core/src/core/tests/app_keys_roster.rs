@@ -9,10 +9,7 @@ fn owner_device_rejects_app_key_only_approval_input() {
     core.pending_relay_publishes.clear();
 
     core.handle_action(AppAction::AddAuthorizedDevice {
-        device_input: new_device
-            .public_key()
-            .to_bech32()
-            .expect("device npub"),
+        device_input: new_device.public_key().to_bech32().expect("device npub"),
     });
 
     assert_eq!(core.state.toast.as_deref(), Some("Invalid device request."));
@@ -64,7 +61,11 @@ fn owner_device_approves_bootstrap_and_publishes_app_keys_snapshot() {
     let app_keys_event = app_keys_events[0];
     assert!(is_app_keys_event(app_keys_event));
     assert_eq!(app_keys_event.pubkey, owner.public_key());
-    assert!(event_has_tag_value(app_keys_event, "device", &linked_device_hex));
+    assert!(event_has_tag_value(
+        app_keys_event,
+        "device",
+        &linked_device_hex
+    ));
     assert_eq!(
         approval_events
             .iter()
@@ -111,11 +112,7 @@ fn create_account_publishes_app_keys_snapshot() {
         1,
         "account bootstrap publishes the current owner AppKeys snapshot"
     );
-    let owner_pubkey = core
-        .logged_in
-        .as_ref()
-        .expect("logged in")
-        .owner_pubkey;
+    let owner_pubkey = core.logged_in.as_ref().expect("logged in").owner_pubkey;
     assert!(app_keys_events.iter().all(is_app_keys_event));
     assert!(app_keys_events
         .iter()
@@ -167,4 +164,88 @@ fn event_has_tag_value(event: &Event, tag_name: &str, value: &str) -> bool {
         values.first().map(|value| value.as_str()) == Some(tag_name)
             && values.get(1).map(|candidate| candidate.as_str()) == Some(value)
     })
+}
+
+#[test]
+fn linked_device_authorization_follows_app_keys() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let other_device = Keys::generate();
+    let mut core = AppCore::new(
+        flume::unbounded().0,
+        flume::unbounded().0,
+        std::env::temp_dir()
+            .join(format!("iris-chat-rs-test-{}", owner.public_key().to_hex()))
+            .to_string_lossy()
+            .to_string(),
+        Arc::new(RwLock::new(AppState::empty())),
+    );
+
+    assert_eq!(
+        core.local_authorization_state(None, owner.public_key(), device.public_key(), None),
+        LocalAuthorizationState::AwaitingApproval
+    );
+
+    let other_keys = known_app_keys_from_ndr(
+        owner.public_key(),
+        &AppKeys::new(vec![DeviceEntry::new(other_device.public_key(), 10)]),
+        10,
+    );
+    core.app_keys
+        .insert(owner.public_key().to_hex(), other_keys);
+    assert_eq!(
+        core.local_authorization_state(
+            None,
+            owner.public_key(),
+            device.public_key(),
+            Some(LocalAuthorizationState::AwaitingApproval),
+        ),
+        LocalAuthorizationState::AwaitingApproval
+    );
+    assert_eq!(
+        core.local_authorization_state(
+            None,
+            owner.public_key(),
+            device.public_key(),
+            Some(LocalAuthorizationState::Authorized),
+        ),
+        LocalAuthorizationState::Revoked
+    );
+
+    let approved_keys = known_app_keys_from_ndr(
+        owner.public_key(),
+        &AppKeys::new(vec![DeviceEntry::new(device.public_key(), 20)]),
+        20,
+    );
+    core.app_keys
+        .insert(owner.public_key().to_hex(), approved_keys);
+    assert_eq!(
+        core.local_authorization_state(
+            None,
+            owner.public_key(),
+            device.public_key(),
+            Some(LocalAuthorizationState::AwaitingApproval),
+        ),
+        LocalAuthorizationState::AwaitingApproval
+    );
+
+    core.start_session(owner.public_key(), None, device.clone(), false, false)
+        .expect("linked session");
+    let approved_keys = known_app_keys_from_ndr(
+        owner.public_key(),
+        &AppKeys::new(vec![DeviceEntry::new(device.public_key(), 20)]),
+        20,
+    );
+    core.app_keys
+        .insert(owner.public_key().to_hex(), approved_keys);
+    install_local_sibling_session_for_test(&mut core, &owner, &device, &other_device);
+    assert_eq!(
+        core.local_authorization_state(
+            None,
+            owner.public_key(),
+            device.public_key(),
+            Some(LocalAuthorizationState::AwaitingApproval),
+        ),
+        LocalAuthorizationState::Authorized
+    );
 }

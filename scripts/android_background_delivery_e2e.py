@@ -177,12 +177,15 @@ def main():
             command("status")
             return event("status")
 
+        def peer_ready(owner):
+            command(f"peer {owner}")
+            return event("peer")["ready"]
+
         ready = event("ready")
         prepared = instrument("prepare_background_receiver", fixture_invite=ready["invite"],
             fixture_owner=ready["owner"], fixture_device=ready["device"],
             fixture_relay=f"ws://127.0.0.1:{port}", offline_lan="1" if args.offline_lan else "0")
         owner = re.search(r"INSTRUMENTATION_STATUS: owner=([a-f0-9]{64})", prepared).group(1)
-        device = re.search(r"INSTRUMENTATION_STATUS: device=([a-f0-9]{64})", prepared).group(1)
         # Android finishes instrumentation by killing its target process. Launch
         # normally before testing user backgrounding, rather than mistaking that
         # test-runner teardown for an ordinary closed app.
@@ -190,7 +193,7 @@ def main():
         wait_for("background service after instrumentation", lambda: notification("background-receiving"))
         command(f"accept {owner}")
         event("accepted")
-        wait_for("verified receiving device", lambda: device in status()["call_authors"])
+        wait_for("verified receiving session", lambda: peer_ready(owner))
         if args.offline_lan:
             wait_for("authenticated local Wi-Fi peer", lambda: owner in status()["lan_owners"], timeout=90)
             relay.terminate()

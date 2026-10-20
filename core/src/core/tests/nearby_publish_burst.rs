@@ -1,5 +1,6 @@
 #[test]
 fn relay_publish_burst_does_not_replay_acknowledged_nearby_backlog() {
+    let transport_keys = Keys::generate();
     let owner = Keys::generate();
     let device = Keys::generate();
     let mut core = logged_in_test_core("nearby-publish-burst", &owner, &device);
@@ -26,7 +27,8 @@ fn relay_publish_burst_does_not_replay_acknowledged_nearby_backlog() {
     core.relay_transport_runtime.publish_drain_in_flight = true;
     core.relay_transport_runtime.publish_drain_started_at = Some(Instant::now());
     let event = EventBuilder::new(Kind::Custom(1060), "earlier control")
-        .sign_with_keys(&device)
+        .tag(nostr::Tag::parse(["v", "2"]).unwrap())
+        .sign_with_keys(&transport_keys)
         .unwrap();
     assert!(core.publish_runtime_event(event.clone(), APPCORE_PROTOCOL_LABEL, None));
     let outbox = core.device_sync.as_ref().unwrap().nearby_outbox.clone();
@@ -36,7 +38,8 @@ fn relay_publish_burst_does_not_replay_acknowledged_nearby_backlog() {
         .acknowledge("test-peer", &event.id.to_hex());
     for index in 0..20 {
         let next = EventBuilder::new(Kind::Custom(1060), format!("new control {index}"))
-            .sign_with_keys(&device)
+            .tag(nostr::Tag::parse(["v", "2"]).unwrap())
+            .sign_with_keys(&transport_keys)
             .unwrap();
         assert!(core.publish_runtime_event(next, APPCORE_PROTOCOL_LABEL, None));
     }

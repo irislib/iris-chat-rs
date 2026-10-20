@@ -41,6 +41,8 @@ struct ProtocolEnginePersistedState {
     #[serde(default)]
     pending_group_fanouts: Vec<ProtocolPendingGroupFanout>,
     #[serde(default)]
+    ready_group_publications: BTreeMap<String, ProtocolReadyGroupPublish>,
+    #[serde(default)]
     pending_local_sibling_sends: Vec<ProtocolPendingLocalSiblingSend>,
     #[serde(default)]
     pending_remote_sends: Vec<ProtocolPendingRemoteSend>,
@@ -68,13 +70,20 @@ enum ProtocolAppKeysEvidence {
     Ambiguous { created_at_secs: u64 },
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ProtocolPublish {
     /// Original plaintext timestamp, preserved when sealing happens on a later retry.
     pub authored_at_secs: Option<u64>,
     pub event: Event,
     pub chat_id: String,
     pub inner_event_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct ProtocolReadyGroupPublish {
+    publish: ProtocolPublish,
+    #[serde(default)]
+    wake_recipient: Option<NdrOwnerPubkey>,
 }
 
 #[derive(Clone, Debug)]
@@ -403,6 +412,7 @@ pub struct ProtocolEngine {
     group_manager: GroupEventManager,
     pending_inbound: Vec<ProtocolPendingInbound>,
     pending_group_fanouts: Vec<ProtocolPendingGroupFanout>,
+    ready_group_publications: BTreeMap<String, ProtocolReadyGroupPublish>,
     pending_local_sibling_sends: Vec<ProtocolPendingLocalSiblingSend>,
     held_direct_chats: BTreeSet<String>,
     pending_remote_sends: Vec<ProtocolPendingRemoteSend>,
@@ -445,6 +455,7 @@ struct ProtocolEngineCheckpoint {
     group_manager: GroupEventManager,
     pending_inbound: Vec<ProtocolPendingInbound>,
     pending_group_fanouts: Vec<ProtocolPendingGroupFanout>,
+    ready_group_publications: BTreeMap<String, ProtocolReadyGroupPublish>,
     pending_local_sibling_sends: Vec<ProtocolPendingLocalSiblingSend>,
     pending_remote_sends: Vec<ProtocolPendingRemoteSend>,
     pending_group_pairwise_payloads: Vec<ProtocolPendingGroupPairwisePayload>,

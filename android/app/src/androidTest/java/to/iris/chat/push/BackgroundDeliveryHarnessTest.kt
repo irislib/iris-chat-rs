@@ -6,6 +6,7 @@ import android.os.Build
 import android.util.Base64
 import androidx.test.ext.junit.rules.ActivityScenarioRule
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.Rule
@@ -33,7 +34,6 @@ class BackgroundDeliveryHarnessTest : RealRelayHarnessBase() {
         waitForPersistedDeviceSecret()
         val manager = appManager()
         val owner = requiredArg("fixture_owner")
-        val device = requiredArg("fixture_device")
         manager.dispatch(AppAction.SetNostrRelays(listOf(requiredArg("fixture_relay"))))
         val offlineLan = optionalArg("offline_lan") == "1"
         if (offlineLan && Build.VERSION.SDK_INT >= 33) {
@@ -52,7 +52,7 @@ class BackgroundDeliveryHarnessTest : RealRelayHarnessBase() {
         manager.dispatch(AppAction.SetMessageRequestAccepted(owner))
         manager.sendText(owner, "Background receiver ready")
         waitForState("verified fixture device", timeoutMs = 60_000) {
-            true.takeIf { device in manager.state.value.mobilePush.callAuthorPubkeys }
+            runBlocking { manager.peerProfileDebug(owner) }?.takeIf { it.rosterDeviceCount > 0uL && it.activeSessionCount > 0uL }
         }
         waitForState("background receiver service") { true.takeIf { receiverActive() } }
         // Closing the activity leaves this chat in the router. Incoming messages
@@ -101,8 +101,7 @@ class BackgroundDeliveryHarnessTest : RealRelayHarnessBase() {
             require(instrumentation.targetContext.checkSelfPermission(permission) == android.content.pm.PackageManager.PERMISSION_GRANTED)
         }
         val owner = requiredArg("fixture_owner")
-        val device = requiredArg("fixture_device")
-        require(owner.matches(Regex("[a-f0-9]{64}")) && device.matches(Regex("[a-f0-9]{64}")))
+        require(owner.matches(Regex("[a-f0-9]{64}")))
         val existing = manager.state.value.chatList.any { it.chatId == owner }
         require(existing == (requiredArg("fixture_contact_exists") == "1"))
         if (!existing) {
@@ -116,7 +115,7 @@ class BackgroundDeliveryHarnessTest : RealRelayHarnessBase() {
         // Also completes a previously interrupted pairing without adding another contact.
         manager.sendText(owner, "Saved receiver fixture ready")
         waitForState("verified normal fixture device", timeoutMs = 60_000) {
-            true.takeIf { device in manager.state.value.mobilePush.callAuthorPubkeys }
+            runBlocking { manager.peerProfileDebug(owner) }?.takeIf { it.rosterDeviceCount > 0uL && it.activeSessionCount > 0uL }
         }
         // Only the selected chat changes; no account creation, grants, or networking actions.
         manager.dispatch(AppAction.UpdateScreenStack(listOf(Screen.Chat(owner))))
@@ -132,32 +131,21 @@ class BackgroundDeliveryHarnessTest : RealRelayHarnessBase() {
         manager.dispatch(AppAction.SetNostrRelays(listOf(requiredArg("fixture_relay"))))
         val contacts = JSONArray(String(Base64.decode(encoded!!, Base64.DEFAULT), Charsets.UTF_8))
         require(contacts.length() in 1..20)
-        val voiceEnabled = manager.state.value.preferences.voiceCallsEnabled
-        // The call-author view intentionally empties when both call alerts are off.
-        manager.dispatch(AppAction.SetVoiceCallsEnabled(true))
-        try {
-            for (index in 0 until contacts.length()) {
-                val contact = contacts.getJSONObject(index)
-                val owner = contact.getString("owner")
-                val device = contact.getString("device")
-                manager.dispatch(AppAction.AcceptInvite(contact.getString("invite")))
-                waitForState("accepted offline fixture contact", timeoutMs = 60_000) {
-                    manager.state.value.chatList.firstOrNull { it.chatId == owner }
-                }
-                manager.dispatch(AppAction.SetMessageRequestAccepted(owner))
-                manager.sendText(owner, "Offline contact setup")
-                waitForState("verified offline fixture device", timeoutMs = 60_000) {
-                    true.takeIf { device in manager.state.value.mobilePush.callAuthorPubkeys }
-                }
+        for (index in 0 until contacts.length()) {
+            val contact = contacts.getJSONObject(index)
+            val owner = contact.getString("owner")
+            manager.dispatch(AppAction.AcceptInvite(contact.getString("invite")))
+            waitForState("accepted offline fixture contact", timeoutMs = 60_000) {
+                manager.state.value.chatList.firstOrNull { it.chatId == owner }
             }
-            reportStatus("prepared_contacts" to contacts.length().toString(),
-                "total_chats" to manager.state.value.chatList.size.toString())
-        } finally {
-            manager.dispatch(AppAction.SetVoiceCallsEnabled(voiceEnabled))
-            waitForState("restored call preference") {
-                true.takeIf { manager.state.value.preferences.voiceCallsEnabled == voiceEnabled }
+            manager.dispatch(AppAction.SetMessageRequestAccepted(owner))
+            manager.sendText(owner, "Offline contact setup")
+            waitForState("verified offline fixture device", timeoutMs = 60_000) {
+                runBlocking { manager.peerProfileDebug(owner) }?.takeIf { it.rosterDeviceCount > 0uL && it.activeSessionCount > 0uL }
             }
         }
+        reportStatus("prepared_contacts" to contacts.length().toString(),
+            "total_chats" to manager.state.value.chatList.size.toString())
     }
 
     private fun receiverActive() = instrumentation.targetContext

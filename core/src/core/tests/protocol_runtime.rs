@@ -1,4 +1,3 @@
-
 #[derive(Clone)]
 struct SwitchableFailStorage {
     inner: InMemoryStorage,
@@ -238,8 +237,7 @@ fn drain_app_updates(update_rx: &flume::Receiver<AppUpdate>) {
 fn protocol_engine_load_or_create_creates_owner_bound_local_invite() {
     let owner = Keys::generate();
     let device = Keys::generate();
-    let storage =
-        Arc::new(InMemoryStorage::new()) as Arc<dyn StorageAdapter>;
+    let storage = Arc::new(InMemoryStorage::new()) as Arc<dyn StorageAdapter>;
 
     let engine =
         ProtocolEngine::load_or_create_for_local_device(storage, owner.public_key(), &device)
@@ -263,7 +261,10 @@ fn protocol_engine_load_or_create_creates_owner_bound_local_invite() {
         .find(|user| user.owner_pubkey == local_owner)
         .expect("local user");
     let roster = local_user.roster.as_ref().expect("local roster");
-    assert_eq!(roster.devices, vec![AuthorizedDevice::new(local_device, invite.created_at)]);
+    assert_eq!(
+        roster.devices,
+        vec![AuthorizedDevice::new(local_device, invite.created_at)]
+    );
 }
 
 #[test]
@@ -274,12 +275,14 @@ fn protocol_engine_load_or_create_installs_legacy_device_invite() {
     let device_id = device.public_key().to_hex();
     let storage_key = format!("device-invite/{device_id}");
 
-    let mut legacy_invite =
-        Invite::create_new(device.public_key(), Some(device_id.clone()), None)
-            .expect("legacy invite");
+    let mut legacy_invite = Invite::create_new(device.public_key(), Some(device_id.clone()), None)
+        .expect("legacy invite");
     legacy_invite.created_at = NdrUnixSeconds(123);
     storage
-        .put(&storage_key, legacy_invite.serialize().expect("legacy invite json"))
+        .put(
+            &storage_key,
+            legacy_invite.serialize().expect("legacy invite json"),
+        )
         .expect("store legacy invite");
 
     let engine = ProtocolEngine::load_or_create_for_local_device(
@@ -336,7 +339,10 @@ fn protocol_engine_load_or_create_prefers_persisted_protocol_invite() {
     legacy_invite.owner_public_key = Some(owner.public_key());
     legacy_invite.created_at = NdrUnixSeconds(222);
     storage
-        .put(&storage_key, legacy_invite.serialize().expect("legacy invite json"))
+        .put(
+            &storage_key,
+            legacy_invite.serialize().expect("legacy invite json"),
+        )
         .expect("store legacy invite");
 
     let engine = ProtocolEngine::load_or_create_for_local_device(
@@ -466,6 +472,7 @@ fn direct_message_with_no_relays_is_queued_locally() {
 
 #[test]
 fn queued_runtime_publish_retries_when_message_servers_return() {
+    let transport_keys = Keys::generate();
     let owner = Keys::generate();
     let device = Keys::generate();
     let peer = Keys::generate();
@@ -496,7 +503,8 @@ fn queued_runtime_publish_retries_when_message_servers_return() {
         .relay_urls
         .clear();
     let event = EventBuilder::new(Kind::from(MESSAGE_EVENT_KIND as u16), "retry body")
-        .sign_with_keys(&device)
+        .tag(nostr::Tag::parse(["v", "2"]).unwrap())
+        .sign_with_keys(&transport_keys)
         .expect("event");
     let event_id = event.id.to_string();
 
@@ -563,6 +571,7 @@ fn queued_runtime_publish_retries_when_message_servers_return() {
 
 #[test]
 fn first_contact_publishes_bootstrap_and_payload_durably() {
+    let transport_keys = Keys::generate();
     let owner = Keys::generate();
     let device = Keys::generate();
     let peer = Keys::generate();
@@ -578,10 +587,12 @@ fn first_contact_publishes_bootstrap_and_payload_durably() {
         DeliveryState::Pending,
     );
     let bootstrap = EventBuilder::new(Kind::from(INVITE_RESPONSE_KIND as u16), "bootstrap")
-        .sign_with_keys(&device)
+        .tag(nostr::Tag::parse(["v", "2"]).unwrap())
+        .sign_with_keys(&transport_keys)
         .expect("bootstrap event");
     let payload = EventBuilder::new(Kind::from(MESSAGE_EVENT_KIND as u16), "payload")
-        .sign_with_keys(&device)
+        .tag(nostr::Tag::parse(["v", "2"]).unwrap())
+        .sign_with_keys(&transport_keys)
         .expect("payload event");
     let payload_id = payload.id.to_string();
     let bootstrap_publish = ProtocolPublish {
@@ -620,6 +631,7 @@ fn first_contact_publishes_bootstrap_and_payload_durably() {
 
 #[test]
 fn liveness_retries_pending_relay_publish_without_active_protocol_subscription() {
+    let transport_keys = Keys::generate();
     let owner = Keys::generate();
     let device = Keys::generate();
     let relay = crate::local_relay::TestRelay::start();
@@ -643,7 +655,8 @@ fn liveness_retries_pending_relay_publish_without_active_protocol_subscription()
     );
 
     let event = EventBuilder::new(Kind::from(MESSAGE_EVENT_KIND as u16), "retry body")
-        .sign_with_keys(&device)
+        .tag(nostr::Tag::parse(["v", "2"]).unwrap())
+        .sign_with_keys(&transport_keys)
         .expect("event");
     let event_id = event.id.to_string();
     core.pending_relay_publishes.insert(
@@ -823,7 +836,10 @@ fn pending_relay_publish_batch_selection_is_bounded_and_ordered() {
 
     let (event_ids, truncated) = core.pending_relay_publish_batch_event_ids(4);
 
-    assert!(truncated, "eligible backlog should be larger than the batch");
+    assert!(
+        truncated,
+        "eligible backlog should be larger than the batch"
+    );
     assert_eq!(
         event_ids,
         vec![
@@ -992,6 +1008,7 @@ fn app_keys_publish_prunes_superseded_pending_publish() {
 
 #[test]
 fn protocol_invite_response_publish_prunes_superseded_pending_bootstrap() {
+    let transport_keys = Keys::generate();
     let owner = Keys::generate();
     let device = Keys::generate();
     let peer = Keys::generate();
@@ -1000,12 +1017,14 @@ fn protocol_invite_response_publish_prunes_superseded_pending_bootstrap() {
 
     let older = EventBuilder::new(Kind::from(INVITE_RESPONSE_KIND as u16), "older bootstrap")
         .custom_created_at(Timestamp::from_secs(10))
-        .sign_with_keys(&device)
+        .tag(nostr::Tag::parse(["v", "2"]).unwrap())
+        .sign_with_keys(&transport_keys)
         .expect("older bootstrap");
     let older_id = older.id.to_string();
     let newer = EventBuilder::new(Kind::from(INVITE_RESPONSE_KIND as u16), "newer bootstrap")
         .custom_created_at(Timestamp::from_secs(20))
-        .sign_with_keys(&device)
+        .tag(nostr::Tag::parse(["v", "2"]).unwrap())
+        .sign_with_keys(&transport_keys)
         .expect("newer bootstrap");
     let newer_id = newer.id.to_string();
 
@@ -1105,6 +1124,7 @@ fn storage_prunes_superseded_protocol_invite_response_rows_before_load() {
 
 #[test]
 fn protocol_control_publish_prunes_superseded_rows_already_in_storage() {
+    let transport_keys = Keys::generate();
     let owner = Keys::generate();
     let device = Keys::generate();
     let mut core = logged_in_test_core("protocol-control-storage-prune", &owner, &device);
@@ -1113,15 +1133,18 @@ fn protocol_control_publish_prunes_superseded_rows_already_in_storage() {
 
     let older = EventBuilder::new(Kind::from(INVITE_RESPONSE_KIND as u16), "older control")
         .custom_created_at(Timestamp::from_secs(10))
-        .sign_with_keys(&device)
+        .tag(nostr::Tag::parse(["v", "2"]).unwrap())
+        .sign_with_keys(&transport_keys)
         .expect("older control");
     let middle = EventBuilder::new(Kind::from(INVITE_RESPONSE_KIND as u16), "middle control")
         .custom_created_at(Timestamp::from_secs(20))
-        .sign_with_keys(&device)
+        .tag(nostr::Tag::parse(["v", "2"]).unwrap())
+        .sign_with_keys(&transport_keys)
         .expect("middle control");
     let newest = EventBuilder::new(Kind::from(INVITE_RESPONSE_KIND as u16), "newest control")
         .custom_created_at(Timestamp::from_secs(30))
-        .sign_with_keys(&device)
+        .tag(nostr::Tag::parse(["v", "2"]).unwrap())
+        .sign_with_keys(&transport_keys)
         .expect("newest control");
     let newest_id = newest.id.to_string();
 
@@ -1167,6 +1190,7 @@ fn protocol_control_publish_prunes_superseded_rows_already_in_storage() {
 
 #[test]
 fn older_protocol_control_publish_is_skipped_when_newer_row_is_already_stored() {
+    let transport_keys = Keys::generate();
     let owner = Keys::generate();
     let device = Keys::generate();
     let mut core = logged_in_test_core("protocol-control-storage-skip", &owner, &device);
@@ -1175,12 +1199,14 @@ fn older_protocol_control_publish_is_skipped_when_newer_row_is_already_stored() 
 
     let older = EventBuilder::new(Kind::from(INVITE_RESPONSE_KIND as u16), "older control")
         .custom_created_at(Timestamp::from_secs(10))
-        .sign_with_keys(&device)
+        .tag(nostr::Tag::parse(["v", "2"]).unwrap())
+        .sign_with_keys(&transport_keys)
         .expect("older control");
     let older_id = older.id.to_string();
     let newer = EventBuilder::new(Kind::from(INVITE_RESPONSE_KIND as u16), "newer control")
         .custom_created_at(Timestamp::from_secs(20))
-        .sign_with_keys(&device)
+        .tag(nostr::Tag::parse(["v", "2"]).unwrap())
+        .sign_with_keys(&transport_keys)
         .expect("newer control");
     let newer_id = newer.id.to_string();
 
@@ -1423,6 +1449,7 @@ fn relay_status_bucket_only_changes_do_not_emit_state() {
 
 #[test]
 fn distinct_protocol_publishes_for_same_target_are_kept() {
+    let transport_keys = Keys::generate();
     let owner = Keys::generate();
     let device = Keys::generate();
     let peer = Keys::generate();
@@ -1438,11 +1465,13 @@ fn distinct_protocol_publishes_for_same_target_are_kept() {
         DeliveryState::Pending,
     );
     let first = EventBuilder::new(Kind::from(MESSAGE_EVENT_KIND as u16), "first")
-        .sign_with_keys(&device)
+        .tag(nostr::Tag::parse(["v", "2"]).unwrap())
+        .sign_with_keys(&transport_keys)
         .expect("first event");
     let first_event_id = first.id.to_string();
     let second = EventBuilder::new(Kind::from(MESSAGE_EVENT_KIND as u16), "second")
-        .sign_with_keys(&device)
+        .tag(nostr::Tag::parse(["v", "2"]).unwrap())
+        .sign_with_keys(&transport_keys)
         .expect("second event");
     let second_event_id = second.id.to_string();
 
@@ -1719,8 +1748,7 @@ fn liveness_replays_retained_appkeys_for_tracked_peer() {
     });
     assert!(
         relay.events().iter().any(|event| {
-            event.get("id").and_then(|value| value.as_str())
-                == Some(app_keys_event_id_hex.as_str())
+            event.get("id").and_then(|value| value.as_str()) == Some(app_keys_event_id_hex.as_str())
         }),
         "peer AppKeys must be retained before the core subscribes"
     );
@@ -1809,17 +1837,15 @@ fn liveness_replays_retained_appkeys_for_tracked_peer() {
         .app_keys
         .get(&peer_owner.public_key().to_hex())
         .expect("peer AppKeys cached after subscription replay");
-    assert!(known.devices.iter().any(|device| {
-        device.identity_pubkey_hex == peer_device.public_key().to_hex()
-    }));
+    assert!(known
+        .devices
+        .iter()
+        .any(|device| { device.identity_pubkey_hex == peer_device.public_key().to_hex() }));
     assert!(
         core.protocol_engine
             .as_ref()
             .expect("protocol engine")
-            .has_device_roster_entry_for_owner(
-                peer_owner.public_key(),
-                peer_device.public_key()
-            ),
+            .has_device_roster_entry_for_owner(peer_owner.public_key(), peer_device.public_key()),
         "subscription replay must install the peer roster in ProtocolEngine"
     );
 
@@ -2310,8 +2336,7 @@ fn liveness_retries_pending_inbound_direct_events() {
             .map(|offset| start + offset)
             .unwrap_or(protocol_source.len())];
     let retry_helpers_source = std::fs::read_to_string(
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("src/core/protocol/retry_helpers.rs"),
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/core/protocol/retry_helpers.rs"),
     )
     .expect("read retry helper source");
     assert!(
@@ -2392,24 +2417,26 @@ fn read_protocol_engine_source() -> Option<String> {
     if !repo.join("chat-protocol/Cargo.toml").is_file() {
         return None;
     }
-    Some([
-        "chat-protocol/src/protocol_engine/types.rs",
-        "chat-protocol/src/protocol_engine/engine_core.rs",
-        "chat-protocol/src/protocol_engine/engine_sends.rs",
-        "chat-protocol/src/protocol_engine/roster_helpers.rs",
-        "chat-protocol/src/protocol_engine/engine_incoming_retry.rs",
-        "chat-protocol/src/protocol_engine/engine_resolution.rs",
-        "chat-protocol/src/protocol_engine/engine_sender_key_repair.rs",
-        "chat-protocol/src/protocol_engine/engine_persistence.rs",
-        "chat-protocol/src/protocol_engine/free_functions.rs",
-    ]
-    .into_iter()
-    .map(|path| {
-        std::fs::read_to_string(repo.join(path))
-            .unwrap_or_else(|error| panic!("read {path}: {error}"))
-    })
-    .collect::<Vec<_>>()
-    .join("\n"))
+    Some(
+        [
+            "chat-protocol/src/protocol_engine/types.rs",
+            "chat-protocol/src/protocol_engine/engine_core.rs",
+            "chat-protocol/src/protocol_engine/engine_sends.rs",
+            "chat-protocol/src/protocol_engine/roster_helpers.rs",
+            "chat-protocol/src/protocol_engine/engine_incoming_retry.rs",
+            "chat-protocol/src/protocol_engine/engine_resolution.rs",
+            "chat-protocol/src/protocol_engine/engine_sender_key_repair.rs",
+            "chat-protocol/src/protocol_engine/engine_persistence.rs",
+            "chat-protocol/src/protocol_engine/free_functions.rs",
+        ]
+        .into_iter()
+        .map(|path| {
+            std::fs::read_to_string(repo.join(path))
+                .unwrap_or_else(|error| panic!("read {path}: {error}"))
+        })
+        .collect::<Vec<_>>()
+        .join("\n"),
+    )
 }
 
 #[test]
@@ -2487,12 +2514,13 @@ fn invalid_pairwise_message_errors_are_seen_without_state_emit() {
     let (mut core, update_rx, _temp_dir) =
         logged_in_test_core_with_updates("invalid-pairwise-seen", &owner, &device);
 
-    let (_valid_message, known_sender_keys) = appcore_direct_message_event_with_author_keys_for_test(
-        core.protocol_engine.as_mut().expect("protocol engine"),
-        &alice,
-        "prime sender session",
-        200,
-    );
+    let (_valid_message, known_sender_keys) =
+        appcore_direct_message_event_with_author_keys_for_test(
+            core.protocol_engine.as_mut().expect("protocol engine"),
+            &alice,
+            "prime sender session",
+            200,
+        );
     assert!(
         core.protocol_engine
             .as_ref()
@@ -2502,8 +2530,11 @@ fn invalid_pairwise_message_errors_are_seen_without_state_emit() {
     );
     drain_app_updates(&update_rx);
 
-    let invalid =
-        signed_pairwise_message_event_for_test(&known_sender_keys, "not-a-valid-header", "ciphertext");
+    let invalid = signed_pairwise_message_event_for_test(
+        &known_sender_keys,
+        "not-a-valid-header",
+        "ciphertext",
+    );
     let event_id = invalid.id.to_string();
     let builds_before = core.debug_snapshot_build_count();
 

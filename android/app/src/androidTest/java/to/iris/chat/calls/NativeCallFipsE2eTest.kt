@@ -119,8 +119,7 @@ class NativeCallFipsE2eTest {
             ffi.dispatch(AppAction.SetMessageRequestAccepted(peer!!))
             ffi.dispatch(AppAction.SendMessage(peer, "Call setup"))
             await("authenticated contact devices", 45_000) {
-                ffi.peerProfileDebug(peer)?.let { it.rosterDeviceCount > 0uL && it.activeSessionCount > 0uL } == true &&
-                    (!lan || peerDevice in ffi.state().mobilePush.callAuthorPubkeys)
+                ffi.peerProfileDebug(peer)?.let { it.rosterDeviceCount > 0uL && it.activeSessionCount > 0uL } == true
             }
             status("nativeCallPhase", "contact_ready")
             await("message server stopped", 15_000) {

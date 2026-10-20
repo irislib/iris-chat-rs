@@ -641,6 +641,9 @@ impl AppCore {
     }
 
     pub(super) fn process_protocol_engine_effects(&mut self, effects: Vec<ProtocolEffect>) {
+        if !self.persist_group_publish_batch(&effects) {
+            return;
+        }
         for effect in effects {
             match effect {
                 ProtocolEffect::Publish(publish) => {

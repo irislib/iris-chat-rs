@@ -324,11 +324,6 @@ fn blocking_a_caller_immediately_ends_pending_and_connected_calls() {
         );
         assert_eq!(f.snapshot().phase, "ended");
         assert_eq!(f.core.shared_state.read().unwrap().call, f.core.state.call);
-        assert!(f
-            .core
-            .build_mobile_push_sync_snapshot()
-            .call_author_pubkeys
-            .is_empty());
 
         // Answer actions and both devices' queued signals cannot revive it.
         f.core.handle_action(AppAction::AnswerCall {

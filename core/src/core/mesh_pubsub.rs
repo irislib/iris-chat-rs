@@ -253,6 +253,9 @@ impl AppCore {
     }
 
     pub(super) fn publish_mesh_event(&self, event: &Event) {
+        if !self.private_publication_allowed(event) {
+            return;
+        }
         let Some(mesh) = &self.device_sync else {
             return;
         };

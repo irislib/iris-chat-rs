@@ -1,5 +1,5 @@
 #[test]
-fn mobile_push_marks_only_own_session_and_group_authors_as_background() {
+fn mobile_push_marks_only_own_pairwise_session_authors_as_background() {
     let owner = Keys::generate();
     let device = Keys::generate();
     let sibling = Keys::generate();
@@ -7,7 +7,10 @@ fn mobile_push_marks_only_own_session_and_group_authors_as_background() {
     let mut core = logged_in_test_core("push-own-background", &owner, &device);
     install_local_sibling_session_for_test(&mut core, &owner, &device, &sibling);
     let _event = appcore_direct_message_event_for_test(
-        core.protocol_engine.as_mut().unwrap(), &peer, "hello", 200,
+        core.protocol_engine.as_mut().unwrap(),
+        &peer,
+        "hello",
+        200,
     );
     core.create_group("Own group", &[]);
     let engine = core.protocol_engine.as_ref().unwrap();
@@ -16,21 +19,179 @@ fn mobile_push_marks_only_own_session_and_group_authors_as_background() {
     let group_authors = engine.group_sender_event_pubkeys_for_owner(owner.public_key());
     assert!(!own.is_empty() && !peer_authors.is_empty() && !group_authors.is_empty());
     let push = core.build_mobile_push_sync_snapshot();
-    for author in own.into_iter().chain(group_authors) {
+    for author in own {
         assert!(push.message_author_pubkeys.contains(&author.to_hex()));
-        assert!(push.background_message_author_pubkeys.contains(&author.to_hex()));
+        assert!(push
+            .background_message_author_pubkeys
+            .contains(&author.to_hex()));
     }
     for author in peer_authors {
         assert!(push.message_author_pubkeys.contains(&author.to_hex()));
-        assert!(!push.background_message_author_pubkeys.contains(&author.to_hex()));
+        assert!(!push
+            .background_message_author_pubkeys
+            .contains(&author.to_hex()));
+    }
+    for author in group_authors {
+        assert!(!push.message_author_pubkeys.contains(&author.to_hex()));
+        assert!(!push
+            .background_message_author_pubkeys
+            .contains(&author.to_hex()));
     }
     core.preferences.accept_unknown_direct_messages = false;
     let push = core.build_mobile_push_sync_snapshot();
     assert!(!push.background_message_author_pubkeys.is_empty());
-    let own_direct = core.protocol_engine.as_ref().unwrap().message_author_pubkeys_for_owner(owner.public_key());
+    let own_direct = core
+        .protocol_engine
+        .as_ref()
+        .unwrap()
+        .message_author_pubkeys_for_owner(owner.public_key());
     let relay_authors = core.subscribable_message_author_hexes();
-    assert!(own_direct.iter().all(|key| relay_authors.contains(&key.to_hex())));
-    assert!(push.background_message_author_pubkeys.iter().all(|key| push.message_author_pubkeys.contains(key)));
+    assert!(own_direct
+        .iter()
+        .all(|key| relay_authors.contains(&key.to_hex())));
+    assert!(push
+        .background_message_author_pubkeys
+        .iter()
+        .all(|key| push.message_author_pubkeys.contains(key)));
+}
+
+#[test]
+fn mobile_push_group_members_have_disjoint_subscription_authors() {
+    let mut farm = GroupScaleFarm::new(&[1, 1, 1]);
+    farm.pump();
+    let members = farm.owners[1..]
+        .iter()
+        .map(|owner| owner.public_key().to_hex())
+        .collect::<Vec<_>>();
+    farm.devices[0]
+        .core
+        .create_group("Private push group", &members);
+    farm.pump();
+    let group_id = farm.devices[0].core.groups.keys().next().unwrap().clone();
+    let chat_id = group_chat_id(&group_id);
+    let shared_author = farm.devices[0]
+        .core
+        .protocol_engine
+        .as_ref()
+        .unwrap()
+        .group_sender_event_pubkeys_for_owner(farm.owners[0].public_key())[0]
+        .to_hex();
+    let mut member_authors = Vec::<HashSet<String>>::new();
+    for (index, device) in farm.devices.iter_mut().enumerate() {
+        device
+            .core
+            .handle_action(AppAction::SetMessageRequestAccepted {
+                chat_id: chat_id.clone(),
+            });
+        let known_group_authors = device
+            .core
+            .protocol_engine
+            .as_ref()
+            .unwrap()
+            .group_sender_event_pubkeys_for_group(&group_id);
+        assert!(
+            known_group_authors
+                .iter()
+                .any(|key| key.to_hex() == shared_author),
+            "the fixture must expose the same group author to every member"
+        );
+        let peer = farm.owners[if index == 0 { 1 } else { 0 }].public_key();
+        let group_transport_authors = device
+            .core
+            .protocol_engine
+            .as_ref()
+            .unwrap()
+            .message_author_pubkeys_for_owner(peer);
+        assert!(!group_transport_authors.is_empty());
+        device.core.handle_action(AppAction::SetChatMuted {
+            chat_id: peer.to_hex(),
+            muted: true,
+        });
+        for mute_mode in 0..3 {
+            if mute_mode == 1 {
+                device.core.handle_action(AppAction::SetChatMuteUntil {
+                    chat_id: chat_id.clone(),
+                    until_secs: unix_now().get() + 3600,
+                });
+            } else if mute_mode == 2 {
+                device.core.handle_action(AppAction::SetChatMuted {
+                    chat_id: chat_id.clone(),
+                    muted: true,
+                });
+            }
+            let push = device.core.build_mobile_push_sync_snapshot();
+            assert!(
+                !push.message_author_pubkeys.is_empty(),
+                "pairwise delivery must remain subscribed"
+            );
+            assert!(
+                group_transport_authors
+                    .iter()
+                    .all(|key| push.message_author_pubkeys.contains(&key.to_hex())),
+                "muting a DM must not stop private wakes for a joined group"
+            );
+            assert!(
+                !push.invite_response_pubkeys.is_empty(),
+                "own invite responses must remain subscribed"
+            );
+            let own_invites = push.invite_response_pubkeys.clone();
+            let request = build_mobile_push_update_subscription_request(
+                farm.owners[index].secret_key().to_secret_hex(),
+                "existing".into(),
+                "android".into(),
+                format!("token-{index}"),
+                None,
+                push.message_author_pubkeys,
+                push.background_message_author_pubkeys,
+                push.invite_response_pubkeys,
+                true,
+                None,
+                push.delayed_message_authors,
+            )
+            .unwrap();
+            let wire = request.body_json.unwrap();
+            for author in &known_group_authors {
+                assert!(
+                    !wire.contains(&author.to_hex()),
+                    "shared group keys must never reach the notification service"
+                );
+            }
+            for invite in own_invites {
+                assert!(wire.contains(&invite));
+            }
+            let body: serde_json::Value = serde_json::from_str(&wire).unwrap();
+            let authors = body["filters"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter_map(|filter| filter["authors"].as_array())
+                .flatten()
+                .map(|value| value.as_str().unwrap().to_owned())
+                .collect::<HashSet<_>>();
+            if mute_mode == 0 {
+                member_authors.push(authors);
+            }
+        }
+        assert!(
+            device
+                .core
+                .protocol_engine
+                .as_ref()
+                .unwrap()
+                .known_group_sender_event_pubkeys()
+                .iter()
+                .any(|key| key.to_hex() == shared_author),
+            "foreground group delivery must retain its shared channel"
+        );
+    }
+    for (index, authors) in member_authors.iter().enumerate() {
+        for other in &member_authors[index + 1..] {
+            assert!(
+                authors.is_disjoint(other),
+                "authenticated subscriptions must not identify common group membership"
+            );
+        }
+    }
 }
 
 #[test]
@@ -41,11 +202,25 @@ fn mobile_push_read_sync_dismisses_only_authenticated_read_messages() {
     let mut payloads = Vec::new();
     let mut events = Vec::new();
     let mut ids = Vec::new();
-    for (text, timestamp) in [("read", 200), ("older unread", 150), ("same second unread", 200), ("newer unread", 201)] {
+    for (text, timestamp) in [
+        ("read", 200),
+        ("older unread", 150),
+        ("same second unread", 200),
+        ("newer unread", 201),
+    ] {
         let event = appcore_direct_message_event_for_test(
-            pair.b.protocol_engine.as_mut().unwrap(), &peer, text, timestamp,
+            pair.b.protocol_engine.as_mut().unwrap(),
+            &peer,
+            text,
+            timestamp,
         );
-        let (_, id) = runtime_rumor_json(peer.public_key(), CHAT_MESSAGE_KIND, text, timestamp, Vec::new());
+        let (_, id) = runtime_rumor_json(
+            peer.public_key(),
+            CHAT_MESSAGE_KIND,
+            text,
+            timestamp,
+            Vec::new(),
+        );
         ids.push(id);
         payloads.push(serde_json::json!({"event": event, "iris_dismiss": true}).to_string());
         events.push(event);
@@ -53,9 +228,14 @@ fn mobile_push_read_sync_dismisses_only_authenticated_read_messages() {
     let data_dir = pair._b_dir.path().to_string_lossy().to_string();
     let owner = pair.owner.public_key().to_hex();
     let device = pair.b_device.secret_key().to_secret_hex();
-    let resolve = |payloads: Vec<String>| read_mobile_push_notification_indexes(
-        data_dir.clone(), owner.clone(), device.clone(), payloads,
-    );
+    let resolve = |payloads: Vec<String>| {
+        read_mobile_push_notification_indexes(
+            data_dir.clone(),
+            owner.clone(),
+            device.clone(),
+            payloads,
+        )
+    };
     assert!(resolve(payloads.clone()).is_empty());
     // The read update can precede foreground message ingestion. Deliver the
     // actual encrypted sibling receipt through the background push entry point.
@@ -63,19 +243,34 @@ fn mobile_push_read_sync_dismisses_only_authenticated_read_messages() {
     pair.a.mark_messages_seen(&chat_id, &[ids[0].clone()]);
     let receipts = pending_events_with_kind(&pair.a, MESSAGE_EVENT_KIND);
     assert!(!receipts.is_empty());
-    let background = pair.b.build_mobile_push_sync_snapshot().background_message_author_pubkeys;
-    assert!(receipts.iter().any(|event| background.contains(&event.pubkey.to_hex())));
+    let background = pair
+        .b
+        .build_mobile_push_sync_snapshot()
+        .background_message_author_pubkeys;
+    assert!(receipts
+        .iter()
+        .any(|event| background.contains(&event.pubkey.to_hex())));
     for receipt in receipts {
-        pair.b.ingest_mobile_push_payload(&serde_json::json!({"event": receipt}).to_string());
+        pair.b
+            .ingest_mobile_push_payload(&serde_json::json!({"event": receipt}).to_string());
     }
     assert_eq!(resolve(payloads.clone()), vec![0]);
     let mut forged = events[0].clone();
     forged.content.push_str("tampered");
-    assert!(resolve(vec![serde_json::json!({"event": forged, "iris_dismiss": true}).to_string()]).is_empty());
+    assert!(resolve(vec![
+        serde_json::json!({"event": forged, "iris_dismiss": true}).to_string()
+    ])
+    .is_empty());
     assert!(read_mobile_push_notification_indexes(
-        data_dir.clone(), Keys::generate().public_key().to_hex(), device.clone(), payloads.clone(),
-    ).is_empty());
-    for event in events { pair.b.handle_relay_event(event); }
+        data_dir.clone(),
+        Keys::generate().public_key().to_hex(),
+        device.clone(),
+        payloads.clone(),
+    )
+    .is_empty());
+    for event in events {
+        pair.b.handle_relay_event(event);
+    }
     pair.b.persist_best_effort();
     assert_eq!(resolve(payloads), vec![0]);
     assert_eq!(pair.b.threads[&chat_id].unread_count, 3);
@@ -86,24 +281,43 @@ fn mobile_push_read_sync_does_not_initialize_or_migrate_the_database() {
     let mut pair = chat_read_receipt_pair("push-read-no-migrations");
     let peer = Keys::generate();
     let event = appcore_direct_message_event_for_test(
-        pair.b.protocol_engine.as_mut().unwrap(), &peer, "read", 200,
+        pair.b.protocol_engine.as_mut().unwrap(),
+        &peer,
+        "read",
+        200,
     );
-    let (_, id) = runtime_rumor_json(peer.public_key(), CHAT_MESSAGE_KIND, "read", 200, Vec::new());
+    let (_, id) = runtime_rumor_json(
+        peer.public_key(),
+        CHAT_MESSAGE_KIND,
+        "read",
+        200,
+        Vec::new(),
+    );
     chat_read_sync_incoming(&mut pair.b, &peer, &id, 200);
-    pair.b.mark_messages_seen(&peer.public_key().to_hex(), &[id]);
+    pair.b
+        .mark_messages_seen(&peer.public_key().to_hex(), &[id]);
     pair.b.persist_best_effort();
     let dir = pair._b_dir.path();
     let conn = rusqlite::Connection::open(dir.join("core.sqlite3")).unwrap();
     // An older schema marker makes a writable preview connection run migrations.
     // Cleanup must only read the existing data, including before message ingestion.
     conn.pragma_update(None, "user_version", 0).unwrap();
-    assert_eq!(read_mobile_push_notification_indexes(
-        dir.to_string_lossy().into_owned(), pair.owner.public_key().to_hex(),
-        pair.b_device.secret_key().to_secret_hex(),
-        vec![serde_json::json!({"event": event}).to_string()],
-    ), vec![0]);
-    let version: u32 = conn.pragma_query_value(None, "user_version", |row| row.get(0)).unwrap();
-    assert_eq!(version, 0, "notification cleanup must never migrate the live database");
+    assert_eq!(
+        read_mobile_push_notification_indexes(
+            dir.to_string_lossy().into_owned(),
+            pair.owner.public_key().to_hex(),
+            pair.b_device.secret_key().to_secret_hex(),
+            vec![serde_json::json!({"event": event}).to_string()],
+        ),
+        vec![0]
+    );
+    let version: u32 = conn
+        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .unwrap();
+    assert_eq!(
+        version, 0,
+        "notification cleanup must never migrate the live database"
+    );
 }
 
 #[test]
@@ -222,12 +436,21 @@ fn mobile_push_large_group_notification_cleanup_has_one_protocol_load_and_bounde
     let after = read_state();
     let before_json: serde_json::Value = serde_json::from_str(&before).unwrap();
     let after_json: serde_json::Value = serde_json::from_str(&after).unwrap();
-    let changed_fields: Vec<_> = before_json.as_object().unwrap().iter()
+    let changed_fields: Vec<_> = before_json
+        .as_object()
+        .unwrap()
+        .iter()
         .filter(|(key, value)| after_json.get(*key) != Some(*value))
-        .map(|(key, _)| key.as_str()).collect();
-    let changed_chunks = before.as_bytes().chunks(4096)
-        .zip(after.as_bytes().chunks(4096)).enumerate()
-        .filter(|(_, (a, b))| a != b).map(|(index, _)| index).collect::<Vec<_>>();
+        .map(|(key, _)| key.as_str())
+        .collect();
+    let changed_chunks = before
+        .as_bytes()
+        .chunks(4096)
+        .zip(after.as_bytes().chunks(4096))
+        .enumerate()
+        .filter(|(_, (a, b))| a != b)
+        .map(|(index, _)| index)
+        .collect::<Vec<_>>();
     eprintln!(
         "large-group foreground receive: sqlite_page_bytes_written={written}, state_bytes={}, after_bytes={}, changed_fields={changed_fields:?}, changed_chunk_count={}, first_changed_chunks={:?}",
         before.len(), after.len(), changed_chunks.len(), &changed_chunks[..changed_chunks.len().min(8)]

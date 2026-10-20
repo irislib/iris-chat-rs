@@ -4,6 +4,73 @@ use nostr_double_ratchet::INVITE_RESPONSE_KIND;
 use rusqlite::params;
 
 impl AppStore {
+    /// Atomically insert the batch and return rows that already existed, so
+    /// startup replay can restore their retry state without delaying new sends.
+    pub(crate) fn insert_pending_relay_publish_batch(
+        &self,
+        pending: &[(PendingRelayPublish, Option<u64>)],
+    ) -> anyhow::Result<Vec<PendingRelayPublish>> {
+        let mut conn = self
+            .conn
+            .lock()
+            .map_err(|_| anyhow::anyhow!("storage connection mutex poisoned"))?;
+        let tx = conn.transaction()?;
+        let mut existing_ids = Vec::new();
+        {
+            let mut statement = tx.prepare(
+                "INSERT INTO pending_relay_publishes(
+                    event_id, owner_pubkey_hex, label, event_json, inner_event_id,
+                    chat_id, created_at_secs, attempt_count, last_error, authored_at_secs
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+                 ON CONFLICT(event_id) DO NOTHING",
+            )?;
+            for (event, authored) in pending {
+                let inserted = statement.execute(params![
+                    event.event_id,
+                    event.owner_pubkey_hex,
+                    event.label,
+                    event.event_json,
+                    event.inner_event_id,
+                    event.chat_id,
+                    event.created_at_secs,
+                    event.attempt_count,
+                    event.last_error,
+                    authored,
+                ])?;
+                if inserted == 0 {
+                    existing_ids.push(event.event_id.clone());
+                }
+            }
+        }
+        let committed = {
+            let mut select = tx.prepare(
+                "SELECT owner_pubkey_hex, event_id, label, event_json, inner_event_id,
+                        chat_id, created_at_secs, attempt_count, last_error
+                 FROM pending_relay_publishes WHERE event_id = ?1",
+            )?;
+            existing_ids
+                .iter()
+                .map(|event_id| {
+                    select.query_row([event_id], |row| {
+                        Ok(PendingRelayPublish {
+                            owner_pubkey_hex: row.get(0)?,
+                            event_id: row.get(1)?,
+                            label: row.get(2)?,
+                            event_json: row.get(3)?,
+                            inner_event_id: row.get(4)?,
+                            chat_id: row.get(5)?,
+                            created_at_secs: row.get::<_, i64>(6)?.max(0) as u64,
+                            attempt_count: row.get::<_, i64>(7)?.max(0) as u64,
+                            last_error: row.get(8)?,
+                        })
+                    })
+                })
+                .collect::<rusqlite::Result<Vec<_>>>()?
+        };
+        tx.commit()?;
+        Ok(committed)
+    }
+
     pub(crate) fn load_pending_relay_publishes(
         &self,
         owner_pubkey_hex: &str,

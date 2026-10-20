@@ -73,8 +73,6 @@ pub(super) fn recover_preview(
     data_dir: String,
     local_owner: PublicKey,
     keys: Keys,
-    caller_owner: PublicKey,
-    caller_device: PublicKey,
     wake: CallWake,
     urls: Vec<String>,
 ) -> Option<ProtocolDecryptedMessage> {
@@ -107,10 +105,7 @@ pub(super) fn recover_preview(
                             &mut engine,
                             &events,
                         )?;
-                    (message.sender == caller_owner
-                        && message.sender_device == Some(caller_device)
-                        && decrypted_offer(&message).is_some())
-                    .then_some(message)
+                    decrypted_offer(&message).is_some().then_some(message)
                 }))
             };
             let _ = tx.send(recover());

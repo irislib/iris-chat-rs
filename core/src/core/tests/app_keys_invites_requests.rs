@@ -40,90 +40,6 @@ fn peer_profile_debug_reports_known_user_context() {
 }
 
 #[test]
-fn linked_device_authorization_follows_app_keys() {
-    let owner = Keys::generate();
-    let device = Keys::generate();
-    let other_device = Keys::generate();
-    let mut core = AppCore::new(
-        flume::unbounded().0,
-        flume::unbounded().0,
-        std::env::temp_dir()
-            .join(format!("iris-chat-rs-test-{}", owner.public_key().to_hex()))
-            .to_string_lossy()
-            .to_string(),
-        Arc::new(RwLock::new(AppState::empty())),
-    );
-
-    assert_eq!(
-        core.local_authorization_state(None, owner.public_key(), device.public_key(), None),
-        LocalAuthorizationState::AwaitingApproval
-    );
-
-    let other_keys = known_app_keys_from_ndr(
-        owner.public_key(),
-        &AppKeys::new(vec![DeviceEntry::new(other_device.public_key(), 10)]),
-        10,
-    );
-    core.app_keys
-        .insert(owner.public_key().to_hex(), other_keys);
-    assert_eq!(
-        core.local_authorization_state(
-            None,
-            owner.public_key(),
-            device.public_key(),
-            Some(LocalAuthorizationState::AwaitingApproval),
-        ),
-        LocalAuthorizationState::AwaitingApproval
-    );
-    assert_eq!(
-        core.local_authorization_state(
-            None,
-            owner.public_key(),
-            device.public_key(),
-            Some(LocalAuthorizationState::Authorized),
-        ),
-        LocalAuthorizationState::Revoked
-    );
-
-    let approved_keys = known_app_keys_from_ndr(
-        owner.public_key(),
-        &AppKeys::new(vec![DeviceEntry::new(device.public_key(), 20)]),
-        20,
-    );
-    core.app_keys
-        .insert(owner.public_key().to_hex(), approved_keys);
-    assert_eq!(
-        core.local_authorization_state(
-            None,
-            owner.public_key(),
-            device.public_key(),
-            Some(LocalAuthorizationState::AwaitingApproval),
-        ),
-        LocalAuthorizationState::AwaitingApproval
-    );
-
-    core.start_session(owner.public_key(), None, device.clone(), false, false)
-        .expect("linked session");
-    let approved_keys = known_app_keys_from_ndr(
-        owner.public_key(),
-        &AppKeys::new(vec![DeviceEntry::new(device.public_key(), 20)]),
-        20,
-    );
-    core.app_keys
-        .insert(owner.public_key().to_hex(), approved_keys);
-    install_local_sibling_session_for_test(&mut core, &owner, &device, &other_device);
-    assert_eq!(
-        core.local_authorization_state(
-            None,
-            owner.public_key(),
-            device.public_key(),
-            Some(LocalAuthorizationState::AwaitingApproval),
-        ),
-        LocalAuthorizationState::Authorized
-    );
-}
-
-#[test]
 fn seen_local_app_keys_event_repairs_missing_protocol_roster() {
     let owner = Keys::generate();
     let device = Keys::generate();
@@ -174,24 +90,42 @@ fn identity_signed_removal_revokes_a_device_even_when_it_has_the_owner_key() {
         Arc::new(RwLock::new(AppState::empty())),
     );
     core.preferences.nostr_relay_urls.clear();
-    core.start_primary_session(owner.clone(), device.clone(), false, false).unwrap();
+    core.start_primary_session(owner.clone(), device.clone(), false, false)
+        .unwrap();
     let created = core.app_keys[&owner.public_key().to_hex()].created_at_secs;
     let registered = AppKeys::new(vec![
         DeviceEntry::new(device.public_key(), created),
         DeviceEntry::new(sibling.public_key(), created),
-    ]).get_event_at(owner.public_key(), created + 1).sign_with_keys(&owner).unwrap();
+    ])
+    .get_event_at(owner.public_key(), created + 1)
+    .sign_with_keys(&owner)
+    .unwrap();
     core.handle_relay_event(registered.clone());
     let removal = AppKeys::new(vec![DeviceEntry::new(sibling.public_key(), created)])
-        .get_event_at(owner.public_key(), created + 2).sign_with_keys(&owner).unwrap();
+        .get_event_at(owner.public_key(), created + 2)
+        .sign_with_keys(&owner)
+        .unwrap();
     let mut forged = removal.clone();
     forged.content.push_str("tampered");
     core.handle_relay_event(forged);
-    assert_eq!(core.logged_in.as_ref().unwrap().authorization_state, LocalAuthorizationState::Authorized);
+    assert_eq!(
+        core.logged_in.as_ref().unwrap().authorization_state,
+        LocalAuthorizationState::Authorized
+    );
     core.handle_relay_event(removal);
-    assert_eq!(core.logged_in.as_ref().unwrap().authorization_state, LocalAuthorizationState::Revoked);
-    assert_eq!(core.state.account.as_ref().unwrap().authorization_state, DeviceAuthorizationState::Revoked);
+    assert_eq!(
+        core.logged_in.as_ref().unwrap().authorization_state,
+        LocalAuthorizationState::Revoked
+    );
+    assert_eq!(
+        core.state.account.as_ref().unwrap().authorization_state,
+        DeviceAuthorizationState::Revoked
+    );
     core.handle_relay_event(registered);
-    assert_eq!(core.logged_in.as_ref().unwrap().authorization_state, LocalAuthorizationState::Revoked);
+    assert_eq!(
+        core.logged_in.as_ref().unwrap().authorization_state,
+        LocalAuthorizationState::Revoked
+    );
     // Native shells route this state through their ordinary logout cleanup.
     core.handle_action(AppAction::Logout);
     assert!(core.logged_in.is_none());
@@ -556,11 +490,7 @@ fn remove_authorized_device_action_updates_roster_immediately() {
     let linked_device = Keys::generate();
     let request_keys = Keys::generate();
     let approval_relay = crate::local_relay::TestRelay::start();
-    let mut core = logged_in_test_core(
-        "device-roster-remove-immediate",
-        &owner,
-        &current_device,
-    );
+    let mut core = logged_in_test_core("device-roster-remove-immediate", &owner, &current_device);
     let bootstrap = device_approval_bootstrap_for_test(
         &linked_device,
         &request_keys,
@@ -613,10 +543,22 @@ fn remove_authorized_device_action_updates_roster_immediately() {
 
 #[test]
 fn removing_authorized_device_beats_equal_timestamp_roster_merge() {
-    assert_eq!(account_app_keys::next_removed_app_keys_created_at(100, 80, 90), 102);
-    assert_eq!(account_app_keys::next_removed_app_keys_created_at(100, 110, 90), 112);
-    assert_eq!(account_app_keys::next_removed_app_keys_created_at(100, 80, 120), 122);
-    assert_eq!(account_app_keys::next_removed_app_keys_created_at(100, 100, 90), 102);
+    assert_eq!(
+        account_app_keys::next_removed_app_keys_created_at(100, 80, 90),
+        102
+    );
+    assert_eq!(
+        account_app_keys::next_removed_app_keys_created_at(100, 110, 90),
+        112
+    );
+    assert_eq!(
+        account_app_keys::next_removed_app_keys_created_at(100, 80, 120),
+        122
+    );
+    assert_eq!(
+        account_app_keys::next_removed_app_keys_created_at(100, 100, 90),
+        102
+    );
 }
 
 #[test]
@@ -854,14 +796,23 @@ fn restored_owner_app_keys_backfill_merges_current_device_and_republishes() {
         LocalAuthorizationState::Authorized,
         "the old roster being backfilled must not revoke the device explicitly being registered"
     );
-    assert_eq!(core.state.account.as_ref().unwrap().authorization_state, DeviceAuthorizationState::Authorized);
-    assert_eq!(core.signed_local_device_authorization(owner.public_key(), device.public_key()), Some(true));
+    assert_eq!(
+        core.state.account.as_ref().unwrap().authorization_state,
+        DeviceAuthorizationState::Authorized
+    );
+    assert_eq!(
+        core.signed_local_device_authorization(owner.public_key(), device.public_key()),
+        Some(true)
+    );
 
     let known = core
         .app_keys
         .get(&owner.public_key().to_hex())
         .expect("known app keys");
-    assert!(known.created_at_secs > remote_event.created_at.as_secs(), "the merged registration must supersede the old signed roster");
+    assert!(
+        known.created_at_secs > remote_event.created_at.as_secs(),
+        "the merged registration must supersede the old signed roster"
+    );
     assert!(known
         .devices
         .iter()
@@ -1049,7 +1000,14 @@ fn device_approval_uses_the_approvers_active_relay_policy() {
     assert!(error.contains("device-approval-app-keys"), "error={error}");
     assert!(!primary
         .app_keys
-        .get(&primary.logged_in.as_ref().expect("primary").owner_pubkey.to_hex())
+        .get(
+            &primary
+                .logged_in
+                .as_ref()
+                .expect("primary")
+                .owner_pubkey
+                .to_hex()
+        )
         .into_iter()
         .flat_map(|app_keys| app_keys.devices.iter())
         .any(|device| device.identity_pubkey_hex == linked_device_hex));
@@ -1092,10 +1050,7 @@ fn owner_device_rejects_legacy_link_invite_for_device_approval() {
         .into_iter()
         .flat_map(|known| known.devices.iter())
         .any(|device| device.identity_pubkey_hex == new_device.public_key().to_hex()));
-    assert_eq!(
-        core.state.toast.as_deref(),
-        Some("Invalid device request.")
-    );
+    assert_eq!(core.state.toast.as_deref(), Some("Invalid device request."));
 }
 
 #[test]
@@ -1129,9 +1084,8 @@ fn owner_device_rejects_full_request_and_request_event_inputs() {
     let request_event_json = serde_json::to_string(&request_event).expect("request event JSON");
     let full_request_uri = format!(
         "nostr-identity://device-approval/{}",
-        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(
-            serde_json::to_vec(&local_request.request).expect("full request JSON")
-        )
+        base64::engine::general_purpose::URL_SAFE_NO_PAD
+            .encode(serde_json::to_vec(&local_request.request).expect("full request JSON"))
     );
     let full_event_uri = format!(
         "nostr-identity://device-approval/{}",
@@ -1143,10 +1097,7 @@ fn owner_device_rejects_full_request_and_request_event_inputs() {
         core.handle_action(AppAction::AddAuthorizedDevice {
             device_input: legacy_input,
         });
-        assert_eq!(
-            core.state.toast.as_deref(),
-            Some("Invalid device request.")
-        );
+        assert_eq!(core.state.toast.as_deref(), Some("Invalid device request."));
     }
 
     assert!(!core
@@ -1246,18 +1197,21 @@ fn pending_linked_device_survives_suspend_and_resumes() {
 
     core.prepare_for_suspend();
     assert!(core.pending_linked_device.is_some());
-    assert!(!core
-        .pending_linked_device
-        .as_ref()
-        .expect("pending link")
-        .refresh_in_flight);
+    assert!(
+        !core
+            .pending_linked_device
+            .as_ref()
+            .expect("pending link")
+            .refresh_in_flight
+    );
 
     core.handle_app_foregrounded();
-    assert!(core
-        .pending_linked_device
-        .as_ref()
-        .expect("pending link")
-        .refresh_in_flight);
+    assert!(
+        core.pending_linked_device
+            .as_ref()
+            .expect("pending link")
+            .refresh_in_flight
+    );
 }
 
 #[test]
@@ -1434,8 +1388,10 @@ fn assert_local_relay_pairing_recovers_after_disconnect(suspend: bool) {
     assert_ne!(stable_response_pubkey, pairing_response_pubkey);
     assert_ne!(stable_invite.purpose.as_deref(), Some("link"));
 
-    assert!(linked.build_public_invite_snapshot().is_none(),
-        "Relay-discoverable invite secrets must not be shown as private links");
+    assert!(
+        linked.build_public_invite_snapshot().is_none(),
+        "Relay-discoverable invite secrets must not be shown as private links"
+    );
 
     let filters = linked.recent_protocol_filters(UnixSeconds(1_777_159_500));
     assert!(
@@ -1592,11 +1548,7 @@ fn single_protocol_plan_builds_filters_for_all_protocol_inputs() {
         "message filters must be derived from message authors"
     );
     assert!(
-        has_filter_with_kind_author(
-            &filters,
-            GROUP_ROSTER_FACT_KIND,
-            group_admin.public_key()
-        ),
+        has_filter_with_kind_author(&filters, GROUP_ROSTER_FACT_KIND, group_admin.public_key()),
         "group roster fact filters must be derived from group admins"
     );
     assert!(
@@ -2049,12 +2001,8 @@ fn established_peer_session_state_for_test(
 
     let local_bootstrap = local_session
         .send_event(
-            nostr_double_ratchet::build_text_rumor(
-                local_keys.public_key(),
-                "bootstrap",
-                vec![],
-            )
-            .expect("bootstrap rumor"),
+            nostr_double_ratchet::build_text_rumor(local_keys.public_key(), "bootstrap", vec![])
+                .expect("bootstrap rumor"),
         )
         .expect("local bootstrap event");
     peer_session
@@ -2063,12 +2011,8 @@ fn established_peer_session_state_for_test(
 
     let peer_reply = peer_session
         .send_event(
-            nostr_double_ratchet::build_text_rumor(
-                peer_keys.public_key(),
-                "reply",
-                vec![],
-            )
-            .expect("reply rumor"),
+            nostr_double_ratchet::build_text_rumor(peer_keys.public_key(), "reply", vec![])
+                .expect("reply rumor"),
         )
         .expect("peer reply event");
     local_session
@@ -2140,8 +2084,7 @@ fn install_local_sibling_session_for_test(
         .expect("primary accepts linked invite");
     let linked_response = nostr_double_ratchet::process_invite_response_event(
         &linked_invite,
-        &nostr_double_ratchet::invite_response_event(&response)
-            .expect("invite response event"),
+        &nostr_double_ratchet::invite_response_event(&response).expect("invite response event"),
         linked_device.secret_key().to_secret_bytes(),
     )
     .expect("linked processes invite response")
@@ -2181,8 +2124,8 @@ fn create_invite_generates_private_link_without_public_republish() {
         .public_invite
         .as_ref()
         .expect("private invite snapshot");
-    let invite =
-        super::invites::parse_public_invite_input(&snapshot.legacy_url).expect("parse private invite");
+    let invite = super::invites::parse_public_invite_input(&snapshot.legacy_url)
+        .expect("parse private invite");
     assert_eq!(invite.purpose.as_deref(), Some("private"));
     assert_eq!(invite.max_uses, None);
     assert_eq!(invite.owner_public_key, Some(owner.public_key()));
@@ -2357,6 +2300,7 @@ fn accepting_invite_alone_installs_session_and_publishes_response() {
 
 #[test]
 fn queued_runtime_publish_registration_persists_inner_message_id() {
+    let transport_keys = Keys::generate();
     let owner = Keys::generate();
     let device = Keys::generate();
     let peer = Keys::generate();
@@ -2372,7 +2316,8 @@ fn queued_runtime_publish_registration_persists_inner_message_id() {
         DeliveryState::Queued,
     );
     let outer_event = EventBuilder::new(Kind::from(MESSAGE_EVENT_KIND as u16), "")
-        .sign_with_keys(&owner)
+        .tag(nostr::Tag::parse(["v", "2"]).unwrap())
+        .sign_with_keys(&transport_keys)
         .expect("outer event");
 
     let event_id = outer_event.id.to_string();

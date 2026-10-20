@@ -14,7 +14,6 @@ internal data class AndroidMobilePushSyncInput(
     val inviteResponsePubkeys: List<String>,
     val serverOverride: String,
     val callDevicePubkeyHex: String?,
-    val callAuthorPubkeys: List<String>,
     val callsEnabled: Boolean,
 )
 
@@ -25,7 +24,6 @@ internal fun mobilePushSyncInput(
     AndroidMobilePushSyncInput(
         enabled = state.preferences.desktopNotificationsEnabled,
         callDevicePubkeyHex = state.mobilePush.callDevicePubkeyHex,
-        callAuthorPubkeys = state.mobilePush.callAuthorPubkeys,
         callsEnabled = state.preferences.voiceCallsEnabled || state.preferences.videoCallsEnabled,
         ownerPubkeyHex = state.mobilePush.ownerPubkeyHex?.trim()?.ifEmpty { null },
         ownerSecretAvailable = !ownerNsec.isNullOrBlank(),

@@ -2,6 +2,28 @@
 
 Each release has channel-specific notes. The release tag must match the `##` heading exactly.
 
+## v2026.10.20.1
+
+### GitHub
+
+- Use private per-session responder keys so public invitations cannot identify the sender of encrypted replies.
+- Sign call wakeups with fresh anonymous keys and authenticate callers only after decrypting the double-ratchet offer. Remove caller identity lists from notification subscriptions.
+- Deliver group notifications through separate double-ratchet envelopes for each recipient instead of exposing shared group keys in notification subscriptions.
+- Require the new private messaging protocol, retire old sessions and invitations, and retain old unsent ciphertext locally without republishing it. Keep chat history.
+- Add serialized-event and upgrade regressions for identity correlation, first replies, calls, notification subscriptions and queued-message replay.
+
+### Apple
+
+- Improve privacy for messages, invitations and incoming calls.
+- Keep caller approval and blocking on your device.
+- Update both sides of a conversation to keep messaging and calling. Existing chat history is preserved; old invitation links need to be replaced.
+
+### Zapstore
+
+- Improve privacy for messages, invitations and incoming calls.
+- Keep caller approval and blocking on your device.
+- Update both sides of a conversation to keep messaging and calling. Existing chat history is preserved; old invitation links need to be replaced.
+
 ## v2026.10.20
 
 ### GitHub

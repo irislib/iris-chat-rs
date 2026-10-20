@@ -79,6 +79,14 @@ fn load_or_create_local_invite(
 }
 
 fn normalize_local_invite_owner(mut invite: Invite, owner_pubkey: PublicKey) -> Invite {
+    if invite.metadata_privacy_version != nostr_double_ratchet::METADATA_PRIVACY_VERSION {
+        invite.metadata_privacy_version = nostr_double_ratchet::METADATA_PRIVACY_VERSION;
+        invite.created_at = NdrUnixSeconds(
+            unix_now()
+                .get()
+                .max(invite.created_at.get().saturating_add(1)),
+        );
+    }
     invite.inviter_owner_pubkey = Some(ndr_owner(owner_pubkey));
     invite.owner_public_key = Some(owner_pubkey);
     invite
@@ -134,5 +142,79 @@ impl ProtocolEngine {
             }
         }
         events.into_values().collect()
+    }
+}
+
+impl ProtocolEngine {
+    fn state_checkpoint(&self) -> ProtocolEngineCheckpoint {
+        ProtocolEngineCheckpoint {
+            session_manager: self.session_manager.clone(),
+            group_manager: self.group_manager.clone(),
+            pending_inbound: self.pending_inbound.clone(),
+            pending_group_fanouts: self.pending_group_fanouts.clone(),
+            ready_group_publications: self.ready_group_publications.clone(),
+            pending_local_sibling_sends: self.pending_local_sibling_sends.clone(),
+            pending_remote_sends: self.pending_remote_sends.clone(),
+            pending_group_pairwise_payloads: self.pending_group_pairwise_payloads.clone(),
+            pending_group_sender_key_messages: self.pending_group_sender_key_messages.clone(),
+            pending_group_sender_key_repairs: self.pending_group_sender_key_repairs.clone(),
+            processed_group_sender_key_messages: self.processed_group_sender_key_messages.clone(),
+            group_sender_key_retry: self.group_sender_key_retry.borrow().clone(),
+            answered_group_sender_key_repairs: self.answered_group_sender_key_repairs.clone(),
+            pending_decrypted_deliveries: self.pending_decrypted_deliveries.clone(),
+            group_roster_fact_histories: self.group_roster_fact_histories.clone(),
+            verified_app_keys_owners: self.verified_app_keys_owners.clone(),
+            invite_owner_app_keys_evidence: self.invite_owner_app_keys_evidence.clone(),
+            processed_private_invite_response_ids: self
+                .processed_private_invite_response_ids
+                .clone(),
+            group_invite_uses: self.group_invite_uses.clone(),
+            local_app_keys_observed: self.local_app_keys_observed,
+            subscription_generation: self.subscription_generation,
+        }
+    }
+
+    fn restore_checkpoint(&mut self, checkpoint: ProtocolEngineCheckpoint) {
+        self.group_invite_uses = checkpoint.group_invite_uses;
+        self.session_manager = checkpoint.session_manager;
+        self.group_manager = checkpoint.group_manager;
+        self.pending_inbound = checkpoint.pending_inbound;
+        self.pending_group_fanouts = checkpoint.pending_group_fanouts;
+        self.ready_group_publications = checkpoint.ready_group_publications;
+        self.pending_local_sibling_sends = checkpoint.pending_local_sibling_sends;
+        self.pending_remote_sends = checkpoint.pending_remote_sends;
+        self.pending_group_pairwise_payloads = checkpoint.pending_group_pairwise_payloads;
+        self.pending_group_sender_key_messages = checkpoint.pending_group_sender_key_messages;
+        self.pending_group_sender_key_repairs = checkpoint.pending_group_sender_key_repairs;
+        self.processed_group_sender_key_messages = checkpoint.processed_group_sender_key_messages;
+        self.group_sender_key_retry
+            .replace(checkpoint.group_sender_key_retry);
+        self.answered_group_sender_key_repairs = checkpoint.answered_group_sender_key_repairs;
+        self.pending_decrypted_deliveries = checkpoint.pending_decrypted_deliveries;
+        self.group_roster_fact_histories = checkpoint.group_roster_fact_histories;
+        self.verified_app_keys_owners = checkpoint.verified_app_keys_owners;
+        self.invite_owner_app_keys_evidence = checkpoint.invite_owner_app_keys_evidence;
+        self.processed_private_invite_response_ids =
+            checkpoint.processed_private_invite_response_ids;
+        self.local_app_keys_observed = checkpoint.local_app_keys_observed;
+        self.subscription_generation = checkpoint.subscription_generation;
+        self.invalidate_known_message_author_cache();
+    }
+
+    fn with_state_checkpoint<T>(
+        &mut self,
+        operation: impl FnOnce(&mut Self) -> anyhow::Result<T>,
+    ) -> anyhow::Result<T> {
+        let checkpoint = self.state_checkpoint();
+        match operation(self) {
+            Ok(value) => {
+                self.invalidate_known_message_author_cache();
+                Ok(value)
+            }
+            Err(error) => {
+                self.restore_checkpoint(checkpoint);
+                Err(error)
+            }
+        }
     }
 }

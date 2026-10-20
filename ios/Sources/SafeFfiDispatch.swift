@@ -367,7 +367,7 @@ private func fallbackAppState(toast: String?) -> AppState {
         linkDevice: nil, remoteSignerLogin: nil,
         networkStatus: nil,
         mobilePush: MobilePushSyncSnapshot(
-            callDevicePubkeyHex: nil, callAuthorPubkeys: [],
+            callDevicePubkeyHex: nil,
             ownerPubkeyHex: nil,
             messageAuthorPubkeys: [],
             delayedMessageAuthors: [],

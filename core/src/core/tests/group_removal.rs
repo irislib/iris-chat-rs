@@ -147,11 +147,13 @@ fn group_removal_retains_history_notifies_once_and_blocks_sends_before_clearing_
 
 #[test]
 fn group_removal_discards_durable_message_outbox_but_keeps_membership_controls() {
-    let (mut core, owner, device, joined, removed) = removed_group_fixture();
+    let transport_keys = Keys::generate();
+    let (mut core, owner, _device, joined, removed) = removed_group_fixture();
     let chat_id = group_chat_id(&joined.group_id);
     for (content, message_id) in [("message", Some("message-id".into())), ("membership", None)] {
         let event = EventBuilder::new(Kind::Custom(1060), content)
-            .sign_with_keys(&device)
+            .tag(nostr::Tag::parse(["v", "2"]).unwrap())
+            .sign_with_keys(&transport_keys)
             .unwrap();
         assert!(core.publish_protocol_event(ProtocolPublish {
             authored_at_secs: None,
@@ -173,7 +175,8 @@ fn group_removal_discards_durable_message_outbox_but_keeps_membership_controls()
         "removal notices must still reach linked devices"
     );
     let event = EventBuilder::new(Kind::Custom(1060), "late prepared message")
-        .sign_with_keys(&device)
+        .tag(nostr::Tag::parse(["v", "2"]).unwrap())
+        .sign_with_keys(&transport_keys)
         .unwrap();
     assert!(!core.publish_protocol_event(ProtocolPublish {
         authored_at_secs: None,

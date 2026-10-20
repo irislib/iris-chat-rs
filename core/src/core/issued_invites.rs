@@ -37,8 +37,13 @@ pub(super) fn load_issued_invites(
         let Some(value) = storage.get(&key)? else {
             continue;
         };
-        let record: IssuedInvite = serde_json::from_str(&value)?;
-        record.record.validate()?;
+        // Retain retired links in storage, but do not advertise an old handshake.
+        let Ok(record) = serde_json::from_str::<IssuedInvite>(&value) else {
+            continue;
+        };
+        if record.record.validate().is_err() {
+            continue;
+        }
         records.insert(key.trim_start_matches(PREFIX).to_string(), record);
     }
     Ok(records)
@@ -106,6 +111,7 @@ impl AppCore {
         invite.purpose = Some("private".to_string());
         // Only the public bootstrap fields go in the encrypted record.
         let connection = InviteConnection {
+            version: nostr_double_ratchet::METADATA_PRIVACY_VERSION,
             inviter: device.to_hex(),
             ephemeral_key: invite.inviter_ephemeral_public_key.to_string(),
             shared_secret: hashtree_core::to_hex(&invite.shared_secret),

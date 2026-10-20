@@ -881,6 +881,14 @@ impl AppCore {
                 let pending = pending
                     .into_iter()
                     .filter(|pending| {
+                        let allowed = serde_json::from_str::<Event>(&pending.event_json)
+                            .is_ok_and(|event| self.private_publication_allowed(&event));
+                        if !allowed {
+                            self.quarantine_private_publication(pending);
+                        }
+                        if !allowed {
+                            return false;
+                        }
                         let obsolete = serde_json::from_str::<Event>(&pending.event_json)
                             .is_ok_and(|event| {
                                 private_contacts::obsolete_private_contact_event(&event)

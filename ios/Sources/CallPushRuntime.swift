@@ -9,7 +9,6 @@ final class CallPushRuntime {
     private struct DesiredSubscription: Equatable {
         let ownerNsec: String
         let device: String
-        let authors: [String]
         let enabled: Bool
         let token: String?
         let serverOverride: String?
@@ -34,14 +33,13 @@ final class CallPushRuntime {
     func sync(state: AppState, ownerNsec: String?, token: String?) {
         guard let ownerNsec, let device = state.mobilePush.callDevicePubkeyHex else { return }
         setDesired(DesiredSubscription(ownerNsec: ownerNsec, device: device,
-            authors: state.mobilePush.callAuthorPubkeys,
             enabled: state.preferences.voiceCallsEnabled || state.preferences.videoCallsEnabled,
             token: token, serverOverride: serverOverride(state)))
     }
 
     func unregister(state: AppState, ownerNsec: String?) {
         guard let ownerNsec else { return }
-        setDesired(DesiredSubscription(ownerNsec: ownerNsec, device: "", authors: [],
+        setDesired(DesiredSubscription(ownerNsec: ownerNsec, device: "",
             enabled: false, token: nil, serverOverride: serverOverride(state)))
     }
 
@@ -68,11 +66,11 @@ final class CallPushRuntime {
                 // to an earlier value while this mutation is in flight.
                 self.confirmed = nil
                 let success: Bool
-                if !next.enabled || next.authors.isEmpty || next.token == nil {
+                if !next.enabled || next.token == nil {
                     success = await self.remove(ownerNsec: next.ownerNsec, override: next.serverOverride)
                 } else {
                     success = await self.register(ownerNsec: next.ownerNsec, device: next.device,
-                        authors: next.authors, token: next.token!, override: next.serverOverride)
+                        token: next.token!, override: next.serverOverride)
                 }
                 if success { self.confirmed = next }
                 if self.desired != next { continue }
@@ -90,16 +88,16 @@ final class CallPushRuntime {
         }
     }
 
-    private func register(ownerNsec: String, device: String, authors: [String], token: String, override: String?) async -> Bool {
+    private func register(ownerNsec: String, device: String, token: String, override: String?) async -> Bool {
         let id = defaults.string(forKey: storageKey)
         guard let request = buildCallPushSubscriptionRequest(ownerNsec: ownerNsec,
-            devicePubkeyHex: device, authorPubkeys: authors, subscriptionId: id,
+            devicePubkeyHex: device, subscriptionId: id,
             platformKey: "ios", pushToken: token, apnsTopic: Bundle.main.bundleIdentifier,
             isRelease: isRelease, serverUrlOverride: override) else { return false }
         let (status, data) = await perform(request)
         if status == 404, id != nil {
             defaults.removeObject(forKey: storageKey)
-            return await register(ownerNsec: ownerNsec, device: device, authors: authors, token: token, override: override)
+            return await register(ownerNsec: ownerNsec, device: device, token: token, override: override)
         }
         guard (200..<300).contains(status) else { return false }
         if id == nil {

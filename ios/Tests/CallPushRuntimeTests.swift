@@ -32,7 +32,6 @@ final class CallPushRuntimeTests: XCTestCase {
         let runtime = CallPushRuntime(defaults: defaults, session: URLSession(configuration: configuration))
         var state = makeAppState(rev: 1)
         state.mobilePush.callDevicePubkeyHex = String(repeating: "a", count: 64)
-        state.mobilePush.callAuthorPubkeys = [String(repeating: "b", count: 64)]
         state.preferences.mobilePushServerUrl = "https://push.test"
         state.preferences.desktopNotificationsEnabled = false
         let registered = expectation(description: "call subscription registered despite message alerts disabled")
@@ -40,6 +39,10 @@ final class CallPushRuntimeTests: XCTestCase {
             XCTAssertEqual(request.httpMethod, "POST")
             XCTAssertEqual(request.url?.path, "/subscriptions")
             XCTAssertTrue(request.value(forHTTPHeaderField: "authorization")?.hasPrefix("Nostr ") == true)
+            let object = try? JSONSerialization.jsonObject(with: self.bodyData(request)) as? [String: Any]
+            let filter = object?["filter"] as? [String: Any]
+            XCTAssertNil(filter?["authors"], "Caller identities must never be sent to the notification service")
+            XCTAssertEqual(filter?["#p"] as? [String], [String(repeating: "a", count: 64)])
             registered.fulfill()
             return (201, Data("{\"id\":\"call-subscription\"}".utf8))
         }
@@ -72,7 +75,7 @@ final class CallPushRuntimeTests: XCTestCase {
         await fulfillment(of: [removed], timeout: 2)
     }
     @MainActor
-    func testBlockingWhileUpdateInFlightReconcilesAfterItEvenWhenReturningToConfirmedState() async throws {
+    func testDisablingWhileUpdateInFlightReconcilesAfterItEvenWhenReturningToConfirmedState() async throws {
         let suite = "call-push-\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
         defer { defaults.removePersistentDomain(forName: suite); CallPushHTTP.hold = nil }
@@ -81,14 +84,15 @@ final class CallPushRuntimeTests: XCTestCase {
         let runtime = CallPushRuntime(defaults: defaults, session: URLSession(configuration: configuration))
         var state = makeAppState(rev: 1)
         state.mobilePush.callDevicePubkeyHex = String(repeating: "a", count: 64)
-        state.mobilePush.callAuthorPubkeys = []
+        state.preferences.voiceCallsEnabled = false
+        state.preferences.videoCallsEnabled = false
         state.preferences.mobilePushServerUrl = "https://push.test"
         let secret = String(repeating: "1", count: 64)
-        // Establish the already-blocked state before an unblock request starts.
+        // Establish the already-disabled state before an enable request starts.
         runtime.sync(state: state, ownerNsec: secret, token: "token")
         await Task.yield()
-        let started = expectation(description: "unblock request started")
-        let removed = expectation(description: "new subscription removed after block")
+        let started = expectation(description: "enable request started")
+        let removed = expectation(description: "new subscription removed after disabling")
         var pending: CallPushHTTP?
         var methods: [String] = []
         CallPushHTTP.hold = { request in
@@ -104,10 +108,11 @@ final class CallPushRuntimeTests: XCTestCase {
                 }
             }
         }
-        state.mobilePush.callAuthorPubkeys = [String(repeating: "b", count: 64)]
+        state.preferences.voiceCallsEnabled = true
         runtime.sync(state: state, ownerNsec: secret, token: "token")
         await fulfillment(of: [started], timeout: 2)
-        state.mobilePush.callAuthorPubkeys = []
+        state.preferences.voiceCallsEnabled = false
+        state.preferences.videoCallsEnabled = false
         runtime.sync(state: state, ownerNsec: secret, token: "token")
         await Task.yield()
         XCTAssertEqual(methods, ["POST"], "Do not overlap a deletion with the in-flight create")
@@ -117,7 +122,7 @@ final class CallPushRuntimeTests: XCTestCase {
     }
 
     @MainActor
-    func testFailedUpdateRetryUsesLatestBlockedState() async throws {
+    func testFailedTokenUpdateRetryUsesLatestToken() async throws {
         let suite = "call-push-\(UUID().uuidString)"
         let defaults = UserDefaults(suiteName: suite)!
         defer { defaults.removePersistentDomain(forName: suite); CallPushHTTP.respond = nil }
@@ -127,7 +132,6 @@ final class CallPushRuntimeTests: XCTestCase {
                                       retryDelayNanoseconds: 100_000_000)
         var state = makeAppState(rev: 1)
         state.mobilePush.callDevicePubkeyHex = String(repeating: "a", count: 64)
-        state.mobilePush.callAuthorPubkeys = [String(repeating: "b", count: 64)]
         state.preferences.mobilePushServerUrl = "https://push.test"
         let secret = String(repeating: "1", count: 64)
         let created = expectation(description: "initial registration")
@@ -142,24 +146,23 @@ final class CallPushRuntimeTests: XCTestCase {
         }
         let failed = expectation(description: "update fails")
         CallPushHTTP.respond = { _ in failed.fulfill(); return (503, Data()) }
-        state.mobilePush.callAuthorPubkeys.append(String(repeating: "c", count: 64))
-        runtime.sync(state: state, ownerNsec: secret, token: "token")
+        runtime.sync(state: state, ownerNsec: secret, token: "new-token")
         await fulfillment(of: [failed], timeout: 2)
         // Let the response handler schedule its retry before changing the policy.
         try await Task.sleep(nanoseconds: 30_000_000)
-        let restored = expectation(description: "blocked caller removed from existing subscription")
+        let restored = expectation(description: "latest token restored in existing subscription")
         CallPushHTTP.respond = { request in
             XCTAssertEqual(request.httpMethod, "POST")
             XCTAssertEqual(request.url?.path, "/subscriptions/existing")
             let body = self.bodyData(request)
             let object = try? JSONSerialization.jsonObject(with: body) as? [String: Any]
             let filter = object?["filter"] as? [String: Any]
-            XCTAssertEqual(filter?["authors"] as? [String], [String(repeating: "b", count: 64)],
+            XCTAssertNil(filter?["authors"], "Caller identities must never leave this device")
+            XCTAssertEqual(object?["apns_tokens"] as? [String], ["token"],
                            "Returning to the confirmed state must replace any possibly applied stale update")
             restored.fulfill()
             return (200, Data("{}".utf8))
         }
-        state.mobilePush.callAuthorPubkeys = [String(repeating: "b", count: 64)]
         runtime.sync(state: state, ownerNsec: secret, token: "token")
         await fulfillment(of: [restored], timeout: 2)
         try await Task.sleep(nanoseconds: 200_000_000)

@@ -129,6 +129,7 @@ mod payloads;
 mod persistence;
 mod private_contacts;
 mod private_device_labels;
+mod private_group_wake;
 mod profile;
 mod profile_directory;
 pub(crate) use profile::{fallback_profile_name_for_identity, profile_name_for_identity};

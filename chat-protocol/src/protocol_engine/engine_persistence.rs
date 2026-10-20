@@ -38,6 +38,7 @@ impl ProtocolEngine {
                 .clone(),
             pending_inbound: self.pending_inbound.clone(),
             pending_group_fanouts: self.pending_group_fanouts.clone(),
+            ready_group_publications: self.ready_group_publications.clone(),
             pending_local_sibling_sends: self.pending_local_sibling_sends.clone(),
             pending_remote_sends: self.pending_remote_sends.clone(),
             pending_group_pairwise_payloads: self.pending_group_pairwise_payloads.clone(),
@@ -45,8 +46,12 @@ impl ProtocolEngine {
             pending_group_sender_key_repairs: self.pending_group_sender_key_repairs.clone(),
             processed_group_sender_key_messages: self.processed_group_sender_key_messages.clone(),
             answered_group_sender_key_repairs: self.answered_group_sender_key_repairs.clone(),
-            pending_decrypted_deliveries: self.pending_decrypted_deliveries.iter()
-                .filter(|delivery| !delivery.discarded).cloned().collect(),
+            pending_decrypted_deliveries: self
+                .pending_decrypted_deliveries
+                .iter()
+                .filter(|delivery| !delivery.discarded)
+                .cloned()
+                .collect(),
             group_roster_fact_histories: self.group_roster_fact_histories.clone(),
             subscription_generation: self.subscription_generation,
         };
@@ -58,7 +63,8 @@ impl ProtocolEngine {
         );
         self.storage.put(PROTOCOL_ENGINE_STATE_KEY, json)?;
         self.batch_persist_dirty.set(false);
-        self.pending_decrypted_deliveries.retain(|delivery| !delivery.discarded);
+        self.pending_decrypted_deliveries
+            .retain(|delivery| !delivery.discarded);
         *self.checkpoint_layout.borrow_mut() = layout;
         Ok(())
     }

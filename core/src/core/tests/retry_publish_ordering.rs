@@ -1,5 +1,6 @@
 #[test]
 fn retry_batch_publish_registration_blocks_delivery_until_relay_success() {
+    let transport_keys = Keys::generate();
     let owner = Keys::generate();
     let device = Keys::generate();
     let peer = Keys::generate();
@@ -20,7 +21,8 @@ fn retry_batch_publish_registration_blocks_delivery_until_relay_success() {
     );
 
     let event = EventBuilder::new(Kind::from(MESSAGE_EVENT_KIND as u16), "payload")
-        .sign_with_keys(&device)
+        .tag(nostr::Tag::parse(["v", "2"]).unwrap())
+        .sign_with_keys(&transport_keys)
         .expect("payload event");
     let event_id = event.id.to_string();
 
@@ -44,7 +46,12 @@ fn retry_batch_publish_registration_blocks_delivery_until_relay_success() {
     let message = core
         .threads
         .get(&chat_id)
-        .and_then(|thread| thread.messages.iter().find(|message| message.id == message_id))
+        .and_then(|thread| {
+            thread
+                .messages
+                .iter()
+                .find(|message| message.id == message_id)
+        })
         .expect("message after retry batch");
     assert_eq!(message.delivery, DeliveryState::Pending);
 
@@ -58,7 +65,12 @@ fn retry_batch_publish_registration_blocks_delivery_until_relay_success() {
     let message = core
         .threads
         .get(&chat_id)
-        .and_then(|thread| thread.messages.iter().find(|message| message.id == message_id))
+        .and_then(|thread| {
+            thread
+                .messages
+                .iter()
+                .find(|message| message.id == message_id)
+        })
         .expect("message after relay ack");
     assert_eq!(message.delivery, DeliveryState::Sent);
 }

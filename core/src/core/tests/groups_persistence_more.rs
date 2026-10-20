@@ -4,15 +4,26 @@ fn background_receiver_keeps_open_chat_messages_unread_without_suspending() {
     let device = Keys::generate();
     let mut core = logged_in_test_core("background-receiver-unread", &owner, &device);
     let peer = Keys::generate().public_key().to_hex();
-    core.screen_stack = vec![Screen::Chat { chat_id: peer.clone() }];
+    core.screen_stack = vec![Screen::Chat {
+        chat_id: peer.clone(),
+    }];
     assert!(core.is_chat_visible(&peer));
 
     core.handle_action(AppAction::AppBackgrounded);
-    assert!(!core.suspended, "background receiving must retain network processing");
+    assert!(
+        !core.suspended,
+        "background receiving must retain network processing"
+    );
     assert!(!core.is_chat_visible(&peer));
     core.push_incoming_message_from(
-        &peer, Some("background-message".into()), "hello".into(), unix_now().get(),
-        None, None, Some(peer.clone()), None,
+        &peer,
+        Some("background-message".into()),
+        "hello".into(),
+        unix_now().get(),
+        None,
+        None,
+        Some(peer.clone()),
+        None,
     );
     assert_eq!(core.threads[&peer].unread_count, 1);
     core.handle_action(AppAction::AppForegrounded);
@@ -890,6 +901,7 @@ fn unknown_group_sender_key_outer_event(sender_event: &Keys) -> Event {
     payload.extend_from_slice(&[42_u8; 32]);
     let content = base64::engine::general_purpose::STANDARD.encode(payload);
     EventBuilder::new(Kind::from(MESSAGE_EVENT_KIND as u16), content)
+        .tag(nostr::Tag::parse(["v", "2"]).unwrap())
         .sign_with_keys(sender_event)
         .expect("unknown group sender-key outer")
 }

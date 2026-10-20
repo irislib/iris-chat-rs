@@ -3,7 +3,9 @@ mod protocol_engine;
 mod storage;
 
 use nostr::UnsignedEvent;
-use nostr::{Event, Keys, Kind, PublicKey, Timestamp};
+use nostr::{Event, Keys, PublicKey};
+#[cfg(test)]
+use nostr::{Kind, Timestamp};
 use nostr_double_ratchet::{
     group_sender_key_message_event, invite_response_event, is_group_roster_fact_event,
     parse_group_roster_fact_event, parse_group_sender_key_message_event,

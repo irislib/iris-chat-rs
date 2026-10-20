@@ -105,7 +105,12 @@ class MobilePushRuntimeTest {
             } else {
                 val buffer = Buffer()
                 requireNotNull(request.body).writeTo(buffer)
-                val registered = JSONObject(buffer.readUtf8()).getJSONArray("fcm_tokens").getString(0)
+                val payload = JSONObject(buffer.readUtf8())
+                if (forCalls) {
+                    assertTrue("Caller identities must never leave this device", !payload.getJSONObject("filter").has("authors"))
+                    assertTrue(!payload.toString().contains("22".repeat(32)))
+                }
+                val registered = payload.getJSONArray("fcm_tokens").getString(0)
                 registeredTokens.add(registered)
                 if (registered == "old-test-token") {
                     oldRegistrationStarted.countDown()
@@ -124,7 +129,6 @@ class MobilePushRuntimeTest {
                 ownerPubkeyHex = "11".repeat(32),
                 messageAuthorPubkeys = listOf("22".repeat(32)),
                 callDevicePubkeyHex = "33".repeat(32),
-                callAuthorPubkeys = listOf("22".repeat(32)),
             ),
         )
         // Public test vector, never an actual account or persisted user secret.

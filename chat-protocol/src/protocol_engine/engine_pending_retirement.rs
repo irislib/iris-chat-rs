@@ -19,8 +19,35 @@ impl ProtocolEngine {
     ) -> anyhow::Result<usize> {
         let chat_id = peer.to_hex();
         self.with_state_checkpoint(|engine| {
-            let before =
-                engine.pending_remote_sends.len() + engine.pending_local_sibling_sends.len();
+            let before = engine.pending_remote_sends.len()
+                + engine.pending_local_sibling_sends.len()
+                + engine.ready_group_publications.len()
+                + engine.pending_group_fanouts.len();
+            engine.pending_group_fanouts.retain(|pending| {
+                let GroupPendingFanout::Remote {
+                    recipient_owner,
+                    payload,
+                } = &pending.fanout
+                else {
+                    return true;
+                };
+                *recipient_owner != ndr_owner(peer)
+                    || !serde_json::from_slice::<UnsignedEvent>(payload)
+                        .is_ok_and(|event| event.kind.as_u16() == 21_113)
+                    || through.is_some_and(|cutoff| {
+                        pending_direct_authored_at(payload, pending.created_at_secs) > cutoff
+                    })
+            });
+            engine.ready_group_publications.retain(|_, pending| {
+                pending.wake_recipient != Some(ndr_owner(peer))
+                    || through.is_some_and(|cutoff| {
+                        pending
+                            .publish
+                            .authored_at_secs
+                            .unwrap_or(pending.publish.event.created_at.as_secs())
+                            > cutoff
+                    })
+            });
             engine.pending_remote_sends.retain(|pending| {
                 pending.recipient_owner != ndr_owner(peer)
                     || pending.chat_id != chat_id
@@ -42,7 +69,9 @@ impl ProtocolEngine {
             });
             let retired = before
                 - engine.pending_remote_sends.len()
-                - engine.pending_local_sibling_sends.len();
+                - engine.pending_local_sibling_sends.len()
+                - engine.ready_group_publications.len()
+                - engine.pending_group_fanouts.len();
             if retired > 0 {
                 // A surrounding batch must not defer this privacy barrier.
                 engine.persist_now()?;

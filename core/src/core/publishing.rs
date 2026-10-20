@@ -5,6 +5,7 @@ mod cancellation;
 mod carrier_cancellation;
 mod nearby;
 mod outbox;
+mod privacy;
 
 enum PendingPublishChange {
     Inserted,
@@ -17,15 +18,6 @@ const PENDING_RELAY_DRAIN_STALE_AFTER: Duration = RELAY_PUBLISH_ATTEMPT_TIMEOUT;
 const PENDING_RELAY_PUBLISH_IN_PROGRESS: &str = "publish attempt in progress";
 
 impl AppCore {
-    pub(super) fn emit_nearby_published_event(&self, event: &Event) {
-        self.publish_fips_nearby(event);
-        self.publish_mesh_event(event);
-        if super::fips_nearby::is_fips_nearby_bootstrap_event(event) {
-            self.refresh_fips_nearby_bootstrap();
-        }
-        send_nearby_published_event(&self.update_tx, event);
-    }
-
     pub(super) fn publish_runtime_event(
         &mut self,
         event: Event,
@@ -41,7 +33,9 @@ impl AppCore {
     pub(super) fn publish_protocol_event(&mut self, publish: ProtocolPublish) -> bool {
         // Retry batches may already contain sealed events when a block arrives.
         // Guard before call push as well as before the durable/network outboxes.
-        if self.blocked_direct_publication(&publish.chat_id) {
+        if self.blocked_direct_publication(&publish.chat_id)
+            || !self.private_publication_allowed(&publish.event)
+        {
             return false;
         }
         self.publish_call_push_for_protocol(&publish);
@@ -136,6 +130,9 @@ impl AppCore {
         inner_event_id: Option<String>,
         authored_at_secs: Option<u64>,
     ) -> bool {
+        if !self.private_publication_allowed(&event) {
+            return false;
+        }
         if chat_id
             .as_deref()
             .is_some_and(|id| self.blocked_direct_publication(id))
@@ -308,6 +305,11 @@ impl AppCore {
                     continue;
                 }
             };
+            if !self.private_publication_allowed(&event) {
+                self.quarantine_private_publication(&pending);
+                self.pending_relay_publishes.remove(&pending.event_id);
+                continue;
+            }
             candidates.push((pending, event));
         }
         if candidates.is_empty() {

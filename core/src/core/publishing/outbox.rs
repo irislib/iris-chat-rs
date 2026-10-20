@@ -1,6 +1,80 @@
 use super::*;
+use nostr::JsonUtil;
 
 impl AppCore {
+    /// Commit a shared group event and all its private wakes before any carrier
+    /// can acknowledge the shared event. Restart then retains every recipient.
+    pub(in crate::core) fn persist_group_publish_batch(
+        &mut self,
+        effects: &[ProtocolEffect],
+    ) -> bool {
+        let Some(local) = &self.logged_in else {
+            return true;
+        };
+        let owner = local.owner_pubkey;
+        if !effects.iter().any(|effect| {
+            let ProtocolEffect::Publish(publish) = effect;
+            self.protocol_engine.as_ref().is_some_and(|engine| {
+                engine.has_pending_group_publish(&publish.event.id.to_hex())
+                    || super::super::private_group_wake::sender_matches(
+                        engine,
+                        owner,
+                        &publish.event,
+                    ) && publish.event.tags.public_keys().next().is_none()
+            })
+        }) {
+            return true;
+        }
+        let pending = effects
+            .iter()
+            .filter_map(|effect| {
+                let ProtocolEffect::Publish(publish) = effect;
+                if !self.private_publication_allowed(&publish.event)
+                    || self.blocked_direct_publication(&publish.chat_id)
+                    || self.is_removed_from_group(&publish.chat_id)
+                {
+                    return None;
+                }
+                Some((
+                    PendingRelayPublish {
+                        owner_pubkey_hex: owner.to_hex(),
+                        event_id: publish.event.id.to_hex(),
+                        label: APPCORE_PROTOCOL_LABEL.to_string(),
+                        event_json: publish.event.as_json(),
+                        inner_event_id: publish.inner_event_id.clone(),
+                        chat_id: Some(publish.chat_id.clone()),
+                        created_at_secs: publish.event.created_at.as_secs(),
+                        attempt_count: 0,
+                        last_error: None,
+                    },
+                    publish.authored_at_secs,
+                ))
+            })
+            .collect::<Vec<_>>();
+        let committed = match self.app_store.insert_pending_relay_publish_batch(&pending) {
+            Ok(committed) => committed,
+            Err(error) => {
+                self.push_debug_log("group.private_wake.queue", error.to_string());
+                return false;
+            }
+        };
+        // Startup may reoffer protocol work before loading the application
+        // outbox. Reuse its exact retry state instead of creating fresh rows.
+        for pending in committed {
+            self.pending_relay_publishes
+                .entry(pending.event_id.clone())
+                .or_insert(pending);
+        }
+        if let Some(engine) = self.protocol_engine.as_mut() {
+            if let Err(error) = engine.ack_group_publish_effects(effects) {
+                // The application outbox already owns the entire batch. A
+                // repeated protocol offer uses the same IDs and is harmless.
+                self.push_debug_log("group.private_wake.ack", error.to_string());
+            }
+        }
+        true
+    }
+
     pub(super) fn remember_pending_relay_publish_with_authored_at(
         &mut self,
         event: &Event,
@@ -9,6 +83,9 @@ impl AppCore {
         inner_event_id: Option<String>,
         authored_at_secs: Option<u64>,
     ) -> Option<PendingPublishChange> {
+        if !self.private_publication_allowed(event) {
+            return None;
+        }
         let logged_in = self.logged_in.as_ref()?;
         let owner_pubkey_hex = logged_in.owner_pubkey.to_hex();
         let event_json = match serde_json::to_string(event) {

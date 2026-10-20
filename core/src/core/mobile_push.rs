@@ -65,16 +65,25 @@ impl AppCore {
             .collect();
         let mut delayed_message_authors = Vec::new();
         if let Some(engine) = self.protocol_engine.as_ref() {
-            message_author_pubkeys.extend(
-                engine
-                    .known_group_sender_event_pubkeys()
-                    .into_iter()
-                    .map(|key| key.to_hex()),
-            );
+            // Shared group authors would let the authenticated notification
+            // service correlate members. Only pairwise session keys belong here.
+            let owner_pubkey =
+                nostr_double_ratchet::OwnerPubkey::from_bytes(logged_in.owner_pubkey.to_bytes());
+            let group_peers = self
+                .groups
+                .values()
+                .filter(|group| {
+                    group.members.contains(&owner_pubkey)
+                        && !self.thread_is_message_request(&group_chat_id(&group.group_id))
+                })
+                .flat_map(|group| group.members.iter().map(ToString::to_string))
+                .collect::<HashSet<_>>();
             let now = unix_now().get();
             let muted_authors = |chat_id: &str| -> Vec<PublicKey> {
-                if let Some(group_id) = parse_group_id_from_chat_id(chat_id) {
-                    engine.group_sender_event_pubkeys_for_group(&group_id)
+                // A muted DM can carry an unmuted group's private wake. Keep
+                // its transport subscribed and apply chat mute after decryption.
+                if parse_group_id_from_chat_id(chat_id).is_some() || group_peers.contains(chat_id) {
+                    Vec::new()
                 } else {
                     PublicKey::from_hex(chat_id)
                         .ok()
@@ -114,8 +123,7 @@ impl AppCore {
             .protocol_engine
             .as_ref()
             .map(|engine| {
-                let mut authors = engine.message_author_pubkeys_for_owner(logged_in.owner_pubkey);
-                authors.extend(engine.group_sender_event_pubkeys_for_owner(logged_in.owner_pubkey));
+                let authors = engine.message_author_pubkeys_for_owner(logged_in.owner_pubkey);
                 sorted_hexes(authors.into_iter().map(|key| key.to_hex()).collect())
             })
             .unwrap_or_default();
@@ -142,26 +150,6 @@ impl AppCore {
 
         MobilePushSyncSnapshot {
             call_device_pubkey_hex: Some(logged_in.device_keys.public_key().to_hex()),
-            call_author_pubkeys: if self.preferences.voice_calls_enabled
-                || self.preferences.video_calls_enabled
-            {
-                sorted_hexes(
-                    self.app_keys
-                        .values()
-                        .filter(|keys| {
-                            keys.created_at_secs > 0
-                                && self.call_contact_allowed(&keys.owner_pubkey_hex)
-                        })
-                        .flat_map(|keys| {
-                            keys.devices
-                                .iter()
-                                .map(|device| device.identity_pubkey_hex.clone())
-                        })
-                        .collect(),
-                )
-            } else {
-                Vec::new()
-            },
             owner_pubkey_hex: Some(logged_in.owner_pubkey.to_string()),
             message_author_pubkeys,
             delayed_message_authors,
@@ -469,6 +457,27 @@ fn decrypt_mobile_push_notification_inner(
         .and_then(|value| value.as_str())
         .unwrap_or("")
         .to_string();
+    if inner_kind == super::private_group_wake::GROUP_WAKE_KIND as u64 {
+        let Some(group_event) = super::private_group_wake::decode(&inner_content) else {
+            return suppressed_resolution();
+        };
+        if !super::private_group_wake::sender_matches(engine, sender_owner, &group_event) {
+            return suppressed_resolution();
+        }
+        // Reuse the disposable engine and existing authenticated group preview.
+        // decode() only admits a signed group envelope, so this cannot recurse
+        // into arbitrary controls or another private wake.
+        let mut group_payload = payload_object.clone();
+        group_payload.insert("event".into(), serde_json::json!(group_event));
+        return decrypt_mobile_push_notification_inner(
+            data_dir,
+            owner_pubkey_hex,
+            device_nsec,
+            serde_json::Value::Object(group_payload).to_string(),
+            false,
+            preview_engine,
+        );
+    }
     let inner_tags: Vec<Vec<String>> = inner_value
         .get("tags")
         .and_then(|value| serde_json::from_value(value.clone()).ok())
@@ -617,6 +626,8 @@ fn lookup_mobile_push_preview(
     owner_pubkey_hex: &str,
 ) -> Option<MobilePushNotificationResolution> {
     let conn = open_lookup_connection(data_dir)?;
+    let source_id = super::private_group_wake::preview_source_id(&conn, outer_event_id);
+    let outer_event_id = source_id.as_str();
     if let Some(control) =
         control_preview::lookup(&conn, data_dir, outer_event_id, owner_pubkey_hex)
     {

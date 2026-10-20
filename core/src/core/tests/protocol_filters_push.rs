@@ -145,6 +145,7 @@ fn appcore_message_author_tracking_includes_current_next_and_skipped_sender_keys
         nostr_double_ratchet::SkippedKeysEntry::default(),
     );
     let session_state = SessionState {
+        metadata_privacy_version: nostr_double_ratchet::METADATA_PRIVACY_VERSION,
         root_key: [1; 32],
         their_current_nostr_public_key: Some(current_sender_pubkey),
         their_next_nostr_public_key: Some(next_sender_pubkey),
@@ -2421,8 +2422,10 @@ fn app_invite_consumers_use_protocol_owned_local_invite() {
     let protocol_pubkey = protocol_invite.inviter_ephemeral_public_key.to_hex();
     assert_ne!(login_pubkey, protocol_pubkey);
 
-    assert!(core.build_public_invite_snapshot().is_none(),
-        "Public discovery invites must not be reused for private sharing");
+    assert!(
+        core.build_public_invite_snapshot().is_none(),
+        "Public discovery invites must not be reused for private sharing"
+    );
 
     let push = core.build_mobile_push_sync_snapshot();
     assert_eq!(push.invite_response_pubkeys, vec![protocol_pubkey.clone()]);
@@ -2531,7 +2534,7 @@ fn mobile_push_snapshot_tracks_private_invite_when_enabled() {
 }
 
 #[test]
-fn mobile_push_snapshot_tracks_group_sender_key_authors() {
+fn mobile_push_snapshot_excludes_group_sender_key_authors() {
     let owner = Keys::generate();
     let device = Keys::generate();
     let mut core = logged_in_test_core("mobile-push-group-sender-key", &owner, &device);
@@ -2555,10 +2558,15 @@ fn mobile_push_snapshot_tracks_group_sender_key_authors() {
 
     for author in group_authors {
         assert!(
-            snapshot.message_author_pubkeys.contains(&author),
-            "push subscriptions must include group sender-key author {author}; snapshot={:?}",
+            !snapshot.message_author_pubkeys.contains(&author),
+            "push subscriptions must not disclose shared group sender-key author {author}; snapshot={:?}",
             snapshot.message_author_pubkeys
         );
+        assert!(!snapshot.background_message_author_pubkeys.contains(&author));
+        assert!(!snapshot
+            .delayed_message_authors
+            .iter()
+            .any(|entry| entry.author_pubkey == author));
     }
 }
 
@@ -2655,7 +2663,8 @@ fn privacy_and_notification_defaults_match_fresh_installs() {
 
     let opted_out = serde_json::from_str::<PersistedPreferences>(
         r#"{"send_typing_indicators":false,"send_read_receipts":false}"#,
-    ).expect("decode explicit preferences");
+    )
+    .expect("decode explicit preferences");
     assert!(!opted_out.send_typing_indicators);
     assert!(!opted_out.send_read_receipts);
 }

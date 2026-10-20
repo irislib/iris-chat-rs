@@ -24,23 +24,29 @@ struct CallWake {
     bootstrap_event_id: Option<String>,
 }
 
-fn wake_event(keys: &Keys, encrypted: &Event, bootstrap: Option<&Event>) -> Option<Event> {
+fn wake_event(encrypted: &Event, bootstrap: Option<&Event>) -> Option<Event> {
+    // This transport envelope never authenticates the caller. Only the inner
+    // double-ratchet offer does. An identity signer would reveal the contact pair.
+    let keys = Keys::generate();
     let targets = encrypted.tags.public_keys().copied().collect::<Vec<_>>();
-    if encrypted.kind.as_u16() as u32 != MESSAGE_EVENT_KIND || targets.len() != 1 {
+    if encrypted.kind.as_u16() as u32 != MESSAGE_EVENT_KIND
+        || targets.len() != 1
+        || !nostr_double_ratchet::has_metadata_privacy_version(encrypted)
+    {
         return None;
     }
     let target = targets.first().copied()?;
     let sign = |events, bootstrap_event_id| {
         let content = serde_json::to_string(&CallWake {
             kind: "call-wake".into(),
-            v: 2,
+            v: 3,
             events,
             bootstrap_event_id,
         })
         .ok()?;
         let event = EventBuilder::new(Kind::from(CALL_WAKE_KIND), content)
             .tags([Tag::public_key(target)])
-            .sign_with_keys(keys)
+            .sign_with_keys(&keys)
             .ok()?;
         (event.as_json().len() <= MAX_WAKE_BYTES).then_some(event)
     };
@@ -67,7 +73,7 @@ fn wake_messages(event: &Event, device: PublicKey) -> Option<CallWake> {
         return None;
     }
     let wake: CallWake = serde_json::from_str(&event.content).ok()?;
-    if wake.kind != "call-wake" || wake.v != 2 || !(1..=2).contains(&wake.events.len()) {
+    if wake.kind != "call-wake" || wake.v != 3 || !(1..=2).contains(&wake.events.len()) {
         return None;
     }
     if let Some(id) = &wake.bootstrap_event_id {
@@ -78,6 +84,7 @@ fn wake_messages(event: &Event, device: PublicKey) -> Option<CallWake> {
     for (index, message) in wake.events.iter().enumerate() {
         let is_message = index + 1 == wake.events.len();
         if message.verify().is_err()
+            || !nostr_double_ratchet::has_metadata_privacy_version(message)
             || (is_message
                 && (message.kind.as_u16() as u32 != MESSAGE_EVENT_KIND
                     || message.tags.public_keys().copied().collect::<Vec<_>>() != vec![device]))
@@ -142,6 +149,9 @@ impl AppCore {
         let Some(active) = &self.calls.active else {
             return;
         };
+        if !self.private_publication_allowed(&publish.event) {
+            return;
+        }
         if publish.event.kind.as_u16() as u32 == INVITE_RESPONSE_KIND && active.outgoing {
             let recipient = publish.event.tags.public_keys().next().copied();
             let device = self
@@ -205,7 +215,7 @@ impl AppCore {
     }
 
     fn flush_call_push_wakeups(&mut self) {
-        let (Some(logged), Some(active)) = (&self.logged_in, &mut self.calls.active) else {
+        let Some(active) = &mut self.calls.active else {
             return;
         };
         if !active.outgoing || active.started.elapsed().as_secs() > WAKE_LIFETIME {
@@ -213,11 +223,7 @@ impl AppCore {
         }
         let mut ready = Vec::new();
         active.push_pending_wakes.retain(|target, encrypted| {
-            let Some(event) = wake_event(
-                &logged.device_keys,
-                encrypted,
-                active.push_bootstrap.get(target),
-            ) else {
+            let Some(event) = wake_event(encrypted, active.push_bootstrap.get(target)) else {
                 return false;
             };
             let Ok(wake) = serde_json::from_str::<CallWake>(&event.content) else {
@@ -239,6 +245,9 @@ impl AppCore {
     }
 
     fn publish_call_wake(&self, event: Event) {
+        if !self.private_publication_allowed(&event) {
+            return;
+        }
         let Some(logged) = &self.logged_in else {
             return;
         };
@@ -279,22 +288,17 @@ impl AppCore {
         let Some(wake) = wake_messages(event, local_keys.public_key()) else {
             return;
         };
-        let Some(owner) = self.call_owner(&event.pubkey.to_hex()) else {
-            return;
-        };
-        if !self.call_contact_allowed(&owner) {
-            return;
-        }
-        let preview = super::super::mobile_push::preview_direct_messages(
+        if let Some(message) = super::super::mobile_push::preview_direct_messages(
             &self.data_dir.to_string_lossy(),
             local_owner,
             &local_keys,
             &wake.events,
-        );
-        if let Some(message) = preview {
-            if message.sender_device != Some(event.pubkey)
-                || message.sender.to_hex() != owner
-                || decrypted_offer(&message).is_none()
+        ) {
+            if decrypted_offer(&message).is_none()
+                || !self.call_contact_allowed(&message.sender.to_hex())
+                || message.sender_device.is_none_or(|device| {
+                    self.call_owner(&device.to_hex()).as_deref() != Some(&message.sender.to_hex())
+                })
             {
                 return;
             }
@@ -358,7 +362,6 @@ impl AppCore {
 pub(crate) fn build_call_push_subscription_request(
     owner_nsec: String,
     device_pubkey_hex: String,
-    author_pubkeys: Vec<String>,
     subscription_id: Option<String>,
     platform_key: String,
     push_token: String,
@@ -367,21 +370,14 @@ pub(crate) fn build_call_push_subscription_request(
     server_url_override: Option<String>,
 ) -> Option<crate::state::MobilePushSubscriptionRequest> {
     let device = PublicKey::from_hex(&device_pubkey_hex).ok()?;
-    let mut authors: Vec<_> = author_pubkeys
-        .into_iter()
-        .filter_map(|key| PublicKey::from_hex(&key).ok().map(|key| key.to_hex()))
-        .collect();
-    authors.sort();
-    authors.dedup();
-    if authors.is_empty() || push_token.trim().is_empty() {
+    if push_token.trim().is_empty() {
         return None;
     }
     let ios = platform_key == "ios";
     if !ios && platform_key != "android" {
         return None;
     }
-    let filter =
-        serde_json::json!({"kinds": [CALL_WAKE_KIND], "authors": authors, "#p": [device.to_hex()]});
+    let filter = serde_json::json!({"kinds": [CALL_WAKE_KIND], "#p": [device.to_hex()]});
     let mut body = serde_json::json!({
         "filter": filter, "filters": [],
         "apns_tokens": if ios { vec![push_token.clone()] } else { vec![] },
@@ -445,18 +441,6 @@ pub(crate) fn resolve_call_push_invite(
     ) {
         return None;
     }
-    let owner = persisted
-        .app_keys
-        .iter()
-        .find(|keys| {
-            keys.created_at_secs > 0
-                && keys
-                    .devices
-                    .iter()
-                    .any(|device| device.identity_pubkey_hex == event.pubkey.to_hex())
-        })?
-        .owner_pubkey_hex
-        .clone();
     let local_owner = persisted
         .app_keys
         .iter()
@@ -470,14 +454,6 @@ pub(crate) fn resolve_call_push_invite(
         .parse::<PublicKey>()
         .ok()?;
     let prefs = &persisted.preferences;
-    if prefs.blocked_owner_pubkeys.contains(&owner)
-        || !(prefs.accepted_owner_pubkeys.contains(&owner)
-            || persisted.threads.iter().any(|thread| {
-                thread.chat_id == owner && thread.messages.iter().any(|message| message.is_outgoing)
-            }))
-    {
-        return None;
-    }
     if !prefs.video_calls_enabled && !prefs.voice_calls_enabled {
         return None;
     }
@@ -489,13 +465,28 @@ pub(crate) fn resolve_call_push_invite(
             data_dir.clone(),
             local_owner,
             keys.clone(),
-            owner.parse().ok()?,
-            event.pubkey,
             wake,
             persisted.preferences.nostr_relay_urls.clone(),
         )
     })?;
-    if message.sender_device != Some(event.pubkey) || message.sender.to_hex() != owner {
+    let owner = message.sender.to_hex();
+    let device = message.sender_device?;
+    if !persisted.app_keys.iter().any(|roster| {
+        roster.created_at_secs > 0
+            && roster.owner_pubkey_hex == owner
+            && roster
+                .devices
+                .iter()
+                .any(|entry| entry.identity_pubkey_hex == device.to_hex())
+    }) {
+        return None;
+    }
+    if prefs.blocked_owner_pubkeys.contains(&owner)
+        || !(prefs.accepted_owner_pubkeys.contains(&owner)
+            || persisted.threads.iter().any(|thread| {
+                thread.chat_id == owner && thread.messages.iter().any(|message| message.is_outgoing)
+            }))
+    {
         return None;
     }
     let signal = decrypted_offer(&message)?;

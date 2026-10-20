@@ -421,6 +421,7 @@ impl ProtocolEngine {
         &mut self,
         now: NdrUnixSeconds,
     ) -> anyhow::Result<ProtocolRetryBatch> {
+        self.retire_ineligible_group_publications()?;
         self.flush_discarded_direct_receives()?;
         let group_result = self.retry_pending_group_inputs(now)?;
         let group_fanout_result = self.retry_pending_group_fanouts(now)?;
@@ -436,6 +437,23 @@ impl ProtocolEngine {
             .collect::<Vec<_>>();
         let mut effects = self.retry_pending_remote_sends(now)?;
         effects.extend(self.retry_pending_local_sibling_sends(now)?);
+        let offered = group_result
+            .effects
+            .iter()
+            .chain(&effects)
+            .map(|effect| {
+                let ProtocolEffect::Publish(publish) = effect;
+                publish.event.id
+            })
+            .collect::<HashSet<_>>();
+        effects.extend(
+            self.pending_group_publish_effects()
+                .into_iter()
+                .filter(|effect| {
+                    let ProtocolEffect::Publish(publish) = effect;
+                    !offered.contains(&publish.event.id)
+                }),
+        );
         let batch = ProtocolRetryBatch {
             group_result,
             direct_messages,
@@ -775,8 +793,22 @@ impl ProtocolEngine {
         let mut effects = Vec::new();
         let mut persist_needed = false;
         let mut session_changed = false;
+        let mut ready_publications_changed = false;
         let mut processed_due = 0usize;
         for mut pending in pending {
+            if let GroupPendingFanout::Remote {
+                recipient_owner,
+                payload,
+            } = &pending.fanout
+            {
+                if self.held_direct_chats.contains(&recipient_owner.to_hex())
+                    && serde_json::from_slice::<UnsignedEvent>(payload)
+                        .is_ok_and(|event| event.kind.as_u16() == 21_113)
+                {
+                    persist_needed = true;
+                    continue;
+                }
+            }
             if self.local_owner_is_inactive_for_group(&pending.group_id) {
                 let payload = match &pending.fanout {
                     GroupPendingFanout::Remote { payload, .. }
@@ -889,13 +921,31 @@ impl ProtocolEngine {
             persist_needed |= !still_has_gap;
             let mut event_ids = Vec::new();
             let chat_id = group_chat_id(&pending.group_id);
-            effects.extend(protocol_effects_from_group_prepared_publish(
+            let ready = protocol_effects_from_group_prepared_publish(
                 &prepared,
                 self,
                 pending.inner_event_id.clone(),
                 chat_id,
                 &mut event_ids,
-            )?);
+            )?;
+            let payload = match &pending.fanout {
+                GroupPendingFanout::Remote { payload, .. }
+                | GroupPendingFanout::LocalSiblings { payload } => payload,
+            };
+            let inner = decode_local_sibling_payload(payload).map(|(_, _, payload)| payload);
+            if serde_json::from_slice::<UnsignedEvent>(inner.as_deref().unwrap_or(payload))
+                .is_ok_and(|event| event.kind.as_u16() == 21_113)
+            {
+                ready_publications_changed |= !ready.is_empty();
+                let recipient = match pending.fanout {
+                    GroupPendingFanout::Remote {
+                        recipient_owner, ..
+                    } => Some(recipient_owner),
+                    GroupPendingFanout::LocalSiblings { .. } => None,
+                };
+                self.retain_group_publications(&ready, recipient)?;
+            }
+            effects.extend(ready);
             if still_has_gap {
                 pending.next_retry_at_secs =
                     next_pending_retry_at_secs(pending.created_at_secs, now);
@@ -907,7 +957,13 @@ impl ProtocolEngine {
             self.invalidate_known_message_author_cache();
         }
         if persist_needed || session_changed {
-            self.persist()?;
+            // A late recipient's ready wake must survive the same checkpoint
+            // that removes its plaintext intent and advances its session.
+            if ready_publications_changed {
+                self.persist_now()?;
+            } else {
+                self.persist()?;
+            }
         }
         Ok(ProtocolGroupIncomingResult {
             effects,

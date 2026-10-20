@@ -9,6 +9,7 @@ fn pending_publish_changes(core: &AppCore) -> u64 {
 
 #[test]
 fn pending_publish_replays_do_not_rewrite_offline_outbox() {
+    let transport_keys = Keys::generate();
     let owner = Keys::generate();
     let device = Keys::generate();
     let (mut core, updates, _dir) =
@@ -23,7 +24,8 @@ fn pending_publish_replays_do_not_rewrite_offline_outbox() {
                     Kind::from(MESSAGE_EVENT_KIND as u16),
                     format!("pending control {index} {}", "x".repeat(4096)),
                 )
-                .sign_with_keys(&device)
+                .tag(nostr::Tag::parse(["v", "2"]).unwrap())
+                .sign_with_keys(&transport_keys)
                 .unwrap(),
                 chat_id: format!("pending-chat-{index}"),
                 inner_event_id: None,
@@ -68,12 +70,14 @@ fn pending_publish_replays_do_not_rewrite_offline_outbox() {
 
 #[test]
 fn pending_publish_replay_preserves_attempts_and_enriches_metadata() {
+    let transport_keys = Keys::generate();
     let owner = Keys::generate();
     let device = Keys::generate();
     let (mut core, _, _dir) =
         logged_in_test_core_with_updates("pending-publish-metadata", &owner, &device);
     let event = EventBuilder::new(Kind::from(MESSAGE_EVENT_KIND as u16), "queued")
-        .sign_with_keys(&device)
+        .tag(nostr::Tag::parse(["v", "2"]).unwrap())
+        .sign_with_keys(&transport_keys)
         .unwrap();
     let id = event.id.to_hex();
     core.publish_runtime_event(event.clone(), APPCORE_PROTOCOL_LABEL, None);
@@ -155,7 +159,9 @@ fn pending_identity_publication_advertises_without_resetting_durable_retries() {
         let pending = core.pending_relay_publishes.get_mut(&id).unwrap();
         pending.attempt_count = 7;
         pending.last_error = Some("publish attempt in progress".into());
-        core.app_store.upsert_pending_relay_publish(pending).unwrap();
+        core.app_store
+            .upsert_pending_relay_publish(pending)
+            .unwrap();
         core.pending_relay_publish_inflight.insert(id);
     }
     core.relay_transport_runtime.publish_drain_in_flight = true;
@@ -187,8 +193,14 @@ fn pending_identity_publication_advertises_without_resetting_durable_retries() {
     assert_eq!(core.pending_relay_publishes, original);
     assert_eq!(core.pending_relay_publish_inflight, inflight);
     assert!(core.relay_transport_runtime.publish_drain_in_flight);
-    assert_eq!(core.relay_transport_runtime.publish_drain_started_at, Some(started));
-    assert_eq!(core.relay_transport_runtime.nearby_replay_started_at, Some(started));
+    assert_eq!(
+        core.relay_transport_runtime.publish_drain_started_at,
+        Some(started)
+    );
+    assert_eq!(
+        core.relay_transport_runtime.nearby_replay_started_at,
+        Some(started)
+    );
 
     // Routine replay of those same events must retain the CPU/write fix.
     for _ in 0..12 {
@@ -198,8 +210,7 @@ fn pending_identity_publication_advertises_without_resetting_durable_retries() {
     }
     assert_eq!(pending_publish_changes(&core), writes);
     assert_eq!(core.pending_relay_publishes, original);
-    assert!(!updates.try_iter().any(|update| matches!(
-        update,
-        AppUpdate::NearbyPublishedEvent { .. }
-    )));
+    assert!(!updates
+        .try_iter()
+        .any(|update| matches!(update, AppUpdate::NearbyPublishedEvent { .. })));
 }

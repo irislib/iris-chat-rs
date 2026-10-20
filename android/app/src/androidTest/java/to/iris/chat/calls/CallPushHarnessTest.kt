@@ -26,7 +26,6 @@ class CallPushHarnessTest : RealRelayHarnessBase() {
         assumeTrue("Needs a fresh call fixture", optionalArg("call_invite") != null)
         val invite = requiredArg("call_invite")
         val owner = requiredArg("call_owner")
-        val device = requiredArg("call_device")
         val relay = requiredArg("call_relay")
         val server = requiredArg("call_push_server")
         listOf(Manifest.permission.RECORD_AUDIO, Manifest.permission.CAMERA, Manifest.permission.POST_NOTIFICATIONS).forEach {
@@ -57,7 +56,7 @@ class CallPushHarnessTest : RealRelayHarnessBase() {
         manager.dispatch(AppAction.SetMessageRequestAccepted(owner))
         manager.sendText(owner, "Call wakeup test setup")
         waitForState("verified caller device", timeoutMs = 60_000) {
-            manager.state.value.mobilePush.takeIf { device in it.callAuthorPubkeys }
+            runBlocking { manager.peerProfileDebug(owner) }?.takeIf { it.rosterDeviceCount > 0uL && it.activeSessionCount > 0uL }
         }
         val secret = runBlocking { manager.exportOwnerNsec() } ?: error("Test account secret unavailable")
         waitForState("call push registered with the existing service", timeoutMs = 60_000) {
@@ -70,10 +69,11 @@ class CallPushHarnessTest : RealRelayHarnessBase() {
                 subscriptions.keys().asSequence().any { id ->
                     val sub = subscriptions.getJSONObject(id)
                     val filter = sub.optJSONObject("filter")
-                    val authors = filter?.optJSONArray("authors")
+                    val recipients = filter?.optJSONArray("#p")
                     (sub.optJSONArray("fcm_tokens")?.length() ?: 0) > 0 &&
                         filter?.optJSONArray("kinds")?.optInt(0) == 21111 &&
-                        authors != null && (0 until authors.length()).any { authors.optString(it) == device }
+                        filter?.has("authors") == false && recipients != null &&
+                        (0 until recipients.length()).any { recipients.optString(it) == account.devicePublicKeyHex }
                 }.takeIf { it }
             } finally { connection.disconnect() }
         }
@@ -87,7 +87,7 @@ class CallPushHarnessTest : RealRelayHarnessBase() {
         ensureLoggedIn()
         appManager().dispatch(AppAction.SetVoiceCallsEnabled(false))
         appManager().dispatch(AppAction.SetVideoCallsEnabled(false))
-        waitForState("calls disabled") { true.takeIf { appManager().state.value.mobilePush.callAuthorPubkeys.isEmpty() } }
+        waitForState("calls disabled") { true.takeIf { !appManager().state.value.preferences.voiceCallsEnabled && !appManager().state.value.preferences.videoCallsEnabled } }
         // Allow the existing subscription worker to unregister before the harness exits.
         Thread.sleep(3_000)
         val manager = appManager()

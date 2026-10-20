@@ -202,12 +202,18 @@ fn main() -> Result<()> {
                         answer_voice = *kind == "voice";
                     }
                     ["manual"] => auto_answer = false,
+                    ["peer", owner] => {
+                        let ready = app.peer_profile_debug((*owner).into()).is_some_and(|peer| {
+                            peer.roster_device_count > 0 && peer.active_session_count > 0
+                        });
+                        emit(json!({"event":"peer","ready":ready}))?;
+                    }
                     ["status"] => {
                         let state = app.state();
                         let call=state.call.map(|s|json!({"id":s.call_id,"phase":s.phase,"video":s.video_capable,"muted":s.remote_muted}));
                         emit(
                             json!({"event":"status","call":call,"audio_frames":audio,"video_frames":video,"nonzero_audio_frames":audio_nonzero,
-                                "call_authors":state.mobile_push.call_author_pubkeys,"lan_owners":lan_owners}),
+                                "lan_owners":lan_owners}),
                         )?;
                     }
                     ["health"] if isolated_control => {

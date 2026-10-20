@@ -1,5 +1,6 @@
 #[test]
 fn private_block_cancels_cloned_drain_and_preserves_other_peer_retry() {
+    let transport_keys = Keys::generate();
     for start_worker in [false, true] {
         let owner = Keys::generate();
         let device = Keys::generate();
@@ -26,7 +27,8 @@ fn private_block_cancels_cloned_drain_and_preserves_other_peer_retry() {
                 Kind::from(MESSAGE_EVENT_KIND as u16),
                 format!("pending {index}"),
             )
-            .sign_with_keys(&device)
+            .tag(nostr::Tag::parse(["v", "2"]).unwrap())
+            .sign_with_keys(&transport_keys)
             .unwrap();
             assert!(core.publish_runtime_event(
                 event.clone(),
@@ -160,7 +162,11 @@ fn private_block_preserves_failed_text_and_never_replays_it_after_unblock() {
     let stored = core.app_store.load_recent_messages(&target, 50).unwrap();
     assert_eq!(stored.len(), 1);
     assert!(matches!(stored[0].delivery, PersistedDeliveryState::Failed));
-    assert!(core.app_store.load_outgoing_event(&target, &retained.id).unwrap().is_none());
+    assert!(core
+        .app_store
+        .load_outgoing_event(&target, &retained.id)
+        .unwrap()
+        .is_none());
     core.set_user_blocked(&target, false);
     let engine = core.protocol_engine.as_mut().unwrap();
     observe_peer_appkeys_for_test(engine, &peer, &[peer_device.public_key()], 1);
@@ -265,10 +271,14 @@ fn private_block_late_unblock_state_cancels_old_intents_but_keeps_reopened_sends
             assert!(stored.iter().any(|pending| &pending.event_id == id));
         }
         assert_eq!(core.threads[&target].messages.len(), messages.len());
-        assert!(core.threads[&target].messages.iter()
-            .filter(|message| message.created_at_secs < 200)
-            .all(|message| matches!(message.delivery, DeliveryState::Failed)),
-            "cancelled sends remain in history without remaining queued");
+        assert!(
+            core.threads[&target]
+                .messages
+                .iter()
+                .filter(|message| message.created_at_secs < 200)
+                .all(|message| matches!(message.delivery, DeliveryState::Failed)),
+            "cancelled sends remain in history without remaining queued"
+        );
         assert!(core.drain_queued_direct_text_messages("after_unblock"));
         assert!(core.threads[&target]
             .messages
@@ -296,12 +306,18 @@ fn private_block_late_unblock_state_cancels_old_intents_but_keeps_reopened_sends
             .unwrap();
         assert!(!restored.is_owner_blocked(&target));
         // Inactive chats initially load only the latest row; inspect full storage.
-        let restored_messages = restored.app_store.load_recent_messages(&target, 50).unwrap();
+        let restored_messages = restored
+            .app_store
+            .load_recent_messages(&target, 50)
+            .unwrap();
         assert_eq!(restored_messages.len(), messages.len());
-        assert!(restored_messages.iter()
-            .filter(|message| message.created_at_secs < 200)
-            .all(|message| matches!(message.delivery, PersistedDeliveryState::Failed)),
-            "cancelled sends remain retired after a full app restart");
+        assert!(
+            restored_messages
+                .iter()
+                .filter(|message| message.created_at_secs < 200)
+                .all(|message| matches!(message.delivery, PersistedDeliveryState::Failed)),
+            "cancelled sends remain retired after a full app restart"
+        );
         let stored = restored
             .app_store
             .load_pending_relay_publishes(&owner.public_key().to_hex())
@@ -344,7 +360,10 @@ fn private_block_catch_up_preserves_cancelled_direct_conversation() {
         )));
     }
     assert_eq!(core.threads[&peer].messages.len(), 1);
-    assert!(matches!(core.threads[&peer].messages[0].delivery, DeliveryState::Failed));
+    assert!(matches!(
+        core.threads[&peer].messages[0].delivery,
+        DeliveryState::Failed
+    ));
     let saved = core.app_store.load_recent_messages(&peer, 50).unwrap();
     assert_eq!(saved.len(), 1);
     assert!(matches!(saved[0].delivery, PersistedDeliveryState::Failed));

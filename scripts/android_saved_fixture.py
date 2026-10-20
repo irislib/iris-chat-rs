@@ -116,7 +116,10 @@ class SavedFixture:
         return self.event("status")
 
     def wait_paired(self):
-        wait_for("saved receiver device trusted by fixture", lambda: self.device in self.status()["call_authors"], timeout=90)
+        def peer_ready():
+            self.command("peer " + self.owner)
+            return self.event("peer")["ready"]
+        wait_for("saved receiver has a verified session", peer_ready, timeout=90)
 
     def message(self, stage, notification):
         body = f"saved-fixture-{stage}-{time.time_ns()}"

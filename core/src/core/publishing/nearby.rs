@@ -1,6 +1,18 @@
 use super::*;
 
 impl AppCore {
+    pub(in crate::core) fn emit_nearby_published_event(&self, event: &Event) {
+        if !self.private_publication_allowed(event) {
+            return;
+        }
+        self.publish_fips_nearby(event);
+        self.publish_mesh_event(event);
+        if crate::core::fips_nearby::is_fips_nearby_bootstrap_event(event) {
+            self.refresh_fips_nearby_bootstrap();
+        }
+        send_nearby_published_event(&self.update_tx, event);
+    }
+
     pub(super) fn replay_pending_nearby_publishes(&mut self) {
         if self.pending_relay_publishes.is_empty() || self.device_sync.is_none() {
             return;

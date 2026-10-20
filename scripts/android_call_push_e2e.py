@@ -132,16 +132,19 @@ def main():
             command("status")
             return event("status")
 
+        def peer_ready(owner):
+            command(f"peer {owner}")
+            return event("peer")["ready"]
+
         ready = event("ready")
         prepared = True
         result = instrument("prepare_incoming_call_push", call_invite=ready["invite"],
             call_owner=ready["owner"], call_device=ready["device"],
             call_relay=f"ws://127.0.0.1:{port}", call_push_server=args.push_server)
         owner = re.search(r"INSTRUMENTATION_STATUS: owner=([a-f0-9]{64})", result).group(1)
-        device = re.search(r"INSTRUMENTATION_STATUS: device=([a-f0-9]{64})", result).group(1)
         command(f"accept {owner}")
         event("accepted")
-        wait_for("caller knows the recipient's verified device", lambda: device in status()["call_authors"])
+        wait_for("caller has a verified recipient session", lambda: peer_ready(owner))
 
         def cold_call(kind, doze=False):
             wait_for("previous notification dismissed", lambda: not notification())

@@ -629,8 +629,12 @@ impl ProtocolEngine {
             let message_id = inner_event_id.clone();
             let mut output = engine.protocol_group_send_from_prepared(&prepared, inner_event_id)?;
             output.snapshot = engine.group_manager.group(group_id);
+            engine.prepare_private_group_wakes(group_id, &mut output, message_id.clone())?;
+            engine.retain_group_publications(&output.effects, None)?;
             output.message_id = message_id;
-            engine.persist()?;
+            // The ratchets and every ready publication must survive before the
+            // caller may hand this batch to any network carrier.
+            engine.persist_now()?;
             Ok(output)
         })
     }

@@ -6,6 +6,7 @@ pub const MAX_INVITE_BYTES: usize = 16 * 1024;
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct InviteConnection {
+    pub version: u8,
     pub inviter: String,
     pub ephemeral_key: String,
     pub shared_secret: String,
@@ -42,7 +43,9 @@ fn hex_key(value: &str) -> bool {
 impl InviteRecord {
     pub fn validate(&self) -> anyhow::Result<()> {
         anyhow::ensure!(
-            self.v == 1 && matches!(self.kind.as_str(), "personal" | "group"),
+            self.v == 1
+                && self.invite.version == nostr_double_ratchet::METADATA_PRIVACY_VERSION
+                && matches!(self.kind.as_str(), "personal" | "group"),
             "Invalid invite version or type"
         );
         anyhow::ensure!(

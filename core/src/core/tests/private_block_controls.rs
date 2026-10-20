@@ -1,5 +1,6 @@
 #[test]
 fn private_block_retires_late_sealed_controls_by_authored_time_after_reload() {
+    let transport_keys = Keys::generate();
     let owner = Keys::generate();
     let device = Keys::generate();
     let peer = Keys::generate();
@@ -70,9 +71,11 @@ fn private_block_retires_late_sealed_controls_by_authored_time_after_reload() {
             .is_none_or(|thread| thread.messages.is_empty()),
         "controls deliberately have no visible message row to recover timestamps from"
     );
+    // Legacy here means missing authored-time metadata, not an old wire protocol.
     let legacy = EventBuilder::new(Kind::from(MESSAGE_EVENT_KIND as u16), "legacy control")
         .custom_created_at(Timestamp::from_secs(300))
-        .sign_with_keys(&device)
+        .tag(nostr::Tag::parse(["v", "2"]).unwrap())
+        .sign_with_keys(&transport_keys)
         .unwrap();
     assert!(core.publish_runtime_event(
         legacy.clone(),
