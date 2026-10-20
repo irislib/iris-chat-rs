@@ -14,6 +14,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import to.iris.chat.MainActivity
 import to.iris.chat.RealRelayHarnessBase
+import to.iris.chat.push.PushNotificationProbe
 import to.iris.chat.rust.AppAction
 import to.iris.chat.rust.buildMobilePushListSubscriptionsRequest
 
@@ -81,11 +82,14 @@ class CallPushHarnessTest : RealRelayHarnessBase() {
                 }.takeIf { it }
             } finally { connection.disconnect() }
         }
+        PushNotificationProbe.armCallProbe(instrumentation.targetContext)
         reportStatus("call_push_ready" to "true", "owner" to account.publicKeyHex,
             "device" to account.devicePublicKeyHex)
     }
 
     @Test fun restore_after_call_push() {
+        // Retain evidence while preventing any subsequent non-test capture.
+        PushNotificationProbe.disarmCallProbe(instrumentation.targetContext)
         val saved = instrumentation.targetContext.getSharedPreferences("call_push_harness", Context.MODE_PRIVATE)
         val original = saved.getString("preferences", null)?.let(::JSONObject) ?: return
         ensureLoggedIn()

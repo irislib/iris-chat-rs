@@ -79,14 +79,17 @@ class IrisConnectionService : ConnectionService() {
             }
             override fun onAnswer() { openCall() }
             override fun onAnswer(videoState: Int) { openCall() }
-            override fun onReject() { end() }
-            override fun onDisconnect() { end() }
-            override fun onAbort() { end() }
+            override fun onReject() { end("reject") }
+            override fun onDisconnect() { end("disconnect") }
+            override fun onAbort() { end("abort") }
             // Always enter the activity before acquiring microphone/camera while-in-use permissions.
             private fun openCall() { startActivity(Intent(this@IrisConnectionService, MainActivity::class.java)
                 .setAction("to.iris.chat.ANSWER_CALL").putExtra("callId", call.callId)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)) }
-            private fun end() { app.dispatch(AppAction.EndCall(call.callId)) }
+            private fun end(action: String) {
+                container.callRuntime.recordPushProbe("telecom_end_action", call.callId, action)
+                app.dispatch(AppAction.EndCall(call.callId))
+            }
         }.apply {
             connectionProperties = Connection.PROPERTY_SELF_MANAGED
             connectionCapabilities = Connection.CAPABILITY_MUTE

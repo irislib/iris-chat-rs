@@ -12,6 +12,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import to.iris.chat.core.AppManager
+import to.iris.chat.push.PushNotificationProbe
 import to.iris.chat.rust.AppAction
 import to.iris.chat.rust.AppUpdate
 import to.iris.chat.rust.CallSnapshot
@@ -113,6 +114,11 @@ class IrisCallRuntime(private val context: Context, private val app: AppManager,
     }
     internal fun snapshot() = current
 
+    internal fun recordPushProbe(stage: String, callId: String? = null, detail: String? = null) {
+        PushNotificationProbe.recordCallEvent(context, stage, callId, current, app.call.value,
+            pendingPushCallId, detail = detail)
+    }
+
     private fun syncMedia() {
         val call = current ?: return
         tones.update(call.takeIf { telecomReady && failedCallId != it.callId })
@@ -192,7 +198,10 @@ class IrisCallRuntime(private val context: Context, private val app: AppManager,
             android.widget.Toast.makeText(context, "Couldn’t switch audio", android.widget.Toast.LENGTH_SHORT).show()
         }
     }
-    fun requestAnswer(callId: String) { mutableAnswerRequest.value = callId }
+    fun requestAnswer(callId: String) {
+        recordPushProbe("answer_requested", callId)
+        mutableAnswerRequest.value = callId
+    }
     fun clearAnswerRequest() { mutableAnswerRequest.value = null }
     private fun granted(permission: String) = ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
 

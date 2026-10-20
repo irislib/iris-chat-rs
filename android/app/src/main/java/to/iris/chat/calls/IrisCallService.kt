@@ -19,13 +19,20 @@ import to.iris.chat.IrisChatApp
 import to.iris.chat.MainActivity
 import to.iris.chat.R
 import to.iris.chat.rust.AppAction
+import to.iris.chat.push.PushNotificationProbe
 
 class IrisCallService : Service() {
+    private var notificationCallId: String? = null
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val container = (application as IrisChatApp).container
         val call = container.callRuntime.snapshot()
+        if (intent?.action == "end") {
+            container.callRuntime.recordPushProbe("notification_end_action", intent.getStringExtra("callId"),
+                if (call != null && call.phase != "ended" && intent.getStringExtra("callId") == call.callId)
+                    "runtime_id_matches" else "runtime_id_rejected")
+        }
         if (call == null || call.phase == "ended") { dismiss(); return START_NOT_STICKY }
         if (intent?.action == "end" && intent.getStringExtra("callId") == call.callId) {
             container.appManager.dispatch(AppAction.EndCall(call.callId))
@@ -77,6 +84,10 @@ class IrisCallService : Service() {
         }
         try {
             ServiceCompat.startForeground(this, 7401, notification, types)
+            notificationCallId = call.callId
+            PushNotificationProbe.recordCallEvent(this, "notification_shown", call.callId,
+                call, container.appManager.call.value, detail = if (incoming) "incoming-calls" else "active-calls",
+                notificationId = 7401)
             container.callRuntime.serviceStarted()
         } catch (_: RuntimeException) {
             container.appManager.dispatch(AppAction.EndCall(call.callId))
@@ -86,6 +97,7 @@ class IrisCallService : Service() {
     }
 
     override fun onDestroy() {
+        recordDismissal("service_destroyed")
         stopForeground(STOP_FOREGROUND_REMOVE)
         getSystemService(NotificationManager::class.java).cancel(7401)
         (application as IrisChatApp).container.callRuntime.serviceStopped()
@@ -93,8 +105,17 @@ class IrisCallService : Service() {
     }
 
     private fun dismiss() {
+        recordDismissal("dismiss")
         stopForeground(STOP_FOREGROUND_REMOVE)
         getSystemService(NotificationManager::class.java).cancel(7401)
         stopSelf()
+    }
+
+    private fun recordDismissal(reason: String) {
+        val container = (application as IrisChatApp).container
+        PushNotificationProbe.recordCallEvent(this, "notification_dismissed", notificationCallId,
+            container.callRuntime.snapshot(), container.appManager.call.value,
+            detail = reason, notificationId = 7401)
+        notificationCallId = null
     }
 }

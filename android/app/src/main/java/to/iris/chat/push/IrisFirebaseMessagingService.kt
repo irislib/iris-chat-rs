@@ -21,17 +21,32 @@ class IrisFirebaseMessagingService : FirebaseMessagingService() {
         val payloadJson = message.toPayloadJson()
         val appManager = (applicationContext as? IrisChatApp)?.container?.appManager
         if (isCallWakeup(message.data["event"])) {
+            PushNotificationProbe.recordCallEvent(this, "fcm_received", rawPayloadJson = payloadJson)
             val container = (applicationContext as? IrisChatApp)?.container ?: return
-            runBlocking {
+            try { runBlocking {
                 deliverCallPush(
-                    resolve = { container.appManager.resolveCallPush(payloadJson) },
+                    resolve = { container.appManager.resolveCallPush(payloadJson).also { preview ->
+                        PushNotificationProbe.recordCallEvent(this@IrisFirebaseMessagingService,
+                            "resolved", callId = preview?.callId, previewCall = preview,
+                            runtimeCall = container.callRuntime.snapshot(), coreCall = container.appManager.call.value,
+                            rawPayloadJson = payloadJson)
+                    } },
                     present = { invite ->
                         // Establish the authenticated call/foreground service before
                         // FCM releases its short wake lease, including cold starts.
-                        withContext(Dispatchers.Main) { container.callRuntime.receivePushInvite(invite) }
+                        withContext(Dispatchers.Main) {
+                            container.callRuntime.receivePushInvite(invite)
+                            container.callRuntime.recordPushProbe("presented", invite.callId)
+                        }
                     },
-                    ingest = { container.appManager.ingestCallPush(payloadJson) },
+                    ingest = {
+                        container.appManager.ingestCallPush(payloadJson)
+                        container.callRuntime.recordPushProbe("ingest_dispatched")
+                    },
                 )
+            } } catch (error: Throwable) {
+                PushNotificationProbe.recordCallEvent(this, "delivery_error", detail = error.javaClass.name)
+                throw error
             }
             return
         }
