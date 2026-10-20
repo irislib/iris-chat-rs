@@ -1489,7 +1489,7 @@ impl AppCore {
             .unwrap_or_default();
         let filter_count = filters.len() as u64;
         let (filters, discovery_filters) = self.split_private_discovery_filters(filters);
-        let discovery_client = self.private_discovery_client();
+        let discovery_scopes = self.private_discovery_subscriptions(discovery_filters);
         self.protocol_subscription_runtime.refresh_in_flight = true;
         self.protocol_subscription_runtime.refresh_dirty = false;
         self.protocol_subscription_runtime.force_reconnect_dirty = false;
@@ -1527,14 +1527,16 @@ impl AppCore {
                         subscribe_protocol_filters_with_id(&client, subscription_id, filters).await
                     };
                     let result = match result {
-                        Ok(()) => {
-                            private_reads::apply_private_discovery_subscription(
-                                &discovery_client,
-                                &relay_urls,
-                                discovery_filters,
-                            )
-                            .await
-                        }
+                        Ok(()) => match discovery_scopes {
+                            Ok(scopes) => {
+                                private_reads::apply_private_discovery_subscriptions(
+                                    scopes,
+                                    &relay_urls,
+                                )
+                                .await
+                            }
+                            Err(error) => Err(error),
+                        },
                         Err(error) => Err(error),
                     };
                     let connected_after = connected_relay_count_for_client(&client).await as u64;

@@ -138,7 +138,10 @@ pub(in crate::core) async fn fetch_events_for_filters(
 
     let relay_urls = client.relays().await.keys().cloned().collect::<Vec<_>>();
     let mut tasks = JoinSet::new();
-    for filter in filters {
+    for filter in filters
+        .into_iter()
+        .flat_map(super::private_reads::split_public_discovery_authors)
+    {
         let relay_urls = relay_urls.clone();
         tasks.spawn(async move {
             // This query has no account AUTH, receive subscriptions, or other

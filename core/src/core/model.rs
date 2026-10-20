@@ -289,7 +289,8 @@ pub(crate) struct ProtocolSubscriptionPlan {
 
 #[derive(Clone, Debug, Default)]
 pub(super) struct ProtocolSubscriptionRuntime {
-    pub(super) discovery_client: Option<Arc<protocol::private_reads::PrivateDiscoveryClient>>,
+    pub(super) discovery_clients:
+        std::collections::HashMap<PublicKey, Arc<protocol::private_reads::PrivateDiscoveryClient>>,
     pub(super) desired_plan: Option<ProtocolSubscriptionPlan>,
     pub(super) applying_plan: Option<ProtocolSubscriptionPlan>,
     pub(super) applied_plan: Option<ProtocolSubscriptionPlan>,

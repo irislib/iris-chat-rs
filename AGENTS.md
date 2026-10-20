@@ -7,6 +7,9 @@ connections, including on retries or authentication failure.
 The same boundary applies to FIPS providers and nearby forwarding: a provider
 must not learn a public sender identity together with a recipient tag or a
 peer-discovery filter. Payload encryption alone does not hide those fields.
+Live FIPS connections to the intended recipient may use device identities, as
+may trusted same-account device sync. This does not authorize identified
+publication, discovery, or store-and-forward delivery through unrelated peers.
 User-to-user relay traffic must use double-ratchet sessions and their invite
 handshakes. Never reveal the identities of both participants through event
 signers, tags, notification filters, authentication, or correlations between them.

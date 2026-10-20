@@ -1791,7 +1791,9 @@ fn liveness_replays_retained_appkeys_for_tracked_peer() {
         assert!(connected > 0, "test relay must be connected");
     };
 
-    let mut notifications = core.private_discovery_client().notifications();
+    let mut notifications = core
+        .private_discovery_client(peer_owner.public_key())
+        .notifications();
 
     let mut plan = protocol_plan_for_test(Vec::new(), Vec::new());
     plan.roster_authors = vec![peer_owner.public_key().to_hex()];
