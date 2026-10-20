@@ -440,6 +440,115 @@ fn nearby_private_unknown_invite_mapping_never_selects_a_neighbor() {
 }
 
 #[test]
+fn nearby_private_invite_response_accepts_only_current_local_invite_keys() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let sender_owner = Keys::generate();
+    let sender_device = Keys::generate();
+    let mut receiver = logged_in_test_core("nearby-private-invite-receive", &owner, &device);
+    let url = create_private_invite_for_test(&mut receiver);
+    let invite = receiver
+        .private_chat_invites
+        .values()
+        .next()
+        .unwrap()
+        .clone();
+    let invite_key = super::invites::private_chat_invite_key(&invite);
+    let response = crafted_private_invite_response(
+        &url,
+        &sender_device,
+        Some(sender_device.public_key().to_hex()),
+        Some(sender_owner.public_key()),
+    );
+    let wire = response.as_json();
+    for key in [&owner, &device, &sender_owner, &sender_device] {
+        assert!(!wire.contains(&key.public_key().to_hex()));
+    }
+    assert_ne!(
+        response.tags.public_keys().next().copied(),
+        receiver
+            .protocol_engine
+            .as_ref()
+            .unwrap()
+            .local_invite_response_pubkey()
+    );
+    let encoded = fips_nearby::encode_fips_nearby_event(&response).unwrap();
+    let fips_nearby::FipsNearbyPacket::Event { event_json, .. } =
+        fips_nearby::FipsNearbyPacket::decode(&encoded).unwrap()
+    else {
+        panic!("event packet")
+    };
+    let decoded: Event = serde_json::from_str(&event_json).unwrap();
+    assert!(
+        receiver.accepts_private_nearby_event(&decoded),
+        "an authenticated locally issued private invite must be eligible for DR decryption"
+    );
+    let proof = AppKeys::new(vec![DeviceEntry::new(
+        sender_device.public_key(),
+        unix_now().get(),
+    )])
+    .get_event_at(sender_owner.public_key(), unix_now().get())
+    .sign_with_keys(&sender_owner)
+    .unwrap();
+    ingest_invite_owner_app_keys(&mut receiver, sender_owner.public_key(), vec![proof]);
+    receiver.handle_fips_nearby_packet(
+        &sender_device.public_key().to_hex(),
+        fips_nearby::FIPS_NEARBY_PORT,
+        &encoded,
+    );
+    assert_eq!(
+        stored_session_count(&receiver, sender_owner.public_key()),
+        1,
+        "the actual private handshake must authenticate and install its session"
+    );
+    assert!(!receiver.private_chat_invites.contains_key(&invite_key));
+    assert!(
+        !receiver.accepts_private_nearby_event(&decoded),
+        "consumed invites must not remain receive targets"
+    );
+    let mut stale = invite.clone();
+    stale.metadata_privacy_version = 1;
+    receiver
+        .private_chat_invites
+        .insert(invite_key.clone(), stale);
+    assert!(
+        !receiver.accepts_private_nearby_event(&decoded),
+        "old invite formats must not be restored as a fallback"
+    );
+    let mut foreign = invite;
+    foreign.inviter_device_pubkey =
+        NdrDevicePubkey::from_bytes(sender_device.public_key().to_bytes());
+    receiver
+        .private_chat_invites
+        .insert(invite_key.clone(), foreign);
+    assert!(
+        !receiver.accepts_private_nearby_event(&decoded),
+        "another device's invite must not be accepted locally"
+    );
+    receiver.private_chat_invites.remove(&invite_key);
+    for recipient in [
+        owner.public_key(),
+        device.public_key(),
+        Keys::generate().public_key(),
+    ] {
+        let other = EventBuilder::new(
+            Kind::Custom(INVITE_RESPONSE_KIND as u16),
+            "opaque handshake",
+        )
+        .tags([
+            nostr::Tag::parse(["v", "2"]).unwrap(),
+            nostr::Tag::public_key(recipient),
+        ])
+        .sign_with_keys(&Keys::generate())
+        .unwrap();
+        assert!(
+            !receiver.accepts_private_nearby_event(&other),
+            "identity and unrelated keys are not invite targets"
+        );
+    }
+}
+
+#[test]
 fn native_identified_receiver_does_not_export_peer_public_cache_or_restart_replay() {
     use fips_core::config::PeerConfig;
     use nostr_pubsub::{EventBus, EventSource, InMemoryEventBus, VerifiedEvent};

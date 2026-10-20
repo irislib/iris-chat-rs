@@ -45,11 +45,25 @@ impl AppCore {
             return false;
         };
         if event.kind.as_u16() as u32 == INVITE_RESPONSE_KIND {
+            let Some(local) = &self.logged_in else {
+                return false;
+            };
+            if *recipient == local.owner_pubkey || *recipient == local.device_keys.public_key() {
+                return false;
+            }
             return self
                 .protocol_engine
                 .as_ref()
                 .and_then(ProtocolEngine::local_invite_response_pubkey)
-                == Some(*recipient);
+                == Some(*recipient)
+                || self.private_chat_invites.values().any(|invite| {
+                    invite.metadata_privacy_version
+                        == nostr_double_ratchet::METADATA_PRIVACY_VERSION
+                        && invite.inviter_ephemeral_private_key.is_some()
+                        && invite.inviter_device_pubkey.to_nostr().ok()
+                            == Some(local.device_keys.public_key())
+                        && invite.inviter_ephemeral_public_key.to_nostr().ok() == Some(*recipient)
+                });
         }
         self.logged_in
             .as_ref()
