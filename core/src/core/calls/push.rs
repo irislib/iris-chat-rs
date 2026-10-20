@@ -260,11 +260,18 @@ impl AppCore {
         if self.preferences.mobile_push_server_url.is_empty() {
             return;
         }
-        let relay = logged.client.clone();
+        let relay_urls = logged.relay_urls.clone();
         self.runtime.spawn(async move {
             let relay_event = event.clone();
             tokio::spawn(async move {
-                let _ = relay.send_event(&relay_event).await;
+                // The account's receiving connection identifies the caller even
+                // when the wake event itself has an anonymous signer.
+                let _ = super::super::publish_helpers::publish_event_to_any_relay_raw(
+                    &relay_urls,
+                    &relay_event,
+                    "call wake",
+                )
+                .await;
             });
             if let Ok(client) = reqwest::Client::builder()
                 .timeout(Duration::from_secs(5))
