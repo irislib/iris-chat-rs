@@ -211,10 +211,21 @@ impl FipsNearbyOutbox {
         });
     }
 
+    #[cfg(test)]
     pub(super) fn pending_for_link(&self, peer_npub: &str, link_id: u64) -> Vec<(String, Vec<u8>)> {
+        self.pending_for_link_with_public(peer_npub, link_id, true)
+    }
+
+    pub(super) fn pending_for_link_with_public(
+        &self,
+        peer_npub: &str,
+        link_id: u64,
+        allow_public: bool,
+    ) -> Vec<(String, Vec<u8>)> {
         let now = Instant::now();
         self.entries
             .iter()
+            .filter(|entry| allow_public || entry.recipient_targets.is_some())
             .filter(|entry| {
                 entry
                     .recipient_targets

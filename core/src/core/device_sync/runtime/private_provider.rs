@@ -27,38 +27,6 @@ pub(super) fn approved_providers(
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn private_provider_pool_requires_explicit_hints_and_public_updates_keep_their_route() {
-        let update = Keys::generate().public_key().to_bech32().unwrap();
-        assert!(
-            approved_providers(&[], &[], None, 64).is_empty(),
-            "contacts, siblings and release services must not become implicit message providers"
-        );
-        let direct = (0..6)
-            .map(|_| {
-                PeerConfig::new(
-                    Keys::generate().public_key().to_bech32().unwrap(),
-                    "udp",
-                    "127.0.0.1:7000",
-                )
-            })
-            .collect::<Vec<_>>();
-        let routed = FipsPeerIdentity::from_npub(&direct[0].npub).unwrap();
-        let private = approved_providers(&direct, &[routed], None, 64);
-        assert_eq!(private.len(), direct.len());
-        assert!(!private.contains(&update));
-        for limit in 0..5 {
-            let public = approved_providers(&direct, &[routed], Some(&update), limit);
-            assert!(public.len() <= limit);
-            assert_eq!(public.contains(&update), limit != 0);
-        }
-    }
-}
-
 impl AppCore {
     pub(in crate::core) fn mesh_public_service_authors(&self) -> Vec<PublicKey> {
         let mut authors = Vec::new();
@@ -117,5 +85,37 @@ pub(super) async fn publish_own_adverts(
         // Endpoint candidates can arrive after bind/STUN, or change on mobile
         // network handoff. Publish the first usable advert promptly.
         sleep(Duration::from_secs(2)).await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn private_provider_pool_requires_explicit_hints_and_public_updates_keep_their_route() {
+        let update = Keys::generate().public_key().to_bech32().unwrap();
+        assert!(
+            approved_providers(&[], &[], None, 64).is_empty(),
+            "contacts, siblings and release services must not become implicit message providers"
+        );
+        let direct = (0..6)
+            .map(|_| {
+                PeerConfig::new(
+                    Keys::generate().public_key().to_bech32().unwrap(),
+                    "udp",
+                    "127.0.0.1:7000",
+                )
+            })
+            .collect::<Vec<_>>();
+        let routed = FipsPeerIdentity::from_npub(&direct[0].npub).unwrap();
+        let private = approved_providers(&direct, &[routed], None, 64);
+        assert_eq!(private.len(), direct.len());
+        assert!(!private.contains(&update));
+        for limit in 0..5 {
+            let public = approved_providers(&direct, &[routed], Some(&update), limit);
+            assert!(public.len() <= limit);
+            assert_eq!(public.contains(&update), limit != 0);
+        }
     }
 }

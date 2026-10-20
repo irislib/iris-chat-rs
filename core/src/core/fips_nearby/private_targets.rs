@@ -9,10 +9,10 @@ pub(in crate::core) fn is_private_transport_event(event: &Event) -> bool {
 
 fn recipient_device_target(event: &Event) -> BTreeSet<String> {
     let recipients = event.tags.public_keys().copied().collect::<Vec<_>>();
-    if recipients.len() != 1 {
+    let [recipient] = recipients.as_slice() else {
         return BTreeSet::new();
-    }
-    fips_peer_from_hex(&recipients[0].to_hex())
+    };
+    fips_peer_from_hex(&recipient.to_hex())
         .map(|peer| BTreeSet::from([peer.npub()]))
         .unwrap_or_default()
 }
@@ -41,19 +41,19 @@ impl AppCore {
             return true;
         }
         let recipients = event.tags.public_keys().copied().collect::<Vec<_>>();
-        if recipients.len() != 1 {
+        let [recipient] = recipients.as_slice() else {
             return false;
-        }
+        };
         if event.kind.as_u16() as u32 == INVITE_RESPONSE_KIND {
             return self
                 .protocol_engine
                 .as_ref()
                 .and_then(ProtocolEngine::local_invite_response_pubkey)
-                == Some(recipients[0]);
+                == Some(*recipient);
         }
         self.logged_in
             .as_ref()
-            .is_some_and(|local| recipients[0] == local.device_keys.public_key())
+            .is_some_and(|local| *recipient == local.device_keys.public_key())
     }
 
     pub(in crate::core) fn private_nearby_targets(
@@ -67,10 +67,10 @@ impl AppCore {
             return Some(recipient_device_target(event));
         }
         let recipients = event.tags.public_keys().collect::<Vec<_>>();
-        if recipients.len() != 1 {
+        let [recipient] = recipients.as_slice() else {
             return Some(BTreeSet::new());
-        }
-        let ephemeral = recipients[0].to_hex();
+        };
+        let ephemeral = recipient.to_hex();
         let targets = self
             .protocol_engine
             .as_ref()

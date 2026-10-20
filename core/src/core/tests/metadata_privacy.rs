@@ -236,7 +236,7 @@ fn metadata_privacy_isolates_peer_discovery_from_identity_auth_and_own_receive_f
                 .any(|(_, event)| event[0] == "REQ" && event.to_string().contains(&peer.to_hex()))
         });
         if all_requested
-            && rows.iter().filter(|(_, event)| event[0] == "AUTH").count() >= peers.len() + 1
+            && rows.iter().filter(|(_, event)| event[0] == "AUTH").count() > peers.len()
         {
             break;
         }

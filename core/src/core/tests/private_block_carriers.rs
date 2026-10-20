@@ -39,7 +39,7 @@ async fn block_carrier_endpoint(
     )
 }
 
-fn queue_block_carrier_events(core: &mut AppCore, _device: &Keys, target: &str) -> Vec<Event> {
+fn queue_block_carrier_events(core: &mut AppCore, recipient: &Keys, target: &str) -> Vec<Event> {
     let transport_keys = Keys::generate();
     let other = Keys::generate().public_key().to_hex();
     [target, &other, "group:shared"]
@@ -47,9 +47,7 @@ fn queue_block_carrier_events(core: &mut AppCore, _device: &Keys, target: &str) 
         .enumerate()
         .map(|(index, chat)| {
             let event = EventBuilder::new(Kind::Custom(1060), format!("queued {index}"))
-                .tag(nostr::Tag::public_key(
-                    PublicKey::from_hex(chat).unwrap_or_else(|_| Keys::generate().public_key()),
-                ))
+                .tag(nostr::Tag::public_key(recipient.public_key()))
                 .tag(nostr::Tag::parse(["v", "2"]).unwrap())
                 .sign_with_keys(&transport_keys)
                 .unwrap();
@@ -65,7 +63,9 @@ fn queue_block_carrier_events(core: &mut AppCore, _device: &Keys, target: &str) 
 
 #[test]
 fn private_block_cancels_unpolled_mesh_publication_and_preserves_other_chats() {
+    use fips_core::config::PeerConfig;
     use nostr_pubsub::EventBus;
+    use nostr_pubsub_fips::{FipsPubsubClient, FipsPubsubClientOptions};
     let owner = Keys::generate();
     let device = Keys::generate();
     let target = Keys::generate().public_key().to_hex();
@@ -73,43 +73,97 @@ fn private_block_cancels_unpolled_mesh_publication_and_preserves_other_chats() {
     let endpoint = core
         .runtime
         .block_on(block_carrier_endpoint(&device, "127.0.0.1:0", None));
+    let provider_keys = Keys::generate();
+    let provider_endpoint =
+        core.runtime
+            .block_on(block_carrier_endpoint(&provider_keys, "127.0.0.1:0", None));
+    let provider_address = core
+        .runtime
+        .block_on(provider_endpoint.bound_udp_listen_addrs())
+        .unwrap()[0];
+    let provider = core
+        .runtime
+        .block_on(FipsPubsubClient::start(
+            provider_endpoint.clone(),
+            FipsPubsubClientOptions {
+                accept_anonymous_publications: true,
+                max_inbound_routed_peers: 8,
+                query_timeout: Duration::from_millis(100),
+                ..Default::default()
+            },
+        ))
+        .unwrap();
     let client = Arc::new(
         core.runtime
-            .block_on(nostr_pubsub_fips::FipsPubsubClient::start(
+            .block_on(FipsPubsubClient::start_receive_only_with_public_authors(
                 endpoint.clone(),
-                nostr_pubsub_fips::FipsPubsubClientOptions {
+                FipsPubsubClientOptions {
                     query_timeout: Duration::from_millis(100),
                     ..Default::default()
                 },
+                core.mesh_public_service_authors(),
             ))
             .unwrap(),
     );
     let (tcp, _records) = DeviceSyncTcpSender::test_channel(4, 1024);
     core.install_device_sync_sender_for_test(endpoint.clone(), tcp, Vec::new());
     core.device_sync.as_mut().unwrap().pubsub = Some(client.clone());
-    let events = queue_block_carrier_events(&mut core, &device, &target);
+    core.device_sync.as_mut().unwrap().private_providers =
+        Some(Arc::new(mesh_pubsub::PrivateMeshProviders::new(
+            vec![PeerConfig::new(
+                provider_endpoint.npub(),
+                "udp",
+                provider_address.to_string(),
+            )],
+            None,
+            vec![provider_endpoint.npub().to_string()],
+            Vec::new(),
+        )));
+    let events = queue_block_carrier_events(&mut core, &Keys::generate(), &target);
     core.set_user_blocked(&target, true);
     let seen = core.runtime.block_on(async {
-        tokio::time::sleep(Duration::from_millis(20)).await;
-        client
-            .query(
-                vec![Filter::new().ids(events.iter().map(|event| event.id))],
-                Default::default(),
-            )
-            .await
-            .unwrap()
-            .events
-            .into_iter()
-            .map(|event| event.event.as_event().id)
-            .collect::<std::collections::BTreeSet<_>>()
+        tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                let seen = provider
+                    .query(
+                        vec![Filter::new().ids(events.iter().map(|event| event.id))],
+                        Default::default(),
+                    )
+                    .await
+                    .unwrap()
+                    .events
+                    .into_iter()
+                    .map(|event| {
+                        assert_ne!(
+                            event.source.id.as_str(),
+                            endpoint.npub(),
+                            "private publication must not use the identified live endpoint"
+                        );
+                        event.event.as_event().id
+                    })
+                    .collect::<std::collections::BTreeSet<_>>();
+                assert!(
+                    !seen.contains(&events[0].id),
+                    "cancelled private copy reached the provider"
+                );
+                if seen.len() == 2 {
+                    break seen;
+                }
+                sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("unrelated and group copies must reach the approved anonymous provider")
     });
     assert_eq!(
         seen,
         [events[1].id, events[2].id].into_iter().collect(),
-        "blocked task cannot reach the mesh cache; unrelated and group work still publishes"
+        "blocked task cannot reach the remote provider; unrelated and group work still publishes"
     );
     core.runtime.block_on(async {
         client.shutdown_shared().await;
+        provider.shutdown().await;
+        provider_endpoint.shutdown().await.unwrap();
         endpoint.shutdown().await.unwrap();
     });
 }
@@ -160,7 +214,7 @@ fn private_block_cancels_unpolled_nearby_publication_and_preserves_other_chats()
     core.device_sync.as_mut().unwrap().nearby_enabled = true;
     core.preferences.nearby_enabled = true;
     core.preferences.nearby_mailbag_enabled = true;
-    let events = queue_block_carrier_events(&mut core, &device, &target);
+    let events = queue_block_carrier_events(&mut core, &recipient, &target);
     core.set_user_blocked(&target, true);
     let seen = core.runtime.block_on(async {
         let mut seen = std::collections::BTreeSet::new();

@@ -93,7 +93,9 @@ pub(super) async fn run(
 
             let pending = outbox
                 .read()
-                .map(|outbox| outbox.pending_for_link(&peer.npub, peer.link_id))
+                .map(|outbox| {
+                    outbox.pending_for_link_with_public(&peer.npub, peer.link_id, nearby_enabled)
+                })
                 .unwrap_or_default();
             if pending.is_empty() {
                 continue;
@@ -316,11 +318,32 @@ mod tests {
         let bootstrap = Arc::new(RwLock::new(vec![b"nearby bootstrap".to_vec()]));
         let mut outbox = FipsNearbyOutbox::default();
         outbox.insert("queued".to_string(), b"nearby outbox".to_vec());
+        let private = EventBuilder::new(Kind::Custom(1060), "intended private delivery")
+            .tags([
+                nostr::Tag::parse(["v", "2"]).unwrap(),
+                nostr::Tag::public_key(PublicKey::from_hex(&sibling_hex).unwrap()),
+            ])
+            .sign_with_keys(&Keys::generate())
+            .unwrap();
+        let private_payload = crate::core::fips_nearby::encode_fips_nearby_event(&private).unwrap();
+        outbox.insert(private.id.to_hex(), private_payload.clone());
+        let elsewhere = EventBuilder::new(Kind::Custom(1060), "another recipient")
+            .tags([
+                nostr::Tag::parse(["v", "2"]).unwrap(),
+                nostr::Tag::public_key(Keys::generate().public_key()),
+            ])
+            .sign_with_keys(&Keys::generate())
+            .unwrap();
+        outbox.insert(
+            elsewhere.id.to_hex(),
+            crate::core::fips_nearby::encode_fips_nearby_event(&elsewhere).unwrap(),
+        );
+        let outbox = Arc::new(RwLock::new(outbox));
         let (sender, receiver) = flume::unbounded();
         let monitor = tokio::spawn(run(
             endpoint.clone(),
             bootstrap,
-            Arc::new(RwLock::new(outbox)),
+            outbox.clone(),
             sender,
             17,
             false,
@@ -332,15 +355,31 @@ mod tests {
             .iter()
             .any(|peer| peer.device_pubkey_hex == sibling_hex));
         let mut nearby_datagrams = Vec::new();
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            nearby_receiver.recv_batch_into(&mut nearby_datagrams, 8),
+        )
+        .await
+        .expect("exact-recipient private delivery must remain available")
+        .unwrap();
+        assert!(!nearby_datagrams.is_empty());
         assert!(
-            tokio::time::timeout(
-                Duration::from_secs(1),
-                nearby_receiver.recv_batch_into(&mut nearby_datagrams, 8),
-            )
-            .await
-            .is_err(),
-            "Nearby disabled must not send bootstrap or queued events"
+            nearby_datagrams
+                .iter()
+                .all(|packet| packet.data.as_ref() == private_payload.as_slice()),
+            "Nearby disabled must suppress public bootstrap/backlog and other recipients"
         );
+        outbox
+            .write()
+            .unwrap()
+            .acknowledge(sibling.npub(), &private.id.to_hex());
+        nearby_datagrams.clear();
+        assert!(tokio::time::timeout(
+            Duration::from_millis(250),
+            nearby_receiver.recv_batch_into(&mut nearby_datagrams, 8)
+        )
+        .await
+        .is_err());
 
         endpoint
             .shutdown()
