@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """The hardware gate must reject missing evidence as well as expensive idling."""
 import copy
+from contextlib import contextmanager, redirect_stderr, redirect_stdout
+import io
 import json
 import os
 import socket
@@ -8,10 +10,11 @@ import subprocess
 import plistlib
 import sys
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
+import physical_ble_idle as physical
 
 from physical_ble_idle import (
     Gate, evaluate_metrics, internet_addresses, require_android_success, require_isolated_instrumentation,
@@ -61,6 +64,257 @@ def save_capture(directory):
 
 
 class PhysicalIdleGateTests(unittest.TestCase):
+    @contextmanager
+    def background_stub(self, supported=True, stale=False):
+        with TemporaryDirectory() as temp:
+            gate = Gate(SimpleNamespace(artifact_dir=Path(temp) / "run", sample_seconds=60,
+                background=True, android_serial="offline-fixture", max_cpu_percent=5, max_write_mib_per_minute=5))
+            gate.iphone = "offline-fixture"; gate.saved_account.before = {"owner": "fixture-owner"}
+            clock, calls, commands = [0.0], [], []
+            android = Mock(returncode=0); android.poll.return_value = None
+            ios = Mock(returncode=0)
+            def ios_poll():
+                if clock[0] < 80:
+                    return None
+                log = gate.out / "ios-test.log"
+                if "LEAVING" not in log.read_text():
+                    with log.open("a") as output: output.write("IRIS_FIPS_BACKGROUND_LEAVING=175000\n")
+                return 0
+            ios.poll.side_effect = ios_poll
+            def popen(argv, **kwargs):
+                calls.append(argv)
+                if len(calls) == 1:
+                    token = argv[argv.index("background_release_token") + 1]
+                    if supported:
+                        kwargs["stdout"].write("INSTRUMENTATION_STATUS: background_release_support=private-file-v1\n"
+                                              f"INSTRUMENTATION_STATUS: background_release_token={token}\n")
+                    kwargs["stdout"].write("INSTRUMENTATION_STATUS: fips_ble_ready=true\n")
+                    process = android
+                else:
+                    kwargs["stdout"].write("IRIS_FIPS_BACKGROUND_ENTERED=100000\n")
+                    process = ios
+                kwargs["stdout"].flush()
+                return process
+            def command(argv, label, timeout=30):
+                commands.append((clock[0], argv, label, timeout))
+                if stale and label == "background-release-absent":
+                    raise RuntimeError("Owned release file already exists")
+                return ""
+            with patch.object(gate, "preflight"), patch.object(gate, "adb"), \
+                    patch.object(gate, "offline", return_value=True), patch.object(gate, "command", side_effect=command), \
+                    patch.object(gate, "action", return_value={"npub": "npub1fixture"}), \
+                    patch.object(gate, "configure", return_value=Path(temp) / "fixture.xctestrun"), \
+                    patch.object(gate, "action_command", side_effect=lambda _, extra: ["offline-receiver", *extra]), \
+                    patch("physical_ble_idle.subprocess.Popen", side_effect=popen), \
+                    patch("physical_ble_idle.time.monotonic", side_effect=lambda: clock[0]), \
+                    patch("physical_ble_idle.time.sleep", side_effect=lambda seconds: clock.__setitem__(0, clock[0] + seconds)), \
+                    patch("physical_ble_idle.evaluate_capture", return_value={"ok": True}), redirect_stdout(io.StringIO()):
+                yield gate, calls, commands, android
+
+    def test_host_loop_releases_exact_token_after_observed_background_only(self):
+        with self.background_stub() as (gate, calls, commands, android):
+            gate.execute()
+            release = [row for row in commands if row[2] == "background-release"]
+            self.assertEqual(len(release), 1)
+            self.assertEqual(release[0][0], 40)
+            token = calls[0][calls[0].index("background_release_token") + 1]
+            self.assertEqual(release[0][1], ["adb", "-s", "offline-fixture", "shell", "run-as", physical.PACKAGE,
+                                           "touch", f"files/ble-background-release/{token}.ready"])
+            self.assertTrue(gate.result["backgroundBarrier"]["released"])
+            android.wait.assert_called_once_with(timeout=165)
+
+    def test_old_android_fixture_is_rejected_before_ios_launch(self):
+        with self.background_stub(supported=False) as (gate, calls, commands, _):
+            with self.assertRaisesRegex(RuntimeError, "lacks the exact background barrier"):
+                gate.execute()
+            self.assertEqual(len(calls), 1)
+            self.assertFalse(commands)
+
+    def test_stale_release_file_is_not_overwritten_or_claimed_owned(self):
+        with self.background_stub(stale=True) as (gate, _, commands, _):
+            with self.assertRaisesRegex(RuntimeError, "already exists"):
+                gate.execute()
+            self.assertFalse(any(row[2] == "background-release" for row in commands))
+            self.assertFalse(gate.background_release.release_attempted)
+
+    def barrier(self):
+        barrier = physical.BackgroundRelease("12345678-1234-4abc-8def-1234567890ab")
+        support = ("INSTRUMENTATION_STATUS: background_release_support=private-file-v1\n"
+                   f"INSTRUMENTATION_STATUS: background_release_token={barrier.token}\n")
+        barrier.acknowledge(support + "INSTRUMENTATION_STATUS: fips_ble_ready=true\n")
+        barrier.start(0)
+        return barrier, support
+
+    def test_barrier_requires_exact_supported_token_before_readiness(self):
+        barrier, support = self.barrier()
+        self.assertTrue(barrier.acknowledged)
+        ready = "INSTRUMENTATION_STATUS: fips_ble_ready=true\n"
+        for output in [ready, ready + support, support + support + ready,
+                       support.replace(barrier.token, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa") + ready,
+                       support.replace("private-file-v1", "unsupported") + ready]:
+            with self.subTest(output=output), self.assertRaises(RuntimeError):
+                physical.BackgroundRelease(barrier.token).acknowledge(output)
+
+    def test_streamed_ack_fragments_wait_for_complete_newline_records(self):
+        barrier = physical.BackgroundRelease("12345678-1234-4abc-8def-1234567890ab")
+        prefix = "INSTRUMENTATION_STATUS: background_release_support=private-file-v1\n"
+        token = f"INSTRUMENTATION_STATUS: background_release_token={barrier.token}"
+        self.assertFalse(barrier.acknowledge(prefix + token[:-5]))
+        self.assertFalse(barrier.acknowledge(prefix + token + "\nINSTRUMENTATION_STATUS: fips_ble_ready=tr"))
+        self.assertTrue(barrier.acknowledge(prefix + token + "\nINSTRUMENTATION_STATUS: fips_ble_ready=true\n"))
+
+    def test_streamed_background_fragment_starts_clock_only_after_newline(self):
+        barrier, _ = self.barrier()
+        partial = "IRIS_FIPS_BACKGROUND_ENTERED=1792537"
+        self.assertFalse(barrier.observe(partial, 5))
+        self.assertIsNone(barrier.observed_at)
+        completed = partial + "565930\n"
+        self.assertFalse(barrier.observe(completed, 10))
+        self.assertEqual(barrier.entered_ms, 1792537565930)
+        self.assertFalse(barrier.observe(completed, 49.999))
+        self.assertTrue(barrier.observe(completed, 50))
+
+    def test_malformed_completed_and_incomplete_final_protocol_records_fail_closed(self):
+        barrier, support = self.barrier()
+        for output in [support.replace("=private-file-v1", "broken") + "INSTRUMENTATION_STATUS: fips_ble_ready=true\n",
+                       support + "INSTRUMENTATION_STATUS: fips_ble_ready=tr\n"]:
+            with self.assertRaises(RuntimeError):
+                physical.BackgroundRelease(barrier.token).acknowledge(output)
+        for output in ["IRIS_FIPS_BACKGROUND_ENTERED=123oops\n", "IRIS_FIPS_BACKGROUND_ENTEREDbroken\n",
+                       "IRIS_FIPS_BACKGROUND_ENTERED=123"]:
+            with self.assertRaises(RuntimeError):
+                barrier.observe(output, 10, completed=True)
+        with self.assertRaises(RuntimeError):
+            barrier.acknowledge(support + "INSTRUMENTATION_STATUS: fips_ble_ready=true", final=True)
+
+    def test_barrier_rejects_unsafe_noncanonical_or_nonrandom_tokens(self):
+        for token in ["../some-file", "", "12345678-1234-1abc-8def-1234567890ab",
+                      "12345678-1234-4ABC-8DEF-1234567890AB", "1234567812344abc8def1234567890ab"]:
+            with self.subTest(token=token), self.assertRaises(ValueError):
+                physical.BackgroundRelease(token)
+
+    def test_barrier_waits_forty_monotonic_seconds_from_observed_entry(self):
+        barrier, _ = self.barrier()
+        log = "IRIS_FIPS_BACKGROUND_ENTERED=100000\n"
+        self.assertFalse(barrier.observe(log, 10))
+        self.assertFalse(barrier.observe(log, 49.999))
+        self.assertTrue(barrier.observe(log, 50))
+        barrier.mark_released(50.2)
+        self.assertFalse(barrier.observe(log + "IRIS_FIPS_BACKGROUND_LEAVING=175000\n", 100, completed=True))
+        self.assertEqual(barrier.evidence()["releaseDelaySeconds"], 40)
+        self.assertEqual(barrier.relative_file, f"files/ble-background-release/{barrier.token}.ready")
+
+    def test_barrier_fails_missing_repeated_malformed_and_early_leaving_markers(self):
+        for log in ["", "IRIS_FIPS_BACKGROUND_ENTERED=bad\n",
+                    "IRIS_FIPS_BACKGROUND_ENTERED=100000\n" * 2,
+                    "IRIS_FIPS_BACKGROUND_LEAVING=175000\n",
+                    "IRIS_FIPS_BACKGROUND_ENTERED=100000\nIRIS_FIPS_BACKGROUND_LEAVING=175000\n"]:
+            barrier, _ = self.barrier()
+            with self.subTest(log=log), self.assertRaises(RuntimeError):
+                barrier.observe(log, 240)
+
+    def test_barrier_rejects_late_host_or_early_process_completion(self):
+        for now, completed in [(46, False), (10, True)]:
+            barrier, _ = self.barrier()
+            log = "IRIS_FIPS_BACKGROUND_ENTERED=100000\n"
+            barrier.observe(log, 0)
+            with self.subTest(now=now), self.assertRaises(RuntimeError):
+                barrier.observe(log, now, completed=completed)
+
+    def test_cleanup_removes_only_an_attempted_owned_release_file(self):
+        with TemporaryDirectory() as temp:
+            gate = Gate(SimpleNamespace(artifact_dir=Path(temp) / "run", android_serial="offline-fixture"))
+            gate.background_release, _ = self.barrier()
+            with patch.object(gate.saved_account, "restore"), patch.object(gate, "command") as command:
+                gate.restore()
+                command.assert_not_called()
+                gate.background_release.release_attempted = True
+                gate.restore()
+            command.assert_called_once_with(["adb", "-s", "offline-fixture", "shell", "run-as", physical.PACKAGE,
+                "rm", "-f", gate.background_release.relative_file], "background-release-cleanup", 5)
+
+    def test_default_and_fractional_receiver_lifetime_round_up_without_shortening(self):
+        self.assertEqual(physical.receiver_lifetime(60, True),
+                         {"idleHoldMs": 305000, "backgroundSeconds": 75, "postIosWaitSeconds": 165})
+        self.assertEqual(physical.receiver_lifetime(60, False),
+                         {"idleHoldMs": 230000, "backgroundSeconds": 0, "postIosWaitSeconds": 90})
+        self.assertEqual(physical.receiver_lifetime(60.0001, True)["idleHoldMs"], 305001)
+        self.assertEqual(physical.receiver_lifetime(40.1234, False)["idleHoldMs"], 170371)
+
+    def test_receiver_lifetime_matches_apk_cap_and_rejects_unsupported_requests(self):
+        self.assertEqual(physical.receiver_lifetime(120, False)["idleHoldMs"], 410000)
+        background_maximum = (420 - 75 - 50) / 3
+        self.assertEqual(physical.receiver_lifetime(background_maximum, True)["idleHoldMs"], 420000)
+        for seconds, background in [(background_maximum + 0.001, True), (120, True), (9.9, False),
+                                    (120.1, False), (float("nan"), True), (float("inf"), False)]:
+            with self.subTest(seconds=seconds), self.assertRaises(ValueError):
+                physical.receiver_lifetime(seconds, background)
+
+    def test_unsupported_lifetime_rejected_before_device_preflight(self):
+        with TemporaryDirectory() as temp:
+            gate = Gate(SimpleNamespace(artifact_dir=Path(temp) / "run", sample_seconds=120, background=True))
+            with patch.object(gate, "preflight") as preflight:
+                with self.assertRaisesRegex(ValueError, "420-second"):
+                    gate.execute()
+            preflight.assert_not_called()
+
+    def test_unsupported_cli_request_does_not_create_a_gate_or_touch_phones(self):
+        argv = ["physical_ble_idle.py", "--iphone", "offline-fixture", "--android-serial", "offline-fixture",
+                "--xctestrun", "/unused", "--artifact-dir", "/unused", "--sample-seconds", "120", "--background"]
+        with patch.object(sys, "argv", argv), patch("physical_ble_idle.Gate") as gate, \
+                redirect_stderr(io.StringIO()) as error:
+            with self.assertRaises(SystemExit) as raised:
+                physical.main()
+        self.assertEqual(raised.exception.code, 2)
+        self.assertIn("420-second", error.getvalue())
+        gate.assert_not_called()
+
+    def test_default_cli_sample_and_resource_budgets_remain_unchanged(self):
+        argv = ["physical_ble_idle.py", "--iphone", "offline-fixture", "--android-serial", "offline-fixture",
+                "--xctestrun", "/unused", "--artifact-dir", "/unused"]
+        with patch.object(sys, "argv", argv), patch("physical_ble_idle.Gate") as gate, redirect_stdout(io.StringIO()):
+            gate.return_value.result = {"ok": True}
+            self.assertEqual(physical.main(), 0)
+        args = gate.call_args.args[0]
+        self.assertEqual((args.sample_seconds, args.max_cpu_percent, args.max_write_mib_per_minute), (60, 5, 5))
+
+    def test_resource_budget_boundaries_are_still_five_percent_and_five_mib_per_minute(self):
+        at_limit = fixture(cpu=(3, 3), writes=(5 * 1024**2, 5 * 1024**2))
+        at_limit[0]["testRuns"][0]["metrics"][2]["unitOfMeasurement"] = "B"
+        self.assertTrue(evaluate_metrics(at_limit, 60, 5, 5)["ok"])
+        above_limit = copy.deepcopy(at_limit)
+        above_limit[0]["testRuns"][0]["metrics"][1]["measurements"][0] += 0.001
+        above_limit[0]["testRuns"][0]["metrics"][2]["measurements"][0] += 1
+        self.assertEqual(len(evaluate_metrics(above_limit, 60, 5, 5)["failures"]), 2)
+
+    def test_background_receiver_lifetime_covers_background_and_measurements(self):
+        with TemporaryDirectory() as temp:
+            gate = Gate(SimpleNamespace(artifact_dir=Path(temp) / "run", sample_seconds=60,
+                background=True, max_cpu_percent=5, max_write_mib_per_minute=5))
+            gate.iphone = "offline-fixture"
+            gate.saved_account.before = {"owner": "fixture-owner"}
+            android = Mock(returncode=0); android.poll.return_value = None
+            ios = Mock(returncode=0); ios.poll.return_value = 0
+            calls = []
+            def popen(argv, **kwargs):
+                calls.append(argv)
+                if len(calls) == 1:
+                    kwargs["stdout"].write("INSTRUMENTATION_STATUS: fips_ble_ready=true\n")
+                    kwargs["stdout"].flush()
+                    return android
+                return ios
+            with patch.object(gate, "preflight"), patch.object(gate, "adb"), \
+                    patch.object(gate, "offline", return_value=True), patch.object(gate, "command"), \
+                    patch.object(gate, "action", return_value={"npub": "npub1fixture"}), \
+                    patch.object(gate, "configure", return_value=Path(temp) / "fixture.xctestrun"), \
+                    patch.object(gate, "action_command", side_effect=lambda _, extra: ["offline-receiver", *extra]), \
+                    patch("physical_ble_idle.BackgroundRelease", return_value=Mock(token="offline-token")), \
+                    patch("physical_ble_idle.subprocess.Popen", side_effect=popen), \
+                    patch("physical_ble_idle.evaluate_capture", return_value={"ok": True}):
+                gate.execute()
+            self.assertEqual(calls[0][calls[0].index("idle_hold_ms") + 1], "305000")
+            android.wait.assert_called_once_with(timeout=165)
+
     def test_background_proof_rejects_receipt_after_foreground_and_missing_evidence(self):
         with TemporaryDirectory() as temp:
             root = Path(temp)
@@ -74,7 +328,7 @@ class PhysicalIdleGateTests(unittest.TestCase):
                     f"INSTRUMENTATION_STATUS: background_received_ms={received}\n")
             receiver()
             self.assertTrue(evaluate_background_reply(root, "reply")["backgroundReplyReceivedWhileHidden"])
-            for sent, received in [(110000, 120000), (145000, 176000), (150000, 145000)]:
+            for sent, received in [(110000, 120000), (120185, 122000), (145000, 176000), (150000, 145000)]:
                 receiver(sent, received)
                 with self.assertRaises(ValueError):
                     evaluate_background_reply(root, "reply")

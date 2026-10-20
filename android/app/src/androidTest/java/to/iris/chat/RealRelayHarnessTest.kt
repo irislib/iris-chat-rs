@@ -1756,15 +1756,25 @@ class RealRelayHarnessTest : PhysicalBleHarnessBase() {
     @Test
     fun accept_and_mark_incoming_message_seen_from_args() {
         ensureLoggedIn()
+        val backgroundReply = optionalArg("background_reply")
+        val backgroundRelease = backgroundReply?.let {
+            check(appPackageName() == "to.iris.chat.blegate") { "Background barrier requires the isolated test app" }
+            BleBackgroundRelease(appFilesDir(), requiredArg("background_release_token"))
+        }
+        if (backgroundRelease != null) {
+            reportStatus("background_release_support" to "private-file-v1", "background_release_token" to backgroundRelease.token)
+        } else {
+            require(optionalArg("background_release_token") == null) { "Background release requires a reply" }
+        }
         enableFipsBleForPhysicalPeer()
         reportStatus("fips_ble_ready" to "true")
         val expectedMessage = requiredArg("message")
         val timeoutMs = optionalArg("timeout_ms")?.toLongOrNull() ?: 120_000L
         val chatId = acceptAndMarkIncomingMessageSeen(expectedMessage, timeoutMs)
 
-        optionalArg("background_reply")?.let { reply ->
-            // Let the iPhone leave its foreground allowance before sending.
-            SystemClock.sleep(45_000)
+        backgroundReply?.let { reply ->
+            // The host releases only after observing actual iPhone background entry.
+            checkNotNull(backgroundRelease).awaitRelease()
             val sentAt = System.currentTimeMillis()
             appManager().sendText(chatId, reply)
             waitForState("background Bluetooth delivery receipt", timeoutMs = 20_000) {

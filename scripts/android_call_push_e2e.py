@@ -79,6 +79,22 @@ def matched_call_callback(records, call_id):
     return None
 
 
+def notification_action_node(tree, actions):
+    matches = [node for node in tree.iter("node")
+               if node.get("package") == "com.android.systemui" and
+               node.get("content-desc") in actions and node.get("enabled") == "true"]
+    if len(matches) > 1:
+        raise AssertionError("Ambiguous SystemUI notification action")
+    return matches[0] if matches else None
+
+
+def window_help_supports_dismissal(result):
+    # Android may print valid read-only help with a nonzero status.
+    text = result.stdout + result.stderr
+    return ("Window manager (window) commands:" in text and
+            re.search(r"^\s*dismiss-keyguard(?:\s|$)", text, re.M) is not None)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--serial", required=True, help="Explicit disposable Android test device")
@@ -212,16 +228,38 @@ def main():
         "This FCM test requires Google Play services in the device's active profile")
 
     def native_action(action, call_id):
+        help_result = subprocess.run(adb_base + ["shell", "wm", "help"],
+                                     capture_output=True, text=True, timeout=10)
+        (args.output / "window-shell-help.json").write_text(json.dumps({
+            "exit_code": help_result.returncode, "stdout": help_result.stdout,
+            "stderr": help_result.stderr}, indent=2) + "\n")
+        (args.output / "window-shell-help.txt").write_text(help_result.stdout + help_result.stderr)
+        assert window_help_supports_dismissal(help_result), "Device lacks advertised normal keyguard dismissal command"
         assert notification("incoming-calls", call_id), "Expected exact incoming call before native action"
+        (args.output / f"native-shade-{call_id}-before-window.txt").write_text(
+            adb("shell", "dumpsys", "window", "policy"))
         adb("shell", "input", "keyevent", "WAKEUP")
-        adb("shell", "input", "keyevent", "82")
-        adb("shell", "cmd", "statusbar", "expand-notifications")
-        for _ in range(3):
-            adb("shell", "uiautomator", "dump", "/sdcard/iris-call-push-test.xml")
-            tree = ET.fromstring(adb("shell", "cat", "/sdcard/iris-call-push-test.xml"))
-            for node in tree.iter("node"):
-                if node.get("content-desc") in action:
+        adb("shell", "wm", "dismiss-keyguard")
+        adb("shell", "input", "keyevent", "HOME")
+        action_error = None
+        try:
+            for attempt in range(3):
+                prefix = args.output / f"native-action-{call_id}-{attempt + 1}"
+                adb("shell", "cmd", "statusbar", "expand-notifications")
+                prefix.with_suffix(".window.txt").write_text(adb("shell", "dumpsys", "window", "policy"))
+                adb("shell", "uiautomator", "dump", "/sdcard/iris-call-push-test.xml")
+                hierarchy = adb("shell", "cat", "/sdcard/iris-call-push-test.xml")
+                prefix.with_suffix(".xml").write_text(hierarchy)
+                prefix.with_suffix(".png").write_bytes(subprocess.check_output(
+                    adb_base + ["exec-out", "screencap", "-p"], timeout=10))
+                node = notification_action_node(ET.fromstring(hierarchy), action)
+                if node is not None:
+                    selection = {"call_id": call_id, "requested_actions": list(action),
+                                 "node": dict(node.attrib), "at_host_ms": int(time.time() * 1000)}
+                    prefix.with_suffix(".json").write_text(json.dumps(selection, indent=2) + "\n")
+                    assert notification("incoming-calls", call_id), "Exact incoming call changed before action"
                     x1, y1, x2, y2 = map(int, re.findall(r"\d+", node.get("bounds")))
+                    assert x2 > x1 and y2 > y1, "Notification action has empty bounds"
                     adb("shell", "input", "tap", str((x1+x2)//2), str((y1+y2)//2))
                     if "Decline" in action:
                         wait_for("exact decline action dispatched", lambda:
@@ -229,10 +267,21 @@ def main():
                             matching_probe(call_id, "telecom_end_action", "reject"))
                     else:
                         wait_for("exact native answer requested", lambda: matching_probe(call_id, "answer_requested"))
-                    capture_live_state(f"action-{call_id}")
                     return
-            time.sleep(0.5)
-        raise AssertionError(f"Native action not found: {action}")
+                time.sleep(0.5)
+            raise AssertionError(f"SystemUI notification action not found: {action}")
+        except Exception as error:
+            action_error = error
+            raise
+        finally:
+            try:
+                capture_live_state(f"action-{call_id}")
+                (args.output / f"native-action-{call_id}-after.png").write_bytes(subprocess.check_output(
+                    adb_base + ["exec-out", "screencap", "-p"], timeout=10))
+            except Exception as error:
+                (args.output / f"native-action-{call_id}-capture-error.txt").write_text(type(error).__name__ + "\n")
+                if action_error is None:
+                    raise
 
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))

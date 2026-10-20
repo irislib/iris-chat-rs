@@ -28,6 +28,105 @@ from android_ble_preservation import BlePreservation
 TEST = "FipsBlePhysicalUITests/testSendAndReceiveReceiptOverFipsBle"
 PACKAGE = "to.iris.chat.blegate"
 BUNDLE = "fi.siriusbusiness.irischat"
+BACKGROUND_SECONDS = 75
+MAX_RECEIVER_HOLD_MS = 420_000
+BACKGROUND_RELEASE_DELAY = 40
+BACKGROUND_ENTRY_TIMEOUT = 240
+
+
+def receiver_lifetime(seconds, background):
+    if not math.isfinite(seconds) or not 10 <= seconds <= 120:
+        raise ValueError("Use finite 10–120 second idle intervals")
+    # Three intervals include XCTest's discarded warmup. Keep the background
+    # window in sync with FipsBlePhysicalUITests and respect the APK's hold cap.
+    extra = BACKGROUND_SECONDS if background else 0
+    hold_ms = math.ceil((seconds * 3 + 50 + extra) * 1000)
+    if hold_ms > MAX_RECEIVER_HOLD_MS:
+        raise ValueError("Receiver hold exceeds Android's 420-second limit; reduce --sample-seconds")
+    return {"idleHoldMs": hold_ms, "backgroundSeconds": extra, "postIosWaitSeconds": 90 + extra}
+
+
+def complete_log_records(output, final=False):
+    records, separator, partial = output.rpartition("\n")
+    if final and partial.startswith(("INSTRUMENTATION_STATUS:", "IRIS_FIPS_BACKGROUND_")):
+        raise RuntimeError("Incomplete final background protocol record")
+    return records + "\n" if separator else ""
+
+
+class BackgroundRelease:
+    """A single owned token, acknowledged before iOS launch and released while hidden."""
+    def __init__(self, token):
+        parsed = uuid.UUID(token)
+        if str(parsed) != token or parsed.version != 4:
+            raise ValueError("Background release requires a canonical random UUID")
+        self.token = token
+        self.relative_file = f"files/ble-background-release/{token}.ready"
+        self.acknowledged = self.release_attempted = self.released = False
+        self.started_at = self.observed_at = self.entered_ms = self.released_at = None
+
+    def acknowledge(self, output, final=False):
+        output = complete_log_records(output, final)
+        def fields(key):
+            matches = list(re.finditer(r"^INSTRUMENTATION_STATUS: " + key + r"([^\r\n]*)", output, re.MULTILINE))
+            if any(not match.group(1).startswith("=") for match in matches):
+                raise RuntimeError("Malformed completed background acknowledgement")
+            return matches
+        support, tokens, ready = (fields(key) for key in
+                                  ("background_release_support", "background_release_token", "fips_ble_ready"))
+        if len(support) > 1 or len(tokens) > 1 or len(ready) > 1:
+            raise RuntimeError("Repeated background barrier acknowledgement")
+        if (support and support[0].group(1) != "=private-file-v1") or (tokens and tokens[0].group(1) != "=" + self.token):
+            raise RuntimeError("Android acknowledged a different background barrier")
+        if not ready:
+            return False
+        if (not support or not tokens or ready[0].group(1) != "=true"
+                or max(support[0].start(), tokens[0].start()) >= ready[0].start()):
+            raise RuntimeError("Android fixture lacks the exact background barrier acknowledgement before readiness")
+        self.acknowledged = True
+        return True
+
+    def start(self, now):
+        if not self.acknowledged or self.started_at is not None:
+            raise RuntimeError("Background barrier must start once after acknowledgement")
+        self.started_at = now
+
+    def observe(self, output, now, completed=False):
+        if self.started_at is None:
+            raise RuntimeError("Background barrier has not started")
+        output = complete_log_records(output, completed)
+        def marker(name):
+            values = re.findall(r"^IRIS_FIPS_BACKGROUND_" + name + r"([^\r\n]*)", output, re.MULTILINE)
+            if len(values) > 1 or values and not re.fullmatch(r"=[0-9]{1,16}", values[0]):
+                raise RuntimeError("Repeated or malformed iOS background marker")
+            return int(values[0][1:]) if values else None
+        entered, leaving = marker("ENTERED"), marker("LEAVING")
+        if entered is None:
+            if self.observed_at is not None or leaving is not None or completed or now >= self.started_at + BACKGROUND_ENTRY_TIMEOUT:
+                raise RuntimeError("Missing iOS background-entry marker before its deadline")
+            return False
+        if self.observed_at is None:
+            if now >= self.started_at + BACKGROUND_ENTRY_TIMEOUT:
+                raise RuntimeError("iOS background entry exceeded its deadline")
+            self.observed_at, self.entered_ms = now, entered
+        if entered != self.entered_ms or leaving is not None and leaving <= entered:
+            raise RuntimeError("iOS background interval changed or is invalid")
+        if leaving is not None and not self.released or completed and (not self.released or leaving is None):
+            raise RuntimeError("iOS left background or exited before the barrier completed")
+        elapsed = now - self.observed_at
+        if not self.released and elapsed > BACKGROUND_RELEASE_DELAY + 5:
+            raise RuntimeError("Host missed the bounded background-release window")
+        return not self.released and elapsed >= BACKGROUND_RELEASE_DELAY
+
+    def mark_released(self, now):
+        if self.released or self.observed_at is None or not BACKGROUND_RELEASE_DELAY <= now - self.observed_at <= BACKGROUND_RELEASE_DELAY + 10:
+            raise RuntimeError("Background release did not finish inside its bounded window")
+        self.released, self.released_at = True, now
+
+    def evidence(self):
+        return {"support": "private-file-v1", "token": self.token, "enteredMs": self.entered_ms,
+                "observedMonotonic": self.observed_at, "releasedMonotonic": self.released_at,
+                "releaseDelaySeconds": BACKGROUND_RELEASE_DELAY, "acknowledged": self.acknowledged,
+                "releaseAttempted": self.release_attempted, "released": self.released}
 
 
 def ancestor_pids():
@@ -232,6 +331,7 @@ class Gate:
         self.out = args.artifact_dir.resolve()
         self.out.mkdir(parents=True, exist_ok=False)
         self.ios = self.android = None
+        self.background_release = None
         self.snapshot = {}
         self.locks = []
         self.restored = {}
@@ -368,6 +468,8 @@ class Gate:
         return configured
 
     def execute(self):
+        lifetime = receiver_lifetime(self.args.sample_seconds, getattr(self.args, "background", False))
+        self.result["receiverLifetime"] = lifetime
         self.preflight()
         self.saved_account.started = True
         identity = self.action("report_logged_in_identity", {"app_package": PACKAGE,
@@ -386,15 +488,22 @@ class Gate:
             if time.monotonic() > deadline:
                 raise RuntimeError("Android still has an IP path; Bluetooth proof would be invalid")
             time.sleep(1)
+        barrier = BackgroundRelease(str(uuid.uuid4())) if self.args.background else None
+        self.background_release = barrier
         with (self.out / "receiver.log").open("w") as log:
-            extra = (["-e", "background_reply", self.probe + "-reply"] if self.args.background else [])
+            extra = (["-e", "background_reply", self.probe + "-reply",
+                      "-e", "background_release_token", barrier.token] if barrier else [])
             self.android = subprocess.Popen(self.action_command(
                 "accept_and_mark_incoming_message_seen_from_args",
                 ["-e", "message", self.probe, "-e", "timeout_ms", "240000",
-                 "-e", "idle_hold_ms", str(int(self.args.sample_seconds * 3 + 50) * 1000)] + extra),
+                 "-e", "idle_hold_ms", str(lifetime["idleHoldMs"])] + extra),
                 stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
         deadline = time.monotonic() + 90
-        while "fips_ble_ready=true" not in (self.out / "receiver.log").read_text():
+        while True:
+            receiver_output = (self.out / "receiver.log").read_text()
+            ready = barrier.acknowledge(receiver_output) if barrier else "fips_ble_ready=true" in receiver_output
+            if ready:
+                break
             if self.android.poll() is not None or time.monotonic() > deadline:
                 raise RuntimeError("Android Bluetooth receiver did not become ready")
             time.sleep(1)
@@ -405,6 +514,8 @@ class Gate:
                    "-parallel-testing-enabled", "NO", "test-without-building"]
         with (self.out / "ios-test.log").open("w") as log:
             self.ios = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
+        if barrier:
+            barrier.start(time.monotonic())
         deadline = time.monotonic() + 420 + self.args.sample_seconds * 3
         while self.ios.poll() is None:
             if time.monotonic() > deadline:
@@ -413,15 +524,29 @@ class Gate:
                 raise RuntimeError("Android gained an IP path or lost Bluetooth during measurement")
             if self.android.poll() is not None:
                 raise RuntimeError("Bluetooth peer exited before iPhone idle measurement completed")
+            if barrier and barrier.observe((self.out / "ios-test.log").read_text(), time.monotonic()):
+                prefix = ["adb", "-s", self.args.android_serial, "shell", "run-as", PACKAGE]
+                self.command(prefix + ["test", "!", "-e", barrier.relative_file], "background-release-absent", 5)
+                if self.ios.poll() is not None or self.android.poll() is not None:
+                    raise RuntimeError("A physical test process exited before background release")
+                barrier.observe((self.out / "ios-test.log").read_text(), time.monotonic())
+                barrier.release_attempted = True
+                self.command(prefix + ["touch", barrier.relative_file], "background-release", 5)
+                barrier.mark_released(time.monotonic())
+                self.result["backgroundBarrier"] = barrier.evidence()
             time.sleep(5)
         if self.ios.returncode:
             raise RuntimeError("Physical iPhone UI test failed; see ios-test.log")
+        if barrier:
+            barrier.observe((self.out / "ios-test.log").read_text(), time.monotonic(), completed=True)
         try:
-            self.android.wait(timeout=90)
+            self.android.wait(timeout=lifetime["postIosWaitSeconds"])
         except subprocess.TimeoutExpired:
             raise RuntimeError("Android did not finish its bounded idle hold") from None
         if self.android.returncode:
             raise RuntimeError("Android receiver process failed; see private log")
+        if barrier:
+            barrier.acknowledge((self.out / "receiver.log").read_text(), final=True)
         self.command(["xcrun", "xcresulttool", "get", "test-results", "summary",
                       "--path", str(result_path)], "test-summary")
         self.command(["xcrun", "xcresulttool", "get", "test-results", "metrics",
@@ -436,6 +561,15 @@ class Gate:
                 stop(child)
             except Exception:
                 self.restored[label] = False
+        if self.background_release is not None and self.background_release.release_attempted:
+            try:
+                self.command(["adb", "-s", self.args.android_serial, "shell", "run-as", PACKAGE,
+                              "rm", "-f", self.background_release.relative_file], "background-release-cleanup", 5)
+                self.restored["background_release_file"] = True
+            except Exception:
+                self.restored["background_release_file"] = False
+        if self.background_release is not None:
+            self.result["backgroundBarrier"] = self.background_release.evidence()
         self.saved_account.restore()
         if self.snapshot:
             for key, service in (("wifi_on", "wifi"), ("mobile_data", "data")):
@@ -506,6 +640,10 @@ def main():
         return 0 if result["ok"] else 1
     if args.output or not all((args.iphone, args.android_serial, args.xctestrun, args.artifact_dir)):
         p.error("A device run requires --iphone, --android-serial, --xctestrun and --artifact-dir")
+    try:
+        receiver_lifetime(args.sample_seconds, args.background)
+    except ValueError as error:
+        p.error(str(error))
     gate = Gate(args)
     def interrupted(_signum, _frame):
         raise KeyboardInterrupt()
