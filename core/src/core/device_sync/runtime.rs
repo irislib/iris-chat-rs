@@ -743,10 +743,31 @@ impl AppCore {
         let nearby_outbox = Arc::new(RwLock::new(initial_nearby_outbox));
         if let Some(receiver) = nearby_receiver {
             let nearby_tx = self.core_sender.clone();
+            let nearby_generation = self.fips_connection_generation;
             tasks.push(self.runtime.spawn(async move {
                 let mut datagrams = Vec::with_capacity(32);
+                let mut dequeued = 0_u64;
+                let mut dequeued_bytes = 0_u64;
+                if debug_snapshot_file_writes_enabled() {
+                    let detail = format!("generation={nearby_generation} registered=true snapshot=true perf={}", crate::perflog::__enabled());
+                    crate::perflog!("fips_nearby.rx.listener {detail}");
+                    let _ = nearby_tx.send(CoreMsg::Internal(Box::new(InternalEvent::DebugLog {
+                        category: "fips_nearby.rx.listener".to_string(), detail,
+                    })));
+                }
                 while receiver.recv_batch_into(&mut datagrams, 32).await.is_some() {
                     for datagram in datagrams.drain(..) {
+                        if debug_snapshot_file_writes_enabled() {
+                            dequeued = dequeued.saturating_add(1);
+                            dequeued_bytes = dequeued_bytes.saturating_add(datagram.data.len() as u64);
+                            if super::super::fips_nearby::diagnostics::sample_receive_diagnostic(dequeued) {
+                                let detail = format!("generation={nearby_generation} packets={dequeued} bytes={dequeued_bytes} source_port={} last_bytes={}", datagram.source_port, datagram.data.len());
+                                crate::perflog!("fips_nearby.rx.dequeue {detail}");
+                                let _ = nearby_tx.send(CoreMsg::Internal(Box::new(InternalEvent::DebugLog {
+                                    category: "fips_nearby.rx.dequeue".to_string(), detail,
+                                })));
+                            }
+                        }
                         let _ = nearby_tx.send(CoreMsg::Internal(Box::new(
                             InternalEvent::FipsNearbyPacket {
                                 source_pubkey_hex: datagram.source_peer.pubkey().to_string(),

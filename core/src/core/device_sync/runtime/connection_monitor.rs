@@ -15,7 +15,42 @@ pub(super) async fn run(
     let mut current_bootstrap = Vec::new();
     let mut bootstrap_revision = 0_u64;
     let mut reported_links = Vec::new();
+    let carrier = debug_snapshot_file_writes_enabled()
+        .then(|| {
+            endpoint
+                .enable_service_carrier_diagnostics(FIPS_NEARBY_PORT)
+                .ok()
+        })
+        .flatten();
+    let mut previous_carrier = None;
     loop {
+        if let Some(handle) = &carrier {
+            let snapshot = handle.snapshot();
+            if previous_carrier.as_ref() != Some(&snapshot) {
+                let transports = snapshot
+                    .transports
+                    .iter()
+                    .filter(|value| value.submitted_packets > 0)
+                    .map(|value| {
+                        format!(
+                            "{}:{}/{}",
+                            value.transport, value.submitted_packets, value.fips_payload_bytes
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join(",");
+                let detail = format!(
+                    "generation={generation} discarded={} transports={transports}",
+                    snapshot.discarded_outputs
+                );
+                crate::perflog!("fips_nearby.tx.carrier {detail}");
+                let _ = core_sender.send(CoreMsg::Internal(Box::new(InternalEvent::DebugLog {
+                    category: "fips_nearby.tx.carrier".to_string(),
+                    detail,
+                })));
+                previous_carrier = Some(snapshot);
+            }
+        }
         if let Ok(payloads) = bootstrap_payloads.read() {
             if *payloads != current_bootstrap {
                 current_bootstrap = payloads.clone();

@@ -748,6 +748,7 @@ pub struct AppCore {
     event_transport_channels: BTreeMap<String, String>,
     pending_mobile_push_events: VecDeque<Event>,
     debug_log: VecDeque<DebugLogEntry>,
+    fips_nearby_receive_diagnostics: fips_nearby::ReceiveDiagnostics,
     debug_event_counters: DebugEventCounters,
     debug_snapshot_write_generation: u64,
     debug_snapshot_write_inflight: bool,

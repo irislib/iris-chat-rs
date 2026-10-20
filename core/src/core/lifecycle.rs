@@ -168,6 +168,7 @@ impl AppCore {
             event_transport_channels: BTreeMap::new(),
             pending_mobile_push_events: VecDeque::new(),
             debug_log: VecDeque::new(),
+            fips_nearby_receive_diagnostics: Default::default(),
             debug_event_counters: DebugEventCounters::default(),
             debug_snapshot_write_generation: 0,
             debug_snapshot_write_inflight: false,
@@ -543,6 +544,7 @@ impl AppCore {
         self.emit_state();
     }
     pub(super) fn handle_internal(&mut self, event: InternalEvent) {
+        self.observe_fips_nearby_packet_arrival(&event);
         if self.suspended && !self.admit_background_ble_event(&event) {
             self.defer_background_ble_event(event);
             return;
@@ -873,8 +875,10 @@ impl AppCore {
                 self.handle_debug_snapshot_write_finished(generation);
             }
             InternalEvent::DebugLog { category, detail } => {
-                self.push_debug_log(&category, detail);
-                self.persist_debug_snapshot_best_effort();
+                if !self.handle_fips_nearby_diagnostic_debug_log(&category, &detail) {
+                    self.push_debug_log(&category, detail);
+                    self.persist_debug_snapshot_best_effort();
+                }
             }
             InternalEvent::TypingIndicatorExpired { chat_id, author } => {
                 let key = format!("{chat_id}\n{author}");

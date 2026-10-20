@@ -3,7 +3,9 @@ use crate::{DesktopNearbyPeerSnapshot, DesktopNearbySnapshot};
 use fips_core::transport::ble::host::HostBleIo;
 use fips_core::PeerIdentity as FipsPeerIdentity;
 use std::collections::BTreeSet;
+pub(in crate::core) mod diagnostics;
 mod private_targets;
+pub(super) use diagnostics::ReceiveDiagnostics;
 pub(in crate::core) use private_targets::is_private_transport_event;
 
 pub(super) const FIPS_NEARBY_PORT: u16 = 7370;
@@ -114,23 +116,30 @@ impl FipsNearbyPacket {
         (encoded.len() <= FIPS_NEARBY_MAX_PACKET_BYTES).then_some(encoded)
     }
 
+    #[cfg(test)]
     pub(super) fn decode(data: &[u8]) -> Option<Self> {
+        Self::decode_diagnostic(data).ok()
+    }
+
+    fn decode_diagnostic(data: &[u8]) -> Result<Self, &'static str> {
         if data.len() > FIPS_NEARBY_MAX_PACKET_BYTES {
-            return None;
+            return Err("packet_size");
         }
-        let packet = serde_json::from_slice::<Self>(data).ok()?;
+        let packet = serde_json::from_slice::<Self>(data).map_err(|_| "packet_json")?;
+        let (version, event_id) = match &packet {
+            Self::Event { v, event_id, .. } | Self::Receipt { v, event_id } => (*v, event_id),
+        };
+        if version != FIPS_NEARBY_VERSION {
+            return Err("packet_version");
+        }
+        if !valid_event_id(event_id) {
+            return Err("packet_id");
+        }
         match &packet {
-            Self::Event {
-                v,
-                event_id,
-                event_json,
-            } => (*v == FIPS_NEARBY_VERSION
-                && valid_event_id(event_id)
-                && event_json.len() <= FIPS_NEARBY_MAX_PACKET_BYTES)
-                .then_some(packet),
-            Self::Receipt { v, event_id } => {
-                (*v == FIPS_NEARBY_VERSION && valid_event_id(event_id)).then_some(packet)
+            Self::Event { event_json, .. } if event_json.len() > FIPS_NEARBY_MAX_PACKET_BYTES => {
+                Err("event_size")
             }
+            _ => Ok(packet),
         }
     }
 }
@@ -551,8 +560,12 @@ impl AppCore {
         source_port: u16,
         data: &[u8],
     ) {
-        let Some(packet) = FipsNearbyPacket::decode(data) else {
-            return;
+        let packet = match FipsNearbyPacket::decode_diagnostic(data) {
+            Ok(packet) => packet,
+            Err(reason) => {
+                self.record_fips_nearby_outcome(reason, None, data.len());
+                return;
+            }
         };
         match packet {
             FipsNearbyPacket::Event {
@@ -561,15 +574,33 @@ impl AppCore {
                 ..
             } => {
                 let Ok(event) = serde_json::from_str::<Event>(&event_json) else {
+                    self.record_fips_nearby_outcome("event_json", None, data.len());
                     return;
                 };
-                if event.id.to_string() != event_id
-                    || !self.accepts_private_nearby_event(&event)
-                    || !self.handle_relay_event_with_channel(event, "FIPS nearby")
-                {
+                let kind = Some(event.kind.as_u16());
+                if event.id.to_string() != event_id {
+                    self.record_fips_nearby_outcome("event_id", kind, data.len());
                     return;
                 }
+                if !self.accepts_private_nearby_event(&event) {
+                    self.record_fips_nearby_outcome("recipient", kind, data.len());
+                    return;
+                }
+                // Only the opt-in diagnostic lane computes this extra hash.
+                // Authentication and application effects retain their existing path.
+                let id_valid = debug_snapshot_file_writes_enabled().then(|| event.verify_id());
+                if !self.handle_relay_event_with_channel(event, "FIPS nearby") {
+                    let reason = if id_valid == Some(false) {
+                        "event_hash"
+                    } else {
+                        "signature"
+                    };
+                    self.record_fips_nearby_outcome(reason, kind, data.len());
+                    return;
+                }
+                self.record_fips_nearby_outcome("accepted", kind, data.len());
                 let Some(source) = fips_peer_from_hex(source_pubkey_hex) else {
+                    self.record_fips_nearby_outcome("receipt_source", kind, data.len());
                     return;
                 };
                 let Some(payload) =
@@ -592,6 +623,7 @@ impl AppCore {
             }
             FipsNearbyPacket::Receipt { event_id, .. } => {
                 let Some(source) = fips_peer_from_hex(source_pubkey_hex) else {
+                    self.record_fips_nearby_outcome("receipt_source", None, data.len());
                     return;
                 };
                 let acknowledged = self.device_sync.as_ref().is_some_and(|runtime| {
@@ -602,8 +634,10 @@ impl AppCore {
                         .unwrap_or(false)
                 });
                 if !acknowledged {
+                    self.record_fips_nearby_outcome("receipt_unmatched", None, data.len());
                     return;
                 }
+                self.record_fips_nearby_outcome("receipt_matched", None, data.len());
                 let changed = self.add_transport_channel_for_event_id(&event_id, "FIPS nearby");
                 self.push_debug_log(
                     "fips_nearby.receipt",
