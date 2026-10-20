@@ -329,8 +329,10 @@ async fn standalone_update_provider(
 
 async fn standalone_fips_update_provider(
     reference: &UpdateRef,
-    config: fips_core::Config,
+    mut config: fips_core::Config,
 ) -> Result<Arc<dyn NostrEventSubscriber>, UpdateError> {
+    // Reading updates does not require carrying unrelated network traffic.
+    config.node.leaf_only = true;
     let pubsub_options = update_pubsub_options(reference)?;
     let endpoint = fips_core::FipsEndpoint::builder()
         .config(config)

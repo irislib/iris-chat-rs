@@ -31,6 +31,8 @@ impl PrivateMeshProviders {
     ) -> Self {
         let key = format!("{peers:?}:{websocket:?}:{providers:?}:{relays:?}");
         let mut config = Config::new();
+        // Disposable clients must not volunteer to route unrelated traffic.
+        config.node.leaf_only = true;
         config.node.control.enabled = false;
         config.node.discovery.nostr.enabled = false;
         config.node.discovery.nostr.advertise = false;
