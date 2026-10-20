@@ -65,14 +65,18 @@ class CallPushHarnessTest : RealRelayHarnessBase() {
             try {
                 connection.connectTimeout = 3_000; connection.readTimeout = 3_000
                 connection.setRequestProperty("authorization", request.authorizationHeader)
-                val subscriptions = JSONObject(connection.inputStream.bufferedReader().use { it.readText() })
+                val responseBody = connection.inputStream.bufferedReader().use { it.readText() }
+                instrumentation.targetContext.openFileOutput("call_push_subscription_probe.json", Context.MODE_PRIVATE).use {
+                    it.write(responseBody.toByteArray(Charsets.UTF_8))
+                }
+                val subscriptions = JSONObject(responseBody)
                 subscriptions.keys().asSequence().any { id ->
                     val sub = subscriptions.getJSONObject(id)
                     val filter = sub.optJSONObject("filter")
                     val recipients = filter?.optJSONArray("#p")
                     (sub.optJSONArray("fcm_tokens")?.length() ?: 0) > 0 &&
                         filter?.optJSONArray("kinds")?.optInt(0) == 21111 &&
-                        filter?.has("authors") == false && recipients != null &&
+                        filter?.isNull("authors") == true && recipients != null &&
                         (0 until recipients.length()).any { recipients.optString(it) == account.devicePublicKeyHex }
                 }.takeIf { it }
             } finally { connection.disconnect() }
