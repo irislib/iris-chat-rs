@@ -32,7 +32,7 @@ internal static class Program
         XNamespace xaml = "http://schemas.microsoft.com/winfx/2006/xaml/presentation";
         var resources = XDocument.Load(Path.Combine(AppContext.BaseDirectory, "App.xaml")).Descendants(xaml + "ResourceDictionary").Single();
         resources.SetAttributeValue(XNamespace.Xmlns + "x", "http://schemas.microsoft.com/winfx/2006/xaml");
-        app.Resources = (ResourceDictionary)XamlReader.Parse(resources.ToString());
+        app.Resources = (ResourceDictionary)XamlReader.Parse(resources.ToString().Replace("clr-namespace:IrisChat", "clr-namespace:IrisChat;assembly=IrisChat"));
         // A fake core reader is the sole profile source. Deliberately stale
         // view fields must not override it; revisions model core notifications.
         var profileConnection = new SocialConnectionSnapshot(SocialBadge.Following, 1, 0, "Following", true);

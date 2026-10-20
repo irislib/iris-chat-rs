@@ -508,6 +508,11 @@ jobs:
         run: |
           dotnet run --project windows/KeyboardTests/KeyboardTests.csproj -c Release -- work/keyboard
           if ($LASTEXITCODE -ne 0) { throw 'Native keyboard tests failed' }
+      - name: Exercise Windows light and dark themes
+        if: ${{ !cancelled() && steps.native-build.outcome == 'success' }}
+        run: |
+          dotnet run --project windows/ThemeTests/ThemeTests.csproj -c Release -- work/themes
+          if ($LASTEXITCODE -ne 0) { throw 'Native theme contrast tests failed' }
       - name: Exercise native direct files and WPF transfer controls
         if: ${{ !cancelled() && steps.native-build.outcome == 'success' && (inputs.scope == '' || inputs.scope == 'all') }}
         run: ./scripts/windows-build-local.ps1 direct-file-tests
@@ -523,6 +528,7 @@ jobs:
             iris-chat-rs/work/clipboard/*.png
             iris-chat-rs/work/clipboard/*timings.json
             iris-chat-rs/work/keyboard/*.png
+            iris-chat-rs/work/themes/*.png
           retention-days: 14
       - name: Upload Windows transfer and nearby results
         if: ${{ always() && (inputs.scope == '' || inputs.scope == 'all') }}

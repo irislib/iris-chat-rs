@@ -31,7 +31,7 @@ internal static class Program
         XNamespace xaml = "http://schemas.microsoft.com/winfx/2006/xaml/presentation";
         var resources = XDocument.Load(Path.Combine(AppContext.BaseDirectory, "App.xaml")).Descendants(xaml + "ResourceDictionary").Single();
         resources.SetAttributeValue(XNamespace.Xmlns + "x", "http://schemas.microsoft.com/winfx/2006/xaml");
-        app.Resources = (ResourceDictionary)XamlReader.Parse(resources.ToString());
+        app.Resources = (ResourceDictionary)XamlReader.Parse(resources.ToString().Replace("clr-namespace:IrisChat", "clr-namespace:IrisChat;assembly=IrisChat"));
         var manager = new AppManager(Path.Combine(output, "data"), new SilentNotifications(), Path.Combine(output, "secret.json"));
         typeof(App).GetProperty(nameof(App.Manager))!.SetValue(app, manager);
         var window = new Window { Width = 500, Height = 470, Title = "Keyboard navigation",

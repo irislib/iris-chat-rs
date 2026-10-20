@@ -9,8 +9,11 @@ namespace IrisChat.Chrome;
 
 public sealed class DirectFileTransferCard : StackPanel
 {
-    public DirectFileTransferCard(string chatId, DirectFileTransferSnapshot transfer)
+    private readonly Brush _foreground;
+
+    public DirectFileTransferCard(string chatId, DirectFileTransferSnapshot transfer, Brush? foreground = null)
     {
+        _foreground = foreground ?? (Brush)FindResource("TextPrimary");
         AutomationProperties.SetAutomationId(this, $"chatDirectTransfer-{transfer.id}");
         Children.Add(Label("Direct files", bold: true));
         foreach (var file in transfer.files)
@@ -48,8 +51,8 @@ public sealed class DirectFileTransferCard : StackPanel
         Children.Add(actions);
     }
 
-    private static TextBlock Label(string text, bool bold = false) => new() {
-        Text = text, Foreground = Brushes.White, TextWrapping = TextWrapping.Wrap,
+    private TextBlock Label(string text, bool bold = false) => new() {
+        Text = text, Foreground = _foreground, TextWrapping = TextWrapping.Wrap,
         FontWeight = bold ? FontWeights.SemiBold : FontWeights.Normal,
         VerticalAlignment = VerticalAlignment.Center, HorizontalAlignment = HorizontalAlignment.Left, MaxWidth = 360,
     };
@@ -58,6 +61,7 @@ public sealed class DirectFileTransferCard : StackPanel
     {
         var button = new Button {
             Content = label, Style = (Style)FindResource("GhostButton"), Margin = new Thickness(0, 0, 6, 0),
+            Foreground = _foreground,
         };
         AutomationProperties.SetAutomationId(button, $"chatDirectTransfer{label}-{transferId}");
         button.Click += (_, _) => callback();

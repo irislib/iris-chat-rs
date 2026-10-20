@@ -10,17 +10,18 @@ namespace IrisChat.Chrome;
 
 public sealed class AudioMessageControl : UserControl
 {
-    private readonly Button _play = new() { Width = 44, Height = 44, FontSize = 20, Content = "▶", Padding = new Thickness(0), Foreground = Brushes.White };
+    private readonly Button _play = new() { Width = 44, Height = 44, FontSize = 20, Content = "▶", Padding = new Thickness(0) };
     private readonly WaveformSlider _progress = new() { Minimum = 0, Maximum = 1, IsEnabled = false, IsMoveToPointEnabled = true };
-    private readonly TextBlock _time = new() { Text = "Audio", FontSize = 11, Opacity = 0.7, Foreground = Brushes.White, TextWrapping = TextWrapping.Wrap };
-    private readonly Button _speed = new() { Content = "1×", FontSize = 11, Foreground = Brushes.White, Padding = new Thickness(6, 2, 6, 2) };
+    private readonly TextBlock _time = new() { Text = "Audio", FontSize = 11, Opacity = 0.85, TextWrapping = TextWrapping.Wrap };
+    private readonly Button _speed = new() { Content = "1×", FontSize = 11, Padding = new Thickness(6, 2, 6, 2) };
     private AudioMessagePlayback? _playback;
     private bool _updating;
 
-    public AudioMessageControl(string key, string filename, Func<Task<byte[]?>> download)
+    public AudioMessageControl(string key, string filename, Func<Task<byte[]?>> download, Brush? foreground = null)
     {
         Width = 244;
-        Foreground = Brushes.White;
+        Foreground = foreground ?? (Brush)FindResource("TextPrimary");
+        _play.Foreground = _time.Foreground = _speed.Foreground = _progress.Foreground = Foreground;
         var grid = new Grid();
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(54) });
         grid.ColumnDefinitions.Add(new ColumnDefinition());

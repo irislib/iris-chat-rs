@@ -75,12 +75,13 @@ public partial class MessageBubble : UserControl
         ApplyJumbomojiFont(message.body);
         ApplyBodyTruncation(message.body);
         BodyText.FontStyle = message.deletedForEveryone ? FontStyles.Italic : FontStyles.Normal;
+        Foreground = (Brush)FindResource(message.kind == ChatMessageKind.System
+            ? "TextMuted" : message.isOutgoing ? "OnAccent" : "TextPrimary");
 
         if (message.kind == ChatMessageKind.System)
         {
             Bubble.Background = (Brush)FindResource("Panel");
             Bubble.HorizontalAlignment = HorizontalAlignment.Center;
-            BodyText.Foreground = (Brush)FindResource("TextMuted");
             BodyText.HorizontalAlignment = HorizontalAlignment.Center;
             DeliveryText.Visibility = Visibility.Collapsed;
             if (!string.IsNullOrWhiteSpace(message.systemNoticeOwnerPubkeyHex))
@@ -94,14 +95,12 @@ public partial class MessageBubble : UserControl
         {
             Bubble.Background = (Brush)FindResource("BubbleMine");
             Bubble.HorizontalAlignment = HorizontalAlignment.Right;
-            BodyText.Foreground = Brushes.White;
             DeliveryText.Visibility = Visibility.Visible;
         }
         else
         {
             Bubble.Background = (Brush)FindResource("BubbleTheirs");
             Bubble.HorizontalAlignment = HorizontalAlignment.Left;
-            BodyText.Foreground = Brushes.White;
             DeliveryText.Visibility = Visibility.Collapsed;
         }
 
@@ -116,7 +115,7 @@ public partial class MessageBubble : UserControl
         };
 
         DirectTransfer.Content = !message.deletedForEveryone && message.directTransfer is {} transfer
-            ? new DirectFileTransferCard(message.chatId, transfer) : null;
+            ? new DirectFileTransferCard(message.chatId, transfer, Foreground) : null;
         DirectTransfer.Visibility = message.deletedForEveryone || message.directTransfer is null ? Visibility.Collapsed : Visibility.Visible;
 
         if (!message.deletedForEveryone && message.attachments != null && message.attachments.Length > 0)
@@ -350,7 +349,7 @@ public partial class MessageBubble : UserControl
         {
             var audio = new AudioMessageControl($"{_message?.id}:{att.htreeUrl}", att.filename,
                 () => Application.Current is App app
-                    ? app.Manager.DownloadAttachmentAsync(att) : Task.FromResult<byte[]?>(null));
+                    ? app.Manager.DownloadAttachmentAsync(att) : Task.FromResult<byte[]?>(null), Foreground);
             audio.ContextMenu = BuildAttachmentContextMenu(att);
             return audio;
         }
@@ -358,6 +357,7 @@ public partial class MessageBubble : UserControl
         var fileBtn = new Button
         {
             Style = (Style)FindResource("SecondaryButton"),
+            Foreground = Foreground,
             Margin = new Thickness(0, 4, 0, 0),
             HorizontalContentAlignment = HorizontalAlignment.Left,
             Content = new StackPanel
@@ -365,11 +365,11 @@ public partial class MessageBubble : UserControl
                 Orientation = Orientation.Horizontal,
                 Children =
                 {
-                    new TextBlock { Text = "📎 ", FontSize = 14, VerticalAlignment = VerticalAlignment.Center },
+                    new TextBlock { Text = "📎 ", Foreground = Foreground, FontSize = 14, VerticalAlignment = VerticalAlignment.Center },
                     new TextBlock
                     {
                         Text = string.IsNullOrEmpty(att.filename) ? "Attachment" : att.filename,
-                        Foreground = (Brush)FindResource("TextPrimary"),
+                        Foreground = Foreground,
                         FontSize = 13,
                         VerticalAlignment = VerticalAlignment.Center,
                     },

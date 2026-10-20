@@ -4,21 +4,44 @@
              xmlns:local="clr-namespace:IrisChat">
     <Application.Resources>
         <ResourceDictionary>
-            <!-- Default iOS dark palette; App.xaml.cs applies light values on light Windows themes. -->
-            <SolidColorBrush x:Key="Background" Color="#FF000000" />
-            <SolidColorBrush x:Key="Panel" Color="#FF161616" />
-            <SolidColorBrush x:Key="PanelAlt" Color="#FF262626" />
-            <SolidColorBrush x:Key="Border" Color="#1FFFFFFF" />
-            <SolidColorBrush x:Key="Toolbar" Color="#F50A0A0A" />
-            <SolidColorBrush x:Key="BubbleMine" Color="#FF702ACE" />
-            <SolidColorBrush x:Key="BubbleTheirs" Color="#FF3A3A3A" />
-            <SolidColorBrush x:Key="Accent" Color="#FF702ACE" />
-            <SolidColorBrush x:Key="AccentAlt" Color="#FFDB8216" />
-            <SolidColorBrush x:Key="TextPrimary" Color="#FFFFFFFF" />
-            <SolidColorBrush x:Key="TextMuted" Color="#FFD1D5DB" />
-            <SolidColorBrush x:Key="OnAccent" Color="#FFFFFFFF" />
-            <SolidColorBrush x:Key="DangerSubtle" Color="#33D63950" />
-            <SolidColorBrush x:Key="Danger" Color="#FFD63950" />
+            <!-- Bind every brush (including style-created clones) to one palette.
+                 Bindings keep WPF from freezing the original dark colors. -->
+            <local:ThemeColors x:Key="ThemeColors">
+                <Color x:Key="Background">#FF000000</Color>
+                <Color x:Key="Panel">#FF161616</Color>
+                <Color x:Key="PanelAlt">#FF262626</Color>
+                <Color x:Key="Border">#1FFFFFFF</Color>
+                <Color x:Key="Toolbar">#F50A0A0A</Color>
+                <Color x:Key="BubbleMine">#FF702ACE</Color>
+                <Color x:Key="BubbleTheirs">#FF3A3A3A</Color>
+                <Color x:Key="Accent">#FF702ACE</Color>
+                <Color x:Key="AccentAlt">#FFDB8216</Color>
+                <Color x:Key="TextPrimary">#FFFFFFFF</Color>
+                <Color x:Key="TextMuted">#FFD1D5DB</Color>
+                <Color x:Key="OnAccent">#FFFFFFFF</Color>
+                <Color x:Key="DangerSubtle">#33D63950</Color>
+                <Color x:Key="Danger">#FFFF7485</Color>
+                <Color x:Key="ControlHover">#14FFFFFF</Color>
+                <Color x:Key="ControlPressed">#24FFFFFF</Color>
+                <Color x:Key="AccentText">#FFB47AF0</Color>
+            </local:ThemeColors>
+            <SolidColorBrush x:Key="Background" Color="{Binding [Background], Source={StaticResource ThemeColors}}" />
+            <SolidColorBrush x:Key="Panel" Color="{Binding [Panel], Source={StaticResource ThemeColors}}" />
+            <SolidColorBrush x:Key="PanelAlt" Color="{Binding [PanelAlt], Source={StaticResource ThemeColors}}" />
+            <SolidColorBrush x:Key="Border" Color="{Binding [Border], Source={StaticResource ThemeColors}}" />
+            <SolidColorBrush x:Key="Toolbar" Color="{Binding [Toolbar], Source={StaticResource ThemeColors}}" />
+            <SolidColorBrush x:Key="BubbleMine" Color="{Binding [BubbleMine], Source={StaticResource ThemeColors}}" />
+            <SolidColorBrush x:Key="BubbleTheirs" Color="{Binding [BubbleTheirs], Source={StaticResource ThemeColors}}" />
+            <SolidColorBrush x:Key="Accent" Color="{Binding [Accent], Source={StaticResource ThemeColors}}" />
+            <SolidColorBrush x:Key="AccentAlt" Color="{Binding [AccentAlt], Source={StaticResource ThemeColors}}" />
+            <SolidColorBrush x:Key="TextPrimary" Color="{Binding [TextPrimary], Source={StaticResource ThemeColors}}" />
+            <SolidColorBrush x:Key="TextMuted" Color="{Binding [TextMuted], Source={StaticResource ThemeColors}}" />
+            <SolidColorBrush x:Key="OnAccent" Color="{Binding [OnAccent], Source={StaticResource ThemeColors}}" />
+            <SolidColorBrush x:Key="DangerSubtle" Color="{Binding [DangerSubtle], Source={StaticResource ThemeColors}}" />
+            <SolidColorBrush x:Key="Danger" Color="{Binding [Danger], Source={StaticResource ThemeColors}}" />
+            <SolidColorBrush x:Key="ControlHover" Color="{Binding [ControlHover], Source={StaticResource ThemeColors}}" />
+            <SolidColorBrush x:Key="ControlPressed" Color="{Binding [ControlPressed], Source={StaticResource ThemeColors}}" />
+            <SolidColorBrush x:Key="AccentText" Color="{Binding [AccentText], Source={StaticResource ThemeColors}}" />
 
             <!-- Layout constants -->
             <CornerRadius x:Key="TopBarRadius">18</CornerRadius>
@@ -28,10 +51,13 @@
             <CornerRadius x:Key="CompactButtonRadius">14</CornerRadius>
             <CornerRadius x:Key="PillRadius">14</CornerRadius>
 
-            <!-- Default control styles for the dark theme. WPF defaults are
-                 light/Aero so we must template each control we use. -->
-            <Style TargetType="{x:Type TextBlock}">
+            <!-- Let text inside controls inherit their foreground, including
+                 white labels on accent buttons and colored danger actions. -->
+            <Style TargetType="{x:Type Window}">
                 <Setter Property="Foreground" Value="{StaticResource TextPrimary}" />
+                <Setter Property="Background" Value="{StaticResource Background}" />
+            </Style>
+            <Style TargetType="{x:Type TextBlock}">
                 <Setter Property="FontSize" Value="14" />
                 <Setter Property="TextOptions.TextFormattingMode" Value="Display" />
             </Style>
@@ -40,7 +66,7 @@
                 <Setter Property="Template">
                     <Setter.Value>
                         <ControlTemplate>
-                            <Border BorderBrush="{DynamicResource Accent}" BorderThickness="2"
+                            <Border BorderBrush="{DynamicResource AccentText}" BorderThickness="2"
                                     CornerRadius="6" Margin="2" IsHitTestVisible="False" />
                         </ControlTemplate>
                     </Setter.Value>
@@ -89,7 +115,7 @@
                             </Border>
                             <ControlTemplate.Triggers>
                                 <Trigger Property="IsKeyboardFocused" Value="True">
-                                    <Setter TargetName="Bd" Property="BorderBrush" Value="{StaticResource Accent}" />
+                                    <Setter TargetName="Bd" Property="BorderBrush" Value="{StaticResource AccentText}" />
                                 </Trigger>
                                 <Trigger Property="IsEnabled" Value="False">
                                     <Setter Property="Opacity" Value="0.4" />
@@ -271,13 +297,13 @@
                             </Border>
                             <ControlTemplate.Triggers>
                                 <Trigger Property="IsMouseOver" Value="True">
-                                    <Setter TargetName="Circle" Property="Background" Value="#14FFFFFF" />
+                                    <Setter TargetName="Circle" Property="Background" Value="{StaticResource ControlHover}" />
                                 </Trigger>
                                 <Trigger Property="IsPressed" Value="True">
-                                    <Setter TargetName="Circle" Property="Background" Value="#24FFFFFF" />
+                                    <Setter TargetName="Circle" Property="Background" Value="{StaticResource ControlPressed}" />
                                 </Trigger>
                                 <Trigger Property="IsKeyboardFocused" Value="True">
-                                    <Setter TargetName="Circle" Property="BorderBrush" Value="{StaticResource Accent}" />
+                                    <Setter TargetName="Circle" Property="BorderBrush" Value="{StaticResource AccentText}" />
                                 </Trigger>
                                 <Trigger Property="IsEnabled" Value="False">
                                     <Setter Property="Opacity" Value="0.4" />

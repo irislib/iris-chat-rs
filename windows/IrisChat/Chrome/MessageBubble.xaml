@@ -1,4 +1,5 @@
 <UserControl x:Class="IrisChat.Chrome.MessageBubble"
+             x:Name="RootBubble"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
     <UserControl.ContextMenu>
@@ -14,12 +15,12 @@
             MaxWidth="540">
         <StackPanel>
             <TextBlock x:Name="AuthorText"
-                       Foreground="{StaticResource TextMuted}"
+                       Foreground="{Binding Foreground, ElementName=RootBubble}"
                        FontSize="11"
                        Margin="0,0,0,2"
                        Visibility="Collapsed" />
             <RichTextBox x:Name="BodyText"
-                     Foreground="White"
+                     Foreground="{Binding Foreground, ElementName=RootBubble}"
                      FontSize="14"
                      IsDocumentEnabled="True"
                      IsReadOnly="True"
@@ -35,14 +36,10 @@
                 <TextBlock x:Name="SystemNoticeProfileText" TextWrapping="Wrap"
                            TextAlignment="Center" Foreground="{StaticResource TextMuted}" />
             </Button>
-            <!-- Foreground is plain white (not Accent purple) — text and
-                 icons are never the brand purple. Opacity matches the
-                 timestamp/meta row so the toggle reads as a subtle
-                 affordance attached to the bubble, not a separate accent. -->
+            <!-- All bubble content follows its direction-specific foreground. -->
             <TextBlock x:Name="ShowMoreLink"
                        Visibility="Collapsed"
-                       Foreground="White"
-                       Opacity="0.85"
+                       Foreground="{Binding Foreground, ElementName=RootBubble}"
                        FontSize="12"
                        FontWeight="SemiBold"
                        Margin="0,4,0,0"
@@ -58,16 +55,14 @@
                         HorizontalAlignment="Right"
                         Margin="0,4,0,0">
                 <TextBlock x:Name="TimeText"
-                           Foreground="#FFFFFFFF"
-                           Opacity="0.6"
+                           Foreground="{Binding Foreground, ElementName=RootBubble}"
                            FontSize="10" />
                 <Button x:Name="EditedButton" Content="Edited" Visibility="Collapsed"
                         Click="OnShowEditHistory" Background="Transparent" BorderThickness="0" Cursor="Hand"
-                        Foreground="White" Opacity="0.8" FontSize="10" Padding="0"
+                        Foreground="{Binding Foreground, ElementName=RootBubble}" FontSize="10" Padding="0"
                         Margin="6,0,0,0" ToolTip="Edit history" />
                 <TextBlock x:Name="DeliveryText"
-                           Foreground="#FFFFFFFF"
-                           Opacity="0.6"
+                           Foreground="{Binding Foreground, ElementName=RootBubble}"
                            FontSize="10"
                            Margin="6,0,0,0" />
             </StackPanel>

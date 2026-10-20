@@ -26,7 +26,12 @@ public partial class App : Application
         string AccentAlt,
         string TextPrimary,
         string TextMuted,
-        string OnAccent);
+        string OnAccent,
+        string Danger,
+        string DangerSubtle,
+        string ControlHover,
+        string ControlPressed,
+        string AccentText);
 
     private static readonly PlatformPalette LightPalette = new(
         "#FFFFFFFF",
@@ -40,7 +45,12 @@ public partial class App : Application
         "#FFDB8216",
         "#FF0F1419",
         "#FF536471",
-        "#FFFFFFFF");
+        "#FFFFFFFF",
+        "#FFB4233D",
+        "#14B4233D",
+        "#0F000000",
+        "#1F000000",
+        "#FF702ACE");
 
     private static readonly PlatformPalette DarkPalette = new(
         "#FF000000",
@@ -54,7 +64,12 @@ public partial class App : Application
         "#FFDB8216",
         "#FFFFFFFF",
         "#FFD1D5DB",
-        "#FFFFFFFF");
+        "#FFFFFFFF",
+        "#FFFF7485",
+        "#33D63950",
+        "#14FFFFFF",
+        "#24FFFFFF",
+        "#FFB47AF0");
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -111,6 +126,7 @@ public partial class App : Application
                 : null
         );
         ApplyPlatformPalette();
+        SystemEvents.UserPreferenceChanged += OnUserPreferenceChanged;
         var startMinimized = IsBackgroundLaunch(e.Args);
         var window = new MainWindow(dataDir, startMinimized);
         _window = window;
@@ -122,6 +138,7 @@ public partial class App : Application
 
     protected override void OnExit(ExitEventArgs e)
     {
+        SystemEvents.UserPreferenceChanged -= OnUserPreferenceChanged;
         _singleInstance?.Dispose();
         Manager?.Shutdown();
         base.OnExit(e);
@@ -162,38 +179,46 @@ public partial class App : Application
         args.Any(arg =>
             string.Equals(arg, PlatformStartupAtLogin.BackgroundLaunchArgument, StringComparison.OrdinalIgnoreCase));
 
-    private static void ApplyPlatformPalette()
+    private void OnUserPreferenceChanged(object sender, UserPreferenceChangedEventArgs e)
     {
-        var palette = UsesWindowsLightAppTheme() ? LightPalette : DarkPalette;
-        SetBrush("Background", palette.Background);
-        SetBrush("Panel", palette.Panel);
-        SetBrush("PanelAlt", palette.PanelAlt);
-        SetBrush("Border", palette.Border);
-        SetBrush("Toolbar", palette.Toolbar);
-        SetBrush("BubbleMine", palette.BubbleMine);
-        SetBrush("BubbleTheirs", palette.BubbleTheirs);
-        SetBrush("Accent", palette.Accent);
-        SetBrush("AccentAlt", palette.AccentAlt);
-        SetBrush("TextPrimary", palette.TextPrimary);
-        SetBrush("TextMuted", palette.TextMuted);
-        SetBrush("OnAccent", palette.OnAccent);
+        if (!Dispatcher.HasShutdownStarted)
+            Dispatcher.BeginInvoke(new Action(ApplyPlatformPalette));
+    }
+
+    private static void ApplyPlatformPalette() => ApplyPalette(UsesWindowsLightAppTheme());
+
+    private static void ApplyPalette(bool light)
+    {
+        var palette = light ? LightPalette : DarkPalette;
+        SetColor("Background", palette.Background);
+        SetColor("Panel", palette.Panel);
+        SetColor("PanelAlt", palette.PanelAlt);
+        SetColor("Border", palette.Border);
+        SetColor("Toolbar", palette.Toolbar);
+        SetColor("BubbleMine", palette.BubbleMine);
+        SetColor("BubbleTheirs", palette.BubbleTheirs);
+        SetColor("Accent", palette.Accent);
+        SetColor("AccentAlt", palette.AccentAlt);
+        SetColor("TextPrimary", palette.TextPrimary);
+        SetColor("TextMuted", palette.TextMuted);
+        SetColor("OnAccent", palette.OnAccent);
+        SetColor("Danger", palette.Danger);
+        SetColor("DangerSubtle", palette.DangerSubtle);
+        SetColor("ControlHover", palette.ControlHover);
+        SetColor("ControlPressed", palette.ControlPressed);
+        SetColor("AccentText", palette.AccentText);
+        ((ThemeColors)Current.Resources["ThemeColors"]).Refresh();
     }
 
     private static bool UsesWindowsLightAppTheme()
     {
         const string personalize = @"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize";
         var value = Registry.GetValue(personalize, "AppsUseLightTheme", null);
-        return value is int intValue && intValue != 0;
+        return value is not int intValue || intValue != 0;
     }
 
-    private static void SetBrush(string key, string color)
+    private static void SetColor(string key, string color)
     {
-        var colorValue = (Color)ColorConverter.ConvertFromString(color)!;
-        if (Current.Resources[key] is SolidColorBrush brush && !brush.IsFrozen)
-        {
-            brush.Color = colorValue;
-            return;
-        }
-        Current.Resources[key] = new SolidColorBrush(colorValue);
+        ((ThemeColors)Current.Resources["ThemeColors"])[key] = (Color)ColorConverter.ConvertFromString(color)!;
     }
 }

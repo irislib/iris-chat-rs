@@ -86,3 +86,20 @@ dotnet run --project windows/KeyboardTests/KeyboardTests.csproj -c Release -- wo
 This uses a separate test profile and checks Tab/Shift-Tab, arrow navigation,
 Enter/Space activation, focus during updates, and composer isolation. It saves
 `work/keyboard/windows-keyboard.png` for visual review.
+
+## Theme regression
+
+The app follows Windows Settings → Personalization → Colors → Choose your mode,
+including changes while it is open. Run the native theme checks on Windows with:
+
+```powershell
+dotnet run --project windows/ThemeTests/ThemeTests.csproj -c Release -- work/themes
+```
+
+This uses an isolated offline profile, materializes styles before selecting the
+light palette, and checks all 13 settings pages, navigation, onboarding, chat and
+attachment controls in both palettes. It also checks existing controls after
+live theme changes. Enabled text must have at least 4.5:1 contrast; interface
+icons must have at least 3:1. Avatar initials and badges are included; uploaded
+image pixels are not evaluated. Screenshots
+for visual review are saved to `work/themes/` and uploaded by Windows CI.

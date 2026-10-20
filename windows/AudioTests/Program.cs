@@ -30,7 +30,7 @@ internal static class Program
         XNamespace xaml = "http://schemas.microsoft.com/winfx/2006/xaml/presentation";
         var resources = XDocument.Load(Path.Combine(AppContext.BaseDirectory, "App.xaml")).Descendants(xaml + "ResourceDictionary").Single();
         resources.SetAttributeValue(XNamespace.Xmlns + "x", "http://schemas.microsoft.com/winfx/2006/xaml");
-        app.Resources = (ResourceDictionary)XamlReader.Parse(resources.ToString());
+        app.Resources = (ResourceDictionary)XamlReader.Parse(resources.ToString().Replace("clr-namespace:IrisChat", "clr-namespace:IrisChat;assembly=AudioTests"));
         var column = new StackPanel { Margin = new Thickness(24) };
         var window = new Window { Title = "Voice messages", Width = 580, Height = 280, Content = column, Background = new SolidColorBrush(Color.FromRgb(18,18,18)) };
         var bytes = File.ReadAllBytes(Path.Combine(AppContext.BaseDirectory, "voice-message.m4a"));

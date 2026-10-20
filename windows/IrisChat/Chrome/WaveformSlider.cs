@@ -21,7 +21,7 @@ public sealed class WaveformSlider : Slider
     public WaveformSlider()
     {
         Height = 32;
-        Foreground = Brushes.White;
+        SetResourceReference(ForegroundProperty, "TextPrimary");
         Template = new ControlTemplate(typeof(Slider));
         ValueChanged += (_, _) => InvalidateVisual();
         IsEnabledChanged += (_, _) => InvalidateVisual();
@@ -37,7 +37,7 @@ public sealed class WaveformSlider : Slider
         for (var i = 0; i < AudioWaveform.BarCount; i++)
         {
             var height = 3 + (i < _peaks.Count ? _peaks[i] : 0) * 21;
-            dc.PushOpacity((i + 0.5) / AudioWaveform.BarCount <= fraction ? 1 : 0.35);
+            dc.PushOpacity((i + 0.5) / AudioWaveform.BarCount <= fraction ? 1 : 0.7);
             dc.DrawRoundedRectangle(Foreground, null, new Rect(4 + i * step, (ActualHeight - height) / 2, Math.Max(1, step - 1.5), height), 1, 1);
             dc.Pop();
         }

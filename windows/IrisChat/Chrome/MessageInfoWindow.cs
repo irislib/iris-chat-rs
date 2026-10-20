@@ -27,6 +27,7 @@ public class MessageInfoWindow : Window
         _manager = App.CurrentManager;
         _accountAtOpen = _manager.Account?.publicKeyHex;
         Title = "Message Details";
+        Foreground = (Brush)Application.Current.Resources["TextPrimary"];
         Width = 460;
         Height = 600;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;

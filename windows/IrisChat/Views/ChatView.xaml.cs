@@ -448,17 +448,20 @@ public partial class ChatView : UserControl
             {
                 var relationship = new DockPanel { Margin = new Thickness(0, 0, 0, 12) };
                 if (connection.badge is not null)
+                {
+                    var badgeBackground = Avatar.SocialBadgeBackground(connection.badge, ResourceBrush("AccentAlt"));
                     relationship.Children.Add(new Border {
                         Width = 16, Height = 16, CornerRadius = new CornerRadius(8),
                         Margin = new Thickness(0, 0, 6, 0), VerticalAlignment = VerticalAlignment.Center,
-                        Background = Avatar.SocialBadgeBackground(connection.badge, ResourceBrush("AccentAlt")),
+                        Background = badgeBackground,
                         Child = new TextBlock {
-                            Text = Avatar.SocialBadgeGlyph(connection.badge), Foreground = Brushes.White,
+                            Text = Avatar.SocialBadgeGlyph(connection.badge), Foreground = Avatar.ContrastForeground(badgeBackground),
                             FontSize = 11, FontWeight = FontWeights.Bold,
                             HorizontalAlignment = HorizontalAlignment.Center,
                             VerticalAlignment = VerticalAlignment.Center,
                         },
                     });
+                }
                 relationship.Children.Add(new TextBlock {
                     Text = connection.description,
                     Foreground = ResourceBrush("TextMuted"), TextWrapping = TextWrapping.Wrap,
@@ -624,7 +627,7 @@ public partial class ChatView : UserControl
             }
             block.Inlines.Add(new Run(match.Value)
             {
-                Foreground = ResourceBrush("Accent"),
+                Foreground = ResourceBrush("AccentText"),
                 TextDecorations = TextDecorations.Underline,
             });
             cursor = match.Index + match.Length;

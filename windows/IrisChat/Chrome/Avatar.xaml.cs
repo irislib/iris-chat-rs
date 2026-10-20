@@ -109,6 +109,7 @@ public partial class Avatar : UserControl
         if (connection?.badge == null) return;
         SocialMark.ToolTip = connection.description;
         SocialMark.Background = SocialBadgeBackground(connection.badge, (Brush)FindResource("AccentAlt"));
+        SocialMarkText.Foreground = ContrastForeground(SocialMark.Background);
         SocialMarkText.Text = SocialBadgeGlyph(connection.badge);
         System.Windows.Automation.AutomationProperties.SetName(SocialMark, connection.description);
     }
@@ -125,6 +126,18 @@ public partial class Avatar : UserControl
 
     internal static string SocialBadgeGlyph(SocialBadge? badge) =>
         badge == SocialBadge.Warning ? "!" : badge == SocialBadge.Muted ? "−" : "✓";
+
+    internal static Brush ContrastForeground(Brush background)
+    {
+        var color = ((SolidColorBrush)background).Color;
+        static double Linear(byte channel)
+        {
+            var value = channel / 255.0;
+            return value <= 0.04045 ? value / 12.92 : Math.Pow((value + 0.055) / 1.055, 2.4);
+        }
+        var luminance = 0.2126 * Linear(color.R) + 0.7152 * Linear(color.G) + 0.0722 * Linear(color.B);
+        return luminance > 0.179 ? Brushes.Black : Brushes.White;
+    }
 
     public string Label
     {
@@ -212,6 +225,7 @@ public partial class Avatar : UserControl
             ?? Native.PresentPersonName("", OwnerPubkeyHex!, null).name : Label ?? string.Empty;
         Initials.Text = ComputeInitials(label);
         BackgroundBorder.Background = new SolidColorBrush(ColorFor(label));
+        Initials.Foreground = ContrastForeground(BackgroundBorder.Background);
     }
 
     private async void UpdateImage()

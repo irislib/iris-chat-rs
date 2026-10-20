@@ -26,6 +26,7 @@ public sealed class MessageEditHistoryWindow : Window
         _chatId = target.chatId;
         _messageId = target.id;
         Title = "Edit history";
+        Foreground = (Brush)FindResource("TextPrimary");
         Width = 440;
         Height = 520;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
