@@ -16,6 +16,7 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 - Require the new private messaging protocol, retire old sessions and invitations, and retain old unsent ciphertext locally without republishing it. Keep chat history.
 - Add serialized-event and upgrade regressions for identity correlation, first replies, calls, notification subscriptions and queued-message replay.
 - Keep Windows text, controls and attachments readable in light and dark themes, and follow Windows theme changes while the app is open.
+- Give Windows settings a full-window layout with keyboard navigation, compact forms and switches. Preserve profile edits when switching settings pages.
 
 ### Apple
 
