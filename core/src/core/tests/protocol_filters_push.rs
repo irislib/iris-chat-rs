@@ -1201,72 +1201,60 @@ fn relay_publish_success_sweeps_ready_outgoing_messages() {
 }
 
 #[test]
-fn sender_key_group_payload_publish_ack_marks_sent_after_outer_success() {
-    let owner = Keys::generate();
-    let device = Keys::generate();
-    let mut core = logged_in_test_core("sender-key-group-publish-completion", &owner, &device);
-
-    core.create_group("Sender key group", &[]);
-    let chat_id = core.active_chat_id.clone().expect("active group chat");
-    core.pending_relay_publishes.clear();
-
-    core.send_group_message(
-        &chat_id,
-        "sender-key visible message",
-        UnixSeconds(1_777_159_600),
-        None,
-    );
-
-    let message_id = core
-        .threads
-        .get(&chat_id)
-        .and_then(|thread| {
-            thread
-                .messages
-                .iter()
-                .find(|message| message.body == "sender-key visible message")
-        })
-        .map(|message| message.id.clone())
-        .expect("outgoing group message");
-    let event_id = core
+fn private_group_payload_publish_ack_marks_sent_after_recipient_carrier_success() {
+    let mut farm = GroupScaleFarm::new(&[1, 1]);
+    farm.pump();
+    let member = farm.owners[1].public_key().to_hex();
+    farm.devices[0]
+        .core
+        .create_group("Private group", &[member]);
+    farm.pump();
+    let group_id = farm.devices[0].core.groups.keys().next().unwrap().clone();
+    let chat_id = group_chat_id(&group_id);
+    let (message_id, _) = farm.send(0, &chat_id, "private group visible message");
+    let recipient = farm.devices[1].keys.public_key();
+    let core = &mut farm.devices[0].core;
+    let pending = core
         .pending_relay_publishes
         .values()
-        .find(|pending| {
+        .filter(|pending| {
             pending.chat_id.as_deref() == Some(chat_id.as_str())
                 && pending.inner_event_id.as_deref() == Some(message_id.as_str())
         })
-        .map(|pending| pending.event_id.clone())
-        .expect("sender-key group message pending relay publish");
-    let message = core
-        .threads
-        .get(&chat_id)
-        .and_then(|thread| {
-            thread
-                .messages
-                .iter()
-                .find(|message| message.id == message_id)
-        })
-        .expect("message before relay ack");
-    assert_ne!(message.delivery, DeliveryState::Sent);
-
+        .collect::<Vec<_>>();
+    assert_eq!(pending.len(), 1, "one recipient gets one private carrier");
+    let event: Event = serde_json::from_str(&pending[0].event_json).unwrap();
+    assert!(event.tags.public_keys().any(|key| *key == recipient));
+    assert!(!core
+        .protocol_engine
+        .as_ref()
+        .unwrap()
+        .is_known_group_sender_event_author(event.pubkey));
+    let event_id = pending[0].event_id.clone();
+    assert_ne!(
+        core.threads[&chat_id]
+            .messages
+            .iter()
+            .find(|message| message.id == message_id)
+            .unwrap()
+            .delivery,
+        DeliveryState::Sent
+    );
     core.handle_relay_publish_finished(
         event_id,
         true,
-        vec!["wss://relay.example".to_string()],
-        "sender-key group message ack".to_string(),
+        vec!["wss://relay.example".into()],
+        "private group recipient carrier ack".into(),
     );
-
-    let message = core
-        .threads
-        .get(&chat_id)
-        .and_then(|thread| {
-            thread
-                .messages
-                .iter()
-                .find(|message| message.id == message_id)
-        })
-        .expect("message after relay ack");
-    assert_eq!(message.delivery, DeliveryState::Sent);
+    assert_eq!(
+        core.threads[&chat_id]
+            .messages
+            .iter()
+            .find(|message| message.id == message_id)
+            .unwrap()
+            .delivery,
+        DeliveryState::Sent
+    );
 }
 
 #[test]

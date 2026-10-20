@@ -213,7 +213,11 @@ fn attached_group_replay_preserves_normal_saves_and_revokes_changed_permissions(
             Kind::Custom(MESSAGE_EVENT_KIND as u16),
             "opaque signed group envelope",
         )
-        .sign_with_keys(&peer)
+        .tags([
+            nostr::Tag::parse(["v", "2"]).unwrap(),
+            nostr::Tag::public_key(owner.public_key()),
+        ])
+        .sign_with_keys(&Keys::generate())
         .unwrap();
         core.apply_runtime_text_message(
             peer.public_key(),

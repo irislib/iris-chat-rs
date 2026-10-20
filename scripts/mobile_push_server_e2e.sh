@@ -6,8 +6,9 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SERVER_URL="${IRIS_MOBILE_PUSH_E2E_SERVER_URL:-https://notifications.iris.to}"
 IOS_HARNESS="$ROOT/scripts/run_ios_harness.py"
 ANDROID_HARNESS="$ROOT/scripts/run_harness.py"
-ANDROID_PACKAGE="to.iris.chat.debug"
-ANDROID_TEST_PACKAGE="to.iris.chat.test"
+ANDROID_PACKAGE="${IRIS_ANDROID_PUSH_E2E_PACKAGE:-to.iris.chat.debug}"
+ANDROID_TEST_PACKAGE="${IRIS_ANDROID_PUSH_E2E_TEST_PACKAGE:-to.iris.chat.test}"
+ANDROID_USER="${IRIS_ANDROID_PUSH_E2E_USER:-}"
 ANDROID_RUNNER="$ANDROID_TEST_PACKAGE/androidx.test.runner.AndroidJUnitRunner"
 ANDROID_CHAT_CLASS="to.iris.chat.RealRelayHarnessTest"
 ANDROID_PUSH_CLASS="to.iris.chat.push.FirebaseChatNotificationE2eTest"
@@ -18,6 +19,31 @@ MESSAGE_IOS="server-apns-$RUN_ID"
 MESSAGE_ANDROID="server-fcm-$RUN_ID"
 IOS_PUSH_LOG=""
 IOS_PUSH_PID=""
+
+validate_android_test_user() {
+  python3 - "$ROOT/scripts" "$ADB" "$ANDROID_SERIAL_RESOLVED" "$ANDROID_USER" <<'PYTHON'
+import sys
+sys.path.insert(0, sys.argv[1])
+from run_harness import verify_isolated_android_user
+verify_isolated_android_user(*sys.argv[2:])
+PYTHON
+}
+
+android_package_pids() {
+  "$ADB" -s "$ANDROID_SERIAL_RESOLVED" shell ps -A -o UID,PID,NAME </dev/null |
+    awk -v user="$ANDROID_USER" -v package="$ANDROID_PACKAGE" \
+      '$1 ~ /^[0-9]+$/ && int($1 / 100000) == user && ($3 == package || index($3, package ":") == 1) { print $2 }'
+}
+
+build_android_packages() {
+  (
+    cd "$ROOT/android"
+    IRIS_MOBILE_PUSH_SERVER_URL="$SERVER_URL" \
+      IRIS_DEBUG_APPLICATION_ID_SUFFIX="${ANDROID_PACKAGE#to.iris.chat}" \
+      IRIS_TEST_APPLICATION_ID="$ANDROID_TEST_PACKAGE" \
+      ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest
+  )
+}
 
 android_sdk() {
   if [[ -n "${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}" ]]; then
@@ -74,7 +100,7 @@ resolve_android_push_serial() {
 
 has_google_play_services() {
   local packages
-  packages="$("$ADB" -s "$1" shell pm path com.google.android.gms </dev/null 2>/dev/null || true)"
+  packages="$("$ADB" -s "$1" shell pm path --user "${ANDROID_USER:-0}" com.google.android.gms </dev/null 2>/dev/null || true)"
   [[ "$packages" == *"package:"* ]]
 }
 
@@ -130,6 +156,9 @@ run_android() {
     --adb "$ADB"
     --serial "$ANDROID_SERIAL_RESOLVED"
     --runner "$ANDROID_RUNNER"
+    --package "$ANDROID_PACKAGE"
+    --user "$ANDROID_USER"
+    --require-isolated-user
     --class-name "$class_name"
     --test-name "$test_name"
     --arg clearPackageData=false
@@ -190,8 +219,6 @@ cleanup() {
 if [[ "${IRIS_MOBILE_PUSH_E2E_SOURCE_ONLY:-0}" == "1" ]]; then
   return 0 2>/dev/null || exit 0
 fi
-trap cleanup EXIT
-
 SDK="$(android_sdk)"
 require_value "Android SDK" "$SDK"
 ADB="$SDK/platform-tools/adb"
@@ -207,6 +234,9 @@ if ! has_google_play_services "$ANDROID_SERIAL_RESOLVED"; then
   echo "The Android notification E2E requires Google Play services for FCM." >&2
   exit 1
 fi
+
+validate_android_test_user
+trap cleanup EXIT
 
 echo "Building physical iOS test host with current Rust core"
 "$ROOT/scripts/ios-build" ios-xcframework
@@ -227,17 +257,13 @@ ios_notifications_deliverable <<<"$IOS_AUTHORIZATION" || {
 }
 
 echo "Building and installing Android E2E packages"
-(
-  cd "$ROOT/android"
-  IRIS_MOBILE_PUSH_SERVER_URL="$SERVER_URL" \
-    ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest
-)
-"$ADB" -s "$ANDROID_SERIAL_RESOLVED" install -r -d \
+build_android_packages
+"$ADB" -s "$ANDROID_SERIAL_RESOLVED" install --user "$ANDROID_USER" -r -d \
   "$ROOT/android/app/build/outputs/apk/debug/app-debug.apk" >/dev/null
-"$ADB" -s "$ANDROID_SERIAL_RESOLVED" install -r -d \
+"$ADB" -s "$ANDROID_SERIAL_RESOLVED" install --user "$ANDROID_USER" -r -d \
   "$ROOT/android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk" >/dev/null
-"$ADB" -s "$ANDROID_SERIAL_RESOLVED" shell pm clear "$ANDROID_PACKAGE" >/dev/null
-"$ADB" -s "$ANDROID_SERIAL_RESOLVED" shell pm grant \
+"$ADB" -s "$ANDROID_SERIAL_RESOLVED" shell pm clear --user "$ANDROID_USER" "$ANDROID_PACKAGE" >/dev/null
+"$ADB" -s "$ANDROID_SERIAL_RESOLVED" shell pm grant --user "$ANDROID_USER" \
   "$ANDROID_PACKAGE" android.permission.POST_NOTIFICATIONS >/dev/null 2>&1 || true
 
 ANDROID_IDENTITY="$(run_android "$ANDROID_CHAT_CLASS" create_account_and_report_identity)"
@@ -307,7 +333,7 @@ require_value "iOS delivered notification" \
 echo "Verifying notifications.iris.to → FCM → physical Android"
 run_android "$ANDROID_PUSH_CLASS" clear_push_probe >/dev/null
 "$ADB" -s "$ANDROID_SERIAL_RESOLVED" shell input keyevent HOME >/dev/null 2>&1 || true
-"$ADB" -s "$ANDROID_SERIAL_RESOLVED" shell am kill "$ANDROID_PACKAGE" >/dev/null 2>&1 || true
+"$ADB" -s "$ANDROID_SERIAL_RESOLVED" shell am kill --user "$ANDROID_USER" "$ANDROID_PACKAGE" >/dev/null 2>&1 || true
 run_ios send_message_from_args \
   peer_input "$ANDROID_NPUB" message "$MESSAGE_ANDROID" wait_for_delivery false >/dev/null
 # Starting instrumentation force-stops the target package. Let the FCM-woken
@@ -315,8 +341,7 @@ run_ios send_message_from_args \
 ANDROID_WAKE_PIDS=""
 for _ in $(seq 1 "${FCM_E2E_WAKE_POLL_SECS:-45}"); do
   ANDROID_WAKE_PIDS="$(
-    "$ADB" -s "$ANDROID_SERIAL_RESOLVED" shell pidof "$ANDROID_PACKAGE" </dev/null 2>/dev/null |
-      tr -d '\r' || true
+    android_package_pids 2>/dev/null | tr -d '\r' || true
   )"
   [[ -z "$ANDROID_WAKE_PIDS" ]] || break
   sleep 1

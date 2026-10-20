@@ -2,6 +2,11 @@ use super::*;
 use futures_util::{SinkExt, StreamExt};
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 
+mod raw;
+use raw::publish_event_raw;
+#[cfg(test)]
+pub(in crate::core) use raw::tests::{authenticated_relay, identity_receiver};
+
 const RELAY_PUBLISH_TIMEOUT_SECS: u64 = 10;
 const RELAY_PUBLISH_TIMEOUT: Duration = Duration::from_secs(RELAY_PUBLISH_TIMEOUT_SECS);
 pub(super) const RELAY_PUBLISH_ATTEMPT_TIMEOUT: Duration =
@@ -81,6 +86,10 @@ pub(super) async fn publish_event_to_any_relay(
         return Err(anyhow::anyhow!("{label}: no relays configured"));
     }
 
+    if requires_private_relay_connection(event) {
+        return publish_event_to_any_relay_raw(relay_urls, event, label).await;
+    }
+
     if relay_urls.len() == 1 {
         if let Ok(accepted) = publish_event_with_client(client, relay_urls, event).await {
             return Ok(accepted);
@@ -98,6 +107,10 @@ pub(super) async fn publish_event_to_any_connected_relay(
 ) -> anyhow::Result<Vec<String>> {
     if relay_urls.is_empty() {
         return Err(anyhow::anyhow!("{label}: no relays configured"));
+    }
+
+    if requires_private_relay_connection(event) {
+        return publish_event_to_any_relay_raw(relay_urls, event, label).await;
     }
 
     match publish_event_with_connected_client(client, relay_urls, event).await {
@@ -262,60 +275,11 @@ async fn publish_event_with_connected_client(
     ))
 }
 
-async fn publish_event_raw(relay_url: &RelayUrl, event: &Event) -> anyhow::Result<()> {
-    let relay_label = relay_url.to_string();
-    let event_id = event.id.to_string();
-    let (mut socket, _) = connect_async(relay_label.as_str()).await?;
-    let event_value = serde_json::to_value(event)?;
-    socket
-        .send(Message::Text(
-            serde_json::json!(["EVENT", event_value]).to_string(),
-        ))
-        .await?;
-
-    let mut last_notice = "no relay response".to_string();
-    while let Some(message) = socket.next().await {
-        let message = message?;
-        let Message::Text(text) = message else {
-            continue;
-        };
-        let Ok(value) = serde_json::from_str::<serde_json::Value>(&text) else {
-            continue;
-        };
-        let Some(parts) = value.as_array() else {
-            continue;
-        };
-        match parts.first().and_then(|part| part.as_str()) {
-            Some("OK")
-                if parts.get(1).and_then(|part| part.as_str()) == Some(event_id.as_str()) =>
-            {
-                let accepted = parts
-                    .get(2)
-                    .and_then(|part| part.as_bool())
-                    .unwrap_or(false);
-                let message = parts
-                    .get(3)
-                    .and_then(|part| part.as_str())
-                    .unwrap_or("")
-                    .to_string();
-                if accepted || relay_publish_failure_is_terminal_success(&message) {
-                    let _ = socket.close(None).await;
-                    return Ok(());
-                }
-                return Err(anyhow::anyhow!(message));
-            }
-            Some("NOTICE") => {
-                last_notice = parts
-                    .get(1)
-                    .and_then(|part| part.as_str())
-                    .unwrap_or("relay notice")
-                    .to_string();
-            }
-            _ => {}
-        }
-    }
-
-    Err(anyhow::anyhow!(last_notice))
+fn requires_private_relay_connection(event: &Event) -> bool {
+    matches!(
+        event.kind.as_u16() as u32,
+        MESSAGE_EVENT_KIND | INVITE_RESPONSE_KIND | 21111
+    )
 }
 
 pub(super) fn relay_publish_failure_is_terminal_success(reason: &str) -> bool {

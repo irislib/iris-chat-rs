@@ -212,6 +212,7 @@ pub struct ProtocolGroupSendResult {
     pub message_id: Option<String>,
     pub event_ids: Vec<String>,
     pub effects: Vec<ProtocolEffect>,
+    pub has_pending_deliveries: bool,
 }
 
 #[derive(Clone, Debug, Default)]

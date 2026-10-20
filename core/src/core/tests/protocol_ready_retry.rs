@@ -20,6 +20,19 @@ fn ready_group_retry_core() -> (
         )
         .unwrap();
     let group_id = created.snapshot.unwrap().group_id;
+    // Authenticate/decrypt recipient carriers in a disposable copy whose group
+    // controls are ready. The low-level retry engine below deliberately lacks
+    // those controls, so it can exercise bounded sender-key recovery without
+    // bypassing the ratchet sender binding at the wire boundary.
+    let carrier_storage = Arc::new(InMemoryStorage::new());
+    for key in storage.list("").unwrap() {
+        if let Some(value) = storage.get(&key).unwrap() {
+            carrier_storage.put(&key, value).unwrap();
+        }
+    }
+    let mut carrier_receiver =
+        test_protocol_engine_with_storage(&devices[1].owner, &devices[1].device, carrier_storage);
+    deliver_protocol_effects_to_engine(&mut carrier_receiver, &created.effects);
     for index in 0..20 {
         let (rumor, id) = runtime_rumor_json(
             devices[0].owner.public_key(),
@@ -32,10 +45,7 @@ fn ready_group_retry_core() -> (
             .engine
             .send_group_payload(&group_id, rumor.into_bytes(), Some(id))
             .unwrap();
-        let outer =
-            sender_key_outer_events_for_engine(&devices[0].engine, &sent.effects, &sent.event_ids)
-                [0]
-            .clone();
+        let outer = take_private_group_cipher_for_test(&mut carrier_receiver, &sent.effects);
         let waiting = devices[1].engine.process_group_outer_event(&outer).unwrap();
         assert!(waiting.consumed && waiting.events.is_empty());
     }

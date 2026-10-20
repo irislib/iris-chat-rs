@@ -49,4 +49,37 @@ ANDROID_EMULATOR_RUNNER="$TMP_DIR/run-emulators"
 has_google_play_services emulator-5554
 ! has_google_play_services physical-device
 
-echo "Mobile push FCM device selection harness passed."
+cat >"$TMP_DIR/harness.py" <<'PYTHON'
+import json
+import os
+from pathlib import Path
+import sys
+Path(os.environ["IRIS_TEST_HARNESS_ARGS"]).write_text(json.dumps(sys.argv[1:]))
+print("INSTRUMENTATION_CODE: -1")
+PYTHON
+export IRIS_TEST_HARNESS_ARGS="$TMP_DIR/harness-args.json"
+ANDROID_HARNESS="$TMP_DIR/harness.py"
+ANDROID_SERIAL_RESOLVED="emulator-5554"
+ANDROID_USER="10"
+run_android "$ANDROID_CHAT_CLASS" test_method >/dev/null
+python3 - "$IRIS_TEST_HARNESS_ARGS" <<'PYTHON'
+import json
+import sys
+args = json.load(open(sys.argv[1]))
+assert args[args.index("--user") + 1] == "10"
+assert args[args.index("--package") + 1] == "to.iris.chat.debug"
+assert "--require-isolated-user" in args
+PYTHON
+
+mkdir -p "$TMP_DIR/build-root/android"
+cat >"$TMP_DIR/build-root/android/gradlew" <<'EOF'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+[[ "$IRIS_DEBUG_APPLICATION_ID_SUFFIX" == ".debug" ]]
+[[ "$IRIS_TEST_APPLICATION_ID" == "to.iris.chat.test" ]]
+[[ "$1 $2" == ":app:assembleDebug :app:assembleDebugAndroidTest" ]]
+EOF
+chmod +x "$TMP_DIR/build-root/android/gradlew"
+ROOT="$TMP_DIR/build-root" build_android_packages
+
+echo "Mobile push FCM selection and isolated-user harness passed."

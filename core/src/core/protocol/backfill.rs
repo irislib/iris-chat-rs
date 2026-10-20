@@ -37,14 +37,6 @@ pub(super) fn direct_message_recipient_history_filter(
         .limit(DEVICE_INVITE_DISCOVERY_LIMIT)
 }
 
-pub(super) fn group_sender_key_history_filter(
-    author_pubkeys: impl IntoIterator<Item = PublicKey>,
-) -> Filter {
-    Filter::new()
-        .kind(Kind::from(GROUP_SENDER_KEY_MESSAGE_KIND as u16))
-        .authors(unique_pubkeys(author_pubkeys))
-}
-
 pub(super) fn protocol_event_summary(events: &[Event]) -> String {
     events
         .iter()

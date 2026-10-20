@@ -1,7 +1,5 @@
 use super::*;
 
-const GROUP_ROSTER_PUBLISH_LABEL: &str = "group-roster";
-
 impl AppCore {
     pub(super) fn publish_group_roster_fact(&mut self, group: &GroupSnapshot) -> bool {
         let Some(logged_in) = self.logged_in.as_ref() else {
@@ -35,7 +33,9 @@ impl AppCore {
         if self.capture_authorization_event(&event).is_err() {
             return false;
         }
-        self.publish_runtime_event(event, GROUP_ROSTER_PUBLISH_LABEL, None)
+        // GroupManager distributes this metadata through the members' ratchets.
+        // Keep the signed authorization record locally for device history sync.
+        true
     }
 
     pub(super) fn publish_local_app_keys_snapshot_only(&mut self, label: &'static str) -> bool {

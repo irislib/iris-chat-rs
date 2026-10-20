@@ -69,7 +69,11 @@ impl AppCore {
         match result {
             Some(Ok(result)) => {
                 let delivery = if result.event_ids.is_empty() {
-                    DeliveryState::Queued
+                    if result.has_pending_deliveries {
+                        DeliveryState::Queued
+                    } else {
+                        DeliveryState::Sent
+                    }
                 } else {
                     DeliveryState::Pending
                 };

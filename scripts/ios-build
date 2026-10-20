@@ -202,6 +202,8 @@ run_ios_xcframework() {
 run_ios_xcodeproj() {
   (
     cd "$IOS_DIR"
+    export IRIS_IOS_NOTIFICATION_DEBUG_SIGNING_STYLE="${IRIS_IOS_NOTIFICATION_DEBUG_SIGNING_STYLE:-Automatic}"
+    export IRIS_IOS_NOTIFICATION_DEBUG_PROFILE_SPECIFIER="${IRIS_IOS_NOTIFICATION_DEBUG_PROFILE_SPECIFIER:-}"
     xcodegen generate --spec project.yml
   )
 }

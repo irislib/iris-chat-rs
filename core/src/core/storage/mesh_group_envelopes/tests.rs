@@ -41,6 +41,10 @@ impl Fixture {
 
     fn event(&self, body: &str) -> Event {
         EventBuilder::new(Kind::Custom(MESSAGE_EVENT_KIND as u16), body)
+            .tags([
+                nostr::Tag::public_key(self.owner.public_key()),
+                nostr::Tag::parse(["v", "2"]).unwrap(),
+            ])
             .sign_with_keys(&self.author)
             .unwrap()
     }
@@ -337,4 +341,31 @@ fn group_replay_storage_contention_is_cancellable_bounded_and_recovers() {
         assert_eq!(report.events[0].event.as_event(), &event);
     });
     holder.join().unwrap();
+}
+
+#[test]
+fn group_replay_quarantines_previously_cached_shared_channels() {
+    let f = Fixture::new();
+    let legacy = EventBuilder::new(
+        Kind::Custom(MESSAGE_EVENT_KIND as u16),
+        "shared legacy ciphertext",
+    )
+    .tag(nostr::Tag::parse(["v", "2"]).unwrap())
+    .sign_with_keys(&f.author)
+    .unwrap();
+    f.add(&legacy);
+    assert_eq!(
+        f.count(),
+        0,
+        "new shared channels must not enter the replay cache"
+    );
+    f.store.shared().lock().unwrap().execute(
+        "INSERT INTO mesh_group_envelopes(owner_pubkey_hex,event_id,event_author,chat_id,message_id,event_json) VALUES (?1,?2,?3,'group:test',?2,?4)",
+        params![f.owner.public_key().to_hex(), legacy.id.to_hex(), legacy.pubkey.to_hex(), legacy.as_json()],
+    ).unwrap();
+    assert_eq!(f.count(), 1, "retain legacy data locally");
+    assert!(
+        f.query(&legacy).events.is_empty(),
+        "old cache rows must never reopen shared group transport"
+    );
 }

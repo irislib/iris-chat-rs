@@ -404,7 +404,9 @@ jobs:
             source scripts/build_common.sh
             load_release_env "$PWD"
             resolve_shared_build_metadata "$PWD"
-            (cd ios && xcodegen generate --spec project.yml)
+            IRIS_IOS_NOTIFICATION_DEBUG_SIGNING_STYLE=Automatic \
+              IRIS_IOS_NOTIFICATION_DEBUG_PROFILE_SPECIFIER= \
+              sh -c 'cd ios && xcodegen generate --spec project.yml'
             xcodebuild -project ios/IrisChat.xcodeproj -scheme IrisChat \
               -destination "$(./scripts/ios-simulator-destination)" -jobs 2 build
           else

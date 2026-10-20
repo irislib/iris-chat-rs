@@ -76,7 +76,7 @@ fn private_group_wake_and_broadcast_share_one_rollback_safe_checkpoint() {
                 .any(|key| *key == fixture.ready_device.public_key()));
         }
     }
-    assert_eq!((broadcast, wakes), (1, 1));
+    assert_eq!((broadcast, wakes), (0, 1));
     let is_wake = |pending: &ProtocolPendingGroupFanout| match &pending.fanout {
         GroupPendingFanout::Remote { payload, .. }
         | GroupPendingFanout::LocalSiblings { payload } => {
@@ -205,7 +205,7 @@ fn private_group_wake_ready_queue_is_bounded_and_respects_block_and_leave() {
         sessions,
         "queue capacity failure must roll back ratchet advancement"
     );
-    fixture.sender.ready_group_publications = ready;
+    fixture.sender.ready_group_publications = ready.clone();
 
     fixture
         .sender
@@ -230,9 +230,15 @@ fn private_group_wake_ready_queue_is_bounded_and_respects_block_and_leave() {
         "blocking also retires unavailable-device wake intents"
     );
     assert!(
-        !fixture.sender.pending_group_publish_effects().is_empty(),
-        "shared group publication remains independent of the blocked recipient"
+        fixture.sender.pending_group_publish_effects().is_empty(),
+        "blocking the only recipient must not leave a shared-channel fallback"
     );
+
+    fixture
+        .sender
+        .hold_pending_direct_sends(fixture.peer_owner.public_key(), false);
+    fixture.sender.ready_group_publications = ready;
+    assert!(!fixture.sender.pending_group_publish_effects().is_empty());
 
     let mut removed = fixture.sender.group_snapshot(&group.group_id).unwrap();
     removed

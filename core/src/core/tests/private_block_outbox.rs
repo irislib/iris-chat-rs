@@ -27,6 +27,7 @@ fn private_block_cancels_cloned_drain_and_preserves_other_peer_retry() {
                 Kind::from(MESSAGE_EVENT_KIND as u16),
                 format!("pending {index}"),
             )
+            .tag(nostr::Tag::public_key(PublicKey::from_hex(chat).unwrap()))
             .tag(nostr::Tag::parse(["v", "2"]).unwrap())
             .sign_with_keys(&transport_keys)
             .unwrap();

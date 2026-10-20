@@ -35,11 +35,6 @@ fn mentions_group_push_and_foreground_use_identity_and_respect_mute_choice() {
             .unwrap()
             .known_group_sender_event_pubkeys();
         let events = sorted_pending_events_for_test(&farm.devices[0].core);
-        let broadcast = events
-            .iter()
-            .find(|event| authors.contains(&event.pubkey))
-            .expect("group ciphertext")
-            .clone();
         let receiver = &farm.devices[1];
         let event = events
             .iter()
@@ -57,9 +52,9 @@ fn mentions_group_push_and_foreground_use_identity_and_respect_mute_choice() {
             .clone();
         let push = receiver.core.build_mobile_push_sync_snapshot();
         assert!(
-            !push
-                .message_author_pubkeys
-                .contains(&broadcast.pubkey.to_hex()),
+            !authors
+                .iter()
+                .any(|author| push.message_author_pubkeys.contains(&author.to_hex())),
             "shared group authors must never enter notification subscriptions"
         );
         assert!(
@@ -139,7 +134,13 @@ fn mentions_group_push_and_foreground_use_identity_and_respect_mute_choice() {
         .known_group_sender_event_pubkeys();
     let event = sorted_pending_events_for_test(&farm.devices[0].core)
         .into_iter()
-        .find(|event| authors.contains(&event.pubkey))
+        .find(|event| {
+            event
+                .tags
+                .public_keys()
+                .any(|key| *key == farm.devices[1].keys.public_key())
+                && !authors.contains(&event.pubkey)
+        })
         .unwrap();
     let receiver = &farm.devices[1];
     assert!(

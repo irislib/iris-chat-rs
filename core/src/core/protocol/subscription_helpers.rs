@@ -15,8 +15,6 @@ pub(in crate::core) fn build_protocol_subscription_filters(
     let invite_authors = pubkeys_from_hexes(&plan.invite_authors);
     let message_authors = pubkeys_from_hexes(&plan.message_authors);
     let message_recipients = pubkeys_from_hexes(&plan.message_recipients);
-    let group_roster_authors = pubkeys_from_hexes(&plan.group_roster_authors);
-    let group_sender_key_authors = pubkeys_from_hexes(&plan.group_sender_key_authors);
     let invite_response_recipients = plan
         .invite_response_recipient
         .as_deref()
@@ -56,19 +54,6 @@ pub(in crate::core) fn build_protocol_subscription_filters(
             Filter::new()
                 .kind(Kind::from(MESSAGE_EVENT_KIND as u16))
                 .pubkeys(message_recipients),
-        );
-    }
-    if !plan.group_roster_group_ids.is_empty() {
-        filters.push(build_group_roster_fact_filter(
-            plan.group_roster_group_ids.iter(),
-            group_roster_authors,
-        ));
-    }
-    if !group_sender_key_authors.is_empty() {
-        filters.push(
-            Filter::new()
-                .kind(Kind::from(GROUP_SENDER_KEY_MESSAGE_KIND as u16))
-                .authors(group_sender_key_authors),
         );
     }
     if !invite_response_recipients.is_empty() {
@@ -151,10 +136,20 @@ pub(in crate::core) async fn fetch_events_for_filters(
 ) -> Result<Vec<Event>, String> {
     use tokio::task::JoinSet;
 
+    let relay_urls = client.relays().await.keys().cloned().collect::<Vec<_>>();
     let mut tasks = JoinSet::new();
     for filter in filters {
-        let client = client.clone();
-        tasks.spawn(async move { client.fetch_events(filter, timeout).await });
+        let relay_urls = relay_urls.clone();
+        tasks.spawn(async move {
+            // This query has no account AUTH, receive subscriptions, or other
+            // lookup context. Never fall back to the caller's identity client.
+            let reader = Client::new(Keys::generate());
+            ensure_session_relays_configured(&reader, &relay_urls).await;
+            connect_client_with_timeout(&reader, timeout).await;
+            let result = reader.fetch_events(filter, timeout).await;
+            let _ = reader.shutdown().await;
+            result
+        });
     }
 
     let mut any_success = false;

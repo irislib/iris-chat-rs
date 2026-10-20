@@ -630,6 +630,25 @@ impl ProtocolEngine {
             let mut output = engine.protocol_group_send_from_prepared(&prepared, inner_event_id)?;
             output.snapshot = engine.group_manager.group(group_id);
             engine.prepare_private_group_wakes(group_id, &mut output, message_id.clone())?;
+            // The shared ciphertext is only a payload inside recipient-specific
+            // ratchets. It must never create a public channel or publication.
+            let private_ids = output
+                .effects
+                .iter()
+                .filter_map(|effect| {
+                    let ProtocolEffect::Publish(publish) = effect;
+                    (publish.event.tags.public_keys().next().is_some())
+                        .then_some(publish.event.id.to_hex())
+                })
+                .collect::<HashSet<_>>();
+            output.effects.retain(|effect| {
+                let ProtocolEffect::Publish(publish) = effect;
+                private_ids.contains(&publish.event.id.to_hex())
+            });
+            output.event_ids.retain(|id| private_ids.contains(id));
+            output.has_pending_deliveries = engine.pending_group_fanouts.iter().any(|pending| {
+                pending.group_id == group_id && pending.inner_event_id == message_id
+            });
             engine.retain_group_publications(&output.effects, None)?;
             output.message_id = message_id;
             // The ratchets and every ready publication must survive before the

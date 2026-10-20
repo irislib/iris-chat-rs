@@ -47,6 +47,9 @@ fn queue_block_carrier_events(core: &mut AppCore, _device: &Keys, target: &str) 
         .enumerate()
         .map(|(index, chat)| {
             let event = EventBuilder::new(Kind::Custom(1060), format!("queued {index}"))
+                .tag(nostr::Tag::public_key(
+                    PublicKey::from_hex(chat).unwrap_or_else(|_| Keys::generate().public_key()),
+                ))
                 .tag(nostr::Tag::parse(["v", "2"]).unwrap())
                 .sign_with_keys(&transport_keys)
                 .unwrap();

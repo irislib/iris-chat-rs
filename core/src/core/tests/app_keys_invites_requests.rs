@@ -1547,27 +1547,13 @@ fn single_protocol_plan_builds_filters_for_all_protocol_inputs() {
         has_filter_with_kind_author(&filters, MESSAGE_EVENT_KIND, message_author.public_key()),
         "message filters must be derived from message authors"
     );
+    let wire = serde_json::to_string(&filters).expect("serialized subscriptions");
+    assert!(!wire.contains(&group_admin.public_key().to_hex()));
+    assert!(!wire.contains(&group_author.public_key().to_hex()));
+    assert!(!wire.contains("test-group"));
     assert!(
-        has_filter_with_kind_author(&filters, GROUP_ROSTER_FACT_KIND, group_admin.public_key()),
-        "group roster fact filters must be derived from group admins"
-    );
-    assert!(
-        has_filter_with_kind_author_tag(
-            &filters,
-            GROUP_ROSTER_FACT_KIND,
-            group_admin.public_key(),
-            "#d",
-            "test-group"
-        ),
-        "group roster fact filters must be scoped to known group ids"
-    );
-    assert!(
-        has_filter_with_kind_author(
-            &filters,
-            GROUP_SENDER_KEY_MESSAGE_KIND,
-            group_author.public_key()
-        ),
-        "group sender-key filters must be derived from group authors"
+        !wire.contains("group_roster"),
+        "saved group plans must not reopen public roster subscriptions"
     );
     assert!(
         has_filter_with_kind_pubkey(
@@ -1623,18 +1609,18 @@ fn recent_protocol_filters_backfill_messages_without_time_or_count_bounds() {
             .expect("history backfill filter")
     };
     let message_filter = find_filter(MESSAGE_EVENT_KIND, message_author.public_key());
-    let group_filter = find_filter(GROUP_SENDER_KEY_MESSAGE_KIND, group_author.public_key());
-
-    for filter in [message_filter, group_filter] {
-        assert!(
-            filter.get("since").is_none(),
-            "message history catch-up must not have a time bound"
-        );
-        assert!(
-            filter.get("limit").is_none(),
-            "message history catch-up must not have a count bound"
-        );
-    }
+    assert!(
+        !serde_json::to_string(&filters).unwrap().contains(&group_author.public_key().to_hex()),
+        "saved group plans must not reopen shared group history channels"
+    );
+    assert!(
+        message_filter.get("since").is_none(),
+        "message history catch-up must not have a time bound"
+    );
+    assert!(
+        message_filter.get("limit").is_none(),
+        "message history catch-up must not have a count bound"
+    );
 }
 
 #[test]
@@ -2316,6 +2302,7 @@ fn queued_runtime_publish_registration_persists_inner_message_id() {
         DeliveryState::Queued,
     );
     let outer_event = EventBuilder::new(Kind::from(MESSAGE_EVENT_KIND as u16), "")
+        .tag(nostr::Tag::public_key(peer.public_key()))
         .tag(nostr::Tag::parse(["v", "2"]).unwrap())
         .sign_with_keys(&transport_keys)
         .expect("outer event");

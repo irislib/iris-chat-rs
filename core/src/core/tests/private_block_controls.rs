@@ -74,6 +74,7 @@ fn private_block_retires_late_sealed_controls_by_authored_time_after_reload() {
     // Legacy here means missing authored-time metadata, not an old wire protocol.
     let legacy = EventBuilder::new(Kind::from(MESSAGE_EVENT_KIND as u16), "legacy control")
         .custom_created_at(Timestamp::from_secs(300))
+        .tag(nostr::Tag::public_key(ready.public_key()))
         .tag(nostr::Tag::parse(["v", "2"]).unwrap())
         .sign_with_keys(&transport_keys)
         .unwrap();

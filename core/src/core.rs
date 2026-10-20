@@ -19,8 +19,8 @@ use nostr_double_ratchet::{
     build_protocol_discovery_filters, deterministic_link_invite_for_device, is_app_keys_event,
     is_group_roster_fact_event, resolve_app_keys_owner_for_device, AppKeys, DeviceEntry,
     APP_KEYS_EVENT_KIND, CHAT_MESSAGE_KIND, CHAT_SETTINGS_KIND, GROUP_ROSTER_FACT_KIND,
-    GROUP_SENDER_KEY_MESSAGE_KIND, INVITE_EVENT_KIND, INVITE_LIST_LABEL, INVITE_RESPONSE_KIND,
-    MESSAGE_EVENT_KIND, REACTION_KIND, RECEIPT_KIND, TYPING_KIND,
+    INVITE_EVENT_KIND, INVITE_LIST_LABEL, INVITE_RESPONSE_KIND, MESSAGE_EVENT_KIND, REACTION_KIND,
+    RECEIPT_KIND, TYPING_KIND,
 };
 use nostr_double_ratchet::{
     parse_group_sender_key_message_event, parse_group_sender_key_message_event_unchecked,
@@ -56,7 +56,7 @@ use tokio::time::{sleep, sleep_until, Duration, Instant};
 #[cfg(test)]
 use nostr_double_ratchet::{
     invite_response_event, message_event, parse_invite_event, parse_message_event,
-    GroupEventManager,
+    GroupEventManager, GROUP_SENDER_KEY_MESSAGE_KIND,
 };
 #[cfg(test)]
 use nostr_double_ratchet::{

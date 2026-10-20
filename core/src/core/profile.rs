@@ -59,18 +59,18 @@ impl AppCore {
             ensure_session_relays_configured(&client, &relay_urls).await;
             connect_client_with_timeout(&client, Duration::from_secs(5)).await;
             let filter = Filter::new().kind(Kind::Metadata).author(owner_pubkey);
-            match client
-                .fetch_events(
-                    filter,
-                    Duration::from_secs(PROFILE_METADATA_FETCH_TIMEOUT_SECS),
-                )
-                .await
+            match super::protocol::fetch_events_for_filters(
+                &client,
+                vec![filter],
+                Duration::from_secs(PROFILE_METADATA_FETCH_TIMEOUT_SECS),
+            )
+            .await
             {
                 Ok(events) => {
                     let _ = tx.send(CoreMsg::Internal(Box::new(
                         InternalEvent::ProfileMetadataFetchFinished {
                             owner_pubkey_hex: owner_hex,
-                            events: events.iter().cloned().collect(),
+                            events,
                             error: None,
                         },
                     )));

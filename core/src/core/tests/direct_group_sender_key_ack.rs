@@ -29,12 +29,7 @@ fn direct_group_copy_preserves_different_same_second_sender_key_candidate() {
             Some("direct-group-ack-cleanup-inner".to_string()),
         )
         .expect("send group payload");
-    let outer =
-        sender_key_outer_events_for_engine(&devices[alice].engine, &sent.effects, &sent.event_ids)
-            .into_iter()
-            .next()
-            .expect("sender-key outer")
-            .clone();
+    let outer = take_private_group_cipher_for_test(&mut devices[bob].engine, &sent.effects);
 
     assert!(devices[bob]
         .engine

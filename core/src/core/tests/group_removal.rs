@@ -153,6 +153,7 @@ fn group_removal_discards_durable_message_outbox_but_keeps_membership_controls()
     for (content, message_id) in [("message", Some("message-id".into())), ("membership", None)] {
         let event = EventBuilder::new(Kind::Custom(1060), content)
             .tag(nostr::Tag::parse(["v", "2"]).unwrap())
+            .tag(nostr::Tag::public_key(Keys::generate().public_key()))
             .sign_with_keys(&transport_keys)
             .unwrap();
         assert!(core.publish_protocol_event(ProtocolPublish {
@@ -176,6 +177,7 @@ fn group_removal_discards_durable_message_outbox_but_keeps_membership_controls()
     );
     let event = EventBuilder::new(Kind::Custom(1060), "late prepared message")
         .tag(nostr::Tag::parse(["v", "2"]).unwrap())
+        .tag(nostr::Tag::public_key(Keys::generate().public_key()))
         .sign_with_keys(&transport_keys)
         .unwrap();
     assert!(!core.publish_protocol_event(ProtocolPublish {

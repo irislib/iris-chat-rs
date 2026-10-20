@@ -24,6 +24,7 @@ fn pending_publish_replays_do_not_rewrite_offline_outbox() {
                     Kind::from(MESSAGE_EVENT_KIND as u16),
                     format!("pending control {index} {}", "x".repeat(4096)),
                 )
+                .tag(nostr::Tag::public_key(device.public_key()))
                 .tag(nostr::Tag::parse(["v", "2"]).unwrap())
                 .sign_with_keys(&transport_keys)
                 .unwrap(),
@@ -76,6 +77,7 @@ fn pending_publish_replay_preserves_attempts_and_enriches_metadata() {
     let (mut core, _, _dir) =
         logged_in_test_core_with_updates("pending-publish-metadata", &owner, &device);
     let event = EventBuilder::new(Kind::from(MESSAGE_EVENT_KIND as u16), "queued")
+        .tag(nostr::Tag::public_key(device.public_key()))
         .tag(nostr::Tag::parse(["v", "2"]).unwrap())
         .sign_with_keys(&transport_keys)
         .unwrap();

@@ -12,11 +12,13 @@ impl ProtocolEngine {
     ) -> ProtocolSenderOwnerResolution {
         self.session_manager
             .message_sender_record(sender)
-            .map(|record| self.owner_resolution_for_sender_record(ProtocolSenderDeviceRecord {
-                storage_owner: record.owner_pubkey,
-                device_pubkey: record.device_pubkey,
-                claimed_owner_pubkey: record.claimed_owner_pubkey,
-            }))
+            .map(|record| {
+                self.owner_resolution_for_sender_record(ProtocolSenderDeviceRecord {
+                    storage_owner: record.owner_pubkey,
+                    device_pubkey: record.device_pubkey,
+                    claimed_owner_pubkey: record.claimed_owner_pubkey,
+                })
+            })
             .unwrap_or_else(|| ProtocolSenderOwnerResolution::ProvisionalDeviceOwner {
                 owner: provisional_owner_from_sender_pubkey(sender),
             })
@@ -168,7 +170,9 @@ impl ProtocolEngine {
     ) -> bool {
         owner == provisional_owner_from_sender_pubkey(device)
             || (self.verified_app_keys_owners.contains(&owner)
-                && self.session_manager.roster(owner)
+                && self
+                    .session_manager
+                    .roster(owner)
                     .is_some_and(|roster| roster.get_device(&device).is_some()))
     }
 
@@ -310,6 +314,7 @@ impl ProtocolEngine {
             &mut event_ids,
         )?);
         Ok(ProtocolGroupSendResult {
+            has_pending_deliveries: false,
             event_ids,
             effects,
             ..Default::default()

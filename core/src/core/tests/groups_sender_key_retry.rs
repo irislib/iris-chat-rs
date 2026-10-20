@@ -44,12 +44,11 @@ fn appcore_sender_key_repair_request_survives_restart_and_throttles() {
             Some("sender-key-repair-restart-inner".to_string()),
         )
         .expect("send with rotated sender key");
-    let outer =
-        sender_key_outer_events_for_engine(&devices[alice].engine, &sent.effects, &sent.event_ids)
-            .into_iter()
-            .next()
-            .expect("sender-key outer event")
-            .clone();
+    let outer = private_group_cipher_from_sender_for_test(
+        &devices[alice].engine,
+        &devices[bob].engine,
+        &sent.effects,
+    );
     let pending = devices[bob]
         .engine
         .process_group_outer_event(&outer)
@@ -208,12 +207,11 @@ fn appcore_sender_key_missing_metadata_revision_repairs_and_applies_pending_oute
             Some("sender-key-metadata-repair-inner".to_string()),
         )
         .expect("send after metadata gap");
-    let outer =
-        sender_key_outer_events_for_engine(&devices[alice].engine, &sent.effects, &sent.event_ids)
-            .into_iter()
-            .next()
-            .expect("sender-key outer event")
-            .clone();
+    let outer = private_group_cipher_from_sender_for_test(
+        &devices[alice].engine,
+        &devices[bob].engine,
+        &sent.effects,
+    );
 
     let pending = devices[bob]
         .engine
@@ -258,8 +256,10 @@ fn appcore_sender_key_distribution_before_metadata_wakes_and_applies_pending_out
     let mut bob = test_protocol_engine(&bob_owner, &bob_device);
     observe_current_device_appkeys_for_test(&mut alice, &alice_owner, &alice_device);
     observe_current_device_appkeys_for_test(&mut bob, &bob_owner, &bob_device);
-    observe_peer_device_invite_for_test(&mut alice, &bob_owner, &bob_device, 400);
-    observe_peer_device_invite_for_test(&mut bob, &alice_owner, &alice_device, 400);
+    let alice_invite = alice.local_invite().unwrap();
+    let bob_invite = bob.local_invite().unwrap();
+    observe_local_invite_for_test(&mut alice, &bob_owner, &bob_device, &bob_invite);
+    observe_local_invite_for_test(&mut bob, &alice_owner, &alice_device, &alice_invite);
 
     let created = alice
         .create_group(
@@ -280,11 +280,8 @@ fn appcore_sender_key_distribution_before_metadata_wakes_and_applies_pending_out
             Some("sender-key-out-of-order-inner".to_string()),
         )
         .expect("send sender-key group payload");
-    let outer = sender_key_outer_events_for_engine(&alice, &sent.effects, &sent.event_ids)
-        .into_iter()
-        .next()
-        .expect("sender-key outer event")
-        .clone();
+    let outer =
+        private_group_cipher_with_controls_for_test(&alice, &bob, &created.effects, &sent.effects);
     let pending_outer = bob
         .process_group_outer_event(&outer)
         .expect("process outer before metadata");
@@ -398,12 +395,7 @@ fn delivered_group_outer_replay_is_quiet_after_restart_and_event_cache_eviction(
             Some("exact-replay-inner".into()),
         )
         .unwrap();
-    let outer =
-        sender_key_outer_events_for_engine(&devices[0].engine, &sent.effects, &sent.event_ids)
-            .into_iter()
-            .next()
-            .unwrap()
-            .clone();
+    let outer = take_private_group_cipher_for_test(&mut devices[1].engine, &sent.effects);
     let received = devices[1].engine.process_group_outer_event(&outer).unwrap();
     assert_eq!(received.events.len(), 1);
     add_legacy_sender_second_ack(storage.as_ref(), &group_id, &outer);
@@ -528,12 +520,11 @@ fn legacy_sender_second_ack_preserves_unknown_ciphertext_and_repair_backoff() {
             Some("same-second-unseen".into()),
         )
         .unwrap();
-    let outer =
-        sender_key_outer_events_for_engine(&devices[0].engine, &sent.effects, &sent.event_ids)
-            .into_iter()
-            .next()
-            .unwrap()
-            .clone();
+    let outer = private_group_cipher_from_sender_for_test(
+        &devices[0].engine,
+        &devices[1].engine,
+        &sent.effects,
+    );
     add_legacy_sender_second_ack(storage.as_ref(), &group_id, &outer);
     devices[1].engine =
         test_protocol_engine_with_storage(&devices[1].owner, &devices[1].device, storage.clone());
@@ -570,9 +561,12 @@ fn legacy_sender_second_ack_preserves_unknown_ciphertext_and_repair_backoff() {
         !due.group_result.effects.is_empty(),
         "missing-key repair must still resume"
     );
-    let (_, response) =
-        deliver_protocol_effects_with_ready_work_once(&mut devices[0].engine, &due.group_result.effects);
-    let (received, _) = deliver_protocol_effects_with_ready_work_once(&mut devices[1].engine, &response);
+    let (_, response) = deliver_protocol_effects_with_ready_work_once(
+        &mut devices[0].engine,
+        &due.group_result.effects,
+    );
+    let (received, _) =
+        deliver_protocol_effects_with_ready_work_once(&mut devices[1].engine, &response);
     assert!(group_events_contain_body(
         &received,
         &group_id,

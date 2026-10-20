@@ -29,11 +29,6 @@ fn private_group_wake_events(farm: &GroupScaleFarm, group_id: &str) -> (Event, V
         .unwrap()
         .group_sender_event_pubkeys_for_group(group_id);
     let pending = sorted_pending_events_for_test(sender);
-    let broadcast = pending
-        .iter()
-        .find(|event| authors.contains(&event.pubkey))
-        .expect("signed group broadcast")
-        .clone();
     let wakes = pending
         .into_iter()
         .filter(|event| {
@@ -45,6 +40,26 @@ fn private_group_wake_events(farm: &GroupScaleFarm, group_id: &str) -> (Event, V
         2,
         "each other account gets its own private wake"
     );
+    let wake = wakes.first().expect("private group carrier");
+    let receiver = farm
+        .devices
+        .iter()
+        .find(|device| {
+            wake.tags
+                .public_keys()
+                .any(|key| *key == device.keys.public_key())
+        })
+        .unwrap();
+    let owner = farm.owners[receiver.owner].public_key();
+    let message = mobile_push::preview_direct_messages(
+        &receiver._dir.path().to_string_lossy(),
+        owner,
+        &receiver.keys,
+        std::slice::from_ref(wake),
+    )
+    .expect("decrypt private group carrier without consuming the live ratchet");
+    let rumor = parse_runtime_rumor(&message.content).unwrap();
+    let broadcast = private_group_wake::decode(&rumor.content).expect("nested signed group event");
     (broadcast, wakes)
 }
 
@@ -211,7 +226,11 @@ fn private_group_wake_outbox_failure_and_crash_before_ack_recover_the_complete_b
                 publish.event.id.to_hex()
             })
             .collect::<HashSet<_>>();
-        assert_eq!(ids.len(), 3, "one shared event and two private wakes");
+        assert_eq!(
+            ids.len(),
+            2,
+            "only two recipient-specific private deliveries"
+        );
         let owner = farm.owners[0].clone();
         let device = farm.devices[0].keys.clone();
         let core = &mut farm.devices[0].core;
@@ -277,7 +296,7 @@ fn private_group_wake_outbox_failure_and_crash_before_ack_recover_the_complete_b
                 .unwrap()
                 .pending_group_publish_effects()
                 .len(),
-            3
+            2
         );
         core.persist_best_effort();
 
@@ -322,6 +341,44 @@ fn private_group_wake_outbox_failure_and_crash_before_ack_recover_the_complete_b
                     .all(|row| row.attempt_count >= 7),
                 "replayed protocol offers must not reset existing outbox attempts"
             );
+        }
+    }
+}
+
+#[test]
+fn private_groups_never_publish_or_subscribe_shared_channels_or_rosters() {
+    let (mut farm, group_id, chat_id) = private_group_wake_farm();
+    farm.send(0, &chat_id, "private transport only");
+    for entry in &farm.devices {
+        let authors = entry
+            .core
+            .protocol_engine
+            .as_ref()
+            .unwrap()
+            .group_sender_event_pubkeys_for_group(&group_id);
+        let plan = entry.core.compute_protocol_subscription_plan().unwrap();
+        let filters = protocol::build_protocol_subscription_filters(&plan);
+        let history = entry.core.recent_protocol_filters(unix_now());
+        for filter in filters.iter().chain(&history) {
+            let wire = serde_json::to_string(filter).unwrap();
+            assert!(
+                !wire.contains(&group_id),
+                "a group identifier escaped into a network filter"
+            );
+            for author in &authors {
+                assert!(
+                    !wire.contains(&author.to_hex()),
+                    "a shared group author escaped into a network filter"
+                );
+            }
+        }
+        for pending in entry.core.pending_relay_publishes.values() {
+            let event: Event = serde_json::from_str(&pending.event_json).unwrap();
+            assert!(!nostr_double_ratchet::is_group_roster_fact_event(&event));
+            assert!(!authors.contains(&event.pubkey));
+            if event.kind.as_u16() as u32 == MESSAGE_EVENT_KIND {
+                assert_eq!(event.tags.public_keys().count(), 1);
+            }
         }
     }
 }

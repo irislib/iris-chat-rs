@@ -5,6 +5,12 @@ impl AppCore {
     /// does not prevent a public signer from identifying the sender.
     pub(in crate::core) fn private_publication_allowed(&self, event: &Event) -> bool {
         let kind = event.kind.as_u16() as u32;
+        if nostr_double_ratchet::is_group_roster_fact_event(event)
+            || (matches!(kind, MESSAGE_EVENT_KIND | INVITE_RESPONSE_KIND)
+                && event.tags.public_keys().count() != 1)
+        {
+            return false;
+        }
         if kind == u32::from(super::super::calls::push::CALL_WAKE_KIND) {
             let Ok(wake) = serde_json::from_str::<serde_json::Value>(&event.content) else {
                 return false;

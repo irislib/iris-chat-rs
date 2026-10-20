@@ -504,14 +504,14 @@ fn appcore_group_100_members_multi_device_scale() {
 }
 
 #[test]
-fn appcore_group_own_relay_echo_does_not_start_sender_key_repair() {
+fn appcore_self_only_group_stays_local_after_restart_without_repairs() {
     let owner = Keys::generate();
     let device = Keys::generate();
     let storage = Arc::new(InMemoryStorage::new());
     let mut engine = test_protocol_engine_with_storage(&owner, &device, storage.clone());
     observe_current_device_appkeys_for_test(&mut engine, &owner, &device);
     let group = engine
-        .create_group("echo".into(), Vec::new(), unix_now())
+        .create_group("local".into(), Vec::new(), unix_now())
         .unwrap()
         .snapshot
         .unwrap();
@@ -519,36 +519,21 @@ fn appcore_group_own_relay_echo_does_not_start_sender_key_repair() {
         .send_group_payload(
             &group.group_id,
             b"already displayed locally".to_vec(),
-            Some("echo".into()),
+            Some("local".into()),
         )
         .unwrap();
-    let event =
-        sender_key_outer_events_for_engine(&engine, &sent.effects, &sent.event_ids)[0].clone();
-    for restored in [false, true] {
-        if restored {
-            engine = ProtocolEngine::load_or_create_for_local_device(
-                storage.clone(),
-                owner.public_key(),
-                &device,
-            )
-            .unwrap();
-        }
-        let received = engine.process_group_outer_event(&event).unwrap();
-        assert!(
-            received.consumed
-                && !received.pending
-                && received.events.is_empty()
-                && received.effects.is_empty(),
-            "our own relay echo must not decrypt, display again, or request key repair"
-        );
-        let snapshot = engine.debug_snapshot();
-        assert_eq!(snapshot.pending_group_sender_key_message_count, 0);
-        assert_eq!(snapshot.pending_group_sender_key_repair_count, 0);
-    }
+    assert!(sent.effects.is_empty());
+    assert!(sent.event_ids.is_empty());
+    engine = ProtocolEngine::load_or_create_for_local_device(storage, owner.public_key(), &device)
+        .unwrap();
+    let snapshot = engine.debug_snapshot();
+    assert_eq!(snapshot.pending_group_sender_key_message_count, 0);
+    assert_eq!(snapshot.pending_group_sender_key_repair_count, 0);
+    assert!(engine.pending_group_publish_effects().is_empty());
 }
 
 #[test]
-fn appcore_group_multi_device_sender_publishes_one_shared_ciphertext() {
+fn appcore_group_multi_device_sender_uses_private_sibling_delivery() {
     let owner = Keys::generate();
     let device = Keys::generate();
     let sibling = Keys::generate();
@@ -580,8 +565,47 @@ fn appcore_group_multi_device_sender_publishes_one_shared_ciphertext() {
             Some("shared".into()),
         )
         .unwrap();
-    assert_eq!(sender_key_outer_count(&sender, &sent.effects, &sent.event_ids), 1,
-        "remote and sibling copies use one shared sender-key event, not independently randomized wrappers");
+    assert_eq!(
+        sender_key_outer_count(&sender, &sent.effects, &sent.event_ids),
+        0,
+        "shared group ciphertext must never be a transport publication"
+    );
+    let private = protocol_publish_events(&sent.effects)
+        .into_iter()
+        .filter(|event| event.kind.as_u16() as u32 == MESSAGE_EVENT_KIND)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        private.len(),
+        3,
+        "the sibling receives a private key distribution, roster, and group delivery"
+    );
+    for event in &private {
+        assert_eq!(
+            event.tags.public_keys().collect::<Vec<_>>(),
+            vec![&sibling.public_key()]
+        );
+        let wire = serde_json::to_string(event).unwrap();
+        assert!(!wire.contains(&owner.public_key().to_hex()));
+        assert!(!wire.contains(&device.public_key().to_hex()));
+        assert!(!wire.contains(&group_id));
+    }
+    let mut probe = receiver.fork_for_test().unwrap();
+    let mut kinds = private
+        .iter()
+        .map(|event| {
+            let decrypted = probe.process_direct_message_event(event).unwrap().unwrap();
+            parse_runtime_rumor(&decrypted.content).unwrap().kind
+        })
+        .collect::<Vec<_>>();
+    kinds.sort_unstable();
+    assert_eq!(
+        kinds,
+        vec![
+            nostr_double_ratchet::group_wire::GROUP_SENDER_KEY_DISTRIBUTION_KIND,
+            private_group_wake::GROUP_WAKE_KIND,
+            nostr_double_ratchet::GROUP_ROSTER_FACT_KIND,
+        ]
+    );
     let received = deliver_protocol_effects_without_feedback(&mut receiver, &sent.effects);
     assert_eq!(received.iter().filter(|event| matches!(event, GroupIncomingEvent::Message(message) if message.body == b"one shared message")).count(), 1);
 }

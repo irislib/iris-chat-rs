@@ -96,3 +96,134 @@ fn metadata_privacy_quarantines_saved_old_ciphertext_and_preserves_history() {
     assert_eq!(message.body, "keep this history");
     assert_eq!(message.delivery, DeliveryState::Failed);
 }
+
+#[test]
+fn metadata_privacy_quarantines_saved_public_group_rosters_and_shared_channels() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let transport = Keys::generate();
+    let (mut core, updates, _dir) =
+        logged_in_test_core_with_updates("metadata-group-restart", &owner, &device);
+    let events = [
+        EventBuilder::new(Kind::from(MESSAGE_EVENT_KIND as u16), "shared ciphertext")
+            .tag(nostr::Tag::parse(["v", "2"]).unwrap())
+            .sign_with_keys(&transport)
+            .unwrap(),
+        EventBuilder::new(Kind::from(GROUP_ROSTER_FACT_KIND as u16), "")
+            .tags([
+                nostr::Tag::parse(["type", "group_roster"]).unwrap(),
+                nostr::Tag::parse(["d", "private-group"]).unwrap(),
+                nostr::Tag::public_key(device.public_key()),
+            ])
+            .sign_with_keys(&owner)
+            .unwrap(),
+    ];
+    for event in &events {
+        assert!(!core.publish_runtime_event(event.clone(), "group-privacy-test", None));
+        core.emit_nearby_published_event(event);
+        core.app_store
+            .upsert_pending_relay_publish(&PendingRelayPublish {
+                owner_pubkey_hex: owner.public_key().to_hex(),
+                event_id: event.id.to_hex(),
+                label: APPCORE_PROTOCOL_LABEL.into(),
+                event_json: event.as_json(),
+                inner_event_id: None,
+                chat_id: Some("group:private-group".into()),
+                created_at_secs: event.created_at.as_secs(),
+                attempt_count: 7,
+                last_error: None,
+            })
+            .unwrap();
+    }
+    core.persist_best_effort();
+    core.start_session(owner.public_key(), Some(owner.clone()), device, true, true)
+        .unwrap();
+    core.run_session_startup_follow_up();
+    core.retry_pending_relay_publishes("group-privacy-restart");
+    let retained = core
+        .app_store
+        .load_pending_relay_publishes(&owner.public_key().to_hex())
+        .unwrap();
+    for event in &events {
+        assert!(!core.pending_relay_publishes.contains_key(&event.id.to_hex()));
+        let saved = retained.iter().find(|row| row.event_id == event.id.to_hex()).unwrap();
+        assert_eq!(saved.event_json, event.as_json());
+        assert_eq!(saved.attempt_count, 7);
+        assert!(saved.last_error.as_deref().unwrap().contains("will not be resent"));
+    }
+    assert!(!updates.try_iter().any(|update| {
+        matches!(update, AppUpdate::NearbyPublishedEvent { event_json, .. }
+            if events.iter().any(|event| event_json == event.as_json()))
+    }));
+}
+
+#[test]
+fn metadata_privacy_isolates_peer_discovery_from_identity_auth_and_own_receive_filters() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer_owner = Keys::generate().public_key();
+    let peer_device = Keys::generate().public_key();
+    let message_author = Keys::generate().public_key();
+    let (mut core, _, _dir) =
+        logged_in_test_core_with_updates("metadata-connection-isolation", &owner, &device);
+    let (relay, wire, client) = core.runtime.block_on(async {
+        let (relay, wire) = publish_helpers::authenticated_relay(device.public_key(), false).await;
+        let client = publish_helpers::identity_receiver(&device, &relay, &wire).await;
+        (relay, wire, client)
+    });
+    core.logged_in.as_mut().unwrap().client = client;
+    core.logged_in.as_mut().unwrap().relay_urls = vec![relay.clone()];
+    core.preferences.nostr_relay_urls = vec![relay.to_string()];
+    core.relay_status_by_url.insert(relay.to_string(), RelayStatus::Connected);
+    let own_invite = core.protocol_engine.as_ref().unwrap().local_invite().unwrap().inviter_ephemeral_public_key.to_string();
+    let mut plan = protocol_plan_for_test(vec![message_author], Vec::new());
+    plan.roster_authors = vec![owner.public_key().to_hex(), peer_owner.to_hex()];
+    plan.invite_authors = vec![device.public_key().to_hex(), peer_device.to_hex()];
+    plan.message_recipients = vec![device.public_key().to_hex()];
+    plan.invite_response_recipient = Some(own_invite.clone());
+    core.protocol_subscription_runtime.desired_plan = Some(plan.clone());
+    let (receiver, discovery) = core.split_private_discovery_filters(build_protocol_subscription_filters(&plan));
+    let receiver_json = serde_json::to_string(&receiver).unwrap();
+    let discovery_json = serde_json::to_string(&discovery).unwrap();
+    for peer in [peer_owner, peer_device] { assert!(!receiver_json.contains(&peer.to_hex())); }
+    for own in [owner.public_key().to_hex(), device.public_key().to_hex(), own_invite.clone()] { assert!(!discovery_json.contains(&own)); }
+    core.reconcile_protocol_subscriptions("metadata-wire-test", false);
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let rows = wire.lock().unwrap().clone();
+        if rows.iter().any(|(_, event)| event[0] == "REQ" && event.to_string().contains(&peer_owner.to_hex())) { break; }
+        assert!(Instant::now() < deadline, "peer discovery did not subscribe");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let rows = wire.lock().unwrap().clone();
+    let own_connections = rows.iter().filter(|(_, event)| event[0] == "AUTH" && event[1]["pubkey"] == device.public_key().to_hex()).map(|(number, _)| *number).collect::<HashSet<_>>();
+    assert!(!own_connections.is_empty());
+    for (number, event) in &rows {
+        let json = event.to_string();
+        if own_connections.contains(number) {
+            assert!(!json.contains(&peer_owner.to_hex()));
+            assert!(!json.contains(&peer_device.to_hex()));
+        } else {
+            assert!(!json.contains(&owner.public_key().to_hex()));
+            assert!(!json.contains(&device.public_key().to_hex()));
+            assert!(!json.contains(&own_invite));
+            assert!(!json.contains(&message_author.to_hex()));
+        }
+    }
+    // A cold-start lookup also receives a fresh anonymous query context, even
+    // when its caller is the account-authenticated receive client.
+    let receiver_client = core.logged_in.as_ref().unwrap().client.clone();
+    core.runtime.block_on(async {
+        let events = protocol::fetch_events_for_filters(
+            &receiver_client,
+            vec![Filter::new().kind(Kind::from(APP_KEYS_EVENT_KIND as u16)).author(peer_owner)],
+            Duration::from_secs(2),
+        ).await.unwrap();
+        assert!(events.is_empty());
+    });
+    let rows = wire.lock().unwrap();
+    for (number, event) in rows.iter().filter(|(_, event)| event[0] == "REQ" && event.to_string().contains(&peer_owner.to_hex())) {
+        assert!(!own_connections.contains(number));
+        assert!(!event.to_string().contains(&device.public_key().to_hex()));
+    }
+}

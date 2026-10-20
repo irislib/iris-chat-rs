@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Real push service -> cold Android app -> native call action -> FIPS media.
 
-Use an English-language disposable test device with the debug and androidTest
-APKs installed. This adds a fresh test contact and restores settings at cleanup.
+Use an English-language ephemeral Android user with the debug and androidTest
+APKs installed for that user. This adds a fresh test contact and restores settings at cleanup.
 Requires built iris-call-fixture and local_nostr_relay binaries, and adb.
 No Firebase credentials or direct provider sends: use the app's existing service.
 """
@@ -17,6 +17,8 @@ import subprocess
 import threading
 import time
 import xml.etree.ElementTree as ET
+
+from run_harness import verify_instrumentation_target, verify_isolated_android_user
 
 
 def wait_for(description, predicate, seconds=25):
@@ -36,9 +38,17 @@ def main():
     parser.add_argument("--output", required=True, type=Path, help="Fresh private evidence directory")
     parser.add_argument("--push-server", default="https://notifications.iris.to")
     parser.add_argument("--adb", default="adb")
+    parser.add_argument("--package", default="to.iris.chat.debug", help="Installed target application ID")
+    parser.add_argument("--user", required=True, help="Current non-primary ephemeral Android test user")
+    parser.add_argument("--test-package", default="to.iris.chat.test", help="Installed instrumentation application ID")
     args = parser.parse_args()
+    package = args.package
+    if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)+", args.test_package):
+        parser.error("Invalid Android instrumentation package.")
+    runner = f"{args.test_package}/androidx.test.runner.AndroidJUnitRunner"
+    verify_isolated_android_user(args.adb, args.serial, args.user)
+    verify_instrumentation_target(args.adb, args.serial, runner, package)
     args.output.mkdir(mode=0o700, parents=True, exist_ok=False)
-    package = "to.iris.chat.debug"
     adb_base = [args.adb, "-s", args.serial]
 
     def adb(*parts, check=True):
@@ -50,11 +60,11 @@ def main():
         return result.stdout
 
     def instrument(method, **extras):
-        parts = ["shell", "am", "instrument", "-w", "-r", "-e", "class",
+        parts = ["shell", "am", "instrument", "-w", "-r", "--user", args.user, "-e", "class",
                  f"to.iris.chat.calls.CallPushHarnessTest#{method}"]
         for key, value in extras.items():
             parts += ["-e", key, value]
-        output = adb(*parts, "to.iris.chat.test/androidx.test.runner.AndroidJUnitRunner")
+        output = adb(*parts, runner)
         (args.output / f"{method}.log").write_text(output)
         assert "OK (1 test)" in output, f"Instrumentation failed: {method}; see private log"
         return output
@@ -62,10 +72,22 @@ def main():
     def notification(channel=None):
         dump = adb("shell", "dumpsys", "notification", "--noredact")
         return any("NotificationRecord(" in line and f"pkg={package} " in line
-                   and "id=7401 " in line and (not channel or f"channel={channel} " in line)
+                   and f"user=UserHandle{{{args.user}}}" in line and "id=7401 " in line and (not channel or f"channel={channel} " in line)
                    for line in dump.splitlines())
 
-    assert adb("shell", "pm", "path", "com.google.android.gms", check=False).strip(), (
+    def package_pids():
+        pids = []
+        for line in adb("shell", "ps", "-A", "-o", "UID,PID,NAME").splitlines():
+            fields = line.split()
+            if len(fields) != 3:
+                continue
+            uid, pid, name = fields
+            if (uid.isdecimal() and pid.isdecimal() and int(uid) // 100_000 == int(args.user)
+                    and (name == package or name.startswith(package + ":"))):
+                pids.append(pid)
+        return pids
+
+    assert adb("shell", "pm", "path", "--user", args.user, "com.google.android.gms", check=False).strip(), (
         "This FCM test requires Google Play services in the device's active profile")
 
     def native_action(action):
@@ -150,14 +172,14 @@ def main():
             wait_for("previous notification dismissed", lambda: not notification())
             adb("shell", "cmd", "statusbar", "collapse")
             adb("shell", "input", "keyevent", "HOME")
-            adb("shell", "am", "kill", package)
+            adb("shell", "am", "kill", "--user", args.user, package)
             # Telecom can briefly keep a finished call's process important.
             # Simulate an OS process kill without force-stop (which blocks FCM).
-            pids = adb("shell", "pidof", package, check=False).split()
+            pids = package_pids()
             if pids:
                 assert all(pid.isdecimal() for pid in pids)
-                adb("shell", "run-as", package, "kill", "-9", *pids)
-            wait_for("app process stopped", lambda: not adb("shell", "pidof", package, check=False).strip())
+                adb("shell", "run-as", package, "--user", args.user, "kill", "-9", *pids)
+            wait_for("app process stopped", lambda: not package_pids())
             adb("shell", "input", "keyevent", "SLEEP")
             if doze:
                 adb("shell", "dumpsys", "battery", "unplug")

@@ -1,4 +1,15 @@
 impl ProtocolEngine {
+    pub fn fork_for_test(&self) -> anyhow::Result<Self> {
+        let storage = Arc::new(crate::InMemoryStorage::new()) as Arc<dyn StorageAdapter>;
+        for key in self.storage.list("")? {
+            if let Some(value) = self.storage.get(&key)? {
+                storage.put(&key, value)?;
+            }
+        }
+        let keys = Keys::new(nostr::SecretKey::from_slice(&self.local_device_secret)?);
+        Self::load_or_create_for_local_device(storage, self.owner_pubkey, &keys)
+    }
+
     pub fn session_manager_snapshot_for_test(&self) -> SessionManagerSnapshot {
         self.session_manager.snapshot()
     }

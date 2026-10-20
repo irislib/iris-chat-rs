@@ -6,9 +6,11 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 
 ### GitHub
 
+- Publish private messages and call wake-ups on separate send-only connections, using fresh anonymous relay authentication and no account-authenticated fallback. Keep peer discovery separate from the account's receiving connection.
 - Use private per-session responder keys so public invitations cannot identify the sender of encrypted replies.
 - Sign call wakeups with fresh anonymous keys and authenticate callers only after decrypting the double-ratchet offer. Remove caller identity lists from notification subscriptions.
-- Deliver group notifications through separate double-ratchet envelopes for each recipient instead of exposing shared group keys in notification subscriptions.
+- Deliver every group message and membership update through separate double-ratchet envelopes for each recipient. Remove public group rosters, shared group broadcasts and shared-key subscriptions from all network carriers.
+- Stop publishing private-group member lists, administrators and names. Previously published records cannot be made private retroactively.
 - Require the new private messaging protocol, retire old sessions and invitations, and retain old unsent ciphertext locally without republishing it. Keep chat history.
 - Add serialized-event and upgrade regressions for identity correlation, first replies, calls, notification subscriptions and queued-message replay.
 

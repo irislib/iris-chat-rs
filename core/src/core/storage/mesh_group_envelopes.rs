@@ -137,6 +137,8 @@ impl GroupEnvelopeReplay {
             };
             if event.id.to_hex() != id
                 || event.kind.as_u16() as u32 != MESSAGE_EVENT_KIND
+                || !nostr_double_ratchet::has_metadata_privacy_version(&event)
+                || event.tags.public_keys().count() != 1
                 || !filters.iter().any(|filter| {
                     filter.match_event(&event, nostr::filter::MatchEventOptions::default())
                 })
@@ -219,6 +221,13 @@ impl AppStore {
             chat.starts_with("group:") && event.kind.as_u16() as u32 == MESSAGE_EVENT_KIND,
             "only authenticated group message envelopes may be cached"
         );
+        // Retain history locally, but never cache shared group channels for
+        // network replay. Every carrier serves only private ratchet envelopes.
+        if !nostr_double_ratchet::has_metadata_privacy_version(event)
+            || event.tags.public_keys().count() != 1
+        {
+            return Ok(());
+        }
         VerifiedEvent::try_from(event.clone())?;
         let json = event.as_json();
         if json.len() > MAX_EVENT_BYTES {

@@ -504,6 +504,7 @@ fn queued_runtime_publish_retries_when_message_servers_return() {
         .clear();
     let event = EventBuilder::new(Kind::from(MESSAGE_EVENT_KIND as u16), "retry body")
         .tag(nostr::Tag::parse(["v", "2"]).unwrap())
+        .tag(nostr::Tag::public_key(Keys::generate().public_key()))
         .sign_with_keys(&transport_keys)
         .expect("event");
     let event_id = event.id.to_string();
@@ -588,10 +589,12 @@ fn first_contact_publishes_bootstrap_and_payload_durably() {
     );
     let bootstrap = EventBuilder::new(Kind::from(INVITE_RESPONSE_KIND as u16), "bootstrap")
         .tag(nostr::Tag::parse(["v", "2"]).unwrap())
+        .tag(nostr::Tag::public_key(Keys::generate().public_key()))
         .sign_with_keys(&transport_keys)
         .expect("bootstrap event");
     let payload = EventBuilder::new(Kind::from(MESSAGE_EVENT_KIND as u16), "payload")
         .tag(nostr::Tag::parse(["v", "2"]).unwrap())
+        .tag(nostr::Tag::public_key(Keys::generate().public_key()))
         .sign_with_keys(&transport_keys)
         .expect("payload event");
     let payload_id = payload.id.to_string();
@@ -656,6 +659,7 @@ fn liveness_retries_pending_relay_publish_without_active_protocol_subscription()
 
     let event = EventBuilder::new(Kind::from(MESSAGE_EVENT_KIND as u16), "retry body")
         .tag(nostr::Tag::parse(["v", "2"]).unwrap())
+        .tag(nostr::Tag::public_key(Keys::generate().public_key()))
         .sign_with_keys(&transport_keys)
         .expect("event");
     let event_id = event.id.to_string();
@@ -1018,12 +1022,14 @@ fn protocol_invite_response_publish_prunes_superseded_pending_bootstrap() {
     let older = EventBuilder::new(Kind::from(INVITE_RESPONSE_KIND as u16), "older bootstrap")
         .custom_created_at(Timestamp::from_secs(10))
         .tag(nostr::Tag::parse(["v", "2"]).unwrap())
+        .tag(nostr::Tag::public_key(Keys::generate().public_key()))
         .sign_with_keys(&transport_keys)
         .expect("older bootstrap");
     let older_id = older.id.to_string();
     let newer = EventBuilder::new(Kind::from(INVITE_RESPONSE_KIND as u16), "newer bootstrap")
         .custom_created_at(Timestamp::from_secs(20))
         .tag(nostr::Tag::parse(["v", "2"]).unwrap())
+        .tag(nostr::Tag::public_key(Keys::generate().public_key()))
         .sign_with_keys(&transport_keys)
         .expect("newer bootstrap");
     let newer_id = newer.id.to_string();
@@ -1134,16 +1140,19 @@ fn protocol_control_publish_prunes_superseded_rows_already_in_storage() {
     let older = EventBuilder::new(Kind::from(INVITE_RESPONSE_KIND as u16), "older control")
         .custom_created_at(Timestamp::from_secs(10))
         .tag(nostr::Tag::parse(["v", "2"]).unwrap())
+        .tag(nostr::Tag::public_key(Keys::generate().public_key()))
         .sign_with_keys(&transport_keys)
         .expect("older control");
     let middle = EventBuilder::new(Kind::from(INVITE_RESPONSE_KIND as u16), "middle control")
         .custom_created_at(Timestamp::from_secs(20))
         .tag(nostr::Tag::parse(["v", "2"]).unwrap())
+        .tag(nostr::Tag::public_key(Keys::generate().public_key()))
         .sign_with_keys(&transport_keys)
         .expect("middle control");
     let newest = EventBuilder::new(Kind::from(INVITE_RESPONSE_KIND as u16), "newest control")
         .custom_created_at(Timestamp::from_secs(30))
         .tag(nostr::Tag::parse(["v", "2"]).unwrap())
+        .tag(nostr::Tag::public_key(Keys::generate().public_key()))
         .sign_with_keys(&transport_keys)
         .expect("newest control");
     let newest_id = newest.id.to_string();
@@ -1200,12 +1209,14 @@ fn older_protocol_control_publish_is_skipped_when_newer_row_is_already_stored() 
     let older = EventBuilder::new(Kind::from(INVITE_RESPONSE_KIND as u16), "older control")
         .custom_created_at(Timestamp::from_secs(10))
         .tag(nostr::Tag::parse(["v", "2"]).unwrap())
+        .tag(nostr::Tag::public_key(Keys::generate().public_key()))
         .sign_with_keys(&transport_keys)
         .expect("older control");
     let older_id = older.id.to_string();
     let newer = EventBuilder::new(Kind::from(INVITE_RESPONSE_KIND as u16), "newer control")
         .custom_created_at(Timestamp::from_secs(20))
         .tag(nostr::Tag::parse(["v", "2"]).unwrap())
+        .tag(nostr::Tag::public_key(Keys::generate().public_key()))
         .sign_with_keys(&transport_keys)
         .expect("newer control");
     let newer_id = newer.id.to_string();
@@ -1466,11 +1477,13 @@ fn distinct_protocol_publishes_for_same_target_are_kept() {
     );
     let first = EventBuilder::new(Kind::from(MESSAGE_EVENT_KIND as u16), "first")
         .tag(nostr::Tag::parse(["v", "2"]).unwrap())
+        .tag(nostr::Tag::public_key(Keys::generate().public_key()))
         .sign_with_keys(&transport_keys)
         .expect("first event");
     let first_event_id = first.id.to_string();
     let second = EventBuilder::new(Kind::from(MESSAGE_EVENT_KIND as u16), "second")
         .tag(nostr::Tag::parse(["v", "2"]).unwrap())
+        .tag(nostr::Tag::public_key(Keys::generate().public_key()))
         .sign_with_keys(&transport_keys)
         .expect("second event");
     let second_event_id = second.id.to_string();
@@ -1754,7 +1767,7 @@ fn liveness_replays_retained_appkeys_for_tracked_peer() {
     );
 
     core.preferences.nostr_relay_urls = vec![relay.url().to_string()];
-    let mut notifications = {
+    {
         let logged_in = core.logged_in.as_mut().expect("logged in");
         logged_in.relay_urls = relay_urls.clone();
         let client = logged_in.client.clone();
@@ -1776,8 +1789,9 @@ fn liveness_replays_retained_appkeys_for_tracked_peer() {
             }
         });
         assert!(connected > 0, "test relay must be connected");
-        client.notifications()
     };
+
+    let mut notifications = core.private_discovery_client().notifications();
 
     let mut plan = protocol_plan_for_test(Vec::new(), Vec::new());
     plan.roster_authors = vec![peer_owner.public_key().to_hex()];
@@ -2149,9 +2163,12 @@ fn protocol_backfill_fetches_configure_relays_before_network_fetch() {
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/core/protocol.rs"),
     )
     .expect("read protocol source");
+    assert!(
+        !protocol_source.contains("fetch_recent_group_sender_key_messages_for_author"),
+        "shared group authors must not be queried from relays"
+    );
     for fn_name in [
         "fetch_recent_messages_for_author",
-        "fetch_recent_group_sender_key_messages_for_author",
         "spawn_protocol_author_backfills",
         "fetch_recent_protocol_state_inner",
     ] {
