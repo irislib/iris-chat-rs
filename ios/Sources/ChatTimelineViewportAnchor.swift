@@ -89,6 +89,7 @@ extension ChatTimelineInteractionCoordinator {
 #if os(iOS)
         viewportHeight = height
         guard previousHeight > 0, height > 0, let scrollView else { return }
+        if !chatTimelineGeometryMatches(previousHeight, height) { historyViewportAnchor?.panPosition = nil }
         guard preservingPosition else {
             prepareForExplicitScroll()
             return
@@ -141,6 +142,7 @@ extension ChatTimelineInteractionCoordinator {
     }
 
     func captureKeyboardViewportAnchor(notification: Notification? = nil, now: CFTimeInterval = CACurrentMediaTime()) {
+        historyViewportAnchor?.panPosition = nil
         guard let scrollView, viewportHeight > 0 else { return }
         let previousAnchor = keyboardViewportAnchor
         let presentation = scrollView.layer.presentation()
@@ -222,11 +224,35 @@ struct ChatTimelineHistoryAnchor {
     var contentHeight: CGFloat = 0
     var offsetBeforeExtentChange: CGFloat?
     var clampCorrectionY: CGFloat = 0
-
-
+    var panPosition: ChatTimelineHistoryPanPosition<CGFloat>?
 }
 
 extension ChatTimelineInteractionCoordinator {
+    func recordHistoryPanState(_ state: UIGestureRecognizer.State) {
+        historyPanState.update(isActive: state == .began || state == .changed)
+    }
+
+    var activeHistoryPanTranslationY: CGFloat? {
+        guard let scrollView else { return nil }
+        let recognizer = scrollView.panGestureRecognizer
+        recordHistoryPanState(recognizer.state)
+        guard historyPanState.isActive else { return nil }
+        let translation = recognizer.translation(in: scrollView).y
+        return translation.isFinite ? translation : nil
+    }
+
+    func captureHistoryPanPosition() -> ChatTimelineHistoryPanPosition<CGFloat>? {
+        guard let scrollView, keyboardViewportAnchor == nil, pendingViewportResize == nil,
+              let translation = activeHistoryPanTranslationY else { return nil }
+        let minimum = -scrollView.adjustedContentInset.top
+        let maximum = max(minimum, scrollView.contentSize.height
+                          + scrollView.adjustedContentInset.bottom - scrollView.bounds.height)
+        let offset = scrollView.contentOffset.y
+        guard offset.isFinite, offset >= minimum, offset <= maximum else { return nil }
+        return ChatTimelineHistoryPanPosition(
+            generation: historyPanState.generation, offsetY: offset, translationY: translation)
+    }
+
     func hasCommittedTimelineExtent(_ height: CGFloat) -> Bool {
         guard height > 0, let scrollView else { return false }
         return abs(scrollView.contentSize.height - height) <= 1
@@ -278,7 +304,7 @@ extension ChatTimelineInteractionCoordinator {
               let contentFrame = latestPage.contentFrames[id] else { return }
         historyViewportAnchor = ChatTimelineHistoryAnchor(
             chatID: chatID, firstMessageID: firstMessageID, layoutGeneration: layoutGeneration,
-            messageID: id, originalContentY: contentFrame.minY)
+            messageID: id, originalContentY: contentFrame.minY, panPosition: captureHistoryPanPosition())
     }
 
     @discardableResult
@@ -308,7 +334,15 @@ extension ChatTimelineInteractionCoordinator {
         guard let anchor = historyViewportAnchor, let scrollView,
               let contentY = anchor.contentY,
               hasCommittedTimelineExtent(anchor.contentHeight) else { return false }
-        let offset = scrollView.contentOffset.y + contentY - anchor.originalContentY + anchor.clampCorrectionY
+        let minimum = -scrollView.adjustedContentInset.top
+        let maximum = max(minimum, scrollView.contentSize.height
+                          + scrollView.adjustedContentInset.bottom - scrollView.bounds.height)
+        let panTranslation = activeHistoryPanTranslationY
+        let offset = chatTimelineHistoryOffset(
+            currentOffsetY: scrollView.contentOffset.y, contentDeltaY: contentY - anchor.originalContentY,
+            clampCorrectionY: anchor.clampCorrectionY, panPosition: anchor.panPosition,
+            panGeneration: historyPanState.generation, panTranslationY: panTranslation,
+            minimumOffsetY: minimum, maximumOffsetY: maximum)
         historyViewportAnchor = nil
         if offset.isFinite, abs(offset - scrollView.contentOffset.y) > 1 {
             UIView.performWithoutAnimation { scrollView.contentOffset.y = offset }

@@ -171,6 +171,7 @@ final class ChatTimelineInteractionCoordinator: ObservableObject {
     var appliedViewportLayout: ChatTimelineViewportLayout?
     var historyViewportAnchor: ChatTimelineHistoryAnchor?
     var historyLayoutScheduled = false
+    var historyPanState = ChatTimelineHistoryPanState()
     var latestPage = ChatTimelinePageFrames()
 #endif
     var messageContentFrames: [String: CGRect] = [:]

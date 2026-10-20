@@ -4,6 +4,94 @@ import XCTest
 @testable import IrisChat
 
 final class ChatTimelineViewportAnchorTests: XCTestCase {
+    func testHistoryPanGenerationDoesNotDependOnWhichCallbackObservesItFirst() {
+        for captureFirst in [true, false] {
+            var state = ChatTimelineHistoryPanState()
+            // Capture and the native observer can observe the same initial
+            // pan in either order; neither may start another generation.
+            let callbacks = captureFirst ? ["capture", "observer"] : ["observer", "capture"]
+            for _ in callbacks { state.update(isActive: true) }
+            XCTAssertEqual(state.generation, 1)
+            state.update(isActive: true)
+            XCTAssertEqual(state.generation, 1, "Changed events stay in the same gesture")
+            state.update(isActive: false)
+            XCTAssertFalse(state.isActive)
+            state.update(isActive: true)
+            XCTAssertEqual(state.generation, 2, "An ended or cancelled gesture cannot lend its baseline to the next")
+        }
+    }
+
+    @MainActor
+    func testSameViewportKeepsHistoryPanBaselineButResizeInvalidatesIt() {
+        let scroll = UIScrollView(frame: CGRect(x: 0, y: 0, width: 390, height: 600))
+        scroll.contentSize.height = 3_000
+        scroll.contentOffset.y = 500
+        let coordinator = ChatTimelineInteractionCoordinator()
+        coordinator.scrollView = scroll
+        coordinator.historyViewportAnchor = ChatTimelineHistoryAnchor(
+            messageID: "119", originalContentY: 1_000,
+            panPosition: .init(generation: 1, offsetY: 500, translationY: -100))
+        coordinator.resizeViewport(from: 600, to: 600)
+        XCTAssertNotNil(coordinator.historyViewportAnchor?.panPosition)
+        coordinator.resizeViewport(from: 600, to: 500)
+        XCTAssertNil(coordinator.historyViewportAnchor?.panPosition)
+    }
+
+    func testWindowSwapKeepsFingerMovementSeparateFromNativeOffsetRebasing() {
+        // CI retained row 119 (height 232.333) moved 344.667 points during a
+        // 227.7-point drag across window 47...126 -> 87...166. The native
+        // rebase is a synthetic counterexample consistent with that geometry,
+        // not a claim that the failed run logged its intermediate offsets.
+        let pan = ChatTimelineHistoryPanPosition<CGFloat>(
+            generation: 3, offsetY: 9_535.333333333334, translationY: 0)
+        let offset = chatTimelineHistoryOffset(
+            currentOffsetY: 9_880, contentDeltaY: 0, clampCorrectionY: 0,
+            panPosition: pan, panGeneration: 3, panTranslationY: -227.7,
+            minimumOffsetY: 0, maximumOffsetY: 40_000)
+        XCTAssertEqual(offset, 9_763.033333333334, accuracy: 0.000001)
+        XCTAssertEqual(10_000 - offset, 236.966666666666, accuracy: 0.000001)
+    }
+
+    func testWindowSwapIncludesMovementAfterAMidPanCaptureAndOneLayoutDelta() {
+        let pan = ChatTimelineHistoryPanPosition<CGFloat>(
+            generation: 3, offsetY: 9_600, translationY: -60)
+        let offset = chatTimelineHistoryOffset(
+            currentOffsetY: 9_844.666666666668, contentDeltaY: -40, clampCorrectionY: 0,
+            panPosition: pan, panGeneration: 3, panTranslationY: -187.7,
+            minimumOffsetY: 0, maximumOffsetY: 40_000)
+        XCTAssertEqual(offset, 9_687.7, accuracy: 0.000001)
+    }
+
+    func testHistoryPanPositionCannotCrossANewOrCancelledGesture() {
+        let pan = ChatTimelineHistoryPanPosition<CGFloat>(
+            generation: 3, offsetY: 900, translationY: -60)
+        let samples: [(Int, CGFloat?)] = [(4, -20), (3, nil)]
+        for (generation, translation) in samples {
+            XCTAssertEqual(chatTimelineHistoryOffset(
+                currentOffsetY: 1_100, contentDeltaY: 80, clampCorrectionY: 0,
+                panPosition: pan, panGeneration: generation, panTranslationY: translation,
+                minimumOffsetY: 0, maximumOffsetY: 4_000), 1_180)
+        }
+    }
+
+    func testHistoryPanFallbackKeepsDecelerationAndExtentClampCorrections() {
+        XCTAssertEqual(chatTimelineHistoryOffset(
+            currentOffsetY: CGFloat(1_100), contentDeltaY: 80, clampCorrectionY: 0,
+            panPosition: nil, panGeneration: 3, panTranslationY: nil,
+            minimumOffsetY: 0, maximumOffsetY: 4_000), 1_180)
+        XCTAssertEqual(chatTimelineHistoryOffset(
+            currentOffsetY: CGFloat(2_000), contentDeltaY: -400, clampCorrectionY: 200,
+            panPosition: nil, panGeneration: 3, panTranslationY: nil,
+            minimumOffsetY: 0, maximumOffsetY: 2_000), 1_800)
+        let pan = ChatTimelineHistoryPanPosition<CGFloat>(
+            generation: 3, offsetY: 100, translationY: 0)
+        XCTAssertEqual(chatTimelineHistoryOffset(
+            currentOffsetY: CGFloat(-20), contentDeltaY: 0, clampCorrectionY: 0,
+            panPosition: pan, panGeneration: 3, panTranslationY: 200,
+            minimumOffsetY: 0, maximumOffsetY: 4_000), -20,
+            "Keep native rubber-banding when a drag leaves the valid extent")
+    }
+
     func testTopGeometryReductionKeepsTheMeasuredValueAcrossEmptySiblings() {
         var value: CGFloat = -435
         ChatTimelineTopMinYPreferenceKey.reduce(value: &value) { ChatTimelineTopMinYPreferenceKey.defaultValue }

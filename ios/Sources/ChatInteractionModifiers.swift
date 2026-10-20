@@ -295,6 +295,7 @@ final class ChatTimelineScrollObserverView: UIView {
     @objc private func handleScrollPan(_ recognizer: UIPanGestureRecognizer) {
         guard let scrollView = observedScrollView else { return }
         let translation = recognizer.translation(in: scrollView)
+        timelineCoordinator?.recordHistoryPanState(recognizer.state)
         switch recognizer.state {
         case .began, .changed:
             let velocity = recognizer.velocity(in: scrollView)

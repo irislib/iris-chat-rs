@@ -18,12 +18,14 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 - Add serialized-event and upgrade regressions for identity correlation, first replies, calls, notification subscriptions and queued-message replay.
 - Keep Windows text, controls and attachments readable in light and dark themes, and follow Windows theme changes while the app is open.
 - Give Windows settings a full-window layout with keyboard navigation, compact forms and switches. Preserve profile edits when switching settings pages.
+- Preserve the ongoing drag position on iPhone when the rendered history window changes.
 
 ### Apple
 
 - Improve privacy for messages, invitations and incoming calls.
 - Keep caller approval and blocking on your device.
 - Improve nearby messaging after changing accounts.
+- Keep your place when scrolling through long chats on iPhone.
 - Update both sides of a conversation to keep messaging and calling. Existing chat history is preserved; old invitation links need to be replaced.
 
 ### Zapstore
