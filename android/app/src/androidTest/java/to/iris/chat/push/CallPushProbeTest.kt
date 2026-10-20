@@ -1,7 +1,11 @@
 package to.iris.chat.push
 
+import android.content.Context
+import android.content.ContextWrapper
+import android.content.SharedPreferences
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import java.util.UUID
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -14,9 +18,17 @@ import to.iris.chat.BuildConfig
 class CallPushProbeTest {
     @Test fun call_capture_requires_local_arm_and_remains_bounded() {
         assumeTrue(BuildConfig.DEBUG)
-        // Use the instrumentation APK's storage, never an app account's probe.
-        val context = InstrumentationRegistry.getInstrumentation().context
-        PushNotificationProbe.clear(context)
+        // Instrumentation runs under the target UID; isolate only this test's storage.
+        val target = InstrumentationRegistry.getInstrumentation().targetContext
+        val preferenceName = "iris_call_probe_test_${UUID.randomUUID()}"
+        val preferences = target.getSharedPreferences(preferenceName, Context.MODE_PRIVATE)
+        val context = object : ContextWrapper(target) {
+            override fun getSharedPreferences(name: String, mode: Int): SharedPreferences {
+                require(name == "iris_push_probe")
+                return preferences
+            }
+        }
+        assertTrue(preferences.edit().clear().commit())
         try {
             PushNotificationProbe.recordCallEvent(context, "unarmed")
             assertEquals(0, PushNotificationProbe.snapshot(context).getJSONArray("call_events").length())
@@ -34,7 +46,7 @@ class CallPushProbeTest {
             assertFalse(disarmed.getBoolean("call_probe_enabled"))
             assertEquals(armed.getJSONArray("call_events").toString(), disarmed.getJSONArray("call_events").toString())
         } finally {
-            PushNotificationProbe.clear(context)
+            assertTrue(target.deleteSharedPreferences(preferenceName))
         }
     }
 }
