@@ -227,17 +227,23 @@ mod tests {
     async fn next_snapshot(
         receiver: &flume::Receiver<CoreMsg>,
     ) -> (u64, Vec<FipsNearbyLinkSnapshot>) {
-        let message = tokio::time::timeout(Duration::from_secs(10), receiver.recv_async())
-            .await
-            .expect("connection monitor update timed out")
-            .expect("connection monitor channel closed");
-        let CoreMsg::Internal(event) = message else {
-            panic!("expected internal connection update");
-        };
-        let InternalEvent::FipsNearbyPeersChanged { generation, peers } = *event else {
-            panic!("expected FIPS connection snapshot");
-        };
-        (generation, peers)
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            let message = tokio::time::timeout_at(deadline, receiver.recv_async())
+                .await
+                .expect("connection monitor update timed out")
+                .expect("connection monitor channel closed");
+            let CoreMsg::Internal(event) = message else {
+                panic!("expected internal connection update");
+            };
+            match *event {
+                InternalEvent::FipsNearbyPeersChanged { generation, peers } => {
+                    return (generation, peers);
+                }
+                InternalEvent::DebugLog { .. } => {}
+                _ => panic!("expected FIPS connection snapshot"),
+            }
+        }
     }
 
     #[tokio::test]
