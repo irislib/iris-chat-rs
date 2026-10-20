@@ -137,21 +137,29 @@ checks += assert_contains(
     ],
 )
 
+windows_tokens = {
+    "background": "Background",
+    "panel": "Panel",
+    "panelAlt": "PanelAlt",
+    "border": "Border",
+    "toolbar": "Toolbar",
+    "bubbleMine": "BubbleMine",
+    "bubbleTheirs": "BubbleTheirs",
+    "accent": "Accent",
+    "accentAlt": "AccentAlt",
+    "textPrimary": "TextPrimary",
+    "muted": "TextMuted",
+    "onAccent": "OnAccent",
+}
 checks += assert_contains(
     "windows/IrisChat/App.xaml",
     [
-        ("dark.background", f'x:Key="Background" Color="#{argb(dark["background"])}"'),
-        ("dark.panel", f'x:Key="Panel" Color="#{argb(dark["panel"])}"'),
-        ("dark.panelAlt", f'x:Key="PanelAlt" Color="#{argb(dark["panelAlt"])}"'),
-        ("dark.border", f'x:Key="Border" Color="#{argb(dark["border"])}"'),
-        ("dark.toolbar", f'x:Key="Toolbar" Color="#{argb(dark["toolbar"])}"'),
-        ("dark.bubbleMine", f'x:Key="BubbleMine" Color="#{argb(dark["bubbleMine"])}"'),
-        ("dark.bubbleTheirs", f'x:Key="BubbleTheirs" Color="#{argb(dark["bubbleTheirs"])}"'),
-        ("dark.accent", f'x:Key="Accent" Color="#{argb(dark["accent"])}"'),
-        ("dark.accentAlt", f'x:Key="AccentAlt" Color="#{argb(dark["accentAlt"])}"'),
-        ("dark.textPrimary", f'x:Key="TextPrimary" Color="#{argb(dark["textPrimary"])}"'),
-        ("dark.muted", f'x:Key="TextMuted" Color="#{argb(dark["muted"])}"'),
-        ("dark.onAccent", f'x:Key="OnAccent" Color="#{argb(dark["onAccent"])}"'),
+        (f"dark.{token}", f'<Color x:Key="{key}">#{argb(dark[token])}</Color>')
+        for token, key in windows_tokens.items()
+    ] + [
+        (f"theme binding {key}",
+         f'<SolidColorBrush x:Key="{key}" Color="{{Binding [{key}], Source={{StaticResource ThemeColors}}}}"')
+        for key in windows_tokens.values()
     ],
 )
 
