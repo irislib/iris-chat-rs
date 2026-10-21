@@ -10,14 +10,18 @@ import re
 import sys
 
 
-CONTRACT = "ios-distributed-upgrade-v1"
+CONTRACT = "ios-distributed-upgrade-v2"
 WORKFLOW = ".github/workflows/ios-runtime-acceptance.yml"
 WORKFLOW_NAME = "iOS Runtime Acceptance"
 RELEASE_KEYS = {"tag", "source_commit", "ipa_sha256", "manifest_sha256", "apple_version", "apple_build"}
 PHASES = {"foreground": (60, "foreground"), "background": (135, "background-suspended"),
-          "resume": (1, "foreground"), "cold_relaunch": (1, "foreground"), "affected_flow": (1, "foreground")}
+          "resume": (1, "foreground"), "cold_relaunch": (1, "foreground"), "affected_flow": (1, "foreground"),
+          "cold_background_launch": (135, "background-suspended"),
+          "early_background": (135, "background-suspended")}
 PHASE_KEYS = {"status", "observed_seconds", "process_samples", "unexpected_exits",
               "process_replacements", "process_state", "evidence_sha256"}
+STARTUP_PHASE_KEYS = {"cold_background_launch": {"entry_state", "foreground_activations"},
+                      "early_background": {"restore_in_flight"}}
 MAX_JSON_BYTES = 256 * 1024
 
 
@@ -68,7 +72,7 @@ def validate_receipt(receipt, **candidate):
     """Return only this exact schema; no raw private evidence belongs here."""
     validate_candidate(candidate)
     exact_object(receipt, {"schema_version", "contract", "release", "installation", "checks", "crash_check"})
-    require(type(receipt["schema_version"]) is int and receipt["schema_version"] == 1)
+    require(type(receipt["schema_version"]) is int and receipt["schema_version"] == 2)
     require(receipt["contract"] == CONTRACT)
     exact_object(receipt["release"], RELEASE_KEYS)
     require(receipt["release"] == candidate)
@@ -86,7 +90,14 @@ def validate_receipt(receipt, **candidate):
     exact_object(receipt["checks"], PHASES)
     for name, (minimum, state) in PHASES.items():
         phase = receipt["checks"][name]
-        exact_object(phase, PHASE_KEYS)
+        exact_object(phase, PHASE_KEYS | STARTUP_PHASE_KEYS.get(name, set()))
+        if name == "affected_flow" and phase["process_state"] == "background-suspended":
+            minimum, state = 135, "background-suspended"
+        if name == "cold_background_launch":
+            require(phase["entry_state"] == "background")
+            count(phase["foreground_activations"], exact=0)
+        elif name == "early_background":
+            require(phase["restore_in_flight"] is True)
         require(phase["status"] == "passed" and phase["process_state"] == state)
         duration(phase["observed_seconds"], minimum)
         count(phase["process_samples"], minimum=2)
@@ -99,7 +110,7 @@ def validate_receipt(receipt, **candidate):
     count(crash["unexpected_reports"], exact=0)
     count(crash["unexpected_exits"], exact=0)
     digest(crash["evidence_sha256"])
-    return {"schema_version": 1, "contract": CONTRACT,
+    return {"schema_version": 2, "contract": CONTRACT,
             "release": {key: candidate[key] for key in sorted(RELEASE_KEYS)},
             "installation": dict(installation),
             "checks": {name: dict(receipt["checks"][name]) for name in PHASES}, "crash_check": dict(crash)}

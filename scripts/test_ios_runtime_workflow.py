@@ -61,7 +61,8 @@ class RuntimeWorkflowTests(unittest.TestCase):
 
     def test_actual_promotion_step_rejects_wrong_proof_and_verifies_provenance(self):
         script = step("Require exact distributed-build runtime acceptance")
-        for case in ("valid", "wrong-source", "wrong-ipa", "failed-phase", "legacy",
+        for case in ("valid", "wrong-source", "wrong-ipa", "failed-phase", "legacy", "warm-background-only",
+                     "startup-crash", "restore-finished-before-background",
                      "wrong-workflow", "failed-attestation", "missing-artifact"):
             with self.subTest(case=case), tempfile.TemporaryDirectory() as folder:
                 root = Path(folder)
@@ -73,6 +74,12 @@ class RuntimeWorkflowTests(unittest.TestCase):
                 if case == "wrong-ipa": proof["release"]["ipa_sha256"] = "0" * 64
                 if case == "failed-phase": proof["checks"]["background"]["status"] = "failed"
                 if case == "legacy": proof = {"passed": True}
+                if case == "warm-background-only":
+                    proof.update(schema_version=1, contract="ios-distributed-upgrade-v1")
+                    del proof["checks"]["cold_background_launch"]
+                    del proof["checks"]["early_background"]
+                if case == "startup-crash": proof["checks"]["cold_background_launch"]["unexpected_exits"] = 1
+                if case == "restore-finished-before-background": proof["checks"]["early_background"]["restore_in_flight"] = False
                 if case == "wrong-workflow": metadata["path"] = ".github/workflows/ci.yml"
                 (root / "fixture.json").write_text(json.dumps(proof))
                 (root / "metadata.json").write_text(json.dumps(metadata))

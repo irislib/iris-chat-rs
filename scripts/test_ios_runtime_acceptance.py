@@ -23,12 +23,18 @@ def receipt():
              "unexpected_exits": 0, "process_replacements": 0,
              "process_state": "foreground", "evidence_sha256": "d" * 64}
     phases = {name: copy.deepcopy(phase)
-              for name in ("foreground", "background", "resume", "cold_relaunch", "affected_flow")}
+              for name in ("foreground", "background", "resume", "cold_relaunch", "affected_flow",
+                           "cold_background_launch", "early_background")}
     phases["background"].update(observed_seconds=135, process_state="background-suspended")
+    phases["cold_background_launch"].update(
+        observed_seconds=135, process_state="background-suspended", entry_state="background",
+        foreground_activations=0)
+    phases["early_background"].update(
+        observed_seconds=135, process_state="background-suspended", restore_in_flight=True)
     for name in ("resume", "cold_relaunch", "affected_flow"):
         phases[name]["observed_seconds"] = 1
     return {
-        "schema_version": 1, "contract": "ios-distributed-upgrade-v1", "release": dict(CANDIDATE),
+        "schema_version": 2, "contract": "ios-distributed-upgrade-v2", "release": dict(CANDIDATE),
         "installation": {
             "channel": "testflight", "device": "physical-iphone", "previous_build": "2026101800",
             "installed_build": CANDIDATE["apple_build"], "storage": "preserved-app-data-and-keychain",
@@ -94,9 +100,41 @@ class RuntimeAcceptanceTests(unittest.TestCase):
                 with self.subTest(phase=phase, field=field), self.assertRaises(acceptance.ValidationError): self.validate(value)
             value = receipt(); del value["checks"][phase]
             with self.subTest(missing=phase), self.assertRaises(acceptance.ValidationError): self.validate(value)
-        for phase, duration in (("foreground", 59.999), ("background", 134.999)):
+        for phase, duration in (("foreground", 59.999), ("background", 134.999),
+                                ("cold_background_launch", 134.999), ("early_background", 134.999)):
             value = receipt(); value["checks"][phase]["observed_seconds"] = duration
             with self.subTest(duration=duration), self.assertRaises(acceptance.ValidationError): self.validate(value)
+
+    def test_warm_background_or_foreground_launch_cannot_replace_startup_coverage(self):
+        cases = (("cold_background_launch", "entry_state", "foreground"),
+                 ("cold_background_launch", "foreground_activations", 1),
+                 ("cold_background_launch", "foreground_activations", False),
+                 ("early_background", "restore_in_flight", False),
+                 ("early_background", "restore_in_flight", 1))
+        for phase, field, wrong in cases:
+            value = receipt(); value["checks"][phase][field] = wrong
+            with self.subTest(phase=phase, field=field, wrong=wrong), self.assertRaises(acceptance.ValidationError):
+                self.validate(value)
+        for phase in ("cold_background_launch", "early_background"):
+            value = receipt(); value["checks"][phase] = copy.deepcopy(value["checks"]["background"])
+            with self.subTest(warm_copy=phase), self.assertRaises(acceptance.ValidationError): self.validate(value)
+
+    def test_legacy_receipt_cannot_skip_new_background_startup_coverage(self):
+        value = receipt()
+        value.update(schema_version=1, contract="ios-distributed-upgrade-v1")
+        del value["checks"]["cold_background_launch"]
+        del value["checks"]["early_background"]
+        with self.assertRaises(acceptance.ValidationError): self.validate(value)
+
+    def test_reported_background_flow_requires_actual_suspension_survival(self):
+        value = receipt()
+        phase = value["checks"]["affected_flow"]
+        phase.update(process_state="background-suspended", observed_seconds=135)
+        self.assertEqual(self.validate(value), value)
+        for field, wrong in (("observed_seconds", 134.999), ("process_state", "background"),
+                             ("unexpected_exits", 1), ("process_replacements", 1)):
+            invalid = copy.deepcopy(value); invalid["checks"]["affected_flow"][field] = wrong
+            with self.subTest(field=field), self.assertRaises(acceptance.ValidationError): self.validate(invalid)
 
     def test_booleans_nonfinite_and_noninteger_counts_are_not_proof(self):
         for field in ("observed_seconds", "process_samples", "unexpected_exits", "process_replacements"):

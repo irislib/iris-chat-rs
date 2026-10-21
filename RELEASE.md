@@ -332,19 +332,39 @@ Launch normally without a debugger or XCTest launch assertion. Verify the
 account, an existing message and a draft; observe the same process for at least
 60 seconds in the foreground and 135 seconds in the background, then resume and
 cold relaunch and verify the preserved state again. A crash corrective release
-must also exercise its reported failing flow and focused regression. Preserve
-the first failure and diagnostics; an automatic relaunch or retry is not a pass.
+must also exercise its reported failing flow and focused regression.
+
+Also exercise startup in the background and backgrounding during account
+restoration. For `cold_background_launch`, start a new process while another app
+remains active; record background entry and zero foreground activations through
+suspension. For `early_background`, launch normally and switch away while account
+restoration is still in flight. Capture evidence of that overlap; waiting until
+restoration finishes does not cover this path. For each, retain the original
+process from launch through at least 135 seconds of actual background suspension,
+without a debugger or XCTest launch assertion. The 135-second interval starts
+after suspension, not at launch. Verify preserved state after resuming.
+Use the startup lifecycle evidence and focused regression to establish these
+conditions; a successful warm-background check is insufficient. A background
+`affected_flow` must likewise survive at least 135 seconds suspended.
+
+Preserve the first failure and diagnostics; an automatic relaunch or retry is not a pass.
 A missing device, unverified installed build, or unavailable crash reproduction
 remains an explicit outstanding gate. Do not promote to public TestFlight or
 submit to the App Store while that gate is outstanding.
 
 After verification, retain the private captures and prepare a safe receipt using
-the `ios-distributed-upgrade-v1` schema in `scripts/ios_runtime_acceptance.py`.
+the `ios-distributed-upgrade-v2` schema in `scripts/ios_runtime_acceptance.py`.
 It records the exact candidate, previous and installed builds, preserved-state
 results, measured lifecycle intervals, process/crash counts, and private evidence
 digests. It must contain no account or device identifiers, local paths, screenshots,
 or raw logs. A success flag or the 15-second development-restoration check cannot
-satisfy this contract.
+satisfy this contract. Legacy v1 receipts do not establish the required startup
+coverage and are rejected. The two startup checks include
+`entry_state: "background"` and `foreground_activations: 0` for `cold_background_launch`, and
+`restore_in_flight: true` for `early_background`, in addition to the common phase
+fields. These attest to the private evidence; they must not be inferred from
+process survival alone. Set `affected_flow.process_state` to the actual observed
+state (`foreground` or `background-suspended`).
 
 Run **iOS Runtime Acceptance** from the exact release tag, supplying that tag and
 the safe receipt JSON. It verifies the immutable release files, validates and
