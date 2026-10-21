@@ -6,6 +6,7 @@ import hashlib
 import json
 from pathlib import Path
 import re
+import time
 import xml.etree.ElementTree as ET
 
 SETUP_WIZARDS = ("com.google.android.setupwizard", "app.grapheneos.setupwizard")
@@ -135,23 +136,105 @@ def verify_owned_ephemeral_ui(adb, ownership, output, capture_png):
     return report
 
 
+WIZARD_STAGES = (
+    ("welcome", "app.grapheneos.setupwizard", "Welcome to GrapheneOS", "Next"),
+    ("location", "app.grapheneos.setupwizard", "Location services", "Next"),
+    ("empty-pin", "com.android.settings", "Set a PIN", "Skip"),
+    ("confirm-skip-pin", "com.android.settings", "Skip setup for PIN • Fingerprint?", "Skip"),
+    ("migration", "app.grapheneos.setupwizard", "Restore apps & data", "Skip"),
+    ("finish", "app.grapheneos.setupwizard", "You're all set now!", "Start"),
+)
+
+
+def wizard_control(xml, stage):
+    """Accept only the observed secondary-user pages and one navigation control."""
+    if not xml.strip() or len(xml) > 1024 * 1024:
+        raise ValueError("Missing or oversized setup UI hierarchy")
+    nodes = list(ET.fromstring(xml).iter("node"))
+    name, package, title, label = WIZARD_STAGES[stage]
+    labels = [n.get("text", "") for n in nodes]
+    if not nodes or nodes[0].get("package") != package or labels.count(title) != 1:
+        raise ValueError("Unrecognized or out-of-order owned-profile setup page: " + name)
+    if any(word in "\n".join(labels).lower() for word in
+           ("administrator", "organization", "work profile", "sign in", "add account")):
+        raise ValueError("Account or administration setup is not allowed")
+    inputs = [n for n in nodes if n.get("class", "").endswith("EditText")]
+    if name == "empty-pin":
+        if (len(inputs) != 1 or inputs[0].get("resource-id") != "com.android.settings:id/password_entry"
+                or inputs[0].get("text") != "" or inputs[0].get("package") != package
+                or inputs[0].get("class") != "android.widget.EditText"
+                or not any(t.startswith("PIN must be at least 4 digits") for t in labels)):
+            raise ValueError("Only the known empty optional PIN-creation page may be skipped")
+    elif inputs:
+        raise ValueError("Unexpected credential or text-entry setup page")
+    if name == "confirm-skip-pin" and ("Cancel" not in labels or not any(
+            t.startswith("A PIN is required to set up Fingerprint Unlock.") for t in labels)):
+        raise ValueError("Unknown optional PIN-skip confirmation")
+    controls = [n for n in nodes if n.get("package") == package and n.get("text") == label
+                and n.get("enabled") == "true" and n.get("clickable") == "true"
+                and n.get("class") == "android.widget.Button"]
+    if len(controls) != 1:
+        raise ValueError("Normal setup control is missing or ambiguous")
+    bounds = controls[0].get("bounds", "")
+    match = re.fullmatch(r"\[(\d+),(\d+)\]\[(\d+),(\d+)\]", bounds)
+    if match is None:
+        raise ValueError("Invalid setup control bounds")
+    x1, y1, x2, y2 = map(int, match.groups())
+    if x2 <= x1 or y2 <= y1:
+        raise ValueError("Empty setup control bounds")
+    return {"stage": name, "package": package, "label": label, "bounds": bounds,
+            "tap": ((x1 + x2) // 2, (y1 + y2) // 2)}
+
+
 def prepare_owned_ephemeral_profile(adb, ownership, output, capture_png):
-    """Changes disappear when the outer controller removes its exact fresh user."""
+    """Use normal visible setup only; the wizard sets its own completion state."""
     ownership.verify(adb)
-    changed = []
-    user = str(ownership.user)
-    adb("shell", "settings", "--user", user, "put", "secure", "user_setup_complete", "1")
-    for package in SETUP_WIZARDS:
+    output = Path(output)
+    output.mkdir(mode=0o700, parents=True, exist_ok=False)
+    wizard_dir = output / "wizard"
+    wizard_dir.mkdir(mode=0o700)
+    deadline = time.monotonic() + 300
+    report = {"passed": False, "user": ownership.user,
+              "creation_response_sha256": ownership.creation_response_sha256,
+              "wizard": {"actions": [], "screens": {}, "observed_user_setup_complete": False},
+              "restoration": "Original outer controller removes this exact freshly created ephemeral user"}
+
+    def ui(*parts):
         ownership.verify(adb)
-        if not adb("shell", "pm", "path", "--user", user, package, check=False).startswith("package:"):
-            continue
-        adb("shell", "pm", "disable-user", "--user", user, package)
-        disabled = adb("shell", "pm", "list", "packages", "--user", user, "-d", package)
-        if "package:" + package not in disabled.splitlines():
-            raise ValueError("Owned-profile setup wizard was not disabled")
-        changed.append(package)
-    report = verify_owned_ephemeral_ui(adb, ownership, output, capture_png)
-    report["disabled_owned_user_wizards"] = changed
-    report["restoration"] = "Original outer controller removes this exact freshly created ephemeral user"
-    (Path(output) / "receipt.json").write_text(json.dumps(report, indent=2) + "\n")
+        if time.monotonic() > deadline:
+            raise ValueError("Owned-profile normal setup exceeded its bounded deadline")
+        return adb("shell", *parts)
+
+    def capture(stage):
+        remote = f"/sdcard/iris-owned-wizard-{ownership.user}.xml"
+        ui("uiautomator", "dump", remote)
+        xml = ui("cat", remote)
+        (wizard_dir / (stage + ".xml")).write_text(xml)
+        ownership.verify(adb)
+        png = capture_png()
+        if not isinstance(png, bytes) or not png.startswith(b"\x89PNG\r\n\x1a\n"):
+            raise ValueError("Missing actual setup UI screenshot")
+        (wizard_dir / (stage + ".png")).write_bytes(png)
+        report["wizard"]["screens"][stage] = {"xml_sha256": hashlib.sha256(xml.encode()).hexdigest(),
+                                                "png_sha256": hashlib.sha256(png).hexdigest()}
+        return xml
+
+    try:
+        for stage, (name, _, _, _) in enumerate(WIZARD_STAGES):
+            control = wizard_control(capture(name), stage)
+            # Recheck the entire accepted page, including empty PIN, immediately before tapping.
+            if wizard_control(capture(name + "-recheck"), stage) != control:
+                raise ValueError("Normal setup control changed before action")
+            ui("input", "tap", *map(str, control["tap"]))
+            report["wizard"]["actions"].append(control)
+        foreground_package(capture("completed"))
+        if ui("settings", "--user", str(ownership.user), "get", "secure", "user_setup_complete").strip() != "1":
+            raise ValueError("Wizard did not complete its own user setup")
+        report["wizard"]["observed_user_setup_complete"] = True
+        report.update(verify_owned_ephemeral_ui(adb, ownership, output / "ordinary-ui", capture_png))
+    except Exception as error:
+        report.update(passed=False, error=str(error))
+        raise
+    finally:
+        (output / "receipt.json").write_text(json.dumps(report, indent=2) + "\n")
     return report
