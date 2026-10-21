@@ -208,8 +208,17 @@ final class BackgroundPushLifecycleTests: XCTestCase {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
         let rust = MockRustApp(state: makeAppState(rev: 1, account: makeAccount()))
+        let startupFinished = expectation(description: "startup finished before the push")
         let manager = AppManager(rust: rust, secretStore: InMemorySecretStore(),
-                                 dataDir: directory, environment: [:])
+                                 pendingDeviceLinkSecretStore: InMemoryPendingDeviceLinkSecretStore(),
+                                 dataDir: directory, environment: [:],
+                                 startupActivityFactory: {
+                                     IrisStartupBackgroundActivity(initiallyBackgrounded: false) {
+                                         startupFinished.fulfill()
+                                     }
+                                 })
+        await fulfillment(of: [startupFinished], timeout: 2)
+        XCTAssertEqual(rust.prepareForSuspendCallCount, 0)
         rust.onDispatch = { action in
             if case .ingestMobilePushPayload = action {
                 rust.emit(.fullState(makeAppState(rev: 2, account: makeAccount())))
