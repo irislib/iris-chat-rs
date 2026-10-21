@@ -75,6 +75,54 @@ class ReleasePublishGuardTests(unittest.TestCase):
         self.assertNotIn("Release publication contract passed", result.stdout)
 
 
+class DistributionToolsTests(unittest.TestCase):
+    def test_release_tools_override_path_without_replacing_global_tools(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            qualified, usual = root / "release tools", root / "usual"
+            for folder in (qualified, usual):
+                folder.mkdir()
+                for name in ("haps", "htree"):
+                    tool = folder / name
+                    tool.write_text("#!/bin/sh\nexit 0\n")
+                    tool.chmod(0o755)
+            env = {**os.environ, "PATH": str(usual) + os.pathsep + os.defpath,
+                   "IRIS_DISTRIBUTION_TOOLS_DIR": str(qualified)}
+            result = subprocess.run(
+                ["/bin/bash", "-e", "-c", 'source "$1"; command -v haps; command -v htree',
+                 "bash", str(ROOT / "scripts/distribution_common.sh")],
+                env=env, capture_output=True, text=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout.splitlines(),
+                             [str(qualified / "haps"), str(qualified / "htree")])
+            self.assertTrue((usual / "haps").is_file())
+            self.assertTrue((usual / "htree").is_file())
+            # An incomplete selected pair must not fall back to an older helper.
+            (qualified / "htree").unlink()
+            failed = subprocess.run(
+                [str(ROOT / "scripts/distribute"), "--help"],
+                env=env, capture_output=True, text=True,
+            )
+            self.assertNotEqual(failed.returncode, 0)
+            self.assertIn("IRIS_DISTRIBUTION_TOOLS_DIR", failed.stderr)
+            # Searchable directories are not helper executables.
+            (qualified / "htree").mkdir()
+            colon = root / "release:tools"
+            colon.mkdir()
+            for name in ("haps", "htree"):
+                (colon / name).symlink_to(usual / name)
+            for invalid in (qualified, colon, Path("relative/tools")):
+                with self.subTest(invalid=invalid):
+                    failed = subprocess.run(
+                        [str(ROOT / "scripts/distribute"), "--help"],
+                        env={**env, "IRIS_DISTRIBUTION_TOOLS_DIR": str(invalid)},
+                        capture_output=True, text=True,
+                    )
+                    self.assertNotEqual(failed.returncode, 0)
+                    self.assertIn("IRIS_DISTRIBUTION_TOOLS_DIR", failed.stderr)
+
+
 class HomebrewPackagingTests(unittest.TestCase):
     def test_temporary_tap_waits_for_git_housekeeping(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -29,6 +29,7 @@ Options:
   -h, --help   Show this help.
 
 Local publishing paths:
+  IRIS_DISTRIBUTION_TOOLS_DIR  Optional absolute directory containing qualified haps and htree
   IRIS_HASHTREE_NSEC_PATH   ~/.config/iris-chat/htree-nsec
   IRIS_HASHTREE_CONFIG_DIR  ~/.config/iris-chat/htree-release-config
   IRIS_HASHTREE_DATA_DIR    ~/.config/iris-chat/htree-release-data

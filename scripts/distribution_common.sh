@@ -12,6 +12,20 @@ IRIS_HASHTREE_DATA_DIR="${IRIS_HASHTREE_DATA_DIR:-$HOME/.config/iris-chat/htree-
 IRIS_HASHTREE_NSEC_PATH="${IRIS_HASHTREE_NSEC_PATH:-$HOME/.config/iris-chat/htree-nsec}"
 IRIS_ZAPSTORE_NSEC_PATH="${IRIS_ZAPSTORE_NSEC_PATH:-$HOME/.config/iris-chat/zapstore-nsec}"
 
+# Keep release-only helpers isolated from tools used by other local services.
+if [[ -n "${IRIS_DISTRIBUTION_TOOLS_DIR:-}" ]]; then
+  if [[ "$IRIS_DISTRIBUTION_TOOLS_DIR" != /* ||
+        "$IRIS_DISTRIBUTION_TOOLS_DIR" == *:* ||
+        ! -f "$IRIS_DISTRIBUTION_TOOLS_DIR/haps" ||
+        ! -x "$IRIS_DISTRIBUTION_TOOLS_DIR/haps" ||
+        ! -f "$IRIS_DISTRIBUTION_TOOLS_DIR/htree" ||
+        ! -x "$IRIS_DISTRIBUTION_TOOLS_DIR/htree" ]]; then
+    echo "IRIS_DISTRIBUTION_TOOLS_DIR must be an absolute directory containing haps and htree." >&2
+    return 1
+  fi
+  export PATH="$IRIS_DISTRIBUTION_TOOLS_DIR:$PATH"
+fi
+
 require_command() {
   local command_name="$1"
   if ! command -v "$command_name" >/dev/null 2>&1; then

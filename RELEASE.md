@@ -218,7 +218,12 @@ uses the public relays in the dedicated Hashtree configuration, bypassing local
 daemon preferences and inherited `NOSTR_RELAYS`; a local storage acknowledgment
 is not proof of public delivery. Verify both packages from a fresh consumer
 before treating Haps distribution as complete. The local publisher needs Haps
-with `import-release` support and Python 3.9 or newer.
+with `import-release` support and Python 3.9 or newer. Set
+`IRIS_DISTRIBUTION_TOOLS_DIR` to an absolute directory containing a qualified
+`haps` and `htree` pair to use dedicated release tools without replacing tools
+used by other local services. Haps helpers with source-file caching and
+retained-root delta uploads avoid processing all previous package payloads on
+each release; older helpers report when these optimizations are unavailable.
 
 Use this order: Hashtree, Homebrew, Zapstore. Homebrew refuses to publish
 until the exact Hashtree tag exists. Commands are safe to retry with the same
