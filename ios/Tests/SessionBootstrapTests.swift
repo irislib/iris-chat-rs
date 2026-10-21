@@ -100,6 +100,77 @@ final class SessionBootstrapTests: XCTestCase {
         XCTAssertEqual(manager.activeScreen, .welcome)
     }
 
+    func testStartupAllowanceBeginsBeforeNativeFactoryAndForegroundRestoreDoesNotSuspend() async {
+        let rust = MockRustApp()
+        var allowanceStarted = false
+        var allowanceFinished = false
+        var finishCount = 0
+        var activity: IrisStartupBackgroundActivity?
+        let manager = AppManager(
+            secretStore: InMemorySecretStore(),
+            pendingDeviceLinkSecretStore: InMemoryPendingDeviceLinkSecretStore(),
+            dataDir: directory, environment: [:],
+            rustFactory: {
+                XCTAssertTrue(allowanceStarted, "native construction must already be protected")
+                XCTAssertFalse(allowanceFinished)
+                return rust
+            },
+            startupActivityFactory: {
+                allowanceStarted = true
+                let started = IrisStartupBackgroundActivity(initiallyBackgrounded: false) {
+                    allowanceFinished = true
+                    finishCount += 1
+                }
+                activity = started
+                return started
+            }
+        )
+        XCTAssertTrue(allowanceStarted)
+        XCTAssertFalse(allowanceFinished, "deferred secure-input lookup still belongs to startup")
+        let completed = await waitUntil { allowanceFinished }
+        XCTAssertTrue(completed)
+        XCTAssertTrue(manager.appSceneIsActive)
+        XCTAssertEqual(rust.prepareForSuspendCallCount, 0)
+        activity?.finish()
+        XCTAssertEqual(finishCount, 1)
+    }
+
+#if os(iOS)
+    func testBackgroundStartupLoadingTimeoutDoesNotReleasePendingStorageBarrier() async {
+        let rust = MockRustApp()
+        let started = expectation(description: "startup barrier waiting for native restore")
+        let finished = expectation(description: "startup allowance ends after native acknowledgement")
+        let gate = DispatchSemaphore(value: 0)
+        defer { gate.signal() }
+        var allowanceFinished = false
+        rust.onNextPrepareForSuspend {
+            started.fulfill()
+            XCTAssertEqual(gate.wait(timeout: .now() + 12), .success)
+        }
+        let manager = AppManager(
+            rust: rust,
+            secretStore: InMemorySecretStore(bundle: StoredAccountBundle(
+                ownerNsec: "test-owner", ownerPubkeyHex: "test-owner-id", deviceNsec: "test-device"
+            )),
+            pendingDeviceLinkSecretStore: InMemoryPendingDeviceLinkSecretStore(),
+            dataDir: directory, environment: [:],
+            startupActivityFactory: {
+                IrisStartupBackgroundActivity(initiallyBackgrounded: true) {
+                    allowanceFinished = true
+                    finished.fulfill()
+                }
+            }
+        )
+        await fulfillment(of: [started], timeout: 2)
+        let loadingTimedOut = await waitUntil(timeoutNanoseconds: 9_000_000_000) { !manager.bootstrapInFlight }
+        XCTAssertTrue(loadingTimedOut)
+        XCTAssertFalse(allowanceFinished, "the eight-second UI timeout does not cancel or complete native work")
+        gate.signal()
+        await fulfillment(of: [finished], timeout: 2)
+        XCTAssertEqual(rust.prepareForSuspendCallCount, 1)
+    }
+#endif
+
     func testLiveCoreRestoreErrorShowsWelcome() async {
         let rust = LiveRustAppClient(dataDir: directory.path, appVersion: "test")
         let manager = makeManager(rust: rust)

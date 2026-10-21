@@ -269,7 +269,7 @@ impl AppCore {
     }
 
     fn rebuild_state_inner(&mut self) {
-        if self.logged_in.is_some() {
+        if self.logged_in.is_some() && !self.state.busy.restoring_session {
             let _ = self.ensure_attachment_service();
         }
         let t0 = crate::perflog::now_ms();

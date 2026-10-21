@@ -2,6 +2,22 @@
 
 Each release has channel-specific notes. The release tag must match the `##` heading exactly.
 
+## v2026.10.22
+
+### GitHub
+
+- Protect iOS background startup through account restoration and a storage suspension acknowledgement, including delayed restoration after an earlier suspension.
+- Reconcile FIPS once after restoring saved authorizations, preserving the complete device roster without opening attachment storage for every intermediate authorization.
+- Require exact TestFlight evidence for both background launch and backgrounding during account restoration before public beta or App Store promotion.
+
+### Apple
+
+- Fix a crash when Iris starts or restores your account in the background.
+
+### Zapstore
+
+- Reduce repeated network startup while restoring your account.
+
 ## v2026.10.21.2
 
 ### GitHub

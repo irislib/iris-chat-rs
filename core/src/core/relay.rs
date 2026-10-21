@@ -771,7 +771,10 @@ impl AppCore {
             // Install that signed proof before checking the older roster for removal.
             self.publish_local_app_keys();
         }
-        self.reconcile_device_sync();
+        // Restore reconciles once after all durable authorization heads are projected.
+        if !self.state.busy.restoring_session {
+            self.reconcile_device_sync();
+        }
         self.migrate_verified_device_owner_threads(event.pubkey, &effective_app_keys);
         self.complete_authorized_device_link();
         self.mark_mobile_push_dirty();

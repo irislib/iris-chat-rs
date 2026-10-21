@@ -159,3 +159,112 @@ fn device_sync_private_negentropy_rejects_other_accounts_and_revoked_devices() {
     assert_eq!(core.device_history_session_count_for_test(), 0);
     core.runtime.block_on(endpoint.shutdown()).unwrap();
 }
+
+#[test]
+fn restored_authorization_projection_defers_transport_until_complete_roster() {
+    let owner = Keys::generate();
+    let local = Keys::generate();
+    let sibling = Keys::generate();
+    let contact_a = Keys::generate();
+    let device_a = Keys::generate();
+    let contact_b = Keys::generate();
+    let device_b = Keys::generate();
+    let (mut core, _, dir) =
+        logged_in_test_core_with_updates("restore-authorization-runtime", &owner, &local);
+    core.preferences.nostr_relay_urls.clear();
+    let socket = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+    let std::net::SocketAddr::V4(rendezvous) = socket.local_addr().unwrap() else {
+        unreachable!("IPv4 fixture");
+    };
+    drop(socket);
+    core.test_fips_rendezvous_addr = Some(rendezvous);
+    let created_at = unix_now().get() + 1;
+    let rosters = [
+        (&owner, vec![local.public_key(), sibling.public_key()]),
+        (&contact_a, vec![device_a.public_key()]),
+        (&contact_b, vec![device_b.public_key()]),
+    ];
+    for (signer, devices) in &rosters {
+        let event = AppKeys::new(
+            devices
+                .iter()
+                .copied()
+                .map(|device| DeviceEntry::new(device, created_at))
+                .collect(),
+        )
+        .get_event_at(signer.public_key(), created_at)
+        .sign_with_keys(signer)
+        .unwrap();
+        core.capture_authorization_event(&event).unwrap();
+    }
+
+    // Real durable replay must restore authority before opening a lifetime LMDB lock.
+    core.state.busy.restoring_session = true;
+    core.restore_device_sync_record_projection();
+    for (signer, devices) in &rosters {
+        let restored = &core.app_keys[&signer.public_key().to_hex()];
+        for device in devices {
+            assert!(restored
+                .devices
+                .iter()
+                .any(|entry| entry.identity_pubkey_hex == device.to_hex()));
+            assert!(core
+                .protocol_engine
+                .as_ref()
+                .unwrap()
+                .has_device_roster_entry_for_owner(signer.public_key(), *device));
+        }
+    }
+    assert!(core.device_sync_peer_is_authorized(&sibling.public_key().to_hex()));
+    assert!(!core.device_sync_peer_is_authorized(&device_a.public_key().to_hex()));
+    assert!(
+        core.device_sync.is_none(),
+        "replay must not start FIPS per head"
+    );
+    assert!(core.attachment_service.is_none());
+    assert!(
+        !dir.path().join("attachments").exists(),
+        "intermediate authorization must not open the attachment LMDB environment"
+    );
+
+    // Exercise the real session tail, whose final reconciliation must still run
+    // while the outer restore action owns the restoring-session flag.
+    core.start_session_inner(
+        owner.public_key(),
+        Some(owner.clone()),
+        local,
+        true,
+        true,
+        false,
+    )
+    .unwrap();
+    assert!(core.state.busy.restoring_session);
+    assert!(core.device_sync_has_sibling_tcp_for_test());
+    let runtime = core.device_sync.as_ref().unwrap();
+    let expected_peers = [
+        sibling.public_key(),
+        device_a.public_key(),
+        device_b.public_key(),
+    ]
+    .into_iter()
+    .collect::<HashSet<_>>();
+    assert_eq!(
+        runtime
+            .peer_advert_authors
+            .iter()
+            .copied()
+            .collect::<HashSet<_>>(),
+        expected_peers
+    );
+    let endpoint = runtime.endpoint.clone();
+    let store_id = core.attachment_service.as_ref().unwrap().store.id;
+    core.state.busy.restoring_session = false;
+    core.reconcile_device_sync();
+    assert!(Arc::ptr_eq(
+        &endpoint,
+        &core.device_sync.as_ref().unwrap().endpoint
+    ));
+    assert_eq!(core.attachment_service.as_ref().unwrap().store.id, store_id);
+    core.stop_device_sync();
+    core.stop_attachment_service();
+}

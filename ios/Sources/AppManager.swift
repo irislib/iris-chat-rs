@@ -921,8 +921,10 @@ final class AppManager: ObservableObject {
         environment: [String: String] = ProcessInfo.processInfo.environment,
         appVersion: String = AppPaths.appVersion(),
         rustFactory: (() -> RustAppClient)? = nil,
-        pushNotificationResolver: MobilePushNotificationResolver = MobilePushNotificationResolver()
+        pushNotificationResolver: MobilePushNotificationResolver = MobilePushNotificationResolver(),
+        startupActivityFactory: (() -> IrisStartupBackgroundActivity)? = nil
     ) {
+        let startupActivity = startupActivityFactory?() ?? IrisStartupBackgroundActivity.live()
         self.interactionTimingController = IrisInteractionTimingController(environment: environment)
         self.fileManager = fileManager
         self.pushNotificationResolver = pushNotificationResolver
@@ -1003,6 +1005,10 @@ final class AppManager: ObservableObject {
 #endif
         self.state = initialState
         self.lastRevApplied = initialState.rev
+        if startupActivity.initiallyBackgrounded {
+            appSceneIsActive = false
+            appIsBackgrounded = true
+        }
         syncDebugLogging(initialState.preferences.debugLoggingEnabled)
         let initialChat = initialState.currentChat
         syncChatPageScope(to: &initialState)
@@ -1044,10 +1050,13 @@ final class AppManager: ObservableObject {
         }
 #endif
 
-        if !logoutIfCurrentDeviceRevoked(initialState) {
-            Task {
-                restorePersistedSession()
+        let shouldRestoreSession = !logoutIfCurrentDeviceRevoked(initialState)
+        Task { [weak self] in
+            guard let self else {
+                startupActivity.finish()
+                return
             }
+            await self.completeStartup(startupActivity, restoreSession: shouldRestoreSession)
         }
         Task {
             // A stalled restore must not keep sign-in hidden indefinitely.
@@ -2221,12 +2230,15 @@ final class AppManager: ObservableObject {
         appSceneIsActive = false
     }
 
-    func appBackgrounded() {
+    @discardableResult
+    func appBackgrounded() -> Task<Void, Never>? {
         appSceneIsActive = false
         appIsBackgrounded = true
         dispatchToRust(.appBackgrounded)
 #if os(iOS)
-        prepareForBackground()
+        return prepareForBackground()
+#else
+        return nil
 #endif
     }
 
@@ -2251,11 +2263,11 @@ final class AppManager: ObservableObject {
     }
 
     @discardableResult
-    private func prepareForBackground() -> Task<Void, Never>? {
+    private func prepareForBackground(force: Bool = false) -> Task<Void, Never>? {
         // CallKit + background audio keep the active local connection alive.
         // Suspending FIPS here would cut off a call when the phone locks.
         if let call = calls.call ?? state.call, call.phase != "ended" { return nil }
-        guard !backgroundSuspendPrepared else { return nil }
+        guard force || !backgroundSuspendPrepared else { return nil }
         backgroundSuspendPrepared = true
         let backgroundTask = IrisSuspendBackgroundTask()
 
@@ -3098,8 +3110,29 @@ final class AppManager: ObservableObject {
     }
 #endif
 
-    private func restorePersistedSession() {
+    func completeStartup(_ activity: IrisStartupBackgroundActivity, restoreSession: Bool = true) async {
+        defer { activity.finish() }
         guard !localResetInFlight else { return }
+        let restoreQueued = restoreSession && restorePersistedSession()
+#if os(iOS)
+        if activity.isBackgrounded {
+            appSceneIsActive = false
+            appIsBackgrounded = true
+        }
+        if appIsBackgrounded {
+            dispatchToRust(.appBackgrounded)
+            // Restore dispatch synchronously enqueues on the same native FIFO as
+            // suspend. Only this later barrier covers the restore, not an earlier
+            // scene flush, an account snapshot, or the loading-screen timeout.
+            await prepareForBackground(force: restoreQueued)?.value
+        }
+#else
+        _ = restoreQueued
+#endif
+    }
+
+    private func restorePersistedSession() -> Bool {
+        guard !localResetInFlight else { return false }
         // Native restore only rehydrates secure inputs. Rust rebuilds the authoritative app state.
         if let link = pendingDeviceLinkSecretStore.loadPendingDeviceLink() {
             persistedRestoreInFlight = true
@@ -3111,14 +3144,14 @@ final class AppManager: ObservableObject {
                 persistedRestoreInFlight = false
                 bootstrapInFlight = false
             }
-            return
+            return dispatched
         }
         guard let bundle = secretStore.load() else {
             storedAccountBundle = nil
             persistedRestoreInFlight = false
             bootstrapInFlight = false
             appendClientDebugLog(category: "session.restore", detail: "stored_bundle_loaded=false")
-            return
+            return false
         }
         appendClientDebugLog(
             category: "session.restore",
@@ -3141,6 +3174,7 @@ final class AppManager: ObservableObject {
         } else {
             appendClientDebugLog(category: "session.restore", detail: "dispatch=true")
         }
+        return dispatched
     }
 
     private func settleBootstrapIfNeeded(with nextState: AppState) {
