@@ -338,6 +338,30 @@ A missing device, unverified installed build, or unavailable crash reproduction
 remains an explicit outstanding gate. Do not promote to public TestFlight or
 submit to the App Store while that gate is outstanding.
 
+After verification, retain the private captures and prepare a safe receipt using
+the `ios-distributed-upgrade-v1` schema in `scripts/ios_runtime_acceptance.py`.
+It records the exact candidate, previous and installed builds, preserved-state
+results, measured lifecycle intervals, process/crash counts, and private evidence
+digests. It must contain no account or device identifiers, local paths, screenshots,
+or raw logs. A success flag or the 15-second development-restoration check cannot
+satisfy this contract.
+
+Run **iOS Runtime Acceptance** from the exact release tag, supplying that tag and
+the safe receipt JSON. It verifies the immutable release files, validates and
+normalizes the record, attests its provenance, and retains the
+`ios-runtime-acceptance` artifact. The workflow records the release owner's
+physical verification; it does not run the off-machine phone tests itself.
+Supply its successful run ID as `runtime_acceptance_run` when running
+`testflight-public` or `app-store`. Promotion verifies the exact workflow,
+repository, source, attestation, IPA and manifest hashes, Apple version/build,
+and every required runtime result before configuring Apple credentials.
+
+Keep the normalized receipt with the private evidence. Valid acceptance has no
+age expiry for unchanged inputs. If a GitHub artifact expires, the same retained
+receipt may be recorded again against the same tag without repeating valid
+physical checks. Changed candidates or superseded acceptance contracts need
+matching evidence; do not relabel a previous candidate's result.
+
 ## Verification and Recovery
 
 - GitHub: the Release must contain the versioned manifest and all expected

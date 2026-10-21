@@ -32,9 +32,14 @@ on:
           - automatic
           - manual
           - phased
+      runtime_acceptance_run:
+        description: "Successful iOS Runtime Acceptance run for this exact build; required for public beta or App Store."
+        required: false
+        type: string
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: ios-distribution-${{ inputs.tag }}
@@ -56,8 +61,20 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.tag }}
+          DISTRIBUTION_TARGET: ${{ inputs.target }}
+          RUNTIME_ACCEPTANCE_RUN: ${{ inputs.runtime_acceptance_run }}
         run: |
           set -Eeuo pipefail
+          case "$DISTRIBUTION_TARGET" in
+            testflight) ;;
+            testflight-public|app-store)
+              if [[ ! "$RUNTIME_ACCEPTANCE_RUN" =~ ^[1-9][0-9]*$ ]]; then
+                echo "::error::Public promotion requires an exact-build iOS Runtime Acceptance run."
+                exit 2
+              fi
+              ;;
+            *) echo "::error::Unknown Apple distribution target."; exit 2 ;;
+          esac
           if [[ ! "$RELEASE_TAG" =~ ^v[0-9]{4}\.[1-9][0-9]?\.[1-9][0-9]?(\.[1-9][0-9]?)?$ ]]; then
             echo "::error::Use a release-date tag such as v2026.7.28."
             exit 2
@@ -175,7 +192,42 @@ jobs:
             echo "version=$version"
             echo "build=$build"
             echo "sha256=$(shasum -a 256 "$ipa_path" | awk '{print $1}')"
+            echo "manifest_sha256=$(shasum -a 256 "$manifest_path" | awk '{print $1}')"
+            echo "source_commit=$(git -C source rev-parse HEAD)"
           } >> "$GITHUB_OUTPUT"
+
+      - name: Require exact distributed-build runtime acceptance
+        if: inputs.target != 'testflight'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+          ACCEPTANCE_RUN: ${{ inputs.runtime_acceptance_run }}
+          SOURCE_COMMIT: ${{ steps.ipa.outputs.source_commit }}
+          IPA_SHA256: ${{ steps.ipa.outputs.sha256 }}
+          MANIFEST_SHA256: ${{ steps.ipa.outputs.manifest_sha256 }}
+          APPLE_VERSION: ${{ steps.ipa.outputs.version }}
+          APPLE_BUILD: ${{ steps.ipa.outputs.build }}
+        run: |
+          set -Eeuo pipefail
+          receipt_dir="$RUNNER_TEMP/ios-runtime-acceptance"
+          mkdir -p "$receipt_dir"
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$ACCEPTANCE_RUN" \
+            --jq '{status, conclusion, event, head_sha, head_repository: {full_name: .head_repository.full_name}, path, name}' \
+            > "$receipt_dir/run.json"
+          gh run download "$ACCEPTANCE_RUN" --repo "$GITHUB_REPOSITORY" \
+            --name ios-runtime-acceptance --dir "$receipt_dir/record"
+          receipt="$receipt_dir/record/ios-runtime-acceptance.json"
+          test -f "$receipt" && test ! -L "$receipt"
+          test "$(find "$receipt_dir/record" -type f | wc -l | tr -d ' ')" = 1
+          gh attestation verify "$receipt" --repo "$GITHUB_REPOSITORY" \
+            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/ios-runtime-acceptance.yml" \
+            --source-ref "refs/tags/$RELEASE_TAG" --source-digest "$SOURCE_COMMIT"
+          python3 source/scripts/ios_runtime_acceptance.py \
+            --receipt "$receipt" --run-metadata "$receipt_dir/run.json" \
+            --repository "$GITHUB_REPOSITORY" --tag "$RELEASE_TAG" \
+            --source-commit "$SOURCE_COMMIT" --ipa-sha256 "$IPA_SHA256" \
+            --manifest-sha256 "$MANIFEST_SHA256" \
+            --apple-version "$APPLE_VERSION" --apple-build "$APPLE_BUILD"
 
       - name: Prepare Apple release notes
         id: notes

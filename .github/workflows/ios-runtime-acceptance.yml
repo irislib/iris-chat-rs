@@ -1,0 +1,94 @@
+name: iOS Runtime Acceptance
+
+run-name: Record iOS runtime acceptance ${{ inputs.tag }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Immutable release tag, also selected as this workflow's Git ref."
+        required: true
+        type: string
+      receipt_json:
+        description: "Safe physical TestFlight acceptance receipt; keep raw device and account evidence private."
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  attestations: write
+  id-token: write
+
+concurrency:
+  group: ios-runtime-acceptance-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  record:
+    name: Validate and attest physical acceptance record
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: ios-app-store-release
+    steps:
+      - uses: actions/checkout@v7
+      - name: Verify candidate and normalize safe acceptance record
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: |
+          set -Eeuo pipefail
+          umask 077
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]{4}\.[1-9][0-9]?\.[1-9][0-9]?(\.[1-9][0-9]?)?$ ]] \
+             || [[ "$GITHUB_REF" != "refs/tags/$RELEASE_TAG" ]]; then
+            echo "::error::Run acceptance from the exact published release tag."
+            exit 2
+          fi
+          release_json="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+            --json isDraft,isImmutable,isPrerelease)"
+          jq -e '.isDraft == false and .isImmutable == true and .isPrerelease == false' \
+            <<< "$release_json" > /dev/null
+          gh release verify "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" > /dev/null
+          artifacts="$RUNNER_TEMP/acceptance-release"
+          mkdir -p "$artifacts" acceptance
+          ipa_name="iris-chat-${RELEASE_TAG}-ios.ipa"
+          manifest_name="iris-chat-${RELEASE_TAG}-manifest.json"
+          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+            --pattern "$ipa_name" --pattern "$manifest_name" --dir "$artifacts"
+          for file in "$ipa_name" "$manifest_name"; do
+            gh release verify-asset "$RELEASE_TAG" "$artifacts/$file" \
+              --repo "$GITHUB_REPOSITORY" > /dev/null
+            gh attestation verify "$artifacts/$file" --repo "$GITHUB_REPOSITORY" \
+              --source-ref "refs/tags/$RELEASE_TAG" --source-digest "$GITHUB_SHA"
+          done
+          python3 scripts/release-manifest.py verify --tag "$RELEASE_TAG" \
+            --commit "$GITHUB_SHA" --manifest "$artifacts/$manifest_name" \
+            --asset-dir "$artifacts" --require-name "$ipa_name"
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text())
+          receipt = event["inputs"]["receipt_json"]
+          if not isinstance(receipt, str) or len(receipt.encode()) > 16384:
+              raise SystemExit("Acceptance receipt exceeds its safe input bound.")
+          (Path(os.environ["RUNNER_TEMP"]) / "runtime-receipt-input.json").write_text(receipt)
+          PY
+          source scripts/build_common.sh
+          python3 scripts/ios_runtime_acceptance.py \
+            --receipt "$RUNNER_TEMP/runtime-receipt-input.json" --tag "$RELEASE_TAG" \
+            --source-commit "$GITHUB_SHA" \
+            --ipa-sha256 "$(sha256sum "$artifacts/$ipa_name" | awk '{print $1}')" \
+            --manifest-sha256 "$(sha256sum "$artifacts/$manifest_name" | awk '{print $1}')" \
+            --apple-version "$(apple_marketing_version "${RELEASE_TAG#v}")" \
+            --apple-build "$(semantic_version_code "${RELEASE_TAG#v}")" \
+            --out acceptance/ios-runtime-acceptance.json
+      - name: Attest normalized acceptance provenance
+        uses: actions/attest@v4
+        with:
+          subject-path: acceptance/ios-runtime-acceptance.json
+      - name: Retain safe acceptance record
+        uses: actions/upload-artifact@v7
+        with:
+          name: ios-runtime-acceptance
+          path: acceptance/ios-runtime-acceptance.json
+          if-no-files-found: error
+          retention-days: 90

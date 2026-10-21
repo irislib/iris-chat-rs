@@ -11,6 +11,9 @@ on:
       - "scripts/distribute"
       - "scripts/distribution_common.sh"
       - "scripts/release-manifest.py"
+      - "scripts/ios_runtime_acceptance.py"
+      - "scripts/test_ios_runtime_acceptance.py"
+      - "scripts/test_ios_runtime_workflow.py"
       - "scripts/check-release-updater.py"
       - "scripts/render-release-notes.py"
       - "scripts/test_release_*.py"
@@ -18,6 +21,7 @@ on:
       - ".github/workflows/build-artifacts.yml"
       - ".github/workflows/release.yml"
       - ".github/workflows/ios-distribution.yml"
+      - ".github/workflows/ios-runtime-acceptance.yml"
   push:
     branches:
       - main
@@ -30,6 +34,9 @@ on:
       - "scripts/distribute"
       - "scripts/distribution_common.sh"
       - "scripts/release-manifest.py"
+      - "scripts/ios_runtime_acceptance.py"
+      - "scripts/test_ios_runtime_acceptance.py"
+      - "scripts/test_ios_runtime_workflow.py"
       - "scripts/check-release-updater.py"
       - "scripts/render-release-notes.py"
       - "scripts/test_release_*.py"
@@ -37,6 +44,7 @@ on:
       - ".github/workflows/build-artifacts.yml"
       - ".github/workflows/release.yml"
       - ".github/workflows/ios-distribution.yml"
+      - ".github/workflows/ios-runtime-acceptance.yml"
   workflow_dispatch:
 
 permissions:
