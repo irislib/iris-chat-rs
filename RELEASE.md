@@ -321,8 +321,8 @@ App Store Connect. Retrying does not rebuild or upload a duplicate build.
   reporting success. The attested Linux x64 CLI must also pass the isolated
   default-settings CLI/app check above. A failed readback can be retried with
   the same tag.
-- Homebrew: update the tap and run `brew info iris`; its formula URL must
-  contain the immutable release tag.
+- Homebrew: update the tap and run `brew info --formula sirius/iris/iris`;
+  its formula URL must contain the immutable release tag.
 - Zapstore: confirm the version and publisher in Zapstore.
 - Apple: workflow success means delivery/submission succeeded. Approval and
   public availability remain visible in App Store Connect.

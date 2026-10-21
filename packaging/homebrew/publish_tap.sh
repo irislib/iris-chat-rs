@@ -207,13 +207,13 @@ Gateway URL:
 
 Install:
   brew tap $TAP_NAME $gateway_url
-  brew install $FORMULA_NAME
+  brew install --formula $TAP_NAME/$FORMULA_NAME
 EOF
 elif [[ -n "$TAP_NAME" ]]; then
   cat <<EOF
 
 Install:
   brew tap $TAP_NAME <tap-url>
-  brew install $FORMULA_NAME
+  brew install --formula $TAP_NAME/$FORMULA_NAME
 EOF
 fi

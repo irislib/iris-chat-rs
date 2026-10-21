@@ -162,7 +162,7 @@ Install the Iris command line app with Homebrew:
 
 ```bash
 brew tap sirius/iris https://upload.iris.to/npub1399g0q2gtwjcglyjcg3jw3rcllqhm375pwases5hkvqa56aqe5wsz2eaap/homebrew-iris.git
-brew install iris
+brew install --formula sirius/iris/iris
 ```
 
 Or install a prebuilt macOS/Linux binary directly:
