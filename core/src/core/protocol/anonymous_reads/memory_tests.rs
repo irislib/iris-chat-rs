@@ -313,7 +313,7 @@ fn populated_startup() {
             .expect("register peers");
         super::super::private_reads::apply_private_discovery_subscriptions(
             scopes,
-            &[relay.clone()],
+            std::slice::from_ref(&relay),
         )
         .await
         .expect("apply production scopes");
@@ -345,7 +345,11 @@ fn populated_startup() {
         // retaining all results must not recreate one SDK cache per author.
         let cold = tokio::time::timeout(
             Duration::from_secs(15),
-            super::fetch(&[relay.clone()], filters.clone(), Duration::from_secs(3)),
+            super::fetch(
+                std::slice::from_ref(&relay),
+                filters.clone(),
+                Duration::from_secs(3),
+            ),
         )
         .await
         .expect("cold populated discovery deadline")
@@ -372,7 +376,7 @@ fn populated_startup() {
             let before = state.requests.load(Ordering::SeqCst);
             super::super::private_reads::apply_private_discovery_subscriptions(
                 scopes,
-                &[relay.clone()],
+                std::slice::from_ref(&relay),
             )
             .await
             .unwrap();
@@ -394,7 +398,7 @@ fn populated_startup() {
             assert!(
                 super::super::private_reads::apply_private_discovery_subscriptions(
                     stale_apply,
-                    &[relay.clone()]
+                    std::slice::from_ref(&relay)
                 )
                 .await
                 .is_err(),

@@ -17,6 +17,9 @@ pub(in crate::core) struct PrivateDiscoveryClient {
     cancelled: std::sync::atomic::AtomicBool,
 }
 
+pub(in crate::core) type PrivateDiscoverySubscription =
+    (std::sync::Weak<PrivateDiscoveryClient>, Vec<Filter>);
+
 impl Drop for PrivateDiscoveryClient {
     fn drop(&mut self) {
         self.cancel();
@@ -123,7 +126,7 @@ impl AppCore {
     pub(in crate::core) fn private_discovery_subscriptions(
         &mut self,
         filters: Vec<Filter>,
-    ) -> Result<Vec<(std::sync::Weak<PrivateDiscoveryClient>, Vec<Filter>)>, String> {
+    ) -> Result<Vec<PrivateDiscoverySubscription>, String> {
         let mut scopes: std::collections::BTreeMap<PublicKey, Vec<Filter>> =
             std::collections::BTreeMap::new();
         for filter in filters.into_iter().flat_map(split_public_discovery_authors) {
@@ -254,7 +257,7 @@ pub(super) fn split_public_discovery_authors(filter: Filter) -> Vec<Filter> {
 }
 
 pub(in crate::core) async fn apply_private_discovery_subscriptions(
-    scopes: Vec<(std::sync::Weak<PrivateDiscoveryClient>, Vec<Filter>)>,
+    scopes: Vec<PrivateDiscoverySubscription>,
     relay_urls: &[RelayUrl],
 ) -> Result<(), String> {
     // Applying config is immediate; the bounded scheduler performs catch-up.
