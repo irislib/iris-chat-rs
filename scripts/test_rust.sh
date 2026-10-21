@@ -38,6 +38,14 @@ fi
 # checksum is pinned by test_dependency_lock_consistency.py; the package's own
 # release checks cover those regressions. Do not compile the inactive old vendor.
 
+# Preserve the capped-process calibration and peak-memory evidence in Linux
+# release logs; successful output is otherwise hidden by either suite runner.
+if [[ "$(uname -s)" == "Linux" ]]; then
+    cargo test --manifest-path "${ROOT_DIR}/core/Cargo.toml" --locked --lib \
+        core::protocol::anonymous_reads::memory_tests::populated_account_discovery_under_memory_limit \
+        -- --exact --nocapture
+fi
+
 # Prefer cargo-nextest when available: it runs test binaries in parallel
 # (cargo test runs them serially), which makes a big difference for the
 # CLI integration tests. Fall back to cargo test if nextest isn't installed.

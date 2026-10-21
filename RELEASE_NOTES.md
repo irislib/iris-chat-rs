@@ -9,6 +9,7 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 - Fix the startup allocation failure in anonymous peer discovery. Bound concurrent reads and connection buffers without allocating a full relay-client cache for every contact or sharing authentication between contacts.
 - Add populated-account discovery regressions under a process memory limit, alongside serialized authentication and query privacy checks.
 - Require attested physical upgrade and lifecycle evidence for the exact TestFlight build before public beta or App Store promotion.
+- Update TLS certificate verification and trusted roots to include the latest trust-store security fixes.
 
 ### Apple
 

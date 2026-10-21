@@ -8,11 +8,17 @@ import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 CRATES = ("core", "chat-protocol", "protocol-ffi")
+MEMORY_TEST = "core::protocol::anonymous_reads::memory_tests::populated_account_discovery_under_memory_limit"
 
 
 class RustRunnerTests(unittest.TestCase):
-    def commands(self, nextest):
+    def commands(self, nextest, platform="Darwin"):
         commands = []
+        if platform == "Linux":
+            commands.append([
+                "test", "--manifest-path", str(ROOT / "core/Cargo.toml"), "--locked",
+                "--lib", MEMORY_TEST, "--", "--exact", "--nocapture",
+            ])
         for crate in CRATES:
             args = ["--manifest-path", str(ROOT / crate / "Cargo.toml"), "--locked"]
             if nextest:
@@ -22,7 +28,8 @@ class RustRunnerTests(unittest.TestCase):
                 commands.append(["test", "-q", *args])
         return commands
 
-    def run_runner(self, nextest, target=None, fail_on=None, approval_relay=None, fail_relay=False):
+    def run_runner(self, nextest, target=None, fail_on=None, approval_relay=None,
+                   fail_relay=False, platform="Darwin"):
         with tempfile.TemporaryDirectory(prefix="iris-rust-runner-") as tmp:
             directory = pathlib.Path(tmp)
             binary_dir = directory / "bin"
@@ -30,6 +37,9 @@ class RustRunnerTests(unittest.TestCase):
             # Isolate PATH so the fallback test cannot discover a real nextest.
             for command in ("dirname", "mktemp", "rm"):
                 (binary_dir / command).symlink_to(shutil.which(command))
+            uname = binary_dir / "uname"
+            uname.write_text('#!/bin/sh\nprintf "%s\\n" "$IRIS_TEST_PLATFORM"\n')
+            uname.chmod(0o755)
             python = binary_dir / "python3"
             python.write_text(
                 '#!/bin/sh\n'
@@ -56,6 +66,7 @@ class RustRunnerTests(unittest.TestCase):
                 os.environ, PATH=str(binary_dir), IRIS_TEST_LOG=str(log),
                 IRIS_TEST_RELAY_LOG=str(relay_log), IRIS_TEST_RELAY_FAIL=str(int(fail_relay)),
                 IRIS_TEST_EXPECTED_RELAY=approval_relay or "ws://127.0.0.1:45678",
+                IRIS_TEST_PLATFORM=platform,
             )
             env.pop("CARGO_TARGET_DIR", None)
             env.pop("IRIS_DEVICE_APPROVAL_RELAY_URL", None)
@@ -100,6 +111,21 @@ class RustRunnerTests(unittest.TestCase):
                 result, calls = self.run_runner(nextest, target="custom target")
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(calls, self.commands(nextest))
+
+    def test_linux_keeps_causal_memory_proof_visible_with_each_runner(self):
+        for nextest in (True, False):
+            with self.subTest(nextest=nextest):
+                result, calls = self.run_runner(nextest, platform="Linux")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(calls, self.commands(nextest, "Linux"))
+
+    def test_failed_linux_memory_gate_stops_before_other_tests(self):
+        for nextest in (True, False):
+            command = self.commands(nextest, "Linux")[0]
+            with self.subTest(nextest=nextest):
+                result, calls = self.run_runner(nextest, platform="Linux", fail_on=command)
+                self.assertEqual(result.returncode, 23, result.stderr)
+                self.assertEqual(calls, [command])
 
     def test_preserves_explicit_approval_relay_without_managing_it(self):
         result, calls = self.run_runner(True, approval_relay="ws://127.0.0.1:4888")

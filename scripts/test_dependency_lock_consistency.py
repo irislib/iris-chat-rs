@@ -132,6 +132,14 @@ class DependencyLockConsistencyTests(unittest.TestCase):
                     f"direct nostr-identity release in {lock_path}",
                 )
 
+    def test_shipping_tls_verifier_and_roots_include_trust_fixes(self):
+        for lock_path in PLATFORM_LOCKS:
+            with self.subTest(lock=lock_path.relative_to(ROOT)):
+                versions = package_versions(lock_path)
+                self.assertEqual(versions.get("rustls-webpki"), {"0.103.16"})
+                # 0.26.11 reexports the resolved 1.x roots for older consumers.
+                self.assertEqual(versions.get("webpki-roots"), {"0.26.11", "1.0.10"})
+
     def test_core_manifest_pins_gated_fips_stack_exactly(self):
         manifest = (ROOT / "core" / "Cargo.toml").read_text(encoding="utf-8")
         self.assertRegex(manifest, r'(?m)^nvpn-fips-core = \{ version = "=0\.4\.107",', "fips-core must stay on the gated release")
