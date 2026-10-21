@@ -248,12 +248,33 @@ fn appcore_sender_key_missing_metadata_revision_repairs_and_applies_pending_oute
 
 #[test]
 fn appcore_sender_key_distribution_before_metadata_wakes_and_applies_pending_outer() {
+    sender_key_distribution_before_metadata_case(GroupMetadataTestSource::Remote);
+}
+
+#[test]
+fn appcore_sender_key_distribution_before_sibling_metadata_wakes_and_applies_pending_outer() {
+    sender_key_distribution_before_metadata_case(GroupMetadataTestSource::Sibling);
+}
+
+#[test]
+fn appcore_sender_key_distribution_before_device_sync_metadata_drains_without_manual_retry() {
+    sender_key_distribution_before_metadata_case(GroupMetadataTestSource::DeviceSync);
+}
+
+enum GroupMetadataTestSource {
+    Remote,
+    Sibling,
+    DeviceSync,
+}
+
+fn sender_key_distribution_before_metadata_case(metadata_source: GroupMetadataTestSource) {
     let alice_owner = Keys::generate();
     let alice_device = Keys::generate();
     let bob_owner = Keys::generate();
     let bob_device = Keys::generate();
     let mut alice = test_protocol_engine(&alice_owner, &alice_device);
-    let mut bob = test_protocol_engine(&bob_owner, &bob_device);
+    let bob_storage = Arc::new(InMemoryStorage::new());
+    let mut bob = test_protocol_engine_with_storage(&bob_owner, &bob_device, bob_storage.clone());
     observe_current_device_appkeys_for_test(&mut alice, &alice_owner, &alice_device);
     observe_current_device_appkeys_for_test(&mut bob, &bob_owner, &bob_device);
     let alice_invite = alice.local_invite().unwrap();
@@ -273,11 +294,18 @@ fn appcore_sender_key_distribution_before_metadata_wakes_and_applies_pending_out
     let distribution =
         latest_sender_key_distribution_for_test(&alice, &group_id, NdrUnixSeconds(401));
 
+    let (message_payload, message_id) = runtime_rumor_json(
+        alice_owner.public_key(),
+        CHAT_MESSAGE_KIND,
+        "distribution before metadata",
+        unix_now().get(),
+        vec![],
+    );
     let sent = alice
         .send_group_payload(
             &group_id,
-            b"distribution before metadata".to_vec(),
-            Some("sender-key-out-of-order-inner".to_string()),
+            message_payload.as_bytes().to_vec(),
+            Some(message_id),
         )
         .expect("send sender-key group payload");
     let outer =
@@ -298,7 +326,9 @@ fn appcore_sender_key_distribution_before_metadata_wakes_and_applies_pending_out
             local_device_pubkey: ndr_device_pubkey(alice_device.public_key()),
             created_at: NdrUnixSeconds(402),
         },
-        &nostr_double_ratchet::GroupPairwiseCommand::SenderKeyDistribution { distribution },
+        &nostr_double_ratchet::GroupPairwiseCommand::SenderKeyDistribution {
+            distribution: distribution.clone(),
+        },
     )
     .expect("sender-key distribution payload");
     let queued_distribution = bob
@@ -311,6 +341,109 @@ fn appcore_sender_key_distribution_before_metadata_wakes_and_applies_pending_out
     assert!(queued_distribution.consumed);
     assert_eq!(bob.debug_snapshot().pending_group_pairwise_payload_count, 1);
 
+    if matches!(metadata_source, GroupMetadataTestSource::DeviceSync) {
+        let sibling = Keys::generate();
+        let (mut core, _, _dir) = logged_in_test_core_with_updates(
+            "group-readiness-device-sync",
+            &bob_owner,
+            &bob_device,
+        );
+        configure_test_device_sync_profile(&mut core, &bob_owner, &bob_device, &sibling, None);
+        core.protocol_engine = Some(bob);
+        assert!(core.device_sync_peer_is_authorized(&sibling.public_key().to_hex()));
+        let packet = serde_json::to_vec(&serde_json::json!({
+            "type": "snapshot", "v": 1, "rosterAt": 100,
+            "groups": [{
+                "id": group.group_id, "name": group.name,
+                "createdBy": group.created_by.to_hex(),
+                "members": group.members.iter().map(|key| key.to_hex()).collect::<Vec<_>>(),
+                "admins": group.admins.iter().map(|key| key.to_hex()).collect::<Vec<_>>(),
+                "protocol": "sender_key_v1", "revision": group.revision,
+                "createdAt": group.created_at.get(), "updatedAt": group.updated_at.get(),
+                "accepted": true,
+            }]
+        }))
+        .unwrap();
+        core.handle_device_sync_packet(&sibling.public_key().to_hex(), 7369, &packet);
+        assert!(
+            core.groups.contains_key(&group_id),
+            "normal sibling snapshot must install metadata"
+        );
+        let engine = core.protocol_engine.as_ref().unwrap();
+        assert!(
+            !engine.known_group_sender_event_pubkeys().is_empty(),
+            "device-sync metadata must wake queued distribution without a timer or manual replay"
+        );
+        assert_eq!(
+            engine.debug_snapshot().pending_group_pairwise_payload_count,
+            0
+        );
+        assert_eq!(
+            engine
+                .debug_snapshot()
+                .pending_group_sender_key_message_count,
+            0
+        );
+        assert!(
+            core.threads[&group_chat_id(&group_id)]
+                .messages
+                .iter()
+                .any(|message| message.body == "distribution before metadata"),
+            "normal snapshot ingress must automatically apply the recovered message"
+        );
+        let mut unready_distribution = distribution;
+        unready_distribution.group_id = "metadata-still-missing".into();
+        let unready_payload = nostr_double_ratchet::GroupPayloadCodec::encode_pairwise_command(
+            &codec,
+            nostr_double_ratchet::GroupPayloadEncodeContext {
+                local_device_pubkey: ndr_device_pubkey(alice_device.public_key()),
+                created_at: NdrUnixSeconds(404),
+            },
+            &nostr_double_ratchet::GroupPairwiseCommand::SenderKeyDistribution {
+                distribution: unready_distribution,
+            },
+        )
+        .unwrap();
+        core.protocol_engine
+            .as_mut()
+            .unwrap()
+            .process_group_pairwise_payload(
+                &unready_payload,
+                alice_owner.public_key(),
+                Some(alice_device.public_key()),
+            )
+            .unwrap();
+        let checkpoint = || {
+            serde_json::from_str::<serde_json::Value>(
+                &bob_storage
+                    .get(TEST_PROTOCOL_ENGINE_STATE_KEY)
+                    .unwrap()
+                    .unwrap(),
+            )
+            .unwrap()["pending_group_pairwise_payloads"]
+                .clone()
+        };
+        let waiting = checkpoint();
+        assert_eq!(waiting.as_array().unwrap().len(), 1);
+        assert!(waiting[0]["next_retry_at_secs"].as_u64().unwrap() > unix_now().get());
+        core.handle_device_sync_packet(&sibling.public_key().to_hex(), 7369, &packet);
+        assert_eq!(
+            checkpoint(),
+            waiting,
+            "unchanged snapshots must preserve backoff"
+        );
+        assert_eq!(
+            core.threads[&group_chat_id(&group_id)]
+                .messages
+                .iter()
+                .filter(|message| message.body == "distribution before metadata")
+                .count(),
+            1,
+            "repeated snapshots must not duplicate the recovered message"
+        );
+        return;
+    }
+
     let metadata_payload = nostr_double_ratchet::GroupPayloadCodec::encode_pairwise_command(
         &codec,
         nostr_double_ratchet::GroupPayloadEncodeContext {
@@ -320,13 +453,20 @@ fn appcore_sender_key_distribution_before_metadata_wakes_and_applies_pending_out
         &nostr_double_ratchet::GroupPairwiseCommand::MetadataSnapshot { snapshot: group },
     )
     .expect("metadata payload");
-    let metadata_result = bob
-        .process_group_pairwise_payload(
+    let metadata_result = if matches!(metadata_source, GroupMetadataTestSource::Sibling) {
+        bob.process_local_sibling_group_pairwise_payload(
             &metadata_payload,
             alice_owner.public_key(),
             Some(alice_device.public_key()),
         )
-        .expect("process metadata after queued distribution");
+    } else {
+        bob.process_group_pairwise_payload(
+            &metadata_payload,
+            alice_owner.public_key(),
+            Some(alice_device.public_key()),
+        )
+    }
+    .expect("process metadata after queued distribution");
 
     assert!(
         !bob.known_group_sender_event_pubkeys().is_empty(),
@@ -343,7 +483,7 @@ fn appcore_sender_key_distribution_before_metadata_wakes_and_applies_pending_out
             &group_id,
             alice_owner.public_key(),
             alice_device.public_key(),
-            b"distribution before metadata"
+            message_payload.as_bytes()
         ),
         "pending sender-key outer should apply once metadata wakes the queued distribution"
     );

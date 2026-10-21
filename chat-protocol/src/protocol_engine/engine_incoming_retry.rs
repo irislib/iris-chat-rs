@@ -323,11 +323,13 @@ impl ProtocolEngine {
                     });
                 }
                 let mut effects = Vec::new();
+                if group_changed && matches!(&event, GroupIncomingEvent::MetadataUpdated(_)) {
+                    for pending in &mut self.pending_group_pairwise_payloads {
+                        pending.next_retry_at_secs = 0;
+                    }
+                }
                 if group_changed && forward_to_local_siblings && sender_owner != self.local_owner {
                     if let GroupIncomingEvent::MetadataUpdated(group) = &event {
-                        for pending in &mut self.pending_group_pairwise_payloads {
-                            pending.next_retry_at_secs = 0;
-                        }
                         let sync_effects = self.sync_group_to_local_siblings(group)?;
                         effects.extend(sync_effects);
                     }

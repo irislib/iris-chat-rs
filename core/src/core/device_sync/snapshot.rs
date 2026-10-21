@@ -216,6 +216,7 @@ impl AppCore {
                 changed = true;
             }
         }
+        let mut group_inputs_changed = false;
         for group in snapshot.groups {
             let legacy_ttl = (!self.groups.contains_key(&group.id)
                 && !self
@@ -236,6 +237,7 @@ impl AppCore {
                 .and_then(|engine| engine.install_device_sync_group(group.clone()).ok())
                 .unwrap_or(false);
             if installed {
+                group_inputs_changed = true;
                 if let Some(ttl) = legacy_ttl.filter(|ttl| {
                     *ttl > 0
                         && *ttl <= 9_007_199_254_740_991
@@ -354,6 +356,9 @@ impl AppCore {
         }
         if !app_keys_retry_batch.is_empty() {
             self.process_protocol_engine_retry_batch("device_sync_app_keys", app_keys_retry_batch);
+        }
+        if group_inputs_changed {
+            self.retry_protocol_engine_pending_work("device_sync_group");
         }
     }
 }

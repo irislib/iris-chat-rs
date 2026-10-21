@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.3
+
+- Retry queued sender-key controls immediately when authenticated group metadata
+  arrives from a linked device or a roster snapshot. Keep unchanged metadata
+  backoff, sender authorization, and sibling forwarding guards.
+
 ## 0.3.1
 
 - Compare SQLite checkpoints with one reusable 4 KiB buffer instead of copying
