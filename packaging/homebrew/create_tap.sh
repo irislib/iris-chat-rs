@@ -229,6 +229,9 @@ write_formula "$work_repo/Formula/${FORMULA_NAME}.rb" "$class_name"
 
 rm -rf "$OUTPUT_DIR"
 tap_git clone -q --bare "$work_repo" "$OUTPUT_DIR" >/dev/null
+# Static HTTP publication exposes config; the temporary clone source is private
+# packaging state, not a remote that belongs in the public tap.
+tap_git --git-dir="$OUTPUT_DIR" remote remove origin
 GIT_DIR="$OUTPUT_DIR" tap_git update-server-info
 
 cat <<EOF

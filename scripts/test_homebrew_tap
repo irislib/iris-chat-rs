@@ -43,6 +43,9 @@ SEED_WORK="$TMPDIR/seed-work"
 SEED_BARE="$TMPDIR/seed.git"
 TAP_BARE="$TMPDIR/tap.git"
 TAP_WORK="$TMPDIR/tap-work"
+REGENERATED_BARE="$TMPDIR/regenerated.git"
+FRESH_BARE="$TMPDIR/fresh.git"
+HTTP_WORK="$TMPDIR/http-work"
 PUBLISH_REMOTE="$TMPDIR/publish-remote.git"
 PUBLISH_WORK="$TMPDIR/publish-work"
 RELEASE_BASE_URL="https://example.invalid/iris/v9.8.7/assets"
@@ -72,7 +75,15 @@ git -C "$SEED_WORK" init -q -b master >/dev/null
 git -C "$SEED_WORK" add Formula/htree.rb >/dev/null
 git -C "$SEED_WORK" -c user.name='Test User' -c user.email='test@example.com' \
   commit -m "Seed htree formula" >/dev/null
+git -C "$SEED_WORK" tag seed-v1
+printf 'Existing tap history\n' > "$SEED_WORK/README.md"
+git -C "$SEED_WORK" add README.md
+git -C "$SEED_WORK" -c user.name='Test User' -c user.email='test@example.com' \
+  commit -m "Preserve a second seed commit" >/dev/null
 git clone -q --bare "$SEED_WORK" "$SEED_BARE" >/dev/null
+seed_head="$(git --git-dir="$SEED_BARE" rev-parse master)"
+seed_refs="$(git --git-dir="$SEED_BARE" show-ref)"
+seed_config_sha="$(sha256_file "$SEED_BARE/config")"
 
 "$ROOT_DIR/packaging/homebrew/create_tap.sh" \
   --version v9.8.7 \
@@ -80,6 +91,20 @@ git clone -q --bare "$SEED_WORK" "$SEED_BARE" >/dev/null
   --assets-dir "$ASSETS_DIR" \
   --output-dir "$TAP_BARE" \
   --seed-repo "$SEED_BARE" >/dev/null
+
+# Static publication exposes config too: no build-machine clone origin belongs
+# in the generated public repository.
+if git --git-dir="$TAP_BARE" config --local --get-regexp '^remote\.'; then
+  echo "Generated public tap leaks clone remote configuration" >&2
+  exit 1
+fi
+test "$(git --git-dir="$SEED_BARE" show-ref)" = "$seed_refs"
+test "$(sha256_file "$SEED_BARE/config")" = "$seed_config_sha"
+git --git-dir="$TAP_BARE" merge-base --is-ancestor "$seed_head" master
+test "$(git --git-dir="$TAP_BARE" rev-parse refs/tags/seed-v1)" = \
+  "$(git --git-dir="$SEED_BARE" rev-parse refs/tags/seed-v1)"
+test "$(git --git-dir="$TAP_BARE" rev-parse master:Formula/htree.rb)" = \
+  "$(git --git-dir="$SEED_BARE" rev-parse master:Formula/htree.rb)"
 
 git clone -q "$TAP_BARE" "$TAP_WORK" >/dev/null
 test -f "$TAP_WORK/Formula/iris.rb"
@@ -96,6 +121,63 @@ grep -F 'class Htree < Formula' "$TAP_WORK/Formula/htree.rb" >/dev/null
 if command -v ruby >/dev/null 2>&1; then
   ruby -c "$TAP_WORK/Formula/iris.rb" >/dev/null
 fi
+
+# Re-generating identical formula bytes must preserve every generated ref and
+# commit, including the seed history and tag.
+"$ROOT_DIR/packaging/homebrew/create_tap.sh" \
+  --version v9.8.7 \
+  --release-base-url "$RELEASE_BASE_URL" \
+  --assets-dir "$ASSETS_DIR" \
+  --output-dir "$REGENERATED_BARE" \
+  --seed-repo "$TAP_BARE" >/dev/null
+test "$(git --git-dir="$REGENERATED_BARE" show-ref)" = \
+  "$(git --git-dir="$TAP_BARE" show-ref)"
+
+"$ROOT_DIR/packaging/homebrew/create_tap.sh" \
+  --version v9.8.7 \
+  --release-base-url "$RELEASE_BASE_URL" \
+  --assets-dir "$ASSETS_DIR" \
+  --output-dir "$FRESH_BARE" >/dev/null
+for public_repo in "$REGENERATED_BARE" "$FRESH_BARE"; do
+  if git --git-dir="$public_repo" config --local --get-regexp '^remote\.'; then
+    echo "Generated public tap leaks clone remote configuration" >&2
+    exit 1
+  fi
+done
+
+python3 - "$TMPDIR" "$TAP_BARE" "$HTTP_WORK" <<'PY'
+from functools import partial
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+import subprocess
+import sys
+from threading import Thread
+from urllib.request import urlopen
+
+root, bare, clone = map(Path, sys.argv[1:])
+
+class QuietHandler(SimpleHTTPRequestHandler):
+    def log_message(self, *args):
+        pass
+
+server = ThreadingHTTPServer(("127.0.0.1", 0), partial(QuietHandler, directory=str(root)))
+worker = Thread(target=server.serve_forever, daemon=True)
+worker.start()
+try:
+    url = f"http://127.0.0.1:{server.server_port}/{bare.name}"
+    with urlopen(url + "/config", timeout=10) as response:
+        config = response.read().decode()
+    assert '[remote ' not in config and str(root) not in config, config
+    subprocess.run(["git", "-c", "protocol.version=0", "clone", "-q", url, str(clone)],
+                   check=True, timeout=20)
+    for formula in ("iris.rb", "htree.rb"):
+        expected = subprocess.check_output(["git", f"--git-dir={bare}", "show", f"master:Formula/{formula}"])
+        assert (clone / "Formula" / formula).read_bytes() == expected
+finally:
+    server.shutdown()
+    server.server_close()
+    worker.join(timeout=5)
+PY
 
 git init -q --bare "$PUBLISH_REMOTE" >/dev/null
 "$ROOT_DIR/packaging/homebrew/publish_tap.sh" \
