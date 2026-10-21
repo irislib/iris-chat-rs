@@ -315,6 +315,29 @@ In GitHub, open **Actions → iOS Distribution → Run workflow**.
 The workflow verifies the tagged IPA and its attestation before contacting
 App Store Connect. Retrying does not rebuild or upload a duplicate build.
 
+For each new release, before `testflight-public` or `app-store`, the release owner
+must verify the uploaded build on a reserved physical iPhone. Internal TestFlight
+upload and processing may happen first so the actual distributed build can be tested.
+An archive, simulator run, development install, or successful launch command
+does not establish that the TestFlight build works.
+
+Use an owned test account populated by the previous distributed version. Update
+it in place through TestFlight, preserving its app data and Keychain. Do not
+erase data, restore a secret key into a fresh profile, or use automation storage
+overrides. Record the previous and installed version/build, device and OS, tagged
+source, immutable IPA and manifest hashes, and App Store Connect build mapping.
+Keep this private runtime evidence with the release coverage record.
+
+Launch normally without a debugger or XCTest launch assertion. Verify the
+account, an existing message and a draft; observe the same process for at least
+60 seconds in the foreground and 135 seconds in the background, then resume and
+cold relaunch and verify the preserved state again. A crash corrective release
+must also exercise its reported failing flow and focused regression. Preserve
+the first failure and diagnostics; an automatic relaunch or retry is not a pass.
+A missing device, unverified installed build, or unavailable crash reproduction
+remains an explicit outstanding gate. Do not promote to public TestFlight or
+submit to the App Store while that gate is outstanding.
+
 ## Verification and Recovery
 
 - GitHub: the Release must contain the versioned manifest and all expected

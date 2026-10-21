@@ -20,6 +20,7 @@ import socket
 import subprocess
 import time
 import uuid
+from urllib.parse import unquote, urlsplit
 
 from native_lab import acquire, release
 from android_ble_preservation import BlePreservation
@@ -32,6 +33,7 @@ BACKGROUND_SECONDS = 75
 MAX_RECEIVER_HOLD_MS = 420_000
 BACKGROUND_RELEASE_DELAY = 40
 BACKGROUND_ENTRY_TIMEOUT = 240
+IOS_LAUNCH_SURVIVAL_SECONDS = 15
 
 
 def receiver_lifetime(seconds, background):
@@ -296,9 +298,20 @@ def evaluate_saved_run(directory, max_cpu, max_writes):
         raise ValueError("Invalid saved measurement interval")
     result = evaluate_capture(directory, env["IRIS_FIPS_PHYSICAL_MESSAGE"], seconds, max_cpu, max_writes,
                               env.get("IRIS_FIPS_BACKGROUND_REPLY"))
+    launch = original.get("iosNormalLaunchSurvival")
+    if launch is not None:
+        duration = launch.get("observedSeconds") if isinstance(launch, dict) else None
+        if (not isinstance(launch, dict) or launch.get("contract") != "same-executable-pid-15s-v1"
+                or launch.get("passed") is not True or restored.get("ios_normal_launch_survived") is not True
+                or type(duration) not in (int, float) or not math.isfinite(duration)
+                or duration < IOS_LAUNCH_SURVIVAL_SECONDS):
+            raise ValueError("Saved iPhone launch has no successful survival measurement")
+    else:
+        launch = {"contract": "legacy-launch-command-only", "survivalChecked": False}
     evidence = ("result.json", "physical-idle.xctestrun", "test-summary.log", "metrics.log",
                 "receiver.log", "network-checks.jsonl")
     result.update(evaluationMode="saved-capture", restoration=restored,
+                  iosLaunchVerification=launch,
                   originalResultOk=original.get("ok"), originalError=original.get("error"),
                   evidenceSha256={name: hashlib.sha256((directory / name).read_bytes()).hexdigest()
                                   for name in evidence})
@@ -307,6 +320,78 @@ def evaluate_saved_run(directory, max_cpu, max_writes):
 
 def write_json(path, data):
     path.write_text(json.dumps(data, indent=2) + "\n")
+
+
+def ios_process(record):
+    """Validate CoreDevice's actual process record, not a display-name match."""
+    if not isinstance(record, dict):
+        raise ValueError("Missing iPhone process record")
+    pid, executable = record.get("processIdentifier"), record.get("executable")
+    if type(pid) is not int or pid <= 0 or not isinstance(executable, str):
+        raise ValueError("Invalid iPhone process identifier or executable")
+    url = urlsplit(executable)
+    path = Path(unquote(url.path))
+    if (url.scheme != "file" or url.netloc or url.query or url.fragment
+            or not path.is_absolute() or ".." in path.parts):
+        raise ValueError("Invalid iPhone process executable URL")
+    return pid, executable, path
+
+
+def ios_command_result(path):
+    document = json.loads(path.read_text())
+    if (not isinstance(document, dict) or not isinstance(document.get("info"), dict)
+            or document["info"].get("outcome") != "success" or not isinstance(document.get("result"), dict)):
+        raise ValueError("iPhone process command did not return successful JSON")
+    return document["result"]
+
+
+def verify_ios_launch(command, device, directory, evidence):
+    """Launch once and observe the same app PID; this is not an upgrade test."""
+    evidence.update(contract="same-executable-pid-15s-v1", passed=False,
+                    requiredSeconds=IOS_LAUNCH_SURVIVAL_SECONDS, processSamples=[])
+    launch = directory / "ios-normal-account.json"
+    command(["xcrun", "devicectl", "device", "process", "launch", "--device", device,
+             "--terminate-existing", BUNDLE, "--json-output", str(launch)], "ios-normal-account",
+            env={key: value for key, value in os.environ.items() if not key.startswith("DEVICECTL_CHILD_")})
+    launched = ios_command_result(launch)
+    pid, executable, path = ios_process(launched.get("process"))
+    if path.name != "IrisChat" or path.parent.name != "IrisChat.app":
+        raise ValueError("Launch returned a different app or an extension process")
+    evidence.update(processIdentifier=pid, launchEvidence=launch.name)
+    device_identifier = launched.get("deviceIdentifier")
+    if device_identifier is not None and (not isinstance(device_identifier, str) or not device_identifier):
+        raise ValueError("Launch returned an invalid iPhone identifier")
+    deadline = time.monotonic() + IOS_LAUNCH_SURVIVAL_SECONDS + 10
+    first_observed = None
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise RuntimeError("iPhone launch survival observation exceeded its budget")
+        sample = directory / f"ios-normal-process-{len(evidence['processSamples']):02d}.json"
+        evidence["processSamples"].append(sample.name)
+        command(["xcrun", "devicectl", "device", "info", "processes", "--device", device,
+                 "--search", "IrisChat",
+                 "--json-output", str(sample)], sample.stem, timeout=min(5, remaining))
+        inventory = ios_command_result(sample)
+        if device_identifier is not None and inventory.get("deviceIdentifier") != device_identifier:
+            raise ValueError("Process inventory belongs to a different iPhone")
+        records = inventory.get("runningProcesses")
+        if not isinstance(records, list):
+            raise ValueError("iPhone process inventory is malformed")
+        observed = [ios_process(record)[:2] for record in records]
+        if observed.count((pid, executable)) != 1 or sum(item[0] == pid for item in observed) != 1:
+            raise RuntimeError("The launched iPhone app process disappeared, restarted, or changed executable")
+        now = time.monotonic()
+        if now > deadline:
+            raise RuntimeError("iPhone process observation exceeded its budget")
+        if first_observed is None:
+            first_observed = now
+        elapsed = now - first_observed
+        evidence["observedSeconds"] = elapsed
+        if elapsed >= IOS_LAUNCH_SURVIVAL_SECONDS:
+            evidence["passed"] = True
+            return
+        time.sleep(min(1, IOS_LAUNCH_SURVIVAL_SECONDS - elapsed))
 
 
 def stop(child):
@@ -340,10 +425,10 @@ class Gate:
         self.probe = "idle-probe-" + uuid.uuid4().hex
         self.saved_account = BlePreservation(self)
 
-    def command(self, argv, label, timeout=30):
+    def command(self, argv, label, timeout=30, *, env=None):
         with (self.out / (label + ".log")).open("w") as log:
             try:
-                result = subprocess.run(argv, stdout=log, stderr=subprocess.STDOUT, timeout=timeout)
+                result = subprocess.run(argv, stdout=log, stderr=subprocess.STDOUT, timeout=timeout, env=env)
             except subprocess.TimeoutExpired:
                 raise RuntimeError(f"{label} timed out; see private log") from None
         if result.returncode:
@@ -592,12 +677,15 @@ class Gate:
             except Exception:
                 self.restored["android_cleanup"] = False
         if self.ios is not None:
+            evidence = self.result["iosNormalLaunchSurvival"] = {}
             try:
-                self.command(["xcrun", "devicectl", "device", "process", "launch", "--device", self.iphone,
-                              "--terminate-existing", BUNDLE], "ios-normal-account")
+                verify_ios_launch(self.command, self.iphone, self.out, evidence)
                 self.restored["ios_normal_launch"] = True
-            except Exception:
+                self.restored["ios_normal_launch_survived"] = True
+            except Exception as error:
+                evidence["error"] = str(error)
                 self.restored["ios_normal_launch"] = False
+                self.restored["ios_normal_launch_survived"] = False
         self.result["restoration"] = self.restored
         if any(v is not True for v in self.restored.values()):
             self.result["ok"] = False

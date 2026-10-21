@@ -531,6 +531,125 @@ class PhysicalIdleGateTests(unittest.TestCase):
             self.assertTrue(result["restoration"]["mobile_data"])
             self.assertTrue(result["restoration"]["android_cleanup"])
 
+    def test_normal_ios_launch_must_survive_not_just_be_accepted(self):
+        for dies in (False, True):
+            with self.subTest(dies=dies), TemporaryDirectory() as temp:
+                gate = Gate(SimpleNamespace(artifact_dir=Path(temp) / "run"))
+                gate.ios = Mock(); gate.ios.poll.return_value = 0
+                gate.iphone = "owned-fixture"
+                gate.result["ok"] = True
+                clock, launches = [0.0], []
+                executable = "file:///private/var/containers/Bundle/Application/fixture/IrisChat.app/IrisChat"
+                def command(argv, label, timeout=30, *, env=None):
+                    if "launch" in argv:
+                        launches.append(argv)
+                        result = {"process": {"processIdentifier": 123, "executable": executable}}
+                    else:
+                        self.assertEqual(argv[argv.index("--search") + 1], "IrisChat")
+                        alive = not dies or clock[0] < 3
+                        result = {"runningProcesses": [{"processIdentifier": 123, "executable": executable}] if alive else []}
+                    if "--json-output" not in argv:
+                        return ""
+                    output = Path(argv[argv.index("--json-output") + 1])
+                    result["deviceIdentifier"] = "owned-coredevice-fixture"
+                    output.write_text(json.dumps({"info": {"outcome": "success"}, "result": result}))
+                    return ""
+                with patch.object(gate, "command", side_effect=command), \
+                        patch.object(gate.saved_account, "restore") as account_restore, \
+                        patch("physical_ble_idle.time.monotonic", side_effect=lambda: clock[0]), \
+                        patch("physical_ble_idle.time.sleep", side_effect=lambda seconds: clock.__setitem__(0, clock[0] + seconds)):
+                    gate.restore()
+                self.assertEqual(len(launches), 1, "A dead app must not be relaunched to hide the failure")
+                self.assertEqual(gate.restored["ios_normal_launch"], not dies)
+                self.assertEqual(gate.result["ok"], not dies)
+                account_restore.assert_called_once()
+                if not dies:
+                    self.assertGreaterEqual(clock[0], 15)
+
+    def test_ios_survival_rejects_wrong_restarted_and_malformed_process_evidence(self):
+        executable = "file:///private/var/containers/Bundle/Application/fixture/IrisChat.app/IrisChat"
+        process = {"processIdentifier": 123, "executable": executable}
+        cases = {
+            "missing-pid": ({"executable": executable}, None),
+            "boolean-pid": ({**process, "processIdentifier": True}, None),
+            "wrong-app": ({**process, "executable": executable.replace("IrisChat.app", "Other.app")}, None),
+            "extension": ({**process, "executable": executable + "/PlugIns/NotificationService.appex/NotificationService"}, None),
+            "restart": (process, [{**process, "processIdentifier": 124}]),
+            "changed-executable": (process, [{**process, "executable": executable.replace("fixture/", "another/")}]),
+            "duplicate-pid": (process, [process, process]),
+            "missing-inventory": (process, None),
+            "invalid-inventory-record": (process, [{"name": "IrisChat"}]),
+            "failed-json-outcome": (process, [process]),
+            "malformed-json": (process, [process]),
+            "wrong-device": (process, [process]),
+        }
+        for name, (launched, inventory) in cases.items():
+            with self.subTest(name=name), TemporaryDirectory() as temp:
+                calls = []
+                def command(argv, label, timeout=30, *, env=None):
+                    calls.append(argv)
+                    result = {"process": launched} if "launch" in argv else {"runningProcesses": inventory}
+                    result["deviceIdentifier"] = ("other-fixture" if name == "wrong-device" and "launch" not in argv
+                                                  else "owned-coredevice-fixture")
+                    outcome = "failure" if name == "failed-json-outcome" else "success"
+                    path = Path(argv[argv.index("--json-output") + 1])
+                    path.write_text("not json" if name == "malformed-json" else
+                                    json.dumps({"info": {"outcome": outcome}, "result": result}))
+                with self.assertRaises((ValueError, RuntimeError)):
+                    physical.verify_ios_launch(command, "owned-fixture", Path(temp), {})
+                self.assertEqual(sum("launch" in args for args in calls), 1)
+
+    def test_ios_inventory_failure_preserves_evidence_and_finishes_other_cleanup(self):
+        with TemporaryDirectory() as temp:
+            gate = Gate(SimpleNamespace(artifact_dir=Path(temp) / "run"))
+            gate.ios = Mock(); gate.ios.poll.return_value = 0
+            gate.iphone = "owned-fixture"
+            gate.snapshot = {"wifi_on": "1", "mobile_data": "0", "bluetooth_on": "1"}
+            gate.locks = [Path(temp) / "owned-lock"]
+            gate.result["ok"] = True
+            launch_env = []
+            def command(argv, label, timeout=30, *, env=None):
+                if "launch" not in argv:
+                    raise RuntimeError("Device tunnel unavailable")
+                launch_env.append(env)
+                Path(argv[argv.index("--json-output") + 1]).write_text(json.dumps({
+                    "info": {"outcome": "success"}, "result": {"process": {"processIdentifier": 123,
+                    "executable": "file:///private/var/containers/Bundle/Application/fixture/IrisChat.app/IrisChat"}}}))
+                return ""
+            with patch.object(gate, "command", side_effect=command), \
+                    patch.object(gate.saved_account, "restore") as account_restore, \
+                    patch.object(gate, "adb", side_effect=lambda *args: gate.snapshot.get(args[-1], "")), \
+                    patch.dict(os.environ, {"DEVICECTL_CHILD_IRIS_UI_TEST_RESET": "1", "PATH": "/normal/tools"}), \
+                    patch("physical_ble_idle.release") as release:
+                gate.restore()
+            account_restore.assert_called_once()
+            release.assert_called_once_with(gate.locks[0])
+            self.assertEqual(len(launch_env), 1)
+            self.assertNotIn("DEVICECTL_CHILD_IRIS_UI_TEST_RESET", launch_env[0])
+            self.assertEqual(launch_env[0]["PATH"], "/normal/tools")
+            self.assertFalse(gate.result["ok"])
+            self.assertFalse(gate.restored["ios_normal_launch_survived"])
+            for key in ("wifi_on", "mobile_data", "bluetooth_unchanged", "android_cleanup"):
+                self.assertTrue(gate.restored[key])
+            self.assertTrue((gate.out / "ios-normal-account.json").exists())
+            self.assertIn("Device tunnel unavailable", gate.result["iosNormalLaunchSurvival"]["error"])
+
+    def test_saved_legacy_launch_is_not_relabelled_as_a_survival_check(self):
+        with TemporaryDirectory() as temp:
+            directory = Path(temp)
+            save_capture(directory)
+            result = evaluate_saved_run(directory, 5, 5)
+            self.assertEqual(result["iosLaunchVerification"],
+                             {"contract": "legacy-launch-command-only", "survivalChecked": False})
+            path = directory / "result.json"
+            data = json.loads(path.read_text())
+            data["restoration"]["ios_normal_launch_survived"] = True
+            data["iosNormalLaunchSurvival"] = {"contract": "same-executable-pid-15s-v1", "passed": True,
+                                               "observedSeconds": 0}
+            path.write_text(json.dumps(data))
+            with self.assertRaises(ValueError):
+                evaluate_saved_run(directory, 5, 5)
+
     def test_result_write_failure_releases_owned_reservation_after_cleanup(self):
         with TemporaryDirectory() as temp:
             gate = Gate(SimpleNamespace(artifact_dir=Path(temp) / "run"))
