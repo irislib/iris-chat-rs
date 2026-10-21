@@ -1791,9 +1791,8 @@ fn liveness_replays_retained_appkeys_for_tracked_peer() {
         assert!(connected > 0, "test relay must be connected");
     };
 
-    let mut notifications = core
-        .private_discovery_client(peer_owner.public_key())
-        .notifications();
+    let (discovery_tx, discovery_rx) = flume::unbounded();
+    core.core_sender = discovery_tx;
 
     let mut plan = protocol_plan_for_test(Vec::new(), Vec::new());
     plan.roster_authors = vec![peer_owner.public_key().to_hex()];
@@ -1832,15 +1831,13 @@ fn liveness_replays_retained_appkeys_for_tracked_peer() {
     let retained = core.runtime.block_on(async {
         tokio::time::timeout(Duration::from_secs(5), async {
             loop {
-                match notifications.recv().await {
-                    Ok(RelayPoolNotification::Event { event, .. })
-                        if event.id == app_keys_event_id =>
-                    {
-                        break (*event).clone();
-                    }
-                    Ok(_) => {}
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
-                    Err(error) => panic!("relay notifications closed: {error}"),
+                match discovery_rx.recv_async().await {
+                    Ok(CoreMsg::Internal(event)) => match *event {
+                        InternalEvent::RelayEvent(event) if event.id == app_keys_event_id => break event,
+                        _ => {},
+                    },
+                    Ok(_) => {},
+                    Err(error) => panic!("discovery event channel closed: {error}"),
                 }
             }
         })

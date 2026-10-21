@@ -1,6 +1,7 @@
 use super::*;
 use crate::core::projection::relay_connection_status;
 
+pub(in crate::core) mod anonymous_reads;
 mod backfill;
 pub(super) mod private_reads;
 mod retry_helpers;

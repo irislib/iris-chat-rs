@@ -2,46 +2,128 @@ use super::*;
 
 const MAX_PRIVATE_DISCOVERY_SCOPES: usize = 512;
 
+#[derive(Clone, Debug, PartialEq)]
+struct DiscoveryConfig {
+    relays: Vec<RelayUrl>,
+    filters: Vec<Filter>,
+}
+
+/// Retained scope state is just configuration and a cancellable task, never an
+/// SDK client/cache. Dropping the last descriptor cancels even a queued read.
 #[derive(Debug)]
 pub(in crate::core) struct PrivateDiscoveryClient {
-    client: Client,
-    runtime: tokio::runtime::Handle,
+    config: tokio::sync::watch::Sender<Option<DiscoveryConfig>>,
+    task: tokio::task::JoinHandle<()>,
+    cancelled: std::sync::atomic::AtomicBool,
 }
 
 impl Drop for PrivateDiscoveryClient {
     fn drop(&mut self) {
-        let client = self.client.clone();
-        self.runtime.spawn(async move {
-            let _ = client.shutdown().await;
+        self.cancel();
+    }
+}
+
+impl PrivateDiscoveryClient {
+    fn new(runtime: &tokio::runtime::Handle, sender: Sender<CoreMsg>) -> Self {
+        let (config, mut updates) = tokio::sync::watch::channel(None::<DiscoveryConfig>);
+        let task = runtime.spawn(async move {
+            let mut seen = HashSet::new();
+            let mut order = std::collections::VecDeque::new();
+            loop {
+                let current = updates.borrow_and_update().clone();
+                let Some(current) = current else {
+                    if updates.changed().await.is_err() {
+                        break;
+                    }
+                    continue;
+                };
+                let cycle = async {
+                    for relay in &current.relays {
+                        if let Ok(events) =
+                            super::anonymous_reads::poll(relay, current.filters.clone()).await
+                        {
+                            for event in events {
+                                if !seen.insert(event.id) {
+                                    continue;
+                                }
+                                order.push_back(event.id);
+                                if order.len() > 128 {
+                                    if let Some(old) = order.pop_front() {
+                                        seen.remove(&old);
+                                    }
+                                }
+                                if sender
+                                    .send(CoreMsg::Internal(Box::new(InternalEvent::RelayEvent(
+                                        event,
+                                    ))))
+                                    .is_err()
+                                {
+                                    return true;
+                                }
+                            }
+                        }
+                    }
+                    // Re-read the original filters, rather than advancing a
+                    // timestamp past late-published metadata. Core deduplicates
+                    // IDs. EOSE gaps, reconnects and restarts cannot lose an
+                    // older AppKeys/invite update through a moving watermark.
+                    sleep(Duration::from_secs(30)).await;
+                    false
+                };
+                tokio::select! {
+                    stopped = cycle => if stopped { break; },
+                    result = updates.changed() => if result.is_err() { break; },
+                }
+            }
         });
+        Self {
+            config,
+            task,
+            cancelled: std::sync::atomic::AtomicBool::new(false),
+        }
+    }
+
+    fn cancel(&self) {
+        self.cancelled
+            .store(true, std::sync::atomic::Ordering::Release);
+        self.task.abort();
+    }
+
+    fn configure(&self, relays: &[RelayUrl], filters: Vec<Filter>) -> Result<(), String> {
+        if self.cancelled.load(std::sync::atomic::Ordering::Acquire) {
+            return Err("anonymous discovery scope was removed".into());
+        }
+        let next = DiscoveryConfig {
+            relays: relays.to_vec(),
+            filters,
+        };
+        if self.config.borrow().as_ref() == Some(&next) {
+            return Ok(());
+        }
+        self.config
+            .send(Some(next))
+            .map_err(|_| "anonymous discovery worker stopped".to_string())
     }
 }
 
 impl AppCore {
-    pub(in crate::core) fn private_discovery_client(&mut self, author: PublicKey) -> Client {
-        if let Some(discovery) = self
-            .protocol_subscription_runtime
+    fn private_discovery_client(&mut self, author: PublicKey) -> Arc<PrivateDiscoveryClient> {
+        self.protocol_subscription_runtime
             .discovery_clients
-            .get(&author)
-        {
-            return discovery.client.clone();
-        }
-        let client = Client::new(Keys::generate());
-        self.start_notifications_loop(client.clone());
-        self.protocol_subscription_runtime.discovery_clients.insert(
-            author,
-            Arc::new(PrivateDiscoveryClient {
-                client: client.clone(),
-                runtime: self.runtime.handle().clone(),
-            }),
-        );
-        client
+            .entry(author)
+            .or_insert_with(|| {
+                Arc::new(PrivateDiscoveryClient::new(
+                    self.runtime.handle(),
+                    self.core_sender.clone(),
+                ))
+            })
+            .clone()
     }
 
     pub(in crate::core) fn private_discovery_subscriptions(
         &mut self,
         filters: Vec<Filter>,
-    ) -> Result<Vec<(Client, Vec<Filter>)>, String> {
+    ) -> Result<Vec<(std::sync::Weak<PrivateDiscoveryClient>, Vec<Filter>)>, String> {
         let mut scopes: std::collections::BTreeMap<PublicKey, Vec<Filter>> =
             std::collections::BTreeMap::new();
         for filter in filters.into_iter().flat_map(split_public_discovery_authors) {
@@ -55,17 +137,26 @@ impl AppCore {
                 })?;
             scopes.entry(author).or_default().push(filter);
         }
-        self.protocol_subscription_runtime
-            .discovery_clients
-            .retain(|author, _| scopes.contains_key(author));
-        // Match the shared SDK's bound; never collapse excess scopes onto one
-        // connection, where the batch would disclose a set of private contacts.
         if scopes.len() > MAX_PRIVATE_DISCOVERY_SCOPES {
             return Err("too many private discovery scopes".to_string());
         }
+        self.protocol_subscription_runtime
+            .discovery_clients
+            .retain(|author, scope| {
+                let keep = scopes.contains_key(author);
+                if !keep {
+                    scope.cancel();
+                }
+                keep
+            });
         Ok(scopes
             .into_iter()
-            .map(|(author, filters)| (self.private_discovery_client(author), filters))
+            .map(|(author, filters)| {
+                (
+                    Arc::downgrade(&self.private_discovery_client(author)),
+                    filters,
+                )
+            })
             .collect())
     }
 
@@ -149,9 +240,6 @@ fn is_public_discovery_filter(filter: &Filter) -> bool {
 }
 
 pub(super) fn split_public_discovery_authors(filter: Filter) -> Vec<Filter> {
-    if !is_public_discovery_filter(&filter) {
-        return vec![filter];
-    }
     let Some(authors) = filter.authors.as_ref().filter(|authors| authors.len() > 1) else {
         return vec![filter];
     };
@@ -165,34 +253,57 @@ pub(super) fn split_public_discovery_authors(filter: Filter) -> Vec<Filter> {
         .collect()
 }
 
-pub(super) async fn apply_private_discovery_subscriptions(
-    scopes: Vec<(Client, Vec<Filter>)>,
+pub(in crate::core) async fn apply_private_discovery_subscriptions(
+    scopes: Vec<(std::sync::Weak<PrivateDiscoveryClient>, Vec<Filter>)>,
     relay_urls: &[RelayUrl],
 ) -> Result<(), String> {
-    let mut tasks = tokio::task::JoinSet::new();
-    for (client, filters) in scopes {
-        let relay_urls = relay_urls.to_vec();
-        tasks.spawn(async move {
-            apply_private_discovery_subscription(&client, &relay_urls, filters).await
-        });
-    }
-    while let Some(result) = tasks.join_next().await {
-        result.map_err(|error| error.to_string())??;
+    // Applying config is immediate; the bounded scheduler performs catch-up.
+    // Do not wait for a whole populated account inside the 8s apply deadline.
+    for (scope, filters) in scopes {
+        let scope = scope
+            .upgrade()
+            .ok_or_else(|| "anonymous discovery scope was removed".to_string())?;
+        scope.configure(relay_urls, filters)?;
     }
     Ok(())
 }
 
-pub(super) async fn apply_private_discovery_subscription(
-    client: &Client,
-    relay_urls: &[RelayUrl],
-    filters: Vec<Filter>,
-) -> Result<(), String> {
-    let id = SubscriptionId::new("ndr-private-discovery");
-    let _ = client.unsubscribe(&id).await;
-    if filters.is_empty() {
-        return Ok(());
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn private_discovery_stops_when_core_event_receiver_closes() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let relay = crate::local_relay::TestRelay::start();
+        let url = RelayUrl::parse(relay.url()).unwrap();
+        let peer = Keys::generate();
+        let event = EventBuilder::new(Kind::Metadata, "{}")
+            .sign_with_keys(&peer)
+            .unwrap();
+        let (sender, receiver) = flume::unbounded();
+        drop(receiver);
+        let reader = PrivateDiscoveryClient::new(runtime.handle(), sender);
+        runtime.block_on(async {
+            let client = Client::new(peer.clone());
+            client.add_relay(url.clone()).await.unwrap();
+            connect_client_with_timeout(&client, Duration::from_secs(2)).await;
+            client.send_event(&event).await.unwrap();
+            reader
+                .configure(
+                    &[url],
+                    vec![Filter::new().author(peer.public_key()).kind(Kind::Metadata)],
+                )
+                .unwrap();
+            let deadline = Instant::now() + Duration::from_secs(2);
+            while !reader.task.is_finished() {
+                assert!(
+                    Instant::now() < deadline,
+                    "closed Core receiver left discovery worker running"
+                );
+                sleep(Duration::from_millis(5)).await;
+            }
+            client.shutdown().await;
+        });
     }
-    ensure_session_relays_configured(client, relay_urls).await;
-    connect_client_with_timeout(client, Duration::from_secs(RELAY_CONNECT_TIMEOUT_SECS)).await;
-    subscribe_protocol_filters_with_id(client, id, filters).await
 }

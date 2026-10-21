@@ -134,56 +134,8 @@ pub(in crate::core) async fn fetch_events_for_filters(
     filters: Vec<Filter>,
     timeout: Duration,
 ) -> Result<Vec<Event>, String> {
-    use tokio::task::JoinSet;
-
     let relay_urls = client.relays().await.keys().cloned().collect::<Vec<_>>();
-    let mut tasks = JoinSet::new();
-    for filter in filters
-        .into_iter()
-        .flat_map(super::private_reads::split_public_discovery_authors)
-    {
-        let relay_urls = relay_urls.clone();
-        tasks.spawn(async move {
-            // This query has no account AUTH, receive subscriptions, or other
-            // lookup context. Never fall back to the caller's identity client.
-            let reader = Client::new(Keys::generate());
-            ensure_session_relays_configured(&reader, &relay_urls).await;
-            connect_client_with_timeout(&reader, timeout).await;
-            let result = reader.fetch_events(filter, timeout).await;
-            let _ = reader.shutdown().await;
-            result
-        });
-    }
-
-    let mut any_success = false;
-    let mut last_error = None;
-    let mut seen_event_ids = HashSet::new();
-    let mut collected = Vec::new();
-
-    while let Some(result) = tasks.join_next().await {
-        match result {
-            Ok(Ok(events)) => {
-                any_success = true;
-                for event in events.iter() {
-                    if seen_event_ids.insert(event.id) {
-                        collected.push(event.clone());
-                    }
-                }
-            }
-            Ok(Err(error)) => {
-                last_error = Some(error.to_string());
-            }
-            Err(error) => {
-                last_error = Some(error.to_string());
-            }
-        }
-    }
-
-    if any_success {
-        Ok(collected)
-    } else {
-        Err(last_error.unwrap_or_else(|| "no protocol filters fetched".to_string()))
-    }
+    super::anonymous_reads::fetch(&relay_urls, filters, timeout).await
 }
 
 pub(super) async fn wait_for_connected_relays(client: &Client, timeout: Duration) -> usize {

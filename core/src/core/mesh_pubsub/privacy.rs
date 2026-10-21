@@ -142,17 +142,17 @@ impl PrivateMeshProviders {
             .cloned()
             .collect::<Vec<_>>();
         if !adverts.is_empty() && !self.relays.is_empty() {
-            let reader = PrivateRelayReader(Client::new(Keys::generate()));
-            ensure_session_relays_configured(&reader.0, &self.relays).await;
-            connect_client_with_timeout(&reader.0, Duration::from_secs(3)).await;
-            for filter in adverts {
-                if let Ok(events) = reader.0.fetch_events(filter, Duration::from_secs(3)).await {
-                    for event in events.iter() {
-                        let _ = live.ingest_nostr_discovery_event(event.clone()).await;
-                    }
+            if let Ok(events) = crate::core::protocol::anonymous_reads::fetch(
+                &self.relays,
+                adverts,
+                Duration::from_secs(3),
+            )
+            .await
+            {
+                for event in events {
+                    let _ = live.ingest_nostr_discovery_event(event).await;
                 }
             }
-            let _ = reader.0.shutdown().await;
         }
         if !self.available() {
             return;
@@ -199,16 +199,6 @@ impl Drop for PrivateEndpoint {
         let endpoint = self.0.clone();
         tokio::spawn(async move {
             let _ = endpoint.shutdown().await;
-        });
-    }
-}
-
-struct PrivateRelayReader(Client);
-impl Drop for PrivateRelayReader {
-    fn drop(&mut self) {
-        let client = self.0.clone();
-        tokio::spawn(async move {
-            let _ = client.shutdown().await;
         });
     }
 }

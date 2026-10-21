@@ -2,6 +2,22 @@
 
 Each release has channel-specific notes. The release tag must match the `##` heading exactly.
 
+## v2026.10.21.2
+
+### GitHub
+
+- Fix the startup allocation failure in anonymous peer discovery. Bound concurrent reads and connection buffers without allocating a full relay-client cache for every contact or sharing authentication between contacts.
+- Add populated-account discovery regressions under a process memory limit, alongside serialized authentication and query privacy checks.
+- Require attested physical upgrade and lifecycle evidence for the exact TestFlight build before public beta or App Store promotion.
+
+### Apple
+
+- Fix a startup crash caused by high memory use.
+
+### Zapstore
+
+- Fix a startup crash caused by high memory use.
+
 ## v2026.10.21.1
 
 ### GitHub
