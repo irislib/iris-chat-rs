@@ -184,16 +184,36 @@ fn call_wake_dispatch_is_anonymous_on_actual_relay_and_http_connections() {
         tokio::time::timeout(Duration::from_secs(3), async {
             loop {
                 let rows = wire.lock().unwrap().clone();
-                if requests.lock().unwrap().len() == 3
-                    && wakes.iter().all(|wake| {
-                        rows.iter().any(|(connection, message)| {
-                            message[0] == "EVENT"
-                                && message[1]["id"] == wake.id.to_hex()
-                                && rows
-                                    .iter()
-                                    .any(|(number, auth)| number == connection && auth[0] == "AUTH")
-                        })
+                let deliveries = rows
+                    .iter()
+                    .filter(|(_, message)| {
+                        message[0] == "EVENT"
+                            && wakes
+                                .iter()
+                                .any(|wake| message[1]["id"] == wake.id.to_hex())
                     })
+                    .map(|(connection, _)| *connection)
+                    .collect::<HashSet<_>>();
+                // The retried wake has the same event ID. Readiness must cover
+                // every copy's connection, not merely each distinct wake ID.
+                let all_authenticated = deliveries.iter().all(|connection| {
+                    let Some(auth_position) = rows
+                        .iter()
+                        .position(|(number, message)| number == connection && message[0] == "AUTH")
+                    else {
+                        return false;
+                    };
+                    rows.iter()
+                        .skip(auth_position + 1)
+                        .any(|(number, message)| {
+                            number == connection
+                                && message[0] == "EVENT"
+                                && wakes
+                                    .iter()
+                                    .any(|wake| message[1]["id"] == wake.id.to_hex())
+                        })
+                });
+                if requests.lock().unwrap().len() == 3 && deliveries.len() == 3 && all_authenticated
                 {
                     break;
                 }

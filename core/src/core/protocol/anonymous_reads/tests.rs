@@ -14,6 +14,14 @@ async fn relay(
     events: Vec<Event>,
     hold: Option<tokio::sync::watch::Receiver<bool>>,
 ) -> (RelayUrl, Wire, Arc<AtomicUsize>) {
+    relay_with_ready(events, hold, None).await
+}
+
+async fn relay_with_ready(
+    events: Vec<Event>,
+    hold: Option<tokio::sync::watch::Receiver<bool>>,
+    event_sent_without_eose: Option<Arc<tokio::sync::Notify>>,
+) -> (RelayUrl, Wire, Arc<AtomicUsize>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = RelayUrl::parse(&format!("ws://{}", listener.local_addr().unwrap())).unwrap();
     let wire: Wire = Arc::default();
@@ -30,6 +38,7 @@ async fn relay(
             let active = active.clone();
             let peak = maximum.clone();
             let mut hold = hold.clone();
+            let event_sent_without_eose = event_sent_without_eose.clone();
             tokio::spawn(async move {
                 let mut socket = accept_async(stream).await.unwrap();
                 peak.fetch_max(active.fetch_add(1, Ordering::SeqCst) + 1, Ordering::SeqCst);
@@ -91,6 +100,9 @@ async fn relay(
                                 }
                             }
                             if value[2]["limit"] == 2 {
+                                if let Some(ready) = &event_sent_without_eose {
+                                    ready.notify_one();
+                                }
                                 while socket.next().await.is_some() {}
                                 return;
                             }
@@ -209,8 +221,79 @@ async fn anonymous_reads_wire_isolates_authors_retries_and_validates_delivery() 
     );
 }
 
+/// These experiments each need to occupy the entire process-global budget.
+/// Separate exact-test children let them run concurrently under the parallel
+/// harness without sharing that deliberately saturated application process.
+fn capacity_experiment_in_child(test: &str) -> bool {
+    use std::process::{Command, Stdio};
+    const CHILD: &str = "IRIS_TEST_ANONYMOUS_CAPACITY_CHILD";
+    let name = format!("core::protocol::anonymous_reads::tests::{test}");
+    if std::env::var(CHILD).as_deref() == Ok(name.as_str()) {
+        return false;
+    }
+    let executable = std::env::current_exe().expect("test executable");
+    let mut command = if cfg!(unix) {
+        let mut shell = Command::new("/bin/sh");
+        shell
+            .args([
+                "-c",
+                "ulimit -c 0 && exec \"$@\"",
+                "iris-anonymous-capacity-child",
+            ])
+            .arg(&executable);
+        shell
+    } else {
+        Command::new(&executable)
+    };
+    let mut child = command
+        .args(["--exact", &name, "--nocapture", "--test-threads=1"])
+        .env(CHILD, &name)
+        .env("RUST_BACKTRACE", "0")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("start owned capacity experiment");
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let timed_out = loop {
+        if child
+            .try_wait()
+            .expect("poll capacity experiment")
+            .is_some()
+        {
+            break false;
+        }
+        if Instant::now() >= deadline {
+            child.kill().expect("stop overdue owned experiment");
+            break true;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    let output = child
+        .wait_with_output()
+        .expect("collect capacity experiment");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    eprintln!(
+        "capacity experiment={name} status={}\nstdout:\n{stdout}\nstderr:\n{}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!timed_out, "capacity experiment exceeded its watchdog");
+    assert!(output.status.success(), "capacity experiment failed");
+    assert!(
+        stdout.contains("test result: ok. 1 passed; 0 failed"),
+        "exact child must execute its assertion-bearing test"
+    );
+    true
+}
+
 #[tokio::test]
 async fn anonymous_reads_global_budget_covers_concurrent_callers_before_socket_open() {
+    if capacity_experiment_in_child(
+        "anonymous_reads_global_budget_covers_concurrent_callers_before_socket_open",
+    ) {
+        return;
+    }
+
     let peer = Keys::generate();
     let event = profile(&peer, "{}");
     let (release, hold) = tokio::sync::watch::channel(false);
@@ -317,6 +400,12 @@ async fn anonymous_reads_session_history_preserves_multiple_authors_without_shar
 
 #[tokio::test]
 async fn anonymous_reads_blackout_cancellation_drops_active_and_queued_jobs() {
+    if capacity_experiment_in_child(
+        "anonymous_reads_blackout_cancellation_drops_active_and_queued_jobs",
+    ) {
+        return;
+    }
+
     let peer = Keys::generate();
     let (release, hold) = tokio::sync::watch::channel(false);
     let (url, wire, _) = relay(vec![profile(&peer, "{}")], Some(hold)).await;
@@ -429,15 +518,30 @@ async fn anonymous_reads_preserves_valid_message_history_above_metadata_result_c
 async fn anonymous_reads_keeps_validated_metadata_at_deadline_when_relay_omits_eose() {
     let peer = Keys::generate();
     let event = profile(&peer, "{}");
-    let (url, _, _) = relay(vec![event.clone()], None).await;
-    assert_eq!(
-        fetch(
-            &[url],
-            vec![filter(peer.public_key()).limit(2)],
-            Duration::from_millis(40)
-        )
+    let ready = Arc::new(tokio::sync::Notify::new());
+    let (url, _, _) = relay_with_ready(vec![event.clone()], None, Some(ready.clone())).await;
+    let author = peer.public_key();
+    let budget = Duration::from_secs(2);
+    let started = Instant::now();
+    // This case isolates the actual socket deadline from admission, which is
+    // separately tested with concurrent callers saturating the global budget.
+    // Parallel tests may deliberately hold all four cold permits.
+    let read = tokio::spawn(async move {
+        read_one(&url, &[filter(author).limit(2)], budget)
+            .await
+            .map_err(ReadFailure::message)
+    });
+    tokio::time::timeout(Duration::from_secs(3), ready.notified())
         .await
-        .unwrap(),
-        vec![event]
+        .expect("relay sent the event and is deliberately withholding EOSE");
+    let received = tokio::time::timeout(Duration::from_secs(3), read)
+        .await
+        .expect("finite socket read ended")
+        .unwrap()
+        .unwrap();
+    assert!(
+        started.elapsed() >= budget,
+        "read ended before its missing-EOSE deadline"
     );
+    assert_eq!(received, vec![event]);
 }

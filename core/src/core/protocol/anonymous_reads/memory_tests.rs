@@ -81,17 +81,25 @@ fn populated_account_discovery_host_progress() {
 fn capped_child(mode: &str, deadline: Instant) -> Output {
     // Static shell text, positional arguments only. The address-space limit is
     // in effect before the real test executable and its runtime are loaded.
-    let mut child = Command::new("/bin/sh")
-        .args([
-            "-c",
-            if cfg!(target_os = "linux") {
-                "ulimit -c 0 && ulimit -v 786432 && exec \"$@\""
-            } else {
-                "ulimit -c 0 && exec \"$@\""
-            },
-            "iris-discovery-memory-child",
-        ])
-        .arg(std::env::current_exe().expect("test executable"))
+    let executable = std::env::current_exe().expect("test executable");
+    let mut command = if cfg!(unix) {
+        let mut shell = Command::new("/bin/sh");
+        shell
+            .args([
+                "-c",
+                if cfg!(target_os = "linux") {
+                    "ulimit -c 0 && ulimit -v 786432 && exec \"$@\""
+                } else {
+                    "ulimit -c 0 && exec \"$@\""
+                },
+                "iris-discovery-memory-child",
+            ])
+            .arg(&executable);
+        shell
+    } else {
+        Command::new(&executable)
+    };
+    let mut child = command
         .args(["--exact", TEST, "--nocapture", "--test-threads", "1"])
         .env(CHILD, mode)
         // Avoid scaling 8 MiB worker stacks with a developer machine's CPU
