@@ -8,7 +8,6 @@ use base64::Engine;
 use iris_chat_core::stack_mesh_fixture::stack_mesh_fixture;
 use iris_chat_core::{download_hashtree_attachment, AppAction, FfiApp};
 use nostr::EventId;
-use nostr_pubsub::Filter;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 
@@ -70,7 +69,7 @@ fn main() -> Result<()> {
     let runtime = tokio::runtime::Runtime::new()?;
     let mut subscription = mesh
         .as_ref()
-        .map(|mesh| runtime.block_on(mesh.client.subscribe(vec![Filter::new()])))
+        .map(|mesh| runtime.block_on(mesh.subscribe_public_events()))
         .transpose()?;
     emit(json!({
         "event": "ready",

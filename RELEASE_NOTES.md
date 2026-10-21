@@ -2,6 +2,43 @@
 
 Each release has channel-specific notes. The release tag must match the `##` heading exactly.
 
+## v2026.10.21.1
+
+### GitHub
+
+- Publish private messages and call wake-ups on separate send-only connections, using fresh anonymous relay authentication and no account-authenticated fallback. Keep peer discovery separate from the account's receiving connection.
+- Isolate FIPS message-provider publishing and each peer lookup from live device identities. Deliver private nearby traffic only to its intended recipient, and keep unsent copies queued when a provider has not accepted them.
+- Request client mode for temporary message-provider and update-reader connections to avoid unnecessary routing work.
+- Restore nearby Bluetooth delivery when a phone changes accounts and reuses its Bluetooth address. Accept traffic only from the current authenticated connection.
+- Use private per-session responder keys so public invitations cannot identify the sender of encrypted replies.
+- Sign call wakeups with fresh anonymous keys and authenticate callers only after decrypting the double-ratchet offer. Remove caller identity lists from notification subscriptions.
+- Deliver every group message and membership update through separate double-ratchet envelopes for each recipient. Remove public group rosters, shared group broadcasts and shared-key subscriptions from all network carriers.
+- Stop publishing private-group member lists, administrators and names. Previously published records cannot be made private retroactively.
+- Require the new private messaging protocol, retire old sessions and invitations, and retain old unsent ciphertext locally without republishing it. Keep chat history.
+- Add serialized-event and upgrade regressions for identity correlation, first replies, calls, notification subscriptions and queued-message replay.
+- Keep Windows text, controls and attachments readable in light and dark themes, and follow Windows theme changes while the app is open.
+- Give Windows settings a full-window layout with keyboard navigation, compact forms and switches. Preserve profile edits when switching settings pages.
+- Preserve the ongoing drag position on iPhone when the rendered history window changes.
+- Retry queued group keys as soon as group information arrives, including through linked-device sync.
+- Scope shared-mesh release-test subscriptions to public file metadata while preserving receiver privacy rules and resource checks.
+
+### Apple
+
+- Improve privacy for messages, invitations and incoming calls.
+- Keep caller approval and blocking on your device.
+- Improve nearby messaging after changing accounts.
+- Keep your place when scrolling through long chats on iPhone.
+- Improve group message delivery after linking devices.
+- Update both sides of a conversation to keep messaging and calling. Existing chat history is preserved; old invitation links need to be replaced.
+
+### Zapstore
+
+- Improve privacy for messages, invitations and incoming calls.
+- Keep caller approval and blocking on your device.
+- Improve nearby messaging after changing accounts.
+- Improve group message delivery after linking devices.
+- Update both sides of a conversation to keep messaging and calling. Existing chat history is preserved; old invitation links need to be replaced.
+
 ## v2026.10.21
 
 ### GitHub

@@ -5,8 +5,8 @@ use std::sync::{Arc, OnceLock, RwLock, Weak};
 
 use fips_core::FipsEndpoint;
 use nostr::{EventBuilder, Keys, Kind};
-use nostr_pubsub::{EventBus, EventSource, VerifiedEvent};
-use nostr_pubsub_fips::FipsPubsubClient;
+use nostr_pubsub::{EventBus, EventSource, Filter, VerifiedEvent};
+use nostr_pubsub_fips::{FipsPubsubClient, FipsPubsubSubscription};
 use serde_json::{json, Value};
 
 struct RegisteredMesh {
@@ -42,7 +42,7 @@ pub(crate) fn register(
 
 pub struct StackMeshFixture {
     endpoint: Arc<FipsEndpoint>,
-    pub client: Arc<FipsPubsubClient>,
+    client: Arc<FipsPubsubClient>,
     keys: Keys,
     lan_discovery_enabled: bool,
     relay_count: usize,
@@ -61,7 +61,17 @@ pub fn stack_mesh_fixture() -> Option<StackMeshFixture> {
 }
 
 impl StackMeshFixture {
+    /// Observe only the lab's explicitly public Drive probes. Never subscribe to
+    /// private messages or peer identities on this identified live connection.
+    pub async fn subscribe_public_events(&self) -> anyhow::Result<FipsPubsubSubscription> {
+        Ok(self
+            .client
+            .subscribe(vec![Filter::new().kind(Kind::FileMetadata)])
+            .await?)
+    }
+
     pub async fn publish(&self, kind: u16, content: &str) -> anyhow::Result<Value> {
+        anyhow::ensure!(kind == 9, "only the lab's public kind 9 probe is allowed");
         let event = EventBuilder::new(Kind::from(kind), content).sign_with_keys(&self.keys)?;
         self.client
             .publish(
@@ -88,3 +98,6 @@ impl StackMeshFixture {
         }))
     }
 }
+
+#[cfg(test)]
+mod tests;
