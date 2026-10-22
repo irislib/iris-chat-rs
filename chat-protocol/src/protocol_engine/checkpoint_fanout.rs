@@ -11,6 +11,7 @@ thread_local! {
 struct CheckpointGroupFanout {
     value: Arc<GroupPendingFanout>,
     serialized: Arc<Mutex<Option<Arc<serde_json::value::RawValue>>>>,
+    repair_identity: Arc<std::sync::OnceLock<Option<serde_json::Value>>>,
 }
 
 impl From<GroupPendingFanout> for CheckpointGroupFanout {
@@ -18,6 +19,7 @@ impl From<GroupPendingFanout> for CheckpointGroupFanout {
         Self {
             value: Arc::new(value),
             serialized: Arc::default(),
+            repair_identity: Arc::default(),
         }
     }
 }
@@ -42,6 +44,43 @@ impl std::fmt::Debug for CheckpointGroupFanout {
 }
 
 impl CheckpointGroupFanout {
+    fn repair_identity(&self) -> Option<&serde_json::Value> {
+        self.repair_identity
+            .get_or_init(|| {
+                let GroupPendingFanout::Remote { payload, .. } = self.as_ref() else {
+                    return None;
+                };
+                if !matches!(
+                    JsonGroupPayloadCodecV1.decode_pairwise_command(payload),
+                    Ok(Some(GroupPairwiseCommand::SenderKeyRepairRequest { .. }))
+                ) {
+                    return None;
+                }
+                let mut identity: serde_json::Value = serde_json::from_slice(payload).ok()?;
+                let fields = identity.as_object_mut()?;
+                if fields.get("kind")?.as_u64() != Some(10_447) {
+                    return None;
+                }
+                // These are refresh clocks, not recovery selectors. The receiver
+                // has no request expiry or request-ID correlation. Preserve every
+                // other field, including extensions and the original device key.
+                fields.remove("id");
+                fields.remove("created_at");
+                let mut content: serde_json::Value =
+                    serde_json::from_str(fields.get("content")?.as_str()?).ok()?;
+                content.as_object_mut()?.remove("createdAt");
+                fields.insert("content".into(), content);
+                fields.get_mut("tags")?.as_array_mut()?.retain(|tag| {
+                    tag.as_array()
+                        .and_then(|parts| parts.first())
+                        .and_then(serde_json::Value::as_str)
+                        != Some("ms")
+                });
+                Some(identity)
+            })
+            .as_ref()
+    }
+
     fn serialized(&self) -> Result<Arc<serde_json::value::RawValue>, serde_json::Error> {
         let mut cached = self
             .serialized
@@ -56,6 +95,34 @@ impl CheckpointGroupFanout {
         CHECKPOINT_FANOUT_SERIALIZED_BYTES.with(|count| count.set(count.get() + json.get().len()));
         *cached = Some(json.clone());
         Ok(json)
+    }
+}
+
+impl ProtocolPendingGroupFanout {
+    fn same_pending_repair(&self, other: &Self) -> bool {
+        if self.inner_event_id.is_some()
+            || other.inner_event_id.is_some()
+            || self.group_id != other.group_id
+            || self.remaining_devices != other.remaining_devices
+        {
+            return false;
+        }
+        let (
+            GroupPendingFanout::Remote {
+                recipient_owner: left,
+                ..
+            },
+            GroupPendingFanout::Remote {
+                recipient_owner: right,
+                ..
+            },
+        ) = (self.fanout.as_ref(), other.fanout.as_ref())
+        else {
+            return false;
+        };
+        left == right
+            && matches!((self.fanout.repair_identity(), other.fanout.repair_identity()),
+            (Some(left), Some(right)) if left == right)
     }
 }
 

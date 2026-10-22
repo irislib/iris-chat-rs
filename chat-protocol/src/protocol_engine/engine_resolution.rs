@@ -404,7 +404,14 @@ impl ProtocolEngine {
                 created_at_secs: unix_now().get(),
                 next_retry_at_secs: unix_now().get().saturating_add(PENDING_RETRY_DELAY_SECS),
             };
-            if !self.pending_group_fanouts.contains(&pending) {
+            // Cooldown retries refresh a repair's timestamps. If the same
+            // recovery intent is still unsent to exactly these devices, keep
+            // its original payload instead of accumulating another copy.
+            if !self
+                .pending_group_fanouts
+                .iter()
+                .any(|queued| queued == &pending || queued.same_pending_repair(&pending))
+            {
                 self.pending_group_fanouts.push(pending);
             }
         }
