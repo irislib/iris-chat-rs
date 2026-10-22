@@ -168,6 +168,7 @@ fn synthetic_history_fixture_with_devices(
                         .unwrap();
                 let mut unsigned = nostr_double_ratchet::invite_unsigned_event(&invite).unwrap();
                 unsigned.created_at = Timestamp::from_secs(created_at);
+                unsigned.id = None;
                 let event = unsigned.sign_with_keys(key).unwrap();
                 engine.observe_invite_event(&event).unwrap();
                 discovery_events.push(event);

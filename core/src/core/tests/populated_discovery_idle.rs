@@ -230,7 +230,14 @@ mod populated_discovery_idle {
         (fixture, events)
     }
 
-    fn verify_wire(wire: &Wire, own: &HashSet<PublicKey>, subjects: &HashSet<String>) -> usize {
+    fn verify_wire(
+        wire: &Wire,
+        own: &HashSet<PublicKey>,
+        subjects: &HashSet<String>,
+        known_identities: &HashSet<PublicKey>,
+        expected_discovery: &BTreeMap<String, HashSet<String>>,
+        expected_receiver: &HashSet<String>,
+    ) -> usize {
         let rows = wire.rows.lock().unwrap();
         let mut auth = HashMap::new();
         let mut keys = HashSet::new();
@@ -247,30 +254,66 @@ mod populated_discovery_idle {
                     "every anonymous connection needs fresh authentication"
                 );
                 assert!(
-                    !subjects.contains(&event.pubkey.to_hex()),
-                    "public peer identity used for authentication"
+                    !known_identities.contains(&event.pubkey),
+                    "known owner/device identity used for anonymous authentication"
                 );
             }
         }
         let mut contexts = BTreeMap::<usize, HashSet<String>>::new();
+        let mut observed_receiver = HashSet::new();
         for (connection, request) in rows.iter().filter(|(_, row)| row[0] == "REQ") {
-            let authors = request.as_array().unwrap()[2..]
-                .iter()
-                .filter_map(|filter| filter["authors"].as_array())
-                .flatten()
-                .map(|author| author.as_str().unwrap().to_string())
-                .collect::<HashSet<_>>();
+            let filters = &request.as_array().unwrap()[2..];
+            assert!(!filters.is_empty(), "request must contain a planned filter");
             let signer = auth
                 .get(connection)
                 .expect("every captured connection authenticates");
             if own.contains(signer) {
-                assert!(
-                    authors.iter().all(|author| !subjects.contains(author)),
-                    "own-account receiver revealed a peer identity"
-                );
+                for filter in filters {
+                    assert!(
+                        expected_receiver.contains(&filter.to_string()),
+                        "receiver filter differs from its exact own-account plan"
+                    );
+                    observed_receiver.insert(filter.to_string());
+                }
+                for subject in subjects {
+                    assert!(
+                        !request.to_string().contains(subject),
+                        "own-account receiver revealed a peer identity"
+                    );
+                }
             } else {
+                let mut authors = HashSet::new();
+                let mut actual_filters = HashSet::new();
+                for filter in filters {
+                    assert!(
+                        filter.get("#p").is_none(),
+                        "public author lookup added a recipient selector"
+                    );
+                    let filter_authors = filter["authors"]
+                        .as_array()
+                        .expect("every anonymous filter has an author");
+                    assert_eq!(
+                        filter_authors.len(),
+                        1,
+                        "every anonymous filter has one subject"
+                    );
+                    let author = filter_authors[0].as_str().unwrap().to_string();
+                    let expected = expected_discovery
+                        .get(&author)
+                        .expect("unplanned anonymous author");
+                    assert!(
+                        expected.contains(&filter.to_string()),
+                        "anonymous filter differs from its exact public plan"
+                    );
+                    authors.insert(author);
+                    actual_filters.insert(filter.to_string());
+                }
                 assert_eq!(authors.len(), 1, "one anonymous subject per connection");
-                assert!(authors.iter().all(|author| subjects.contains(author)));
+                let author = authors.iter().next().unwrap();
+                assert_eq!(
+                    &actual_filters, &expected_discovery[author],
+                    "request omitted planned discovery filters"
+                );
                 for key in own {
                     assert!(
                         !request.to_string().contains(&key.to_hex()),
@@ -280,6 +323,10 @@ mod populated_discovery_idle {
                 contexts.entry(*connection).or_default().extend(authors);
             }
         }
+        assert_eq!(
+            &observed_receiver, expected_receiver,
+            "own receiver did not send its planned filters"
+        );
         assert!(contexts.values().all(|authors| authors.len() == 1));
         assert!(
             rows.iter().all(|(_, row)| row[0] != "EVENT"),
@@ -312,6 +359,32 @@ mod populated_discovery_idle {
             .collect::<HashSet<_>>();
         own.insert(fixture.core.logged_in.as_ref().unwrap().owner_pubkey);
         assert_eq!(own.len(), 4, "three own devices plus owner");
+        let snapshot = fixture
+            .core
+            .protocol_engine
+            .as_ref()
+            .unwrap()
+            .session_manager_snapshot();
+        let mut known_identities = own.clone();
+        known_identities.insert(snapshot.local_owner_pubkey.to_nostr().unwrap());
+        known_identities.insert(snapshot.local_device_pubkey.to_nostr().unwrap());
+        for user in &snapshot.users {
+            known_identities.insert(user.owner_pubkey.to_nostr().unwrap());
+            for device in &user.devices {
+                known_identities.insert(device.device_pubkey.to_nostr().unwrap());
+                if let Some(owner) = device.claimed_owner_pubkey {
+                    known_identities.insert(owner.to_nostr().unwrap());
+                }
+            }
+            if let Some(roster) = &user.roster {
+                known_identities.extend(
+                    roster
+                        .devices
+                        .iter()
+                        .map(|device| device.device_pubkey.to_nostr().unwrap()),
+                );
+            }
+        }
         let filters = fixture.core.recent_protocol_metadata_filters(unix_now());
         let (receiver, discovery) = fixture.core.split_private_discovery_filters(filters);
         let subjects = discovery
@@ -325,6 +398,29 @@ mod populated_discovery_idle {
             "all persisted owners/devices need real discovery interests"
         );
         assert!(subjects.contains(&target.to_hex()));
+        assert!(
+            snapshot
+                .users
+                .iter()
+                .flat_map(|user| &user.devices)
+                .filter(|device| !device.authorized && device.is_stale)
+                .map(|device| device.device_pubkey.to_nostr().unwrap())
+                .any(|key| known_identities.contains(&key)
+                    && !own.contains(&key)
+                    && !subjects.contains(&key.to_hex())),
+            "authentication deny set must include identities outside active discovery subjects"
+        );
+        // Freeze the exact serialized plans before either set is moved into
+        // production subscription setup; do not normalize away selectors.
+        let mut expected_discovery = BTreeMap::<String, HashSet<String>>::new();
+        for filter in &discovery {
+            let authors = filter.authors.as_ref().unwrap();
+            assert_eq!(authors.len(), 1);
+            expected_discovery
+                .entry(authors.first().unwrap().to_hex())
+                .or_default()
+                .insert(serde_json::to_value(filter).unwrap().to_string());
+        }
         let (sender, incoming) = flume::unbounded();
         fixture.core.core_sender = sender;
         let runtime = fixture.core.runtime.handle().clone();
@@ -356,6 +452,7 @@ mod populated_discovery_idle {
             connect_client_with_timeout(&client, Duration::from_secs(2)).await;
             let receiver = receiver.into_iter().filter(|f| f.authors.as_ref().is_some_and(|authors| authors.iter().all(|key| own.contains(key)))).collect::<Vec<_>>();
             assert!(!receiver.is_empty());
+            let expected_receiver = receiver.iter().map(|filter| serde_json::to_value(filter).unwrap().to_string()).collect::<HashSet<_>>();
             for filter in receiver {
                 client.subscribe(filter, None).await.unwrap();
             }
@@ -412,13 +509,30 @@ mod populated_discovery_idle {
                 assert!(Instant::now() < deadline, "targeted proof demand did not deliver its fresh signed roster");
                 sleep(Duration::from_millis(5)).await;
             }
-            sleep(Duration::from_millis(100)).await;
-            let after = wire.rounds.lock().unwrap().clone();
-            for author in &subjects {
-                assert_eq!(after.get(author), Some(&(before[author] + usize::from(*author == target.to_hex()))),
-                    "targeted demand woke an unrelated contact or was duplicated");
+            let target = target.to_hex();
+            let mut expected_after = before.clone();
+            *expected_after.get_mut(&target).unwrap() += 1;
+            loop {
+                assert!(!server.is_finished(), "wire fixture failed");
+                let after = wire.rounds.lock().unwrap().clone();
+                for (author, count) in &after {
+                    let expected = expected_after.get(author).expect("targeted demand introduced an unrelated scope");
+                    if author == &target {
+                        assert!(count <= expected, "targeted demand duplicated its poll");
+                    } else {
+                        assert_eq!(count, expected, "targeted demand woke an unrelated contact");
+                    }
+                }
+                if after == expected_after { break; }
+                assert!(Instant::now() < deadline, "targeted proof poll did not finish its CLOSE acknowledgement");
+                sleep(Duration::from_millis(5)).await;
             }
-            let auth_count = verify_wire(&wire, &own, &subjects);
+            // This is only an extra-work observation window after the actual
+            // acknowledgement, never a substitute for poll completion.
+            sleep(Duration::from_millis(100)).await;
+            assert_eq!(*wire.rounds.lock().unwrap(), expected_after,
+                "targeted demand woke an unrelated contact or was duplicated");
+            let auth_count = verify_wire(&wire, &own, &subjects, &known_identities, &expected_discovery, &expected_receiver);
             println!("POPULATED_DISCOVERY_IDLE_RESULT={}", serde_json::json!({
                 "database_bytes": fixture.database_bytes, "message_rows": fixture.rows,
                 "contacts": CONTACTS, "peer_devices": CONTACTS * DEVICES, "own_devices": 3,
