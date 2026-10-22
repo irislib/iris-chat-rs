@@ -2,6 +2,33 @@
 
 Each release has channel-specific notes. The release tag must match the `##` heading exactly.
 
+## v2026.10.22.5
+
+### GitHub
+
+- Cache public message-server addresses briefly during discovery, with bounded storage and refresh after failed connections, loss of connectivity or returning to the foreground. Keep sockets, anonymous authentication and TLS sessions isolated by author and message server.
+- Add `iris invite create --full` for durable invite links that do not require a file upload. Preserve account recovery and existing group-invite authorization.
+- Pin Windows binding generation to its reviewed commit and verify locked package versions and content hashes before building the app.
+- Keep sign-in hidden while a saved account restores, including slow restores, and preserve background storage protection.
+- Stop republishing unchanged connection adverts every two seconds; retain immediate endpoint updates and refresh before expiration.
+- Reuse TLS 1.3 sessions only within an unchanged, single-author discovery scope and exact message-server URL, with fresh key exchange and anonymous authentication on every connection.
+- Keep nearby-device discovery on its quiet schedule when accepted connection adverts are renewed or replayed, while preserving signed expiry and cache recovery.
+- Preserve the visible message when an older page finishes loading just after a held drag ends.
+- Show the hand cursor over clickable Mac controls and message links while preserving text selection and image zoom.
+- Add Haps source-install recipes for the desktop app and CLI, with checks that keep package metadata and build versions aligned with the tag. Locally built packages remain distinct from signed release binaries.
+
+### Apple
+
+- Reduce repeated network work while Iris is open.
+- Prevent a brief sign-in screen while your saved account loads.
+- Keep your place when loading older messages on iPhone.
+- Show the hand cursor on clickable controls and message links on Mac.
+
+### Zapstore
+
+- Reduce repeated network work while Iris is open.
+- Reduce repeated network startup while restoring your account.
+
 ## v2026.10.22.4
 
 ### GitHub
