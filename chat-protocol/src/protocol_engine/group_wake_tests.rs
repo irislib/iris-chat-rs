@@ -12,6 +12,11 @@ fn private_group_wake_and_broadcast_share_one_rollback_safe_checkpoint() {
         .snapshot
         .unwrap()
         .group_id;
+    let mut deferred = synthetic_pending_inbound(&mut fixture.sender, 4_214, 0, unix_now().get());
+    for pending in &mut deferred {
+        pending.next_retry_at_secs = u64::MAX;
+    }
+    fixture.sender.pending_inbound = deferred.clone();
     let sessions = serde_json::to_value(fixture.sender.session_manager.snapshot()).unwrap();
     let groups = serde_json::to_value(fixture.sender.group_manager.snapshot()).unwrap();
     let pending = fixture.sender.pending_group_fanouts.clone();
@@ -140,7 +145,39 @@ fn private_group_wake_and_broadcast_share_one_rollback_safe_checkpoint() {
     );
     restored.ack_group_publish_effects(&sent.effects).unwrap();
     assert!(restored.pending_group_publish_effects().is_empty());
-    let resumed = observe_sibling_invite(&mut restored, &fixture.late, &fixture.late_device);
+    // Install the late device's invite without consuming the pending fanout.
+    let pending = std::mem::take(&mut restored.pending_group_fanouts);
+    assert!(observe_sibling_invite(&mut restored, &fixture.late, &fixture.late_device).is_empty());
+    restored.pending_group_fanouts = pending;
+    for pending in &mut restored.pending_group_fanouts {
+        pending.next_retry_at_secs = 0;
+    }
+    restored.persist().unwrap();
+    let fanouts_before = restored.pending_group_fanouts.clone();
+    let sessions_before = serde_json::to_value(restored.session_manager.snapshot()).unwrap();
+    let groups_before = serde_json::to_value(restored.group_manager.snapshot()).unwrap();
+    let deliveries_before = restored.pending_decrypted_deliveries.clone();
+    // A ready wake uses an immediate atomic save even inside an already-dirty
+    // app batch. Failing it must restore the session and original target order.
+    restored.enter_batch();
+    restored.batch_persist_dirty.set(true);
+    ack_storage.fail_next.store(true, std::sync::atomic::Ordering::Relaxed);
+    assert!(restored.retry_pending_group_fanouts(NdrUnixSeconds(unix_now().get())).is_err());
+    assert_eq!(restored.pending_group_fanouts, fanouts_before);
+    assert!(restored.pending_inbound == deferred, "failed fanout save changed deferred packets");
+    assert_eq!(restored.pending_decrypted_deliveries, deliveries_before);
+    assert_eq!(serde_json::to_value(restored.session_manager.snapshot()).unwrap(), sessions_before);
+    assert_eq!(serde_json::to_value(restored.group_manager.snapshot()).unwrap(), groups_before);
+    assert!(restored.pending_group_publish_effects().is_empty());
+    assert!(restored.batch_persist_dirty.get());
+    assert_eq!(restored.batch_depth.get(), 1);
+    restored.exit_batch().unwrap();
+    let mut restored = ProtocolEngine::load_or_create_for_local_device(
+        ack_storage, fixture.owner.public_key(), &fixture.device,
+    ).unwrap();
+    assert_eq!(restored.pending_group_fanouts, fanouts_before);
+    assert!(restored.pending_inbound == deferred, "fanout restart changed deferred packets");
+    let resumed = restored.retry_pending_protocol(NdrUnixSeconds(unix_now().get())).unwrap();
     let effects = resumed
         .group_result
         .effects
@@ -149,6 +186,13 @@ fn private_group_wake_and_broadcast_share_one_rollback_safe_checkpoint() {
         .collect::<Vec<_>>();
     for effect in &effects {
         let ProtocolEffect::Publish(publish) = effect;
+        let wire = serde_json::to_string(&publish.event).unwrap();
+        for identity in [&fixture.owner, &fixture.device, &fixture.peer_owner, &fixture.ready_device] {
+            assert!(!wire.contains(&identity.public_key().to_hex()),
+                "late retry must not expose either account or the sending device");
+        }
+        assert_ne!(publish.event.pubkey, fixture.late_device.public_key());
+        publish.event.verify().unwrap();
         assert!(
             !publish
                 .event

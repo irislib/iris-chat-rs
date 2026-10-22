@@ -143,6 +143,11 @@ mod incoming_retry_tests {
         }
         // Install the sessions without consuming the queued messages yet.
         let pending = std::mem::take(&mut receiver.pending_inbound);
+        let mut due_packets = pending.clone();
+        let due_ids = pending
+            .iter()
+            .map(|item| item.event.id.to_hex())
+            .collect::<HashSet<_>>();
         for response in responses {
             receiver.observe_invite_response_event(&response).unwrap();
         }
@@ -182,22 +187,100 @@ mod incoming_retry_tests {
             2,
             "each pending message is offered exactly once per batch"
         );
-        assert_eq!(receiver.pending_inbound, deferred);
-        let mut restored =
-            ProtocolEngine::load_or_create_for_local_device(storage, owner.public_key(), &device)
-                .unwrap();
-        assert_eq!(restored.pending_inbound, deferred);
+        assert!(
+            receiver.pending_inbound == deferred,
+            "retry changed deferred packets"
+        );
+        let mut restored = ProtocolEngine::load_or_create_for_local_device(
+            storage.clone(),
+            owner.public_key(),
+            &device,
+        )
+        .unwrap();
+        // Receive persists the journal while its ciphertext is still installed.
+        // A crash may therefore restore a due packet alongside its journal;
+        // the next retry must reconcile it without advancing the ratchet again.
+        let retained_due = restored
+            .pending_inbound
+            .len()
+            .checked_sub(deferred.len())
+            .expect("restart lost deferred packets");
+        assert!(
+            restored.pending_inbound[retained_due..] == deferred,
+            "restart changed or reordered deferred packets"
+        );
+        let journal_ids = restored
+            .pending_decrypted_deliveries
+            .iter()
+            .filter_map(|item| item.event_id.clone())
+            .collect::<HashSet<_>>();
+        assert!(
+            journal_ids == due_ids,
+            "restart changed the authenticated delivery journal"
+        );
+        let mut seen = HashSet::new();
+        let mut previous_position = None;
+        // Startup fills missing owner metadata from the installed sessions.
+        // Normalize only that derived metadata; signed events and scheduling
+        // fields must still match the exact originally queued packets.
+        for packet in &mut due_packets {
+            let metadata = restored.pending_inbound_metadata_for_event(
+                &packet.event,
+                packet.envelope.as_ref(),
+                None,
+            );
+            apply_pending_inbound_metadata(packet, metadata);
+        }
+        for item in &restored.pending_inbound[..retained_due] {
+            let position = due_packets
+                .iter()
+                .position(|original| original == item)
+                .expect("restart introduced an unexpected due packet");
+            assert!(
+                previous_position.is_none_or(|previous| position > previous),
+                "restart reordered due packets"
+            );
+            previous_position = Some(position);
+            let id = item.event.id.to_hex();
+            assert!(
+                journal_ids.contains(&id) && seen.insert(id),
+                "retained ciphertext must have one exact authenticated journal entry"
+            );
+        }
+        let sessions_before = serde_json::to_value(restored.session_manager.snapshot()).unwrap();
+        let replayed = restored
+            .retry_pending_protocol(NdrUnixSeconds(201))
+            .unwrap();
         assert_eq!(
-            restored
-                .retry_pending_protocol(NdrUnixSeconds(201))
-                .unwrap()
-                .direct_messages
-                .len(),
+            replayed.direct_messages.len(),
             2,
             "both deliveries survive restart before the app acknowledges them"
         );
+        let replayed_ids = replayed
+            .direct_messages
+            .iter()
+            .filter_map(|item| item.event_id.clone())
+            .collect::<HashSet<_>>();
+        assert!(
+            replayed_ids == due_ids,
+            "restart must offer both original deliveries exactly once"
+        );
+        assert!(
+            serde_json::to_value(restored.session_manager.snapshot()).unwrap() == sessions_before,
+            "journal replay must not advance a ratchet again"
+        );
+        assert!(
+            restored.pending_inbound == deferred,
+            "journal replay changed deferred packets"
+        );
         restored.ack_pending_decrypted_deliveries().unwrap();
-        assert_eq!(restored.pending_inbound, deferred);
+        let mut restored =
+            ProtocolEngine::load_or_create_for_local_device(storage, owner.public_key(), &device)
+                .unwrap();
+        assert!(
+            restored.pending_inbound == deferred,
+            "acknowledged restart changed deferred packets"
+        );
         assert!(restored
             .retry_pending_protocol(NdrUnixSeconds(202))
             .unwrap()

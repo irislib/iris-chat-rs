@@ -87,7 +87,10 @@ fn deferred_inbound_retry_allocation_is_bounded_by_due_packets() {
         allocated < 2 * 1024 * 1024,
         "allocated {allocated} bytes copying deferred packets"
     );
-    assert_eq!(engine.pending_inbound, expected);
+    assert!(
+        engine.pending_inbound == expected,
+        "inbound retry changed deferred packets"
+    );
     assert!(engine.pending_decrypted_deliveries.is_empty());
 }
 
@@ -98,6 +101,91 @@ fn retry_process_cpu_ticks() -> u64 {
         .split_whitespace()
         .collect::<Vec<_>>();
     fields[11].parse::<u64>().unwrap() + fields[12].parse::<u64>().unwrap()
+}
+
+#[test]
+fn due_fanout_retry_allocations_do_not_scale_with_deferred_inbound() {
+    fn allocated_with_inbound(count: usize) -> usize {
+        let mut f = checkpoint_backlog_fixture(64, 0);
+        assert_eq!(f.sender.pending_decrypted_deliveries.len(), 1);
+        let delivered: UnsignedEvent =
+            serde_json::from_str(&f.sender.pending_decrypted_deliveries[0].content).unwrap();
+        assert_eq!(delivered.pubkey, f.peer_owner.public_key());
+        assert_eq!(delivered.content, "establish receiver");
+        f.sender.ack_pending_decrypted_deliveries().unwrap();
+        assert!(f.sender.pending_decrypted_deliveries.is_empty());
+        // The shared fixture also queues the setup hello for its missing late
+        // device. Preserve it, but isolate due fanout work from direct retries.
+        assert_eq!(f.sender.pending_remote_sends.len(), 1);
+        let pending = &mut f.sender.pending_remote_sends[0];
+        let setup: UnsignedEvent = serde_json::from_slice(&pending.payload).unwrap();
+        assert_eq!(setup.pubkey, f.owner.public_key());
+        assert_eq!(setup.content, "establish sender");
+        assert_eq!(
+            pending.recipient_owner,
+            ndr_owner(f.peer_owner.public_key())
+        );
+        assert_eq!(
+            pending.eligible_devices,
+            BTreeSet::from([
+                ndr_device(f.ready_device.public_key()),
+                ndr_device(f.late_device.public_key()),
+            ])
+        );
+        assert_eq!(
+            pending.completed_devices,
+            BTreeSet::from([ndr_device(f.ready_device.public_key())])
+        );
+        pending.next_retry_at_secs = u64::MAX;
+        let remote_sends = serde_json::to_value(&f.sender.pending_remote_sends).unwrap();
+        let now = unix_now().get();
+        let mut deferred = synthetic_pending_inbound(&mut f.sender, count, 0, now);
+        for pending in &mut deferred {
+            pending.next_retry_at_secs = u64::MAX;
+        }
+        f.sender.pending_inbound = deferred.clone();
+        for pending in &mut f.sender.pending_group_fanouts {
+            pending.next_retry_at_secs = now;
+        }
+        let mut expected_fanouts = f.sender.pending_group_fanouts.clone();
+        let sessions = serde_json::to_value(f.sender.session_manager.snapshot()).unwrap();
+        let ((), allocated) = remote_roster_tests::allocated_bytes(|| {
+            for turn in 0..8 {
+                assert!(f
+                    .sender
+                    .retry_pending_protocol(NdrUnixSeconds(now + turn * 60))
+                    .unwrap()
+                    .is_empty());
+            }
+        });
+        for pending in &mut expected_fanouts {
+            pending.next_retry_at_secs = now + 8 * 60;
+        }
+        assert!(
+            f.sender.pending_group_fanouts == expected_fanouts,
+            "fanout retry changed pending targets"
+        );
+        assert!(
+            f.sender.pending_inbound == deferred,
+            "fanout retry changed deferred packets"
+        );
+        assert!(
+            serde_json::to_value(&f.sender.pending_remote_sends).unwrap() == remote_sends,
+            "fanout retry changed the deferred setup remote send"
+        );
+        assert!(
+            serde_json::to_value(f.sender.session_manager.snapshot()).unwrap() == sessions,
+            "unavailable targets changed sessions"
+        );
+        allocated
+    }
+    let empty = allocated_with_inbound(0);
+    let populated = allocated_with_inbound(4_214);
+    eprintln!("fanout_retry turns=8 due_fanouts=64 deferred_inbound=4214 empty_allocated_bytes={empty} populated_allocated_bytes={populated}");
+    assert!(
+        populated <= empty + 64 * 1024,
+        "due fanout retries copied unrelated inbound state: {empty} -> {populated} bytes"
+    );
 }
 
 #[cfg(target_os = "linux")]
@@ -292,16 +380,32 @@ fn restored_backlog_whole_retry_at_continuation_cadence() {
         .eq(ciphertexts_before.iter().skip(1)));
     assert_eq!(engine.pending_remote_sends.len(), 44);
     assert_eq!(engine.pending_inbound.len(), INBOUND);
-    for (actual, original) in engine.pending_inbound.iter().zip(&inbound_before) {
+    for (index, (actual, original)) in engine
+        .pending_inbound
+        .iter()
+        .zip(&inbound_before)
+        .enumerate()
+    {
         let mut expected = original.clone();
         expected.next_retry_at_secs = actual.next_retry_at_secs;
-        assert_eq!(actual, &expected);
+        assert!(
+            actual == &expected,
+            "inbound packet {index} changed beyond its retry deadline"
+        );
     }
     assert!(engine.pending_group_fanouts.len() >= FANOUTS);
-    for (actual, original) in engine.pending_group_fanouts.iter().zip(&fanouts_before) {
+    for (index, (actual, original)) in engine
+        .pending_group_fanouts
+        .iter()
+        .zip(&fanouts_before)
+        .enumerate()
+    {
         let mut expected = original.clone();
         expected.next_retry_at_secs = actual.next_retry_at_secs;
-        assert_eq!(actual, &expected);
+        assert!(
+            actual == &expected,
+            "fanout {index} changed beyond its retry deadline"
+        );
     }
     assert!(
         storage.puts.load(Relaxed) > puts_before,
@@ -311,15 +415,22 @@ fn restored_backlog_whole_retry_at_continuation_cadence() {
     let restored =
         ProtocolEngine::load_or_create_for_local_device(storage, f.owner.public_key(), &f.device)
             .unwrap();
-    assert_eq!(restored.pending_inbound, engine.pending_inbound);
-    assert_eq!(restored.pending_group_fanouts, engine.pending_group_fanouts);
-    assert_eq!(
-        restored.pending_group_sender_key_messages,
-        engine.pending_group_sender_key_messages
+    assert!(
+        restored.pending_inbound == engine.pending_inbound,
+        "restart changed inbound packets"
     );
-    assert_eq!(
-        serde_json::to_value(&restored.pending_remote_sends).unwrap(),
-        serde_json::to_value(&engine.pending_remote_sends).unwrap()
+    assert!(
+        restored.pending_group_fanouts == engine.pending_group_fanouts,
+        "restart changed pending fanouts"
+    );
+    assert!(
+        restored.pending_group_sender_key_messages == engine.pending_group_sender_key_messages,
+        "restart changed unresolved ciphertexts"
+    );
+    assert!(
+        serde_json::to_value(&restored.pending_remote_sends).unwrap()
+            == serde_json::to_value(&engine.pending_remote_sends).unwrap(),
+        "restart changed remote sends"
     );
     // This is a qualification gate, not an ignored performance printout. A
     // passing microbenchmark cannot override a still-busy whole retry loop.
