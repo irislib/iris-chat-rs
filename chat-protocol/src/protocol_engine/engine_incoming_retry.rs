@@ -538,12 +538,16 @@ impl ProtocolEngine {
     ) -> anyhow::Result<Vec<ProtocolDecryptedMessage>> {
         // Keep the queue installed while decrypting: decryption persists the
         // ratchet and its delivery journal, including all not-yet-tried events.
-        let pending = self.pending_inbound.clone();
+        // Group continuations run every 25 ms even while inbound packets are
+        // backed off. Copy only due packets, not the entire deferred backlog.
+        let pending = self
+            .pending_inbound
+            .iter()
+            .filter(|pending| pending.next_retry_at_secs <= now.get())
+            .cloned()
+            .collect::<Vec<_>>();
         let mut messages = Vec::new();
         for pending in pending {
-            if pending.next_retry_at_secs > now.get() {
-                continue;
-            }
             match self.decrypt_pending_direct_message_event(&pending) {
                 Ok(DirectReceive::Message(message)) => {
                     self.pending_inbound
