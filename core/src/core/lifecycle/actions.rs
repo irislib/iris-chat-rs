@@ -113,6 +113,7 @@ impl AppCore {
                 &picture_filename,
             ),
             AppAction::CreatePublicInvite => self.create_public_invite(),
+            AppAction::CreateFullInvite => self.create_full_invite(),
             AppAction::CreateGroupInvite {
                 group_id,
                 max_uses,

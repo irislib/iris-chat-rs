@@ -34,6 +34,19 @@ pub(super) struct PendingOutgoingInviteAcceptance {
 
 impl AppCore {
     pub(super) fn ensure_local_app_keys_for_public_invite(&mut self) {
+        self.ensure_local_app_keys_for_invite(true);
+    }
+
+    pub(super) fn ensure_local_app_keys_for_full_invite(&mut self) {
+        // Recovery must merge the existing signed roster before this device is
+        // added. A fresh singleton here would supersede older sibling records.
+        if self.defer_owner_app_keys_publish {
+            return;
+        }
+        self.ensure_local_app_keys_for_invite(false);
+    }
+
+    fn ensure_local_app_keys_for_invite(&mut self, publish: bool) {
         let Some(logged_in) = self.logged_in.as_ref() else {
             return;
         };
@@ -53,7 +66,8 @@ impl AppCore {
             device_pubkey,
             current_device_labels.as_ref(),
             true,
-        ) {
+        ) && publish
+        {
             self.defer_owner_app_keys_publish = false;
             self.publish_local_app_keys_snapshot_only("public_invite_app_keys");
         }

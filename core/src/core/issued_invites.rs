@@ -10,6 +10,9 @@ pub(super) struct IssuedInvite {
     pub url: String,
     pub created_at_ms: u64,
     pub published: bool,
+    // Local inline sharing is independent of remote short-link publication.
+    #[serde(default)]
+    pub full: bool,
     pub revoked: bool,
 }
 
@@ -52,6 +55,30 @@ pub(super) fn load_issued_invites(
 impl AppCore {
     pub(super) fn create_public_invite(&mut self) {
         self.begin_invite_upload(None, None, None);
+    }
+
+    pub(super) fn create_full_invite(&mut self) {
+        let result = (|| -> anyhow::Result<()> {
+            anyhow::ensure!(
+                self.pending_invite_upload.is_none(),
+                "An invite is already being created."
+            );
+            let (key, mut issued) = self.prepare_issued_invite(None, None, None)?;
+            let invite = self
+                .private_chat_invites
+                .get(&key)
+                .ok_or_else(|| anyhow::anyhow!("Invite unavailable."))?;
+            issued.url = super::invites::chat_invite_url(invite)?;
+            issued.full = true;
+            self.save_issued_invite(&key, &issued)?;
+            self.issued_invites.insert(key, issued);
+            self.ensure_local_app_keys_for_full_invite();
+            Ok(())
+        })();
+        if let Err(error) = result {
+            self.state.toast = Some(error.to_string());
+        }
+        self.rebuild_persist_and_emit_state();
     }
 
     pub(super) fn create_group_invite(
@@ -151,6 +178,7 @@ impl AppCore {
             url: format!("https://chat.iris.to/#/{reference}"),
             created_at_ms: SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis() as u64,
             published: false,
+            full: false,
             revoked: false,
         };
         let key = super::invites::private_chat_invite_key(&invite);
@@ -158,7 +186,6 @@ impl AppCore {
         self.save_issued_invite(&key, &issued)?;
         self.private_chat_invites.insert(key.clone(), invite);
         self.issued_invites.insert(key.clone(), issued.clone());
-        self.ensure_local_app_keys_for_public_invite();
         self.mark_mobile_push_dirty();
         self.request_protocol_subscription_refresh();
         Ok((key, issued))
@@ -182,6 +209,7 @@ impl AppCore {
                 return;
             }
         };
+        self.ensure_local_app_keys_for_public_invite();
         let Some(login) = self.logged_in.as_ref() else {
             return;
         };
@@ -263,7 +291,7 @@ impl AppCore {
     fn displayed_personal_invite(&self) -> Option<(&String, &IssuedInvite)> {
         self.issued_invites
             .iter()
-            .filter(|(_, i)| i.published && !i.revoked && i.record.kind == "personal")
+            .filter(|(_, i)| (i.published || i.full) && !i.revoked && i.record.kind == "personal")
             .max_by_key(|(key, i)| (i.created_at_ms, *key))
     }
 
