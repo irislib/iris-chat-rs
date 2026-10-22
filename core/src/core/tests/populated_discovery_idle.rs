@@ -356,7 +356,9 @@ mod populated_discovery_idle {
             connect_client_with_timeout(&client, Duration::from_secs(2)).await;
             let receiver = receiver.into_iter().filter(|f| f.authors.as_ref().is_some_and(|authors| authors.iter().all(|key| own.contains(key)))).collect::<Vec<_>>();
             assert!(!receiver.is_empty());
-            client.subscribe(receiver, None).await.unwrap();
+            for filter in receiver {
+                client.subscribe(filter, None).await.unwrap();
+            }
             let scopes = fixture.core.private_discovery_subscriptions(discovery).unwrap();
             super::super::protocol::private_reads::apply_private_discovery_subscriptions(scopes, std::slice::from_ref(&relay)).await.unwrap();
             let settling = Instant::now();
