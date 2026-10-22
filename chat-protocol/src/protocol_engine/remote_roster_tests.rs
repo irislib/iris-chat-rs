@@ -52,7 +52,7 @@ mod remote_roster_tests {
     #[global_allocator]
     static ALLOCATOR: CountedAllocator = CountedAllocator;
 
-    fn allocated_bytes<T>(operation: impl FnOnce() -> T) -> (T, usize) {
+    pub(super) fn allocated_bytes<T>(operation: impl FnOnce() -> T) -> (T, usize) {
         struct Reset;
         impl Drop for Reset {
             fn drop(&mut self) {
