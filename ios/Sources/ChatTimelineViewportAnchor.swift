@@ -132,7 +132,10 @@ extension ChatTimelineInteractionCoordinator {
     }
 
     func recordNativeScrollPosition() {
-        guard let scrollView, let layout = appliedViewportLayout,
+        guard let scrollView else { return }
+        recordHistoryDeceleration(scrollView.isDecelerating)
+        recordHistoryDiagnostic("offset")
+        guard let layout = appliedViewportLayout,
               abs(scrollView.bounds.height - layout.nativeHeight) < 0.5,
               abs((visibleViewportMaxY ?? 0) - layout.viewportHeight) < 0.5 else { return }
         // Track real dragging and deceleration while this layout is current.
@@ -227,9 +230,54 @@ struct ChatTimelineHistoryAnchor {
     var panPosition: ChatTimelineHistoryPanPosition<CGFloat>?
 }
 
+/// Exposed through the existing scroll view only for reset, synthetic UI tests.
+/// No message content or stable message/chat identifiers enter this trace.
+final class ChatTimelineHistoryDiagnostics {
+    static let capacity = 160
+    private var entries: [String] = []
+    private var sequence = 0
+    private let started = ProcessInfo.processInfo.systemUptime
+
+    static func configured(environment: [String: String]) -> ChatTimelineHistoryDiagnostics? {
+        guard environment["IRIS_UI_TEST_TIMELINE_TRACE"] == "1",
+              environment["IRIS_UI_TEST_RESET"] == "1",
+              environment["IRIS_UI_TEST_SEED_PEER"] == "self" else { return nil }
+        return ChatTimelineHistoryDiagnostics()
+    }
+
+    var text: String { entries.joined(separator: "\n") }
+
+    func record(_ event: String, fields: String) {
+        sequence += 1
+        let elapsed = (ProcessInfo.processInfo.systemUptime - started) * 1_000
+        entries.append("\(sequence) \(String(format: "%.1f", elapsed)) \(event) \(fields)")
+        if entries.count > Self.capacity { entries.removeFirst(entries.count - Self.capacity) }
+    }
+}
+
 extension ChatTimelineInteractionCoordinator {
-    func recordHistoryPanState(_ state: UIGestureRecognizer.State) {
+    func recordHistoryPanState(_ state: UIGestureRecognizer.State, translationY: CGFloat? = nil) {
+        let wasActive = historyPanState.isActive
         historyPanState.update(isActive: state == .began || state == .changed)
+        if state == .ended, wasActive {
+            let translation = translationY ?? scrollView.map { $0.panGestureRecognizer.translation(in: $0).y }
+            if let translation, translation.isFinite {
+                historyViewportAnchor?.panPosition?.completedTranslationY = translation
+            }
+        } else if state == .cancelled || state == .failed {
+            historyViewportAnchor?.panPosition = nil
+        }
+        if state != .possible, historyDiagnostics != nil {
+            recordHistoryDiagnostic("pan-\(state.rawValue)", extra: "translation=\(translationY.map { String(describing: $0) } ?? "-")")
+        }
+    }
+
+    func recordHistoryDeceleration(_ isDecelerating: Bool) {
+        guard isDecelerating, historyViewportAnchor?.panPosition != nil else { return }
+        // The finger's final translation cannot represent inertia, including
+        // a fling which has already stopped by the time the extent commits.
+        recordHistoryDiagnostic("deceleration-invalidates-pan")
+        historyViewportAnchor?.panPosition = nil
     }
 
     var activeHistoryPanTranslationY: CGFloat? {
@@ -239,6 +287,33 @@ extension ChatTimelineInteractionCoordinator {
         guard historyPanState.isActive else { return nil }
         let translation = recognizer.translation(in: scrollView).y
         return translation.isFinite ? translation : nil
+    }
+
+    var historyPanTranslationYForCorrection: CGFloat? {
+        if let translation = activeHistoryPanTranslationY { return translation }
+        guard let scrollView else { return nil }
+        recordHistoryDeceleration(scrollView.isDecelerating)
+        guard !scrollView.isDecelerating else { return nil }
+        // A held drag can end before the new native extent arrives. Retain its
+        // final translation for that one pending correction; a native offset
+        // rebase after release is still layout, not more finger movement.
+        return historyViewportAnchor?.panPosition?.completedTranslationY
+    }
+
+    func recordHistoryDiagnostic(_ event: String, extra: @autoclosure () -> String = "") {
+        guard let historyDiagnostics, let scrollView else { return }
+        func number(_ value: CGFloat?) -> String { value.map { String(format: "%.2f", Double($0)) } ?? "-" }
+        func token(_ value: String?) -> String { value.map { String($0.hashValue, radix: 16) } ?? "-" }
+        let anchor = historyViewportAnchor
+        historyDiagnostics.record(event, fields:
+            "g=\(historyPanState.generation) drag=\(scrollView.isDragging) decel=\(scrollView.isDecelerating) " +
+            "offset=\(number(scrollView.contentOffset.y)) extent=\(number(scrollView.contentSize.height)) " +
+            "page=\(latestPage.layoutGeneration):\(token(latestPage.firstMessageID))..\(token(latestPage.lastMessageID)) " +
+            "anchor=\(token(anchor?.messageID)) y=\(number(anchor?.originalContentY))->\(number(anchor?.contentY)) " +
+            "height=\(number(anchor?.contentHeight)) clamp=\(number(anchor?.clampCorrectionY)) " +
+            "base=\(number(anchor?.panPosition?.offsetY)) translation=\(number(anchor?.panPosition?.translationY)) " +
+            "end=\(number(anchor?.panPosition?.completedTranslationY)) \(extra())")
+        scrollView.accessibilityValue = historyDiagnostics.text
     }
 
     func captureHistoryPanPosition() -> ChatTimelineHistoryPanPosition<CGFloat>? {
@@ -305,6 +380,7 @@ extension ChatTimelineInteractionCoordinator {
         historyViewportAnchor = ChatTimelineHistoryAnchor(
             chatID: chatID, firstMessageID: firstMessageID, layoutGeneration: layoutGeneration,
             messageID: id, originalContentY: contentFrame.minY, panPosition: captureHistoryPanPosition())
+        recordHistoryDiagnostic("capture")
     }
 
     @discardableResult
@@ -316,6 +392,7 @@ extension ChatTimelineInteractionCoordinator {
         anchor.contentY = frame.minY
         anchor.contentHeight = page.contentHeight
         historyViewportAnchor = anchor
+        recordHistoryDiagnostic("restore")
         if applyPendingHistoryViewportAnchor() { return true }
         // Preference geometry can precede UIKit's new content extent. Stage
         // one correction for the completed native layout, never an old extent.
@@ -337,12 +414,16 @@ extension ChatTimelineInteractionCoordinator {
         let minimum = -scrollView.adjustedContentInset.top
         let maximum = max(minimum, scrollView.contentSize.height
                           + scrollView.adjustedContentInset.bottom - scrollView.bounds.height)
-        let panTranslation = activeHistoryPanTranslationY
+        let panTranslation = historyPanTranslationYForCorrection
+        // Sampling a recognizer can invalidate a captured pan (cancellation or
+        // deceleration). Do not use the anchor copy from before that sample.
+        let panPosition = historyViewportAnchor?.panPosition
         let offset = chatTimelineHistoryOffset(
             currentOffsetY: scrollView.contentOffset.y, contentDeltaY: contentY - anchor.originalContentY,
-            clampCorrectionY: anchor.clampCorrectionY, panPosition: anchor.panPosition,
+            clampCorrectionY: anchor.clampCorrectionY, panPosition: panPosition,
             panGeneration: historyPanState.generation, panTranslationY: panTranslation,
             minimumOffsetY: minimum, maximumOffsetY: maximum)
+        recordHistoryDiagnostic("apply", extra: "target=\(offset) pan=\(String(describing: panTranslation))")
         historyViewportAnchor = nil
         if offset.isFinite, abs(offset - scrollView.contentOffset.y) > 1 {
             UIView.performWithoutAnimation { scrollView.contentOffset.y = offset }
@@ -351,11 +432,13 @@ extension ChatTimelineInteractionCoordinator {
     }
 
     func historyExtentWillChange() {
+        recordHistoryDiagnostic("extent-will")
         guard let scrollView, historyViewportAnchor != nil else { return }
         historyViewportAnchor?.offsetBeforeExtentChange = scrollView.contentOffset.y
     }
 
     func historyExtentDidChange() {
+        recordHistoryDiagnostic("extent-did")
         guard let scrollView, let before = historyViewportAnchor?.offsetBeforeExtentChange else { return }
         historyViewportAnchor?.offsetBeforeExtentChange = nil
         let minimum = -scrollView.adjustedContentInset.top

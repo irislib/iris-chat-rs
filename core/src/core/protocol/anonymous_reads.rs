@@ -6,9 +6,13 @@ use nostr::EventId;
 use std::sync::OnceLock;
 use tokio::sync::Semaphore;
 use tokio_tungstenite::{
-    connect_async_with_config,
+    connect_async_tls_with_config,
     tungstenite::{protocol::WebSocketConfig, Message},
+    Connector,
 };
+
+mod scoped_tls;
+pub(in crate::core) use scoped_tls::ScopedTlsConnector;
 
 pub(super) const COLD_READERS: usize = 4;
 pub(super) const BACKGROUND_READERS: usize = 16;
@@ -22,6 +26,8 @@ static BACKGROUND_SLOTS: OnceLock<Semaphore> = OnceLock::new();
 mod memory_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+pub(in crate::core) mod tls_tests;
 
 /// Cold lookups have their own admission budget so a populated account's
 /// background catch-up cannot starve an invite or first-contact proof.
@@ -95,7 +101,11 @@ pub(in crate::core) async fn fetch(
     }
 }
 
-pub(super) async fn poll(relay: &RelayUrl, filters: Vec<Filter>) -> Result<Vec<Event>, String> {
+pub(super) async fn poll(
+    relay: &RelayUrl,
+    filters: Vec<Filter>,
+    tls: Option<&ScopedTlsConnector>,
+) -> Result<Vec<Event>, String> {
     let _permit = BACKGROUND_SLOTS
         .get_or_init(|| Semaphore::new(BACKGROUND_READERS))
         .acquire()
@@ -103,7 +113,8 @@ pub(super) async fn poll(relay: &RelayUrl, filters: Vec<Filter>) -> Result<Vec<E
         .map_err(|error| error.to_string())?;
     // Bound an unresponsive subject's turn; Tokio's semaphore is FIFO, so
     // every retained author eventually runs even when all relays are offline.
-    read_one(relay, &filters, Duration::from_secs(3))
+    let connector = tls.map(|tls| tls.connector(relay, &filters)).transpose()?;
+    read_one_with_connector(relay, &filters, Duration::from_secs(3), connector)
         .await
         .map_err(ReadFailure::message)
 }
@@ -189,8 +200,22 @@ async fn read_one(
     filters: &[Filter],
     timeout: Duration,
 ) -> Result<Vec<Event>, ReadFailure> {
+    read_one_with_connector(relay, filters, timeout, None).await
+}
+
+async fn read_one_with_connector(
+    relay: &RelayUrl,
+    filters: &[Filter],
+    timeout: Duration,
+    connector: Option<Connector>,
+) -> Result<Vec<Event>, ReadFailure> {
     let mut collected = Collection::new(filters.iter().any(requests_message_history));
-    match tokio::time::timeout(timeout, read_socket(relay, filters, &mut collected)).await {
+    match tokio::time::timeout(
+        timeout,
+        read_socket(relay, filters, &mut collected, connector),
+    )
+    .await
+    {
         // Match the former SDK fetch deadline: already validated events remain
         // useful when a relay omits EOSE. Safety-limit failures below never
         // take this path and cannot masquerade as a successful partial fetch.
@@ -225,6 +250,7 @@ async fn read_socket(
     relay: &RelayUrl,
     filters: &[Filter],
     collected: &mut Collection,
+    connector: Option<Connector>,
 ) -> anyhow::Result<()> {
     anyhow::ensure!(!filters.is_empty(), "no discovery filters");
     let authors = filters
@@ -243,7 +269,8 @@ async fn read_socket(
         max_frame_size: Some(MAX_FRAME_BYTES),
         ..Default::default()
     };
-    let (mut socket, _) = connect_async_with_config(relay.as_str(), Some(config), false).await?;
+    let (mut socket, _) =
+        connect_async_tls_with_config(relay.as_str(), Some(config), false, connector).await?;
     let id = SubscriptionId::generate();
     let mut request = vec![serde_json::json!("REQ"), serde_json::json!(id)];
     for filter in filters {

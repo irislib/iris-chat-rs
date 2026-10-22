@@ -86,6 +86,15 @@ assert len(samples) == 2 and sum(sample["seconds"] for sample in samples) >= 70
 for sample in samples:
     assert math.isfinite(sample["cpu_percent_one_core"]) and 0 <= sample["cpu_percent_one_core"] <= 5
     assert sample["application_wire_bytes"] == sample["connections"] == 0
+cycles = result["full_cycle_tls_samples"]
+assert len(cycles) == 2
+for cycle in cycles:
+    assert math.isfinite(cycle["seconds"]) and cycle["seconds"] >= 125
+    assert math.isfinite(cycle["cpu_percent_one_core"]) and 0 <= cycle["cpu_percent_one_core"] <= 5
+    assert cycle["every_author_polled"] is True
+    assert cycle["tls_full_handshakes"] == 0
+    assert cycle["tls_resumed_handshakes"] >= result["discovery_subjects"]
+    assert cycle["connections"] >= result["discovery_subjects"] and cycle["application_wire_bytes"] > 0
 print("Populated discovery CPU/wire companion evidence verified")
 CPU_RECEIPT
     fi

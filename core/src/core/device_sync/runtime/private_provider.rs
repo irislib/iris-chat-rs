@@ -1,6 +1,59 @@
 use super::*;
 use nostr_pubsub::{EventBus, EventSource, VerifiedEvent};
 
+const ADVERT_POLL_INTERVAL: Duration = Duration::from_secs(2);
+const ADVERT_REFRESH_INTERVAL: Duration = Duration::from_secs(60);
+
+#[derive(Default)]
+struct OwnAdvertPublication {
+    previous: Option<(Event, Instant)>,
+}
+
+fn same_advert(left: &Event, right: &Event) -> bool {
+    // Signing each poll changes the timestamp, ID, signature and expiration.
+    // Keep every other field, including unknown tags, in the change detector.
+    fn semantic_tags(event: &Event) -> impl Iterator<Item = &nostr::Tag> {
+        event
+            .tags
+            .iter()
+            .filter(|tag| tag.as_slice().first().map(String::as_str) != Some("expiration"))
+    }
+    left.pubkey == right.pubkey
+        && left.kind == right.kind
+        && left.content == right.content
+        && semantic_tags(left).eq(semantic_tags(right))
+}
+
+impl OwnAdvertPublication {
+    async fn publish_if_due<F, Fut>(
+        &mut self,
+        event: &Event,
+        now: Instant,
+        unix_now: u64,
+        publish: F,
+    ) -> bool
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = ()>,
+    {
+        if self.previous.as_ref().is_some_and(|(previous, at)| {
+            let expires_before_next_poll = previous.tags.expiration().is_some_and(|expiration| {
+                expiration.as_secs() <= unix_now.saturating_add(ADVERT_POLL_INTERVAL.as_secs())
+            });
+            same_advert(previous, event)
+                && now.saturating_duration_since(*at) < ADVERT_REFRESH_INTERVAL
+                && !expires_before_next_poll
+        }) {
+            return false;
+        }
+        publish().await;
+        // Count from the start of publication: network waits must not extend
+        // the previous advert's signed lifetime or the refresh interval.
+        self.previous = Some((event.clone(), now));
+        true
+    }
+}
+
 pub(super) fn approved_providers(
     direct: &[PeerConfig],
     routed: &[FipsPeerIdentity],
@@ -59,34 +112,42 @@ pub(super) async fn publish_own_adverts(
     public_client: Client,
     relays: Vec<RelayUrl>,
 ) {
-    let mut published: Option<(String, Instant)> = None;
+    let mut published = OwnAdvertPublication::default();
     loop {
         if let Ok(Some(event)) = endpoint.local_nostr_discovery_advert_event().await {
-            let payload = serde_json::to_string(&(&event.tags, &event.content)).unwrap_or_default();
-            if published.as_ref().is_some_and(|(previous, at)| {
-                previous == &payload && at.elapsed() < Duration::from_secs(60)
-            }) {
-                sleep(Duration::from_secs(2)).await;
-                continue;
-            }
-            if let Ok(verified) = VerifiedEvent::try_from(event.clone()) {
-                let _ = pubsub
-                    .publish(verified, EventSource::local_index("iris-chat-live-advert"))
-                    .await;
-            }
-            let _ = super::super::super::publish_helpers::publish_event_once(
-                &public_client,
-                &relays,
-                &event,
-            )
-            .await;
-            published = Some((payload, Instant::now()));
+            published
+                .publish_if_due(
+                    &event,
+                    Instant::now(),
+                    Timestamp::now().as_secs(),
+                    || async {
+                        if let Ok(verified) = VerifiedEvent::try_from(event.clone()) {
+                            let _ = pubsub
+                                .publish(
+                                    verified,
+                                    EventSource::local_index("iris-chat-live-advert"),
+                                )
+                                .await;
+                        }
+                        let _ = super::super::super::publish_helpers::publish_event_once(
+                            &public_client,
+                            &relays,
+                            &event,
+                        )
+                        .await;
+                    },
+                )
+                .await;
         }
         // Endpoint candidates can arrive after bind/STUN, or change on mobile
         // network handoff. Publish the first usable advert promptly.
-        sleep(Duration::from_secs(2)).await;
+        sleep(ADVERT_POLL_INTERVAL).await;
     }
 }
+
+#[cfg(test)]
+#[path = "private_provider/advert_tests.rs"]
+mod advert_tests;
 
 #[cfg(test)]
 mod tests {

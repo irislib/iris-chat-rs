@@ -4,6 +4,22 @@ import XCTest
 @testable import IrisChat
 
 final class ChatTimelineViewportAnchorTests: XCTestCase {
+    func testHistoryDiagnosticsRequireSyntheticResetFixtureAndKeepBoundedRecords() throws {
+        let fixture = ["IRIS_UI_TEST_TIMELINE_TRACE": "1", "IRIS_UI_TEST_RESET": "1",
+                       "IRIS_UI_TEST_SEED_PEER": "self"]
+        for requiredKey in fixture.keys {
+            var missing = fixture
+            missing.removeValue(forKey: requiredKey)
+            XCTAssertNil(ChatTimelineHistoryDiagnostics.configured(environment: missing))
+        }
+        let trace = try XCTUnwrap(ChatTimelineHistoryDiagnostics.configured(environment: fixture))
+        for index in 0..<(ChatTimelineHistoryDiagnostics.capacity + 3) {
+            trace.record("sample", fields: "index=\(index)")
+        }
+        XCTAssertEqual(trace.text.split(separator: "\n").count, ChatTimelineHistoryDiagnostics.capacity)
+        XCTAssertTrue(trace.text.split(separator: "\n").first?.hasSuffix("index=3") == true)
+    }
+
     func testHistoryPanGenerationDoesNotDependOnWhichCallbackObservesItFirst() {
         for captureFirst in [true, false] {
             var state = ChatTimelineHistoryPanState()
@@ -130,6 +146,70 @@ final class ChatTimelineViewportAnchorTests: XCTestCase {
         XCTAssertTrue(coordinator.applyPendingHistoryViewportAnchor())
         XCTAssertEqual(scroll.contentOffset.y, 900)
         XCTAssertFalse(coordinator.applyPendingHistoryViewportAnchor())
+    }
+
+    @MainActor
+    func testHistoryExtentCommitAfterHeldDragEndsDoesNotCountNativeRebaseAsMovement() {
+        let scroll = UIScrollView(frame: CGRect(x: 0, y: 0, width: 390, height: 600))
+        scroll.contentSize = CGSize(width: 390, height: 3_000)
+        scroll.contentOffset.y = 500
+        let coordinator = ChatTimelineInteractionCoordinator()
+        coordinator.scrollView = scroll
+        coordinator.recordHistoryPanState(.changed, translationY: 40)
+        coordinator.historyViewportAnchor = ChatTimelineHistoryAnchor(
+            chatID: "chat", firstMessageID: "81", messageID: "86", originalContentY: 600,
+            panPosition: .init(generation: coordinator.historyPanState.generation,
+                               offsetY: 500, translationY: 40))
+        let page = ChatTimelinePageFrames(chatID: "chat", firstMessageID: "41",
+            contentFrames: ["86": CGRect(x: 0, y: 1_400, width: 100, height: 232)],
+            contentHeight: 4_000)
+        XCTAssertFalse(coordinator.restoreHistoryViewportAnchor(page: page))
+        coordinator.recordHistoryPanState(.ended, translationY: 160)
+        // A deterministic ordering counterexample, not reconstructed CI offsets:
+        // 120 points of finger movement, then a native 126-point offset rebase.
+        scroll.contentOffset.y = 254
+        scroll.contentSize.height = 4_000
+        XCTAssertTrue(coordinator.applyPendingHistoryViewportAnchor())
+        XCTAssertEqual(scroll.contentOffset.y, 1_180,
+                       "Use the completed drag's 120 points plus the 800-point layout delta")
+        XCTAssertEqual(1_400 - scroll.contentOffset.y, 220,
+                       "The visible anchor moves only from 100 to 220")
+        XCTAssertFalse(coordinator.applyPendingHistoryViewportAnchor())
+    }
+
+    @MainActor
+    func testCompletedHistoryDragCannotEraseDecelerationOrCrossCancelledOrNewGesture() {
+        for interruption in ["deceleration", "cancelled", "new-gesture", "resize"] {
+            let scroll = UIScrollView(frame: CGRect(x: 0, y: 0, width: 390, height: 600))
+            scroll.contentSize = CGSize(width: 390, height: 3_000)
+            scroll.contentOffset.y = 500
+            let coordinator = ChatTimelineInteractionCoordinator()
+            coordinator.scrollView = scroll
+            coordinator.recordHistoryPanState(.changed, translationY: 40)
+            coordinator.historyViewportAnchor = ChatTimelineHistoryAnchor(
+                chatID: "chat", firstMessageID: "81", messageID: "86", originalContentY: 600,
+                panPosition: .init(generation: coordinator.historyPanState.generation,
+                                   offsetY: 500, translationY: 40))
+            let page = ChatTimelinePageFrames(chatID: "chat", firstMessageID: "41",
+                contentFrames: ["86": CGRect(x: 0, y: 1_400, width: 100, height: 232)],
+                contentHeight: 4_000)
+            XCTAssertFalse(coordinator.restoreHistoryViewportAnchor(page: page))
+            if interruption != "cancelled" {
+                coordinator.recordHistoryPanState(.ended, translationY: 160)
+            }
+            switch interruption {
+            case "deceleration": coordinator.recordHistoryDeceleration(true)
+            case "cancelled": coordinator.recordHistoryPanState(.cancelled, translationY: 160)
+            case "new-gesture": coordinator.recordHistoryPanState(.began, translationY: 0)
+            default: coordinator.resizeViewport(from: 600, to: 500)
+            }
+            // Native movement after the old drag must remain authoritative,
+            // even if deceleration finishes before the delayed extent commits.
+            scroll.contentOffset.y = 300
+            scroll.contentSize.height = 4_000
+            XCTAssertTrue(coordinator.applyPendingHistoryViewportAnchor(), interruption)
+            XCTAssertEqual(scroll.contentOffset.y, 1_100, interruption)
+        }
     }
 
     @MainActor

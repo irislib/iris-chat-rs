@@ -14,6 +14,7 @@ final class ChatPaginationUITests: IrisChatUITestCase {
             "IRIS_UI_TEST_SEED_PEER": "self",
             "IRIS_UI_TEST_SEED_COUNT": "160",
             "IRIS_UI_TEST_SEED_MIXED_HEIGHTS": "1",
+            "IRIS_UI_TEST_TIMELINE_TRACE": "1",
         ])
         submitWelcomeName(app)
         XCTAssertTrue(waitForChatList(app, timeout: 60))
@@ -62,13 +63,21 @@ final class ChatPaginationUITests: IrisChatUITestCase {
             let end = timeline.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.7))
             // Holding after a slow drag ends momentum before measuring.
             start.press(forDuration: 0.05, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.25)
-            let sameMessage = messageSnapshots(in: try timeline.snapshot()).first { $0.label == label }
+            let after = try timeline.snapshot()
+            let sameMessage = messageSnapshots(in: after).first { $0.label == label }
             let afterY = sameMessage?.frame.minY ?? CGFloat.nan
             let tolerance = max(20, viewport.height * 0.06)
             let stayedVisible = sameMessage.map { viewport.intersects($0.frame) } ?? false
             if !stayedVisible || abs(afterY - beforeY - distance) > tolerance {
                 capture(app, name: "older-page-anchor-discontinuity")
-                let detail = XCTAttachment(string: "ordinal=\(ordinal(label) ?? -1) beforeY=\(beforeY) afterY=\(afterY) expectedDelta=\(distance) tolerance=\(tolerance)")
+                let beforeOrdinals = messageSnapshots(in: before).compactMap { ordinal($0.label) }
+                let afterOrdinals = messageSnapshots(in: after).compactMap { ordinal($0.label) }
+                let detail = XCTAttachment(string:
+                    "ordinal=\(ordinal(label) ?? -1) beforeY=\(beforeY) afterY=\(afterY) expectedDelta=\(distance) tolerance=\(tolerance)\n" +
+                    "rendered before=\(beforeOrdinals.min() ?? -1)...\(beforeOrdinals.max() ?? -1) " +
+                    "after=\(afterOrdinals.min() ?? -1)...\(afterOrdinals.max() ?? -1)\n" +
+                    "before timeline trace:\n\(String(describing: before.value))\n" +
+                    "after timeline trace:\n\(String(describing: after.value))")
                 detail.lifetime = .keepAlways
                 add(detail)
             }

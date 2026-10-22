@@ -173,7 +173,10 @@ The mandatory Rust suite also restores a generated 100 MiB account database with
 96 contacts, three devices per contact, three own devices and eight groups.
 Its populated-discovery test waits for all anonymous author scopes to settle,
 then requires two 35-second windows below 5% of one CPU core with no repeated
-application requests, followed by prompt targeted proof recovery. Signed wire
+application requests. Two further 125-second windows cover actual recurring
+TLS discovery polls for every author, each below 5% of one CPU core, followed
+by prompt targeted proof recovery. TLS sessions stay isolated by author and
+exact message-server URL; a quiet gap alone does not satisfy the CPU gate. Signed wire
 checks must keep each peer separate from account receiving and authentication.
 Retain its CPU/wire receipt and full child log with the private-control test
 artifact. The relayless resource fixture alone does not cover this workload.

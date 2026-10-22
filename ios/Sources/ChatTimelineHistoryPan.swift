@@ -16,6 +16,7 @@ struct ChatTimelineHistoryPanPosition<Coordinate: BinaryFloatingPoint> {
     let generation: Int
     let offsetY: Coordinate
     let translationY: Coordinate
+    var completedTranslationY: Coordinate? = nil
 }
 
 func chatTimelineHistoryOffset<Coordinate: BinaryFloatingPoint>(

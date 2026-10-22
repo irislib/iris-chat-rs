@@ -62,10 +62,48 @@ impl DiscoverySnapshot {
 struct DiscoveryConfig {
     relays: Vec<RelayUrl>,
     filters: Vec<Filter>,
+    #[cfg(test)]
+    tls_test_roots: Vec<(RelayUrl, Vec<Vec<u8>>)>,
 }
 
-/// Retained scope state is just configuration and a cancellable task, never an
-/// SDK client/cache. Dropping the last descriptor cancels even a queued read.
+impl DiscoveryConfig {
+    fn tls_connector(
+        &self,
+        relay: &RelayUrl,
+    ) -> Option<super::anonymous_reads::ScopedTlsConnector> {
+        #[cfg(test)]
+        if let Some((_, certificates)) = self
+            .tls_test_roots
+            .iter()
+            .find(|(test_relay, _)| test_relay == relay)
+        {
+            return super::anonymous_reads::ScopedTlsConnector::new_with_roots(
+                relay,
+                &self.filters,
+                test_tls_roots(certificates).expect("validated discovery test roots"),
+            );
+        }
+        super::anonymous_reads::ScopedTlsConnector::new(relay, &self.filters)
+    }
+}
+
+#[cfg(test)]
+fn test_tls_roots(certificates: &[Vec<u8>]) -> Result<rustls::RootCertStore, String> {
+    if certificates.is_empty() {
+        return Err("discovery test roots are empty".into());
+    }
+    let mut roots = rustls::RootCertStore::empty();
+    for certificate in certificates {
+        roots
+            .add(rustls::pki_types::CertificateDer::from(certificate.clone()))
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(roots)
+}
+
+/// Retained state is configuration, bounded author/relay TLS tickets and a
+/// cancellable task, never an SDK client/cache or idle socket. Dropping the last
+/// descriptor cancels even a queued read and releases its TLS session state.
 #[derive(Debug)]
 pub(in crate::core) struct PrivateDiscoveryClient {
     config: tokio::sync::watch::Sender<Option<DiscoveryConfig>>,
@@ -93,6 +131,8 @@ impl PrivateDiscoveryClient {
             let mut order = std::collections::VecDeque::new();
             let mut cadence = DiscoveryCadence::default();
             let mut snapshots = Vec::<DiscoverySnapshot>::new();
+            let mut tls_connectors = Vec::new();
+            let mut tls_config = None;
             let mut redeliver = false;
             loop {
                 let current = updates.borrow_and_update().clone();
@@ -103,12 +143,32 @@ impl PrivateDiscoveryClient {
                     continue;
                 };
                 snapshots.resize_with(current.relays.len(), DiscoverySnapshot::default);
+                // A watch update can arrive between a completed sleep and
+                // borrow_and_update, without selecting the changed branch.
+                // Bind retained tickets to the actual configuration as well.
+                if tls_config.as_ref() != Some(&current) {
+                    tls_connectors = current
+                        .relays
+                        .iter()
+                        .map(|relay| current.tls_connector(relay))
+                        .collect();
+                    tls_config = Some(current.clone());
+                }
                 let mut changed = false;
                 let mut read_succeeded = false;
                 let cycle = async {
-                    for (relay, snapshot) in current.relays.iter().zip(snapshots.iter_mut()) {
-                        if let Ok(events) =
-                            super::anonymous_reads::poll(relay, current.filters.clone()).await
+                    for ((relay, snapshot), tls) in current
+                        .relays
+                        .iter()
+                        .zip(snapshots.iter_mut())
+                        .zip(&tls_connectors)
+                    {
+                        if let Ok(events) = super::anonymous_reads::poll(
+                            relay,
+                            current.filters.clone(),
+                            tls.as_ref(),
+                        )
+                        .await
                         {
                             read_succeeded = true;
                             let response_changed = snapshot.observe(&events);
@@ -152,6 +212,8 @@ impl PrivateDiscoveryClient {
                         if result.is_err() { break; }
                         cadence.reset();
                         snapshots.clear();
+                        tls_connectors.clear();
+                        tls_config = None;
                         continue;
                     },
                 }
@@ -171,6 +233,8 @@ impl PrivateDiscoveryClient {
                         if result.is_err() { break; }
                         cadence.reset();
                         snapshots.clear();
+                        tls_connectors.clear();
+                        tls_config = None;
                     },
                 }
             }
@@ -202,10 +266,44 @@ impl PrivateDiscoveryClient {
         let next = DiscoveryConfig {
             relays: relays.to_vec(),
             filters,
+            #[cfg(test)]
+            tls_test_roots: self
+                .config
+                .borrow()
+                .as_ref()
+                .map(|config| config.tls_test_roots.clone())
+                .unwrap_or_default(),
         };
         if self.config.borrow().as_ref() == Some(&next) {
             return Ok(());
         }
+        self.config
+            .send(Some(next))
+            .map_err(|_| "anonymous discovery worker stopped".to_string())
+    }
+
+    /// Test-only trust for one exact configured relay, without altering the
+    /// normal verifier or any other worker. A watch change discards old tickets.
+    #[cfg(test)]
+    pub(in crate::core) fn set_test_tls_roots(
+        &self,
+        relay: &RelayUrl,
+        certificates: Vec<Vec<u8>>,
+    ) -> Result<(), String> {
+        if self.cancelled.load(std::sync::atomic::Ordering::Acquire) {
+            return Err("anonymous discovery scope was removed".into());
+        }
+        test_tls_roots(&certificates)?;
+        let mut next = self
+            .config
+            .borrow()
+            .clone()
+            .ok_or_else(|| "anonymous discovery scope is not configured".to_string())?;
+        if !next.relays.contains(relay) {
+            return Err("test roots require an exact configured discovery relay".into());
+        }
+        next.tls_test_roots.retain(|(url, _)| url != relay);
+        next.tls_test_roots.push((relay.clone(), certificates));
         self.config
             .send(Some(next))
             .map_err(|_| "anonymous discovery worker stopped".to_string())
@@ -393,6 +491,9 @@ pub(in crate::core) async fn apply_private_discovery_subscriptions(
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tls_tests;
 
 #[cfg(test)]
 mod tests {

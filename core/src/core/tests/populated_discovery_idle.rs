@@ -2,6 +2,7 @@
 // rosters and history are generated; this never opens an existing account.
 #[cfg(target_os = "linux")]
 mod populated_discovery_idle {
+    use super::super::protocol::anonymous_reads::tls_tests;
     use super::*;
     use futures_util::{SinkExt, StreamExt};
     use sha2::Digest;
@@ -9,7 +10,8 @@ mod populated_discovery_idle {
     use std::io::Write;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Mutex;
-    use tokio::net::{TcpListener, TcpStream};
+    use tokio::io::{AsyncRead, AsyncWrite};
+    use tokio::net::TcpListener;
     use tokio_tungstenite::tungstenite::Message;
 
     const TEST: &str = "core::tests::populated_discovery_idle::populated_account_discovery_stays_quiet_and_targeted_demand_progresses";
@@ -23,10 +25,12 @@ mod populated_discovery_idle {
         rounds: Mutex<BTreeMap<String, usize>>,
         connections: AtomicUsize,
         bytes: AtomicUsize,
+        tls_full: AtomicUsize,
+        tls_resumed: AtomicUsize,
     }
 
-    async fn connection(
-        stream: TcpStream,
+    async fn connection<S: AsyncRead + AsyncWrite + Unpin>(
+        stream: S,
         id: usize,
         wire: Arc<Wire>,
         events: Arc<Mutex<Vec<Event>>>,
@@ -428,8 +432,13 @@ mod populated_discovery_idle {
         let events = Arc::new(Mutex::new(events));
         let ticks_per_second = tick_rate();
         runtime.block_on(async {
+            // The existing account receiver stays on its own socket. Private
+            // discovery exercises real certificate verification and TLS tickets.
+            let receiver_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let receiver_relay = RelayUrl::parse(&format!("ws://{}", receiver_listener.local_addr().unwrap())).unwrap();
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-            let relay = RelayUrl::parse(&format!("ws://{}", listener.local_addr().unwrap())).unwrap();
+            let relay = RelayUrl::parse(&format!("wss://{}", listener.local_addr().unwrap())).unwrap();
+            let acceptor = tls_tests::acceptor(true, false);
             let server_wire = wire.clone();
             let server_events = events.clone();
             let server = tokio::spawn(async move {
@@ -437,6 +446,27 @@ mod populated_discovery_idle {
                 loop {
                     tokio::select! {
                         accepted = listener.accept() => {
+                            let (stream, _) = accepted.unwrap();
+                            let id = server_wire.connections.fetch_add(1, Ordering::SeqCst);
+                            let acceptor = acceptor.clone();
+                            let wire = server_wire.clone();
+                            let events = server_events.clone();
+                            connections.spawn(async move {
+                                // A worker can start before its test-only trust
+                                // root is installed; normal rejection is retained.
+                                let Ok(stream) = acceptor.accept(stream).await else { return; };
+                                let tls = stream.get_ref().1;
+                                assert_eq!(tls.protocol_version(), Some(rustls::ProtocolVersion::TLSv1_3));
+                                assert!(tls.negotiated_key_exchange_group().is_some(), "resumption must retain fresh key exchange");
+                                match tls.handshake_kind().unwrap() {
+                                    rustls::HandshakeKind::Full => { wire.tls_full.fetch_add(1, Ordering::SeqCst); },
+                                    rustls::HandshakeKind::Resumed => { wire.tls_resumed.fetch_add(1, Ordering::SeqCst); },
+                                    other => panic!("unexpected TLS handshake {other:?}"),
+                                }
+                                connection(stream, id, wire, events).await;
+                            });
+                        },
+                        accepted = receiver_listener.accept() => {
                             let (stream, _) = accepted.unwrap();
                             let id = server_wire.connections.fetch_add(1, Ordering::SeqCst);
                             connections.spawn(connection(stream, id, server_wire.clone(), server_events.clone()));
@@ -448,7 +478,7 @@ mod populated_discovery_idle {
                 }
             });
             let client = fixture.core.logged_in.as_ref().unwrap().client.clone();
-            client.add_relay(relay.clone()).await.unwrap();
+            client.add_relay(receiver_relay).await.unwrap();
             connect_client_with_timeout(&client, Duration::from_secs(2)).await;
             let receiver = receiver.into_iter().filter(|f| f.authors.as_ref().is_some_and(|authors| authors.iter().all(|key| own.contains(key)))).collect::<Vec<_>>();
             assert!(!receiver.is_empty());
@@ -457,7 +487,11 @@ mod populated_discovery_idle {
                 client.subscribe(filter, None).await.unwrap();
             }
             let scopes = fixture.core.private_discovery_subscriptions(discovery).unwrap();
+            let workers = scopes.iter().map(|(worker, _)| worker.upgrade().unwrap()).collect::<Vec<_>>();
             super::super::protocol::private_reads::apply_private_discovery_subscriptions(scopes, std::slice::from_ref(&relay)).await.unwrap();
+            for worker in workers {
+                worker.set_test_tls_roots(&relay, tls_tests::certificates()).unwrap();
+            }
             let settling = Instant::now();
             loop {
                 assert!(!server.is_finished(), "wire fixture failed");
@@ -498,6 +532,41 @@ mod populated_discovery_idle {
                 assert_eq!(connection_delta, 0, "quiet discovery reopened anonymous sockets");
             }
             assert_eq!(*wire.rounds.lock().unwrap(), before);
+            // The old 70s measurement ended before the 120s timer fired. Keep
+            // that quiet-window assertion, then cover two actual steady polls
+            // for every author, including TLS, authentication and verification.
+            let mut cycle_samples = Vec::new();
+            for _ in 0..2 {
+                let baseline = wire.rounds.lock().unwrap().clone();
+                let full = wire.tls_full.load(Ordering::SeqCst);
+                let resumed = wire.tls_resumed.load(Ordering::SeqCst);
+                let bytes = wire.bytes.load(Ordering::SeqCst);
+                let connections = wire.connections.load(Ordering::SeqCst);
+                let ticks = cpu_ticks();
+                let started = Instant::now();
+                sleep(Duration::from_secs(125)).await;
+                let seconds = started.elapsed().as_secs_f64();
+                let cpu = (cpu_ticks() - ticks) as f64 / ticks_per_second * 100.0 / seconds;
+                let after = wire.rounds.lock().unwrap().clone();
+                for author in &subjects {
+                    let delta = after[author] - baseline[author];
+                    assert!((1..=2).contains(&delta), "each full cycle must include bounded real polls for every author");
+                }
+                let full_delta = wire.tls_full.load(Ordering::SeqCst) - full;
+                let resumed_delta = wire.tls_resumed.load(Ordering::SeqCst) - resumed;
+                let sample = serde_json::json!({"seconds": seconds, "cpu_percent_one_core": cpu,
+                    "application_wire_bytes": wire.bytes.load(Ordering::SeqCst) - bytes,
+                    "connections": wire.connections.load(Ordering::SeqCst) - connections,
+                    "tls_full_handshakes": full_delta, "tls_resumed_handshakes": resumed_delta,
+                    "every_author_polled": true});
+                println!("POPULATED_DISCOVERY_CYCLE_SAMPLE={sample}");
+                cycle_samples.push(sample);
+                assert!(!server.is_finished(), "TLS wire fixture failed");
+                assert_eq!(full_delta, 0, "quiet scopes repeated full TLS handshakes");
+                assert!(resumed_delta >= subjects.len(), "measurement missed the recurring TLS work");
+                assert!(cpu <= 5.0, "populated full-cycle discovery exceeded 5% of one CPU: {cpu:.3}");
+            }
+            let before = wire.rounds.lock().unwrap().clone();
             while incoming.try_recv().is_ok() {}
             events.lock().unwrap().push(proof.clone());
             fixture.core.refresh_private_discovery_for_author(target);
@@ -538,7 +607,8 @@ mod populated_discovery_idle {
                 "contacts": CONTACTS, "peer_devices": CONTACTS * DEVICES, "own_devices": 3,
                 "groups": 8, "discovery_subjects": subjects.len(), "settle_seconds": settle_seconds,
                 "readiness_round_min": readiness_round_min, "completed_peer_polls": completed_peer_polls,
-                "quiet_samples": samples, "targeted_fresh_proof_delivered": true,
+                "quiet_samples": samples, "full_cycle_tls_samples": cycle_samples,
+                "targeted_fresh_proof_delivered": true,
                 "fresh_anonymous_authentications": auth_count, "privacy_wire_passed": true,
                 "revoked_stale_records": fixture.core.protocol_engine.as_ref().unwrap().session_manager_snapshot()
                     .users.iter().flat_map(|user| &user.devices).filter(|device| !device.authorized && device.is_stale).count(),
@@ -590,7 +660,7 @@ mod populated_discovery_idle {
             if child.try_wait().unwrap().is_some() {
                 break false;
             }
-            if started.elapsed() >= Duration::from_secs(240) {
+            if started.elapsed() >= Duration::from_secs(540) {
                 child.kill().unwrap();
                 break true;
             }
@@ -631,7 +701,7 @@ mod populated_discovery_idle {
             .unwrap();
         assert!(
             !timed_out,
-            "populated discovery child exceeded 240s absolute deadline"
+            "populated discovery child exceeded 540s absolute deadline"
         );
         assert!(
             passed,
