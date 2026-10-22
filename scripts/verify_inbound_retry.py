@@ -186,6 +186,11 @@ def stage(which, root, out, data):
     target.mkdir(parents=True, exist_ok=True)
     if which == "before":
         save(out / "cache.json", {key: os.environ.get(key, "") for key in ("IRIS_CACHE_REQUESTED", "IRIS_CACHE_MATCHED", "IRIS_CACHE_HIT")})
+        # Other branch/tag caches may be inaccessible. Seed the exact locked
+        # dependencies once; both source compilations below remain offline.
+        fetch_command = ["cargo", f"+{TOOLCHAIN}", "fetch", "--manifest-path", "chat-protocol/Cargo.toml", "--locked"]
+        fetch, _ = bounded(fetch_command, root, output, "fetch", 300, pre["deadline_unix"], target)
+        assert fetch["exit_code"] == 0, "Dependency fetch failed; no regression result"
     command = ["cargo", f"+{TOOLCHAIN}", "test", "--manifest-path", "chat-protocol/Cargo.toml", "--locked", "--offline", "--lib", "--no-run", "--message-format=json", "--jobs", "2"]
     build, text = bounded(command, root, output, "build", 600, pre["deadline_unix"], target)
     assert build["exit_code"] == 0, "Compilation failed; this is not the expected regression"
