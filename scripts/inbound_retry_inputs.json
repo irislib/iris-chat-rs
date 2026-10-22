@@ -1,28 +1,38 @@
 {
   "enabled": true,
-  "base": "9b1c95f14e99ddac87f5d88b912fe2a69714082e",
-  "before": "0f54b5164d5799c20030a0eca6070a730f5e1c0d",
-  "after": "74c1b1ab0bf217fbda2bb74ab607f0d336529625",
+  "base": "74c1b1ab0bf217fbda2bb74ab607f0d336529625",
+  "before": "b538d0c018ae1846e23469ff92ade58f69375433",
+  "after": "b3468da6fd9001213ff54014986e8e8c587c84b1",
   "fixture_paths": [
     "chat-protocol/src/protocol_engine.rs",
     "chat-protocol/src/protocol_engine/inbound_retry_backlog_tests.rs",
     "chat-protocol/src/protocol_engine/incoming_retry_tests.rs",
-    "chat-protocol/src/protocol_engine/remote_roster_tests.rs"
+    "chat-protocol/src/protocol_engine/remote_roster_tests.rs",
+    "chat-protocol/src/protocol_engine/group_wake_tests.rs",
+    "chat-protocol/src/protocol_engine/remote_send_tests.rs"
   ],
   "before_changed_paths": [
-    "chat-protocol/src/protocol_engine.rs",
+    "chat-protocol/src/protocol_engine/group_wake_tests.rs",
     "chat-protocol/src/protocol_engine/inbound_retry_backlog_tests.rs",
-    "chat-protocol/src/protocol_engine/incoming_retry_tests.rs",
-    "chat-protocol/src/protocol_engine/remote_roster_tests.rs"
+    "chat-protocol/src/protocol_engine/incoming_retry_tests.rs"
   ],
   "after_changed_paths": [
-    "chat-protocol/src/protocol_engine/engine_incoming_retry.rs"
+    "chat-protocol/src/protocol_engine/engine_incoming_retry.rs",
+    "chat-protocol/src/protocol_engine/engine_state_helpers.rs"
   ],
-  "before_test": "protocol_engine::tests::deferred_inbound_retry_allocation_is_bounded_by_due_packets",
-  "before_failure_marker": "bytes copying deferred packets",
+  "before_test": "protocol_engine::tests::due_fanout_retry_allocations_do_not_scale_with_deferred_inbound",
+  "before_failure_marker": "due fanout retries copied unrelated inbound state:",
   "before_observation_test": "protocol_engine::tests::restored_backlog_whole_retry_at_continuation_cadence",
   "before_observation_failure_marker": "whole retry loop still uses",
   "tests": [
+    {
+      "name": "protocol_engine::tests::due_fanout_retry_allocations_do_not_scale_with_deferred_inbound",
+      "expected_count": 1,
+      "exact": true,
+      "marker": "fanout_retry turns=8 due_fanouts=64 deferred_inbound=4214 empty_allocated_bytes=",
+      "ignored": false,
+      "timeout_seconds": 300
+    },
     {
       "name": "protocol_engine::tests::deferred_inbound_retry_allocation_is_bounded_by_due_packets",
       "expected_count": 1,
@@ -77,6 +87,22 @@
       "exact": true,
       "marker": "checkpoint_backlog fanouts=22702 ciphertexts=19231 checkpoint_bytes=254672896",
       "ignored": true,
+      "timeout_seconds": 300
+    },
+    {
+      "name": "protocol_engine::tests::private_group_wake_and_broadcast_share_one_rollback_safe_checkpoint",
+      "expected_count": 1,
+      "exact": true,
+      "marker": null,
+      "ignored": false,
+      "timeout_seconds": 300
+    },
+    {
+      "name": "protocol_engine::tests::group_fanout_save_failure_keeps_unsent_targets_and_ratchets_retryable",
+      "expected_count": 1,
+      "exact": true,
+      "marker": null,
+      "ignored": false,
       "timeout_seconds": 300
     },
     {
