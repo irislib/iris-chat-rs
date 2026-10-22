@@ -1058,19 +1058,9 @@ final class AppManager: ObservableObject {
             }
             await self.completeStartup(startupActivity, restoreSession: shouldRestoreSession)
         }
-        Task {
-            // A stalled restore must not keep sign-in hidden indefinitely.
-            try? await Task.sleep(nanoseconds: 8_000_000_000)
-            guard bootstrapInFlight, !localResetInFlight else {
-                return
-            }
-            appendClientDebugLog(
-                category: "bootstrap.timeout",
-                detail: "persistedRestoreInFlight=\(persistedRestoreInFlight)"
-            )
-            persistedRestoreInFlight = false
-            bootstrapInFlight = false
-        }
+        // A slow native restore is still a signed-in account being loaded.
+        // Only its result (or missing secure inputs / dispatch failure) may
+        // settle bootstrap; elapsed time must never expose a false login screen.
 
 #if os(iOS) || os(macOS)
 #if DEBUG

@@ -200,6 +200,7 @@ struct SecretKeyField: View {
 
 struct LoadingOverlay: View {
     @Environment(\.irisPalette) private var palette
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var showsLoading = false
 
     var body: some View {
@@ -209,6 +210,8 @@ struct LoadingOverlay: View {
                 Text("Loading…")
                     .font(.system(.callout, design: .rounded))
                     .foregroundStyle(palette.muted)
+                    .accessibilityIdentifier("startupLoadingLabel")
+                    .transition(.opacity)
             }
         }
         .task {
@@ -217,7 +220,10 @@ struct LoadingOverlay: View {
             } catch {
                 return
             }
-            showsLoading = true
+            guard !Task.isCancelled else { return }
+            withAnimation(reduceMotion ? nil : .easeIn(duration: 0.2)) {
+                showsLoading = true
+            }
         }
     }
 }

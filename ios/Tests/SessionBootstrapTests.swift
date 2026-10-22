@@ -1,4 +1,5 @@
 import XCTest
+import Combine
 #if os(macOS)
 import AppKit
 import SwiftUI
@@ -136,7 +137,7 @@ final class SessionBootstrapTests: XCTestCase {
     }
 
 #if os(iOS)
-    func testBackgroundStartupLoadingTimeoutDoesNotReleasePendingStorageBarrier() async {
+    func testSlowBackgroundStartupKeepsLoadingAndStorageProtectionUntilAcknowledged() async {
         let rust = MockRustApp()
         let started = expectation(description: "startup barrier waiting for native restore")
         let finished = expectation(description: "startup allowance ends after native acknowledgement")
@@ -162,9 +163,9 @@ final class SessionBootstrapTests: XCTestCase {
             }
         )
         await fulfillment(of: [started], timeout: 2)
-        let loadingTimedOut = await waitUntil(timeoutNanoseconds: 9_000_000_000) { !manager.bootstrapInFlight }
-        XCTAssertTrue(loadingTimedOut)
-        XCTAssertFalse(allowanceFinished, "the eight-second UI timeout does not cancel or complete native work")
+        let exposedLogin = await waitUntil(timeoutNanoseconds: 9_000_000_000) { !manager.bootstrapInFlight }
+        XCTAssertFalse(exposedLogin, "slow restoration must not expose login while native work is pending")
+        XCTAssertFalse(allowanceFinished, "a slow restore must retain protection until native storage acknowledges suspension")
         gate.signal()
         await fulfillment(of: [finished], timeout: 2)
         XCTAssertEqual(rust.prepareForSuspendCallCount, 1)
@@ -183,9 +184,20 @@ final class SessionBootstrapTests: XCTestCase {
         await rust.shutdown()
     }
 
-    func testRestoreTimeoutShowsWelcomeAndLateUpdatesDoNotHideIt() async {
+    func testSlowRestoreGoesDirectlyFromLoadingToChatsWithoutShowingWelcome() async throws {
         let rust = MockRustApp()
         let manager = makeManager(rust: rust)
+        var exposedLoginDuringTransition = false
+        let observation = manager.$bootstrapInFlight.sink { loading in
+            if !loading && manager.state.account == nil {
+                exposedLoginDuringTransition = true
+            }
+        }
+        defer { observation.cancel() }
+#if os(macOS)
+        let (window, host) = makeWindow(manager)
+        defer { window.orderOut(nil) }
+#endif
         await Task.yield()
         var snapshot = rust.state()
         snapshot.rev = 1
@@ -195,15 +207,20 @@ final class SessionBootstrapTests: XCTestCase {
         XCTAssertTrue(started)
         XCTAssertTrue(manager.bootstrapInFlight)
 
-        let timedOut = await waitUntil(timeoutNanoseconds: 9_000_000_000) { !manager.bootstrapInFlight }
-        XCTAssertTrue(timedOut, "A stalled restore must release the startup screen within eight seconds")
-        XCTAssertEqual(manager.activeScreen, .welcome)
+        let exposedLogin = await waitUntil(timeoutNanoseconds: 9_000_000_000) { !manager.bootstrapInFlight }
+        XCTAssertFalse(exposedLogin, "elapsed time does not establish that a saved account is logged out")
+        XCTAssertTrue(manager.bootstrapInFlight)
+#if os(macOS)
+        XCTAssertTrue(containsText("Loading…", in: host))
+        XCTAssertFalse(containsText("Restore profile", in: host))
+        try capture(host, name: "session-slow-restore-no-login")
+#endif
 
         snapshot.rev = 2
         rust.emit(.fullState(snapshot))
         let updated = await waitUntil { manager.state.rev == 2 }
         XCTAssertTrue(updated)
-        XCTAssertFalse(manager.bootstrapInFlight)
+        XCTAssertTrue(manager.bootstrapInFlight, "intermediate restore snapshots must keep login hidden")
 
         snapshot.rev = 3
         snapshot.busy.restoringSession = false
@@ -214,6 +231,11 @@ final class SessionBootstrapTests: XCTestCase {
         XCTAssertTrue(restored)
         XCTAssertFalse(manager.bootstrapInFlight)
         XCTAssertEqual(manager.activeScreen, .chatList)
+        XCTAssertFalse(exposedLoginDuringTransition, "loading must transition directly to the restored account")
+#if os(macOS)
+        XCTAssertFalse(containsText("Restore profile", in: host))
+        try capture(host, name: "session-slow-restore-chats")
+#endif
     }
 
     func testPendingDeviceLinkRestoreWaitsForLinkScreen() async {
