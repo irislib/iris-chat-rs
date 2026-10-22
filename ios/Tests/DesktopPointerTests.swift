@@ -8,52 +8,55 @@ import XCTest
 final class DesktopPointerTests: XCTestCase {
     override func setUp() {
         super.setUp()
-        continueAfterFailure = false
+        // Keep these event-loop tests synchronous and unwind Swift cleanup
+        // normally on failure. Aborting an async test can leave its hover
+        // task running after XCTest has started the next test.
+        continueAfterFailure = true
         _ = NSApplication.shared
         if NSApp.activationPolicy() == .prohibited { NSApp.setActivationPolicy(.regular) }
     }
 
-    func testControlsShowHandWhileDisabledAndSelectableTextDoNot() async throws {
+    func testControlsShowHandWhileDisabledAndSelectableTextDoNot() throws {
         let host = NSHostingView(rootView: PointerControls())
         let window = makeWindow(host, size: CGSize(width: 400, height: 500))
         let originalPointer = NSEvent.mouseLocation
         defer { finish(window, restoring: originalPointer) }
-        await settle()
+        settle()
 
         for (row, expected) in [(0, NSCursor.pointingHand), (1, .pointingHand), (2, .pointingHand),
                                 (3, .pointingHand), (4, .pointingHand), (5, .arrow), (6, .iBeam), (7, .arrow)] {
-            try await hover(NSPoint(x: 200, y: 425 - row * 50), in: window)
-            XCTAssertEqual(NSCursor.current, expected, "wrong cursor for control row \(row)")
+            try hover(NSPoint(x: 200, y: 425 - row * 50), in: window)
+            assertCursor(expected, in: host, context: "control row \(row)")
         }
         capture(host, name: "desktop-control-cursors")
     }
 
-    func testLegacyCursorReleasesWhenHoveredControlDisablesOrDisappears() async throws {
+    func testLegacyCursorReleasesWhenHoveredControlDisablesOrDisappears() throws {
         let model = PointerModel()
         let host = NSHostingView(rootView: LegacyPointerControls(model: model))
         let window = makeWindow(host, size: CGSize(width: 400, height: 200))
         let originalPointer = NSEvent.mouseLocation
         defer { finish(window, restoring: originalPointer) }
-        await settle()
-        try await hover(NSPoint(x: 200, y: 100), in: window)
+        settle()
+        try hover(NSPoint(x: 200, y: 100), in: window)
         XCTAssertEqual(NSCursor.current, .pointingHand)
-        try await hover(NSPoint(x: 280, y: 100), in: window)
+        try hover(NSPoint(x: 280, y: 100), in: window)
         XCTAssertEqual(NSCursor.current, .pointingHand, "leaving the nested button must retain its clickable parent's cursor")
-        try await hover(NSPoint(x: 390, y: 100), in: window)
+        try hover(NSPoint(x: 390, y: 100), in: window)
         XCTAssertNotEqual(NSCursor.current, .pointingHand)
-        try await hover(NSPoint(x: 200, y: 100), in: window)
+        try hover(NSPoint(x: 200, y: 100), in: window)
         model.enabled = false
-        await settle()
+        settle()
         XCTAssertNotEqual(NSCursor.current, .pointingHand)
         model.enabled = true
-        try await hover(NSPoint(x: 200, y: 100), in: window)
+        try hover(NSPoint(x: 200, y: 100), in: window)
         XCTAssertEqual(NSCursor.current, .pointingHand)
         model.shown = false
-        await settle()
+        settle()
         XCTAssertNotEqual(NSCursor.current, .pointingHand)
     }
 
-    func testInlineLinksKeepHandTextSelectionAndAppURLRouting() async throws {
+    func testInlineLinksKeepHandTextSelectionAndAppURLRouting() throws {
         let text = try AttributedString(markdown: "Open [a profile](irischat-mention:example) and select this text.")
         var opened: [URL] = []
         let host = NSHostingView(rootView: IrisDesktopLinkedText(attributed: text, foreground: .primary, lineLimit: nil)
@@ -63,7 +66,7 @@ final class DesktopPointerTests: XCTestCase {
         let window = makeWindow(host, size: CGSize(width: 400, height: 100))
         let originalPointer = NSEvent.mouseLocation
         defer { finish(window, restoring: originalPointer) }
-        await settle()
+        settle()
         let view = try XCTUnwrap(descendant(NSTextView.self, in: host))
         let storage = try XCTUnwrap(view.textStorage)
         let layout = try XCTUnwrap(view.layoutManager)
@@ -75,9 +78,9 @@ final class DesktopPointerTests: XCTestCase {
             let rect = layout.boundingRect(forGlyphRange: glyphs, in: container)
             return view.convert(NSPoint(x: rect.midX, y: rect.midY), to: nil)
         }
-        try await hover(point(linkRange), in: window)
+        try hover(point(linkRange), in: window)
         XCTAssertEqual(NSCursor.current, .pointingHand)
-        try await hover(point(plainRange), in: window)
+        try hover(point(plainRange), in: window)
         XCTAssertEqual(NSCursor.current, .iBeam)
         XCTAssertTrue(view.isSelectable)
         XCTAssertFalse(view.isEditable)
@@ -89,7 +92,7 @@ final class DesktopPointerTests: XCTestCase {
         capture(host, name: "desktop-inline-link-selection")
     }
 
-    func testLinkedMessagesWrapAndExpandWithoutGrowingShortBubbles() async throws {
+    func testLinkedMessagesWrapAndExpandWithoutGrowingShortBubbles() throws {
         let short = try AttributedString(markdown: "Read [this](https://example.com).")
         let shortSize = measure(short, width: 400, limit: nil)
         XCTAssertLessThan(shortSize.width, 120)
@@ -112,8 +115,8 @@ final class DesktopPointerTests: XCTestCase {
         return descendant(NSTextView.self, in: host)?.frame.size ?? .zero
     }
 
-    private func makeWindow<V: View>(_ host: NSHostingView<V>, size: CGSize) -> NSWindow {
-        let window = NSWindow(contentRect: NSRect(origin: CGPoint(x: 200, y: 200), size: size),
+    private func makeWindow<V: View>(_ host: NSHostingView<V>, size: CGSize) -> PointerTestWindow {
+        let window = PointerTestWindow(contentRect: NSRect(origin: CGPoint(x: 200, y: 200), size: size),
                               styleMask: [.titled], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         window.contentView = host
@@ -124,28 +127,58 @@ final class DesktopPointerTests: XCTestCase {
         return window
     }
 
-    private func hover(_ point: NSPoint, in window: NSWindow) async throws {
+    private func hover(_ point: NSPoint, in window: PointerTestWindow) throws {
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
-        await settle()
+        settle()
+        if !window.establishedPointerEntry {
+            // First establish the pointer outside all controls. Opening a
+            // window under a stationary pointer need not generate hover entry.
+            try move(NSPoint(x: 10, y: 10), in: window)
+            window.establishedPointerEntry = true
+        }
+        try move(point, in: window)
+    }
+
+    private func move(_ point: NSPoint, in window: PointerTestWindow) throws {
         let screen = window.convertPoint(toScreen: point)
         let location = CGPoint(x: screen.x, y: NSScreen.screens[0].frame.maxY - screen.y)
         CGWarpMouseCursorPosition(location)
-        let event = try XCTUnwrap(CGEvent(mouseEventSource: nil, mouseType: .mouseMoved, mouseCursorPosition: location, mouseButton: .left))
-        event.post(tap: .cghidEventTap)
-        await settle()
-        XCTAssertTrue(window.isKeyWindow, "cursor test lost its focused window")
-        XCTAssertEqual(window.mouseLocationOutsideOfEventStream.x, point.x, accuracy: 1)
-        XCTAssertEqual(window.mouseLocationOutsideOfEventStream.y, point.y, accuracy: 1)
+        let previousMoves = window.mouseMoveCount
+        let event = try XCTUnwrap(NSEvent.mouseEvent(with: .mouseMoved, location: point,
+            modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+            windowNumber: window.windowNumber, context: nil, eventNumber: 0,
+            clickCount: 0, pressure: 0))
+        // Deliver through AppKit's normal event queue. A global HID event
+        // needs Accessibility permission, unlike moving the pointer itself.
+        NSApp.postEvent(event, atStart: false)
+        settle()
+        let actual = window.mouseLocationOutsideOfEventStream
+        guard NSApp.isActive, window.isKeyWindow, window.mouseMoveCount > previousMoves,
+              abs(actual.x - point.x) <= 1, abs(actual.y - point.y) <= 1 else {
+            if let content = window.contentView { capture(content, name: "cursor-input-failure") }
+            throw PointerInputFailure(detail: "active=\(NSApp.isActive), key=\(window.isKeyWindow), " +
+                "delivered=\(window.mouseMoveCount - previousMoves), expected=\(point), actual=\(actual)")
+        }
     }
 
-    private func settle() async {
+    private func assertCursor(_ expected: NSCursor, in host: NSView, context: String,
+                              file: StaticString = #filePath, line: UInt = #line) {
+        let actual = NSCursor.current
+        if actual != expected { capture(host, name: "cursor-mismatch-\(context)") }
+        func name(_ cursor: NSCursor) -> String {
+            cursor == .arrow ? "arrow" : cursor == .pointingHand ? "hand" : cursor == .iBeam ? "text" : cursor.description
+        }
+        XCTAssertEqual(actual, expected, "\(context): actual \(name(actual)), expected \(name(expected))", file: file, line: line)
+    }
+
+    private func settle() {
         let deadline = Date().addingTimeInterval(0.18)
         while Date() < deadline {
             while let event = NSApp.nextEvent(matching: .any, until: .now, inMode: .default, dequeue: true) {
                 NSApp.sendEvent(event)
             }
-            try? await Task.sleep(nanoseconds: 10_000_000)
+            RunLoop.main.run(until: Date().addingTimeInterval(0.01))
         }
     }
 
@@ -169,6 +202,21 @@ final class DesktopPointerTests: XCTestCase {
         attachment.name = name
         attachment.lifetime = .keepAlways
         add(attachment)
+    }
+}
+
+private struct PointerInputFailure: Error, CustomStringConvertible {
+    let detail: String
+    var description: String { "Cursor input was not delivered to the active test window: \(detail)" }
+}
+
+@MainActor private final class PointerTestWindow: NSWindow {
+    private(set) var mouseMoveCount = 0
+    var establishedPointerEntry = false
+
+    override func sendEvent(_ event: NSEvent) {
+        if event.type == .mouseMoved { mouseMoveCount += 1 }
+        super.sendEvent(event)
     }
 }
 
