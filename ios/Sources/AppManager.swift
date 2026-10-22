@@ -883,6 +883,7 @@ final class AppManager: ObservableObject {
     private var reconciliationGeneration: UInt64 = 0
     private var pendingNavigationOverride: PendingNavigationOverride?
     private var backgroundSuspendPrepared = false
+    private let startupLifecycle: IrisStartupLifecycle
     private var storedAccountBundle: StoredAccountBundle?
     // Startup updates can arrive before the credential lookup task runs.
     private var persistedRestoreInFlight = true
@@ -922,9 +923,11 @@ final class AppManager: ObservableObject {
         appVersion: String = AppPaths.appVersion(),
         rustFactory: (() -> RustAppClient)? = nil,
         pushNotificationResolver: MobilePushNotificationResolver = MobilePushNotificationResolver(),
-        startupActivityFactory: (() -> IrisStartupBackgroundActivity)? = nil
+        startupActivityFactory: (() -> IrisStartupBackgroundActivity)? = nil,
+        startupLifecycle: IrisStartupLifecycle? = nil
     ) {
         let startupActivity = startupActivityFactory?() ?? IrisStartupBackgroundActivity.live()
+        self.startupLifecycle = startupLifecycle ?? IrisStartupLifecycle()
         self.interactionTimingController = IrisInteractionTimingController(environment: environment)
         self.fileManager = fileManager
         self.pushNotificationResolver = pushNotificationResolver
@@ -2222,8 +2225,12 @@ final class AppManager: ObservableObject {
 
     @discardableResult
     func appBackgrounded() -> Task<Void, Never>? {
+        let enteredBackground = !appIsBackgrounded
         appSceneIsActive = false
         appIsBackgrounded = true
+        if enteredBackground {
+            startupLifecycle.backgrounded(nativeRestoringObserved: state.busy.restoringSession)
+        }
         dispatchToRust(.appBackgrounded)
 #if os(iOS)
         return prepareForBackground()
@@ -2758,6 +2765,9 @@ final class AppManager: ObservableObject {
         chatSnapshotCache.removeAll()
         chatSnapshotCacheOrder.removeAll()
         persistedRestoreInFlight = false
+        startupLifecycle.restoreCancelled(
+            backgrounded: appIsBackgrounded, nativeRestoringObserved: state.busy.restoringSession
+        )
         lastSyncedDeviceLabelsKey = nil
         Task {
             await previousRust.shutdown()
@@ -3130,6 +3140,10 @@ final class AppManager: ObservableObject {
                 deviceNsec: link.deviceNsec,
                 approvalBootstrapJson: link.approvalBootstrapJson
             ))
+            startupLifecycle.restoreDispatchFinished(
+                dispatched: dispatched, backgrounded: appIsBackgrounded,
+                nativeRestoringObserved: state.busy.restoringSession
+            )
             if !dispatched {
                 persistedRestoreInFlight = false
                 bootstrapInFlight = false
@@ -3157,6 +3171,10 @@ final class AppManager: ObservableObject {
                 deviceNsec: bundle.deviceNsec
             )
         )
+        startupLifecycle.restoreDispatchFinished(
+            dispatched: dispatched, backgrounded: appIsBackgrounded,
+            nativeRestoringObserved: state.busy.restoringSession
+        )
         if !dispatched {
             appendClientDebugLog(category: "session.restore", detail: "dispatch=false")
             persistedRestoreInFlight = false
@@ -3181,6 +3199,9 @@ final class AppManager: ObservableObject {
         guard restoredAccount || finishedWithoutAccount else { return }
         persistedRestoreInFlight = false
         bootstrapInFlight = false
+        startupLifecycle.restoreResultObserved(
+            backgrounded: appIsBackgrounded, nativeRestoringObserved: nextState.busy.restoringSession
+        )
     }
 
     private func stateByReconcilingPendingNavigation(_ nextState: AppState) -> AppState {

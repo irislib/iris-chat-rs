@@ -101,6 +101,116 @@ final class SessionBootstrapTests: XCTestCase {
         XCTAssertEqual(manager.activeScreen, .welcome)
     }
 
+    func testStartupMarkersSeparateQueuedRestoreFromObservedNativeRestoration() async {
+        let rust = MockRustApp()
+        var records: [IrisStartupLifecycle.Record] = []
+        let lifecycle = IrisStartupLifecycle { records.append($0) }
+        let manager = makeManager(rust: rust, lifecycle: lifecycle)
+
+        // Bootstrap starts true before secure inputs have even been read. That
+        // default must never be reported as a successfully enqueued restoration.
+        _ = manager.appBackgrounded()
+        XCTAssertEqual(records, [.init(phase: .backgrounded, restorePendingResult: false,
+                                     nativeRestoringObserved: false, appBackgrounded: true)])
+        let enqueued = await waitUntil { records.contains { $0.phase == .restoreEnqueued } }
+        XCTAssertTrue(enqueued)
+        XCTAssertEqual(records.last, .init(phase: .restoreEnqueued, restorePendingResult: true,
+                                          nativeRestoringObserved: false, appBackgrounded: true))
+
+        var snapshot = rust.state()
+        snapshot.rev = 1
+        manager.apply(update: .fullState(snapshot), generation: 0)
+        manager.appForegrounded()
+        _ = manager.appBackgrounded()
+        XCTAssertEqual(records.last, .init(phase: .backgrounded, restorePendingResult: true,
+                                          nativeRestoringObserved: false, appBackgrounded: true),
+                       "a queued idle snapshot cannot establish restoration overlap")
+        XCTAssertFalse(records.contains { $0.phase == .restoreResultObserved })
+
+        snapshot.rev = 2
+        snapshot.busy.restoringSession = true
+        manager.apply(update: .fullState(snapshot), generation: 0)
+        manager.appForegrounded()
+        _ = manager.appBackgrounded()
+        XCTAssertEqual(records.last, .init(phase: .backgrounded, restorePendingResult: true,
+                                          nativeRestoringObserved: true, appBackgrounded: true))
+        let countBeforeRepeatedBackground = records.count
+        _ = manager.appBackgrounded()
+        XCTAssertEqual(records.count, countBeforeRepeatedBackground,
+                       "a repeated suspend request is not a new background transition")
+
+        snapshot.rev = 3
+        snapshot.busy.restoringSession = false
+        snapshot.account = makeAccount()
+        snapshot.router = Router(defaultScreen: .chatList, screenStack: [])
+        manager.apply(update: .fullState(snapshot), generation: 0)
+        XCTAssertEqual(records.last, .init(phase: .restoreResultObserved, restorePendingResult: false,
+                                          nativeRestoringObserved: false, appBackgrounded: true))
+        snapshot.rev = 4
+        manager.apply(update: .fullState(snapshot), generation: 0)
+        manager.appForegrounded()
+        _ = manager.appBackgrounded()
+        XCTAssertEqual(records.last?.restorePendingResult, false)
+        XCTAssertEqual(records.filter { $0.phase == .restoreResultObserved }.count, 1,
+                       "ordinary snapshots must not repeatedly emit startup completion")
+        XCTAssertEqual(records.map(\.phase), [.backgrounded, .restoreEnqueued, .backgrounded,
+                                             .backgrounded, .restoreResultObserved, .backgrounded])
+    }
+
+    func testStartupMarkersDoNotClaimEnqueueForMissingInputsOrDispatchFailure() async {
+        for failDispatch in [false, true] {
+            let rust = MockRustApp()
+            var records: [IrisStartupLifecycle.Record] = []
+            let lifecycle = IrisStartupLifecycle { records.append($0) }
+            if failDispatch {
+                rust.dispatchError = NSError(domain: "SessionBootstrapTests", code: 2)
+            }
+            let manager = makeManager(rust: rust,
+                                      store: failDispatch ? nil : InMemorySecretStore(),
+                                      lifecycle: lifecycle)
+            let settled = await waitUntil { !manager.bootstrapInFlight }
+            XCTAssertTrue(settled)
+            _ = manager.appBackgrounded()
+            XCTAssertFalse(records.contains { $0.phase == .restoreEnqueued })
+            XCTAssertFalse(records.contains { $0.phase == .restoreResultObserved })
+            XCTAssertEqual(records.filter { $0.phase == .restoreDispatchFailed }.count,
+                           failDispatch ? 1 : 0)
+            XCTAssertEqual(records.last?.restorePendingResult, false)
+        }
+    }
+
+    func testStartupMarkersRecordTerminalErrorWithoutInventingNativeBusyObservation() async {
+        let rust = MockRustApp()
+        var records: [IrisStartupLifecycle.Record] = []
+        let manager = makeManager(rust: rust, lifecycle: IrisStartupLifecycle { records.append($0) })
+        let enqueued = await waitUntil { records.contains { $0.phase == .restoreEnqueued } }
+        XCTAssertTrue(enqueued)
+        var snapshot = rust.state()
+        snapshot.rev = 1
+        snapshot.toast = "Invalid key."
+        manager.apply(update: .fullState(snapshot), generation: 0)
+        _ = manager.appBackgrounded()
+        XCTAssertEqual(records.map(\.phase), [.restoreEnqueued, .restoreResultObserved, .backgrounded])
+        XCTAssertFalse(records.contains { $0.nativeRestoringObserved })
+        XCTAssertEqual(records.last?.restorePendingResult, false)
+    }
+
+    func testStartupMarkersCancelPendingResultOnLocalReset() async {
+        let rust = MockRustApp()
+        var records: [IrisStartupLifecycle.Record] = []
+        let manager = makeManager(rust: rust, lifecycle: IrisStartupLifecycle { records.append($0) })
+        let enqueued = await waitUntil { records.contains { $0.phase == .restoreEnqueued } }
+        XCTAssertTrue(enqueued)
+        manager.logout()
+        _ = manager.appBackgrounded()
+        XCTAssertEqual(records.map(\.phase), [.restoreEnqueued, .restoreCancelled, .backgrounded])
+        XCTAssertEqual(records.last?.restorePendingResult, false)
+        let settled = await waitUntil { !manager.bootstrapInFlight }
+        XCTAssertTrue(settled)
+        XCTAssertFalse(records.contains { $0.phase == .restoreResultObserved },
+                       "a replacement core's idle snapshot cannot finish the abandoned restore")
+    }
+
     func testStartupAllowanceBeginsBeforeNativeFactoryAndForegroundRestoreDoesNotSuspend() async {
         let rust = MockRustApp()
         var allowanceStarted = false
@@ -240,6 +350,7 @@ final class SessionBootstrapTests: XCTestCase {
 
     func testPendingDeviceLinkRestoreWaitsForLinkScreen() async {
         let rust = MockRustApp()
+        var records: [IrisStartupLifecycle.Record] = []
         let manager = AppManager(
             rust: rust,
             secretStore: InMemorySecretStore(),
@@ -247,7 +358,8 @@ final class SessionBootstrapTests: XCTestCase {
                 deviceNsec: "test-device", approvalBootstrapJson: "{}"
             )),
             dataDir: directory,
-            environment: ["IRIS_UI_TEST_RUN_ID": "session-bootstrap", "IRIS_DISABLE_NOTIFICATIONS": "1"]
+            environment: ["IRIS_UI_TEST_RUN_ID": "session-bootstrap", "IRIS_DISABLE_NOTIFICATIONS": "1"],
+            startupLifecycle: IrisStartupLifecycle { records.append($0) }
         )
         await Task.yield()
         var snapshot = rust.state()
@@ -256,6 +368,7 @@ final class SessionBootstrapTests: XCTestCase {
         let applied = await waitUntil { manager.state.rev == 1 }
         XCTAssertTrue(applied)
         XCTAssertTrue(manager.bootstrapInFlight)
+        XCTAssertEqual(records.map(\.phase), [.restoreEnqueued])
 
         snapshot.rev = 2
         snapshot.linkDevice = LinkDeviceSnapshot(url: "test-link", deviceInput: "test-device")
@@ -265,9 +378,11 @@ final class SessionBootstrapTests: XCTestCase {
         XCTAssertTrue(linked)
         XCTAssertFalse(manager.bootstrapInFlight)
         XCTAssertEqual(manager.activeScreen, .addDevice)
+        XCTAssertEqual(records.map(\.phase), [.restoreEnqueued, .restoreResultObserved])
     }
 
-    private func makeManager(rust: RustAppClient, store: InMemorySecretStore? = nil) -> AppManager {
+    private func makeManager(rust: RustAppClient, store: InMemorySecretStore? = nil,
+                             lifecycle: IrisStartupLifecycle? = nil) -> AppManager {
         AppManager(
             rust: rust,
             secretStore: store ?? InMemorySecretStore(bundle: StoredAccountBundle(
@@ -275,7 +390,8 @@ final class SessionBootstrapTests: XCTestCase {
             )),
             pendingDeviceLinkSecretStore: InMemoryPendingDeviceLinkSecretStore(),
             dataDir: directory,
-            environment: ["IRIS_UI_TEST_RUN_ID": "session-bootstrap", "IRIS_DISABLE_NOTIFICATIONS": "1"]
+            environment: ["IRIS_UI_TEST_RUN_ID": "session-bootstrap", "IRIS_DISABLE_NOTIFICATIONS": "1"],
+            startupLifecycle: lifecycle
         )
     }
 
