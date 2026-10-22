@@ -2,6 +2,23 @@
 
 Each release has channel-specific notes. The release tag must match the `##` heading exactly.
 
+## v2026.10.22.1
+
+### GitHub
+
+- Keep sign-in hidden while a saved account is still restoring, including restores longer than eight seconds. Preserve genuine restore errors and background storage protection.
+- Fade in the loading label after two seconds, respecting reduced-motion settings.
+- Add slow-restore transition checks on iOS and macOS, including background storage acknowledgement and macOS screen captures.
+
+### Apple
+
+- Prevent a brief sign-in screen while your saved account loads.
+- Gently show the loading label only when startup takes more than two seconds.
+
+### Zapstore
+
+- Reduce repeated network startup while restoring your account.
+
 ## v2026.10.22
 
 ### GitHub
