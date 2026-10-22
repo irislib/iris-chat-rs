@@ -2,6 +2,22 @@
 
 Each release has channel-specific notes. The release tag must match the `##` heading exactly.
 
+## v2026.10.22.3
+
+### GitHub
+
+- Bound and deduplicate pending LAN discovery hints and per-peer address candidates, processing a limited batch each tick.
+- Preserve an advertised initial connection fallback when delayed traffic arrives on the first path, while retaining established-session and rekey arbitration.
+- Update `nvpn-fips-core` and `nvpn-fips-endpoint` to `0.4.108`, `nvpn-fips-tcp-endpoint` to `0.2.43`, and `nostr-pubsub-fips` to `0.5.38`.
+
+### Apple
+
+- Improve connection reliability between nearby devices.
+
+### Zapstore
+
+- Improve connection reliability between nearby devices.
+
 ## v2026.10.22.2
 
 ### GitHub
