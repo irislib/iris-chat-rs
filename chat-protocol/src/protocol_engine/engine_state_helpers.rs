@@ -146,6 +146,31 @@ impl ProtocolEngine {
 }
 
 impl ProtocolEngine {
+    fn with_group_fanout_checkpoint<T>(
+        &mut self,
+        operation: impl FnOnce(&mut Self) -> anyhow::Result<T>,
+    ) -> anyhow::Result<T> {
+        // Fanout retries mutate only sessions, their pending targets, and ready
+        // publications. Keep unrelated inbound ciphertext/journals installed.
+        // Persistence is the final fallible step: after a successful save its
+        // delivery-journal cleanup cannot need an in-memory rollback.
+        let checkpoint = (
+            self.session_manager.clone(),
+            self.pending_group_fanouts.clone(),
+            self.ready_group_publications.clone(),
+            self.batch_persist_dirty.get(),
+        );
+        let result = operation(self);
+        if result.is_err() {
+            self.session_manager = checkpoint.0;
+            self.pending_group_fanouts = checkpoint.1;
+            self.ready_group_publications = checkpoint.2;
+            self.batch_persist_dirty.set(checkpoint.3);
+        }
+        self.invalidate_known_message_author_cache();
+        result
+    }
+
     fn state_checkpoint(&self) -> ProtocolEngineCheckpoint {
         ProtocolEngineCheckpoint {
             session_manager: self.session_manager.clone(),

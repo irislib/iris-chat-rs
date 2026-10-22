@@ -787,7 +787,7 @@ impl ProtocolEngine {
         {
             return Ok(ProtocolGroupIncomingResult::default());
         }
-        self.with_state_checkpoint(|engine| engine.retry_pending_group_fanouts_inner(now))
+        self.with_group_fanout_checkpoint(|engine| engine.retry_pending_group_fanouts_inner(now))
     }
 
     fn retry_pending_group_fanouts_inner(
@@ -849,11 +849,9 @@ impl ProtocolEngine {
                     } => *recipient_owner,
                     GroupPendingFanout::LocalSiblings { .. } => self.local_owner,
                 };
-                if let Some(current) = user_record_snapshot(&self.session_manager.snapshot(), owner)
-                    .and_then(roster_device_pubkeys)
-                {
+                if let Some(current) = self.session_manager.roster(owner) {
                     let previous_len = devices.len();
-                    devices.retain(|device| current.contains(device));
+                    devices.retain(|device| current.get_device(device).is_some());
                     persist_needed |= devices.len() != previous_len;
                 }
                 if devices.is_empty() {
