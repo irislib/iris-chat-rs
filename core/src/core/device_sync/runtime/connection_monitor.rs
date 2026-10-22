@@ -22,7 +22,7 @@ impl DiscoveryRouteEdges {
             peers
                 .iter()
                 .filter_map(|peer| {
-                    let author = PublicKey::from_hex(peer_key_hex(&peer.npub)?).ok()?;
+                    let author = PublicKey::from_hex(&peer_key_hex(&peer.npub)?).ok()?;
                     Some((
                         author,
                         DiscoveryPeerState {

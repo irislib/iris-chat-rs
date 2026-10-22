@@ -93,6 +93,7 @@ impl PrivateDiscoveryClient {
             let mut order = std::collections::VecDeque::new();
             let mut cadence = DiscoveryCadence::default();
             let mut snapshots = Vec::<DiscoverySnapshot>::new();
+            let mut redeliver = false;
             loop {
                 let current = updates.borrow_and_update().clone();
                 let Some(current) = current else {
@@ -108,15 +109,22 @@ impl PrivateDiscoveryClient {
                         if let Ok(events) =
                             super::anonymous_reads::poll(relay, current.filters.clone()).await
                         {
-                            changed |= snapshot.observe(&events);
+                            let response_changed = snapshot.observe(&events);
+                            changed |= response_changed;
+                            if !response_changed && !redeliver {
+                                continue;
+                            }
                             for event in events {
-                                if !seen.insert(event.id) {
+                                let unseen = seen.insert(event.id);
+                                if !unseen && !redeliver {
                                     continue;
                                 }
-                                order.push_back(event.id);
-                                if order.len() > 128 {
-                                    if let Some(old) = order.pop_front() {
-                                        seen.remove(&old);
+                                if unseen {
+                                    order.push_back(event.id);
+                                    if order.len() > 128 {
+                                        if let Some(old) = order.pop_front() {
+                                            seen.remove(&old);
+                                        }
                                     }
                                 }
                                 if sender
@@ -145,11 +153,15 @@ impl PrivateDiscoveryClient {
                         continue;
                     },
                 }
+                redeliver = false;
                 // A demand coalesces while a query is running. Consume it
                 // after completion instead of cancelling a useful catch-up.
                 tokio::select! {
                     _ = sleep(cadence.after_poll(changed)) => {},
-                    _ = demanded.notified() => cadence.reset(),
+                    _ = demanded.notified() => {
+                        cadence.reset();
+                        redeliver = true;
+                    },
                     result = updates.changed() => {
                         if result.is_err() { break; }
                         cadence.reset();
@@ -430,6 +442,73 @@ mod tests {
             cadence.after_poll(snapshot.observe(&events)),
             Duration::from_secs(30)
         );
+    }
+
+    #[test]
+    fn unchanged_large_wire_response_is_not_redelivered_until_explicit_demand() {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let relay = crate::local_relay::TestRelay::start();
+        let url = RelayUrl::parse(relay.url()).unwrap();
+        runtime.block_on(async {
+            let peer = Keys::generate();
+            let publisher = Client::new(peer.clone());
+            publisher.add_relay(url.clone()).await.unwrap();
+            connect_client_with_timeout(&publisher, Duration::from_secs(2)).await;
+            for index in 0..256 {
+                let event = EventBuilder::new(Kind::Custom(1059), index.to_string())
+                    .sign_with_keys(&peer)
+                    .unwrap();
+                publisher.send_event(&event).await.unwrap();
+            }
+            let (sender, incoming) = flume::unbounded();
+            let reader = PrivateDiscoveryClient::new(runtime.handle(), sender);
+            reader
+                .configure(
+                    &[url],
+                    vec![Filter::new()
+                        .author(peer.public_key())
+                        .kind(Kind::Custom(1059))],
+                )
+                .unwrap();
+            let mut delivered = HashSet::new();
+            tokio::time::timeout(Duration::from_secs(10), async {
+                while delivered.len() < 256 {
+                    if let CoreMsg::Internal(event) = incoming.recv_async().await.unwrap() {
+                        if let InternalEvent::RelayEvent(event) = *event {
+                            delivered.insert(event.id);
+                        }
+                    }
+                }
+            })
+            .await
+            .unwrap();
+            // Use the actual production interval: the old 128-ID delivery
+            // cache churned on the next unchanged 256-event response.
+            sleep(Duration::from_secs(32)).await;
+            assert!(
+                incoming.is_empty(),
+                "unchanged large response was forwarded again"
+            );
+            reader.refresh();
+            let mut retried = HashSet::new();
+            tokio::time::timeout(Duration::from_secs(10), async {
+                while retried.len() < 256 {
+                    if let CoreMsg::Internal(event) = incoming.recv_async().await.unwrap() {
+                        if let InternalEvent::RelayEvent(event) = *event {
+                            retried.insert(event.id);
+                        }
+                    }
+                }
+            })
+            .await
+            .unwrap();
+            assert_eq!(
+                retried, delivered,
+                "explicit recovery must allow redelivery"
+            );
+            reader.cancel();
+            publisher.shutdown().await;
+        });
     }
 
     #[test]
