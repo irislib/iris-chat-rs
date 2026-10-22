@@ -359,29 +359,39 @@ async fn anonymous_reads_timeout_and_oversized_frames_fail_without_partial_succe
 }
 
 #[tokio::test]
-async fn anonymous_background_relay_polls_keep_aggregate_bounds_and_reject_mixed_authors() {
+async fn anonymous_background_relay_polls_union_events_and_reject_mixed_authors() {
     let peer = Keys::generate();
     let filters = [filter(peer.public_key())];
-    let payload = "x".repeat(MAX_FRAME_BYTES - 2048);
-    let per_relay = MAX_RESULT_BYTES / payload.len() / 2 + 1;
-    let events = (0..per_relay * 2)
-        .map(|index| profile(&peer, &format!("{index}:{payload}")))
-        .collect::<Vec<_>>();
-    let (first, wire, _) = relay(events[..per_relay].to_vec(), None).await;
-    let (second, _, _) = relay(events[per_relay..].to_vec(), None).await;
+    let events = [
+        profile(&peer, "first"),
+        profile(&peer, "shared"),
+        profile(&peer, "second"),
+    ];
+    let (first, first_wire, _) = relay(events[..2].to_vec(), None).await;
+    let (second, second_wire, _) = relay(events[1..].to_vec(), None).await;
     let relays = [first, second];
-    assert_eq!(
-        poll_relays(&relays[..1], &filters, &[None])
-            .await
-            .unwrap()
-            .len(),
-        per_relay
-    );
-    let error = poll_relays(&relays, &filters, &[None, None])
+    let received = poll_relays(&relays, &filters, &[None, None])
         .await
-        .unwrap_err();
-    assert!(error.contains("result exceeds safety bound"), "{error}");
-    let before = wire.lock().unwrap().len();
+        .expect("small complete relay results");
+    assert_eq!(received.len(), events.len());
+    assert_eq!(
+        received
+            .iter()
+            .map(|event| event.id)
+            .collect::<HashSet<_>>(),
+        events.iter().map(|event| event.id).collect::<HashSet<_>>()
+    );
+    let wires = [first_wire, second_wire];
+    // A late CLOSE is harmless. Count only AUTH/REQ when checking that an
+    // invalid multi-author scope never emits either frame on either relay.
+    let request_count = |wire: &Wire| {
+        wire.lock()
+            .unwrap()
+            .iter()
+            .filter(|(_, value)| matches!(value[0].as_str(), Some("AUTH" | "REQ")))
+            .count()
+    };
+    let before = wires.each_ref().map(request_count);
     assert!(poll_relays(
         &relays,
         &[filters[0].clone(), filter(Keys::generate().public_key())],
@@ -390,10 +400,84 @@ async fn anonymous_background_relay_polls_keep_aggregate_bounds_and_reject_mixed
     .await
     .is_err());
     assert_eq!(
-        wire.lock().unwrap().len(),
+        wires.each_ref().map(request_count),
         before,
-        "invalid scope opened a socket"
+        "invalid scope emitted AUTH or REQ"
     );
+    let mut auths = HashSet::new();
+    for wire in &wires {
+        for (_, value) in wire.lock().unwrap().iter() {
+            match value[0].as_str() {
+                Some("AUTH") => {
+                    let key = value[1]["pubkey"].as_str().unwrap();
+                    assert_ne!(key, peer.public_key().to_hex());
+                    assert!(auths.insert(key.to_string()), "relay reused anonymous AUTH");
+                }
+                Some("REQ") => {
+                    assert_eq!(value.as_array().unwrap().len(), 3);
+                    assert_eq!(value[2]["authors"], json!([peer.public_key().to_hex()]));
+                    assert!(value[2].get("#p").is_none());
+                }
+                Some("CLOSE") => {}
+                _ => panic!("unexpected outgoing discovery frame"),
+            }
+        }
+    }
+    assert_eq!(auths.len(), 2);
+}
+
+#[tokio::test]
+async fn anonymous_reads_complete_relay_results_enforce_aggregate_byte_bound() {
+    let peer = Keys::generate();
+    let payload = "x".repeat(MAX_FRAME_BYTES - 2048);
+    let per_relay = MAX_RESULT_BYTES / payload.len() / 2 + 1;
+    let events = (0..per_relay * 2)
+        .map(|index| profile(&peer, &format!("{index}:{payload}")))
+        .collect::<Vec<_>>();
+    let serialized_bytes = |events: &[Event]| {
+        events
+            .iter()
+            .map(|event| serde_json::to_vec(event).unwrap().len())
+            .sum::<usize>()
+    };
+    assert_eq!(
+        events
+            .iter()
+            .map(|event| event.id)
+            .collect::<HashSet<_>>()
+            .len(),
+        events.len(),
+        "aggregate fixture events must be unique"
+    );
+    for event in &events {
+        event.verify().expect("valid signed fixture event");
+        assert!(json!(["EVENT", "fixture", event]).to_string().len() < MAX_FRAME_BYTES);
+    }
+    let (first, second) = events.split_at(per_relay);
+    for batch in [first, second] {
+        assert!(serialized_bytes(batch) < MAX_RESULT_BYTES);
+        let received = collect_reads(stream::iter([Ok(batch.to_vec())]), false)
+            .await
+            .expect("each complete relay result fits independently");
+        assert_eq!(received.len(), batch.len());
+    }
+    assert!(serialized_bytes(&events) > MAX_RESULT_BYTES);
+    // Feed complete validated per-relay results through the production
+    // aggregator. Network deadlines deliberately permit partial delivery and
+    // must not decide whether this deterministic byte-bound assertion runs.
+    match collect_reads(
+        stream::iter([Ok(first.to_vec()), Ok(second.to_vec())]),
+        false,
+    )
+    .await
+    {
+        Err(error) => assert!(error.contains("result exceeds safety bound"), "{error}"),
+        Ok(received) => panic!(
+            "aggregate byte bound accepted {} events / {} serialized bytes",
+            received.len(),
+            serialized_bytes(&received)
+        ),
+    }
 }
 
 #[tokio::test]
