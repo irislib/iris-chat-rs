@@ -94,7 +94,7 @@ async fn discovery_worker_reconfiguration_and_shutdown_discard_scoped_tls_ticket
         stop(&first).await;
         first.refresh();
         assert!(first
-            .configure(&[changed_url.clone()], vec![filter(alice)])
+            .configure(std::slice::from_ref(&changed_url), vec![filter(alice)])
             .is_err());
         drop(first);
         let restarted = PrivateDiscoveryClient::new(&runtime, sender);
