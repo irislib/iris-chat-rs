@@ -15,6 +15,7 @@ MEMORY_TEST = "core::protocol::anonymous_reads::memory_tests::populated_account_
 CHECKPOINT_TEST = "protocol_engine::tests::checkpoint_backlog_production_counts_are_durable"
 CHECKPOINT_MARKER = "checkpoint_backlog fanouts=22702 ciphertexts=19231 checkpoint_bytes=254672896"
 CHECKPOINT_RESULT = "test result: ok. 1 passed; 0 failed; 0 ignored;"
+BATCHED_TEST = "protocol_engine::tests::restored_backlog_batched_retry_stays_within_cpu_budget"
 
 
 def checkpoint_command():
@@ -23,6 +24,91 @@ def checkpoint_command():
         "--lib", CHECKPOINT_TEST,
         "--", "--ignored", "--exact", "--test-threads=1", "--nocapture",
     ]
+
+
+def batched_command():
+    return [
+        "test", "--manifest-path", str(ROOT / "chat-protocol/Cargo.toml"), "--locked",
+        "--release", "--jobs", "2", "--lib", BATCHED_TEST,
+        "--", "--ignored", "--exact", "--test-threads=1", "--nocapture",
+    ]
+
+
+def batched_output(mode):
+    result = {
+        "schema": "iris-batched-retry-cpu/v1", "fixture": "restored-mixed-backlog-v1", "synthetic": True,
+        "pending_inbound": 4214, "initially_due_inbound": 102, "fanouts": 24990,
+        "initially_due_fanouts": 10462, "ciphertexts": 23437, "remote_sends": 44,
+        "checkpoint_bytes": 350224384, "outer_batch": True, "ack_and_flush_in_turn": True,
+        "continuation_delay_ms": 25, "liveness_delay_ms": 2000, "settle_seconds": 180,
+        "measurement_windows": 2, "window_seconds": 60, "debug_assertions": False,
+        "initially_ready": True, "group_deliveries": 1, "acknowledged_deliveries": 1,
+        "repeated_search_starts": 0, "wire_effect_count": 0, "remaining_inbound": 4214,
+        "remaining_ciphertexts": 23436, "remaining_remote_sends": 44, "remaining_fanouts": 24991,
+        "preservation_checked": True, "restart_checked": True, "restart_ready": True,
+        "restore_seconds": 1.0, "readiness_seconds": 1.1, "first_valid_delivery_seconds": 2.0,
+        "search_starts": 30, "input_generation_changes": 1, "slices": [],
+    }
+    progress = {"search_starts": 0, "repeated_search_starts": 0, "input_generation_changes": 1,
+                "ready_candidates": 10, "engine_attempts": 0, "active_cursor": False, "prepared_result": False}
+    result["restart_progress"] = dict(progress)
+    for index in range(5):
+        before = dict(progress)
+        if index < 3:
+            progress["search_starts"] += 10
+            progress["engine_attempts"] += 100
+        cpu = 30.0 if index < 3 else 4.0
+        result["slices"].append({
+            "stage": "settle" if index < 3 else "measure", "stage_index": index if index < 3 else index - 3,
+            "elapsed_seconds": 60.0, "recovery_elapsed_seconds": 60.0 * (index + 1),
+            "cpu_seconds": cpu * 0.6, "cpu_percent_one_core": cpu, "work_seconds": cpu * 0.6,
+            "max_turn_seconds": 1.0, "turns": 20, "continuations": 20,
+            "acknowledged_deliveries": int(index == 0), "puts": 1, "read_bytes": 350224384,
+            "written_bytes": 4096, "remote_deadline_updates": 1,
+            "due_at_start": {"inbound": 0, "fanouts": 0, "remote_sends": 1},
+            "progress_before": before, "progress_after": dict(progress),
+        })
+    changes = {
+        "wrong-schema": lambda: result.update(schema="unknown"),
+        "wrong-counts": lambda: result.update(ciphertexts=23436),
+        "no-batch": lambda: result.update(outer_batch=False),
+        "no-flush": lambda: result.update(ack_and_flush_in_turn=False),
+        "debug-mode": lambda: result.update(debug_assertions=True),
+        "late-delivery": lambda: result.update(first_valid_delivery_seconds=181.0),
+        "no-ack": lambda: result.update(acknowledged_deliveries=0),
+        "restart-unchecked": lambda: result.update(restart_checked=False),
+        "repeated-search": lambda: result["slices"][2]["progress_after"].update(repeated_search_starts=1),
+        "reset-audit": lambda: result["slices"][2]["progress_before"].update(search_starts=0),
+        "short-window": lambda: result["slices"][-1].update(elapsed_seconds=59.0),
+        "wrong-stage": lambda: result["slices"][-1].update(stage="settle"),
+        "excess-first": lambda: result["slices"][3].update(cpu_seconds=3.06, cpu_percent_one_core=5.1),
+        "excess-second": lambda: result["slices"][4].update(cpu_seconds=3.06, cpu_percent_one_core=5.1),
+        "nonfinite": lambda: result["slices"][-1].update(cpu_percent_one_core=float("nan")),
+        "no-due": lambda: result["slices"][-1].update(remote_deadline_updates=0),
+        "no-puts": lambda: result["slices"][-1].update(puts=0),
+        "no-progress": lambda: result.update(search_starts=0),
+        "no-restart-ready": lambda: result.update(restart_ready=False),
+    }
+    if mode in changes:
+        changes[mode]()
+    rows = ["batched_retry_slice " + json.dumps(row) for row in result["slices"]]
+    if mode == "missing-slice":
+        rows.pop()
+    if mode == "mismatched-slice":
+        rows[-1] = rows[-1].replace('"turns": 20', '"turns": 19')
+    marker = "batched_retry_cpu " + json.dumps(result)
+    if mode != "missing-marker":
+        rows.append(marker)
+    if mode == "duplicate-marker":
+        rows.append(marker)
+    summary = "test result: ok. 1 passed; 0 failed; 0 ignored;"
+    if mode == "zero-tests":
+        summary = summary.replace("1 passed", "0 passed")
+    if mode == "missing-result":
+        summary = ""
+    if mode == "duplicate-result":
+        summary += "\n" + summary
+    return "\n".join(["running 1 test", "test " + BATCHED_TEST + " ...", *rows, "ok", summary])
 
 
 class RustRunnerTests(unittest.TestCase):
@@ -42,17 +128,19 @@ class RustRunnerTests(unittest.TestCase):
                 commands.append(["test", "-q", *args])
             if crate == "chat-protocol":
                 commands.append(checkpoint_command())
+                if platform == "Linux":
+                    commands.append(batched_command())
         return commands
 
     def run_runner(self, nextest, target=None, fail_on=None, approval_relay=None,
                    fail_relay=False, platform="Darwin", cpu_receipt=None,
-                   checkpoint_output="passed"):
+                   checkpoint_output="passed", batched_mode="passed"):
         with tempfile.TemporaryDirectory(prefix="iris-rust-runner-") as tmp:
             directory = pathlib.Path(tmp)
             binary_dir = directory / "bin"
             binary_dir.mkdir()
             # Isolate PATH so the fallback test cannot discover a real nextest.
-            for command in ("dirname", "mktemp", "rm"):
+            for command in ("dirname", "mktemp", "rm", "tee"):
                 (binary_dir / command).symlink_to(shutil.which(command))
             uname = binary_dir / "uname"
             uname.write_text('#!/bin/sh\nprintf "%s\\n" "$IRIS_TEST_PLATFORM"\n')
@@ -77,7 +165,15 @@ class RustRunnerTests(unittest.TestCase):
                 'if env["IRIS_DEVICE_APPROVAL_RELAY_URL"] != env["IRIS_TEST_EXPECTED_RELAY"]: sys.exit(38)\n'
                 'with open(env["IRIS_TEST_LOG"], "a") as log:\n'
                 '    log.write("\\t".join([os.getcwd(), env["CARGO_TARGET_DIR"], *sys.argv[1:]]) + "\\n")\n'
-                'if sys.argv[1:] == json.loads(env["IRIS_TEST_FAIL_COMMAND"]): sys.exit(23)\n'
+                'if sys.argv[1:] == json.loads(env["IRIS_TEST_FAIL_COMMAND"]):\n'
+                '    print("Synthetic cargo failure stdout")\n'
+                '    print("Synthetic cargo failure stderr", file=sys.stderr)\n'
+                '    sys.exit(23)\n'
+                f'if sys.argv[1:] == {batched_command()!r}:\n'
+                '    assert [env.get("CARGO_PROFILE_RELEASE_" + key) for key in ("OPT_LEVEL", "DEBUG", "DEBUG_ASSERTIONS")] == ["3", "1", "false"]\n'
+                '    print(env["IRIS_TEST_BATCHED_OUTPUT"])\n'
+                'else:\n'
+                '    assert [env.get("CARGO_PROFILE_RELEASE_" + key) for key in ("OPT_LEVEL", "DEBUG", "DEBUG_ASSERTIONS")] == ["1", "0", "true"]\n'
                 f'if sys.argv[1:] == {checkpoint_command()!r}:\n'
                 '    mode = env["IRIS_TEST_CHECKPOINT_OUTPUT"]\n'
                 '    if mode != "missing-marker":\n'
@@ -92,12 +188,17 @@ class RustRunnerTests(unittest.TestCase):
                 (binary_dir / "cargo-nextest").symlink_to(cargo)
             log = directory / "commands"
             relay_log = directory / "relay-commands"
+            scratch = directory / "scratch"
+            scratch.mkdir()
             env = dict(
-                os.environ, PATH=str(binary_dir), IRIS_TEST_LOG=str(log),
+                os.environ, PATH=str(binary_dir), TMPDIR=str(scratch), IRIS_TEST_LOG=str(log),
                 IRIS_TEST_RELAY_LOG=str(relay_log), IRIS_TEST_RELAY_FAIL=str(int(fail_relay)),
                 IRIS_TEST_EXPECTED_RELAY=approval_relay or "ws://127.0.0.1:45678",
                 IRIS_TEST_PLATFORM=platform, IRIS_TEST_REAL_PYTHON=sys.executable,
                 IRIS_TEST_CHECKPOINT_OUTPUT=checkpoint_output,
+                IRIS_TEST_BATCHED_OUTPUT=batched_output(batched_mode),
+                CARGO_PROFILE_RELEASE_OPT_LEVEL="1", CARGO_PROFILE_RELEASE_DEBUG="0",
+                CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS="true",
             )
             env.pop("CARGO_TARGET_DIR", None)
             env.pop("IRIS_DEVICE_APPROVAL_RELAY_URL", None)
@@ -191,6 +292,7 @@ class RustRunnerTests(unittest.TestCase):
                 pid_file = start[start.index("--pid-file") + 1]
                 self.assertEqual(stop[stop.index("--pid-file") + 1], pid_file)
                 self.assertFalse(pathlib.Path(pid_file).parent.exists(), "fixture directory was not removed")
+            self.assertEqual(list(scratch.iterdir()), [], "runner-owned temporary files were not removed")
             return result, [call[2:] for call in calls]
 
     def test_runs_all_crates_and_doc_tests_with_each_runner(self):
@@ -235,6 +337,57 @@ class RustRunnerTests(unittest.TestCase):
                 result, calls = self.run_runner(nextest, platform="Linux", fail_on=command)
                 self.assertEqual(result.returncode, 23, result.stderr)
                 self.assertEqual(calls, [command])
+
+    def test_linux_batched_gate_runs_once_with_complete_visible_evidence(self):
+        for nextest in (True, False):
+            with self.subTest(nextest=nextest):
+                result, calls = self.run_runner(nextest, platform="Linux", target="custom target")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(calls, self.commands(nextest, "Linux"))
+                self.assertEqual(calls.count(batched_command()), 1)
+                self.assertEqual(result.stdout.count("batched_retry_slice "), 5)
+                self.assertEqual(result.stdout.count("batched_retry_cpu "), 1)
+                self.assertIn("Batched protocol CPU, progress and restart evidence verified", result.stdout)
+
+    def test_linux_batched_gate_rejects_incomplete_or_failed_evidence(self):
+        modes = ("zero-tests", "missing-result", "duplicate-result", "missing-marker", "duplicate-marker",
+                 "missing-slice", "mismatched-slice", "wrong-schema", "wrong-counts", "no-batch", "no-flush",
+                 "debug-mode", "late-delivery", "no-ack", "restart-unchecked", "repeated-search", "reset-audit",
+                 "short-window", "wrong-stage", "excess-first", "excess-second", "nonfinite", "no-due", "no-puts",
+                 "no-progress", "no-restart-ready")
+        for nextest in (True, False):
+            commands = self.commands(nextest, "Linux")
+            index = commands.index(batched_command())
+            for mode in modes:
+                with self.subTest(nextest=nextest, batched=mode):
+                    result, calls = self.run_runner(nextest, platform="Linux", batched_mode=mode)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertEqual(calls, commands[:index + 1])
+
+    def test_batched_cargo_failure_preserves_status_output_and_cleanup(self):
+        for nextest in (True, False):
+            for relay in (None, "ws://127.0.0.1:4888"):
+                with self.subTest(nextest=nextest, relay=relay):
+                    result, calls = self.run_runner(nextest, platform="Linux", fail_on=batched_command(),
+                                                    approval_relay=relay)
+                    self.assertEqual(result.returncode, 23, result.stderr)
+                    self.assertIn("Synthetic cargo failure stdout", result.stdout)
+                    self.assertIn("Synthetic cargo failure stderr", result.stdout)
+                    commands = self.commands(nextest, "Linux")
+                    self.assertEqual(calls, commands[:commands.index(batched_command()) + 1])
+
+    def test_batched_observer_is_ordinary_and_standalone_diagnostic_remains_separate(self):
+        protocol = ROOT / "chat-protocol/src/protocol_engine"
+        observer = (protocol / "batched_retry_cpu_tests.rs").read_text()
+        self.assertRegex(observer, r"#\[test\]\s+fn retry_search_audit_keeps_author_generations_across_observations\(\)")
+        self.assertIn('#[cfg(target_os = "linux")]\n    include!("protocol_engine/batched_retry_cpu_tests.rs");',
+                      (protocol.with_suffix(".rs")).read_text())
+        standalone = (protocol / "inbound_retry_backlog_tests.rs").read_text()
+        self.assertIn("fn restored_backlog_whole_retry_at_continuation_cadence()", standalone)
+        self.assertIn('"whole retry loop still uses {cpu_percent:.2}% of one CPU"', standalone)
+        for nextest in (True, False):
+            self.assertFalse(any("restored_backlog_whole_retry" in arg
+                                 for command in self.commands(nextest, "Linux") for arg in command))
 
     def test_populated_discovery_runs_nonignored_in_the_core_suite(self):
         source = (ROOT / "core/src/core/tests/populated_discovery_idle.rs").read_text()

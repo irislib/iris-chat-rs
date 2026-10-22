@@ -199,6 +199,26 @@ must preserve pending work and the exact ratchet state. This mandatory storage
 regression complements physical CPU checks; it does not establish a device's
 CPU usage, and the storage adapter still compares the full checkpoint on a save.
 
+On Linux, the same runner also requires exactly one optimized
+`restored_backlog_batched_retry_stays_within_cpu_budget` test. It restores a
+350,224,384-byte SQLite checkpoint with 4,214 pending incoming packets, 24,990
+group fanouts, 23,437 encrypted group messages and 44 outgoing retries. Each
+retry turn includes the app's batch boundary, journal acknowledgment and durable
+flush, with 25 ms ready continuations and 2-second liveness checks. Restore,
+scheduler readiness and the valid message must complete within the three
+60-second settling slices. Two further 60-second slices must each use at most
+5% of one CPU core while exercising recurring due work and durable saves.
+Unresolved work must survive, unchanged inputs must not restart exhausted
+searches, and a reload must preserve queues and ratchets. Missing-key searches
+may still make finite progress during measurement.
+
+The gate uses release optimization level 3, debug info level 1 and disabled
+debug assertions, with two build jobs and the existing Cargo target/cache.
+Retain its complete stdout, including all five `batched_retry_slice` records and
+the `iris-batched-retry-cpu/v1` summary. The runner rejects missing execution,
+incomplete measurements or a CPU failure. Keep standalone retry diagnostic
+results and the physical-device CPU gates as separate evidence.
+
 ## 2. Tag the Latest `main`
 
 Merge the release notes and all intended changes first. Then:

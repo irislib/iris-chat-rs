@@ -73,6 +73,86 @@ for crate in core chat-protocol protocol-ffi; do
             echo "Required protocol backlog checkpoint regression did not execute" >&2
             exit 1
         fi
+        if [[ "$(uname -s)" == Linux ]]; then
+            # One optimized protocol test, sharing the existing target/cache.
+            # Retain complete stdout in the caller's log, including Cargo failure.
+            # The subshell owns only its mktemp file; the outer relay trap remains.
+            (
+                batched_log="$(mktemp "${TMPDIR:-/tmp}/iris-batched-retry.XXXXXX")"
+                trap 'rm -f "$batched_log"' EXIT
+                CARGO_PROFILE_RELEASE_OPT_LEVEL=3 CARGO_PROFILE_RELEASE_DEBUG=1 \
+                CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS=false \
+                    cargo test "${args[@]}" --release --jobs 2 --lib \
+                    protocol_engine::tests::restored_backlog_batched_retry_stays_within_cpu_budget \
+                    -- --ignored --exact --test-threads=1 --nocapture 2>&1 | tee "$batched_log"
+                python3 - "$batched_log" <<'BATCHED_CPU_RECEIPT'
+import json
+import math
+from pathlib import Path
+import re
+import sys
+
+text = Path(sys.argv[1]).read_text()
+assert re.findall(r"test result: (ok|FAILED)\. (\d+) passed; (\d+) failed; (\d+) ignored;", text) == [("ok", "1", "0", "0")], "Required batched retry test did not pass exactly once"
+assert "running 1 test\n" in text
+assert "protocol_engine::tests::restored_backlog_batched_retry_stays_within_cpu_budget" in text
+rows = re.findall(r"batched_retry_cpu (\{[^\n]+\})", text)
+assert len(rows) == 1, "Require exactly one complete batched retry receipt"
+result = json.loads(rows[0])
+expected = {
+    "schema": "iris-batched-retry-cpu/v1", "fixture": "restored-mixed-backlog-v1", "synthetic": True,
+    "pending_inbound": 4214, "initially_due_inbound": 102, "fanouts": 24990,
+    "initially_due_fanouts": 10462, "ciphertexts": 23437, "remote_sends": 44,
+    "checkpoint_bytes": 350224384, "outer_batch": True, "ack_and_flush_in_turn": True,
+    "continuation_delay_ms": 25, "liveness_delay_ms": 2000, "settle_seconds": 180,
+    "measurement_windows": 2, "window_seconds": 60, "debug_assertions": False,
+    "initially_ready": True, "group_deliveries": 1, "acknowledged_deliveries": 1,
+    "repeated_search_starts": 0, "wire_effect_count": 0, "remaining_inbound": 4214,
+    "remaining_ciphertexts": 23436, "remaining_remote_sends": 44,
+    "preservation_checked": True, "restart_checked": True, "restart_ready": True,
+}
+assert all(type(result[key]) is type(value) and result[key] == value for key, value in expected.items()), "Batched workload or completion assertions changed"
+assert result["remaining_fanouts"] >= 24990 and result["search_starts"] > 0
+assert all(type(result[key]) in (int, float) and math.isfinite(result[key]) and 0 <= result[key] <= 180
+           for key in ("restore_seconds", "readiness_seconds", "first_valid_delivery_seconds")), "Recovery deadline not met"
+slices = result["slices"]
+emitted = [json.loads(row) for row in re.findall(r"batched_retry_slice (\{[^\n]+\})", text)]
+assert len(slices) == 5 and emitted == slices, "Require three settling and two measured slices"
+counts = ("search_starts", "repeated_search_starts", "input_generation_changes", "ready_candidates", "engine_attempts")
+previous = None
+elapsed_sum = 0.0
+for index, row in enumerate(slices):
+    assert (row["stage"], row["stage_index"]) == (("settle", index) if index < 3 else ("measure", index - 3)), "Slice order changed"
+    for key in ("elapsed_seconds", "recovery_elapsed_seconds", "cpu_seconds", "cpu_percent_one_core", "work_seconds", "max_turn_seconds"):
+        assert type(row[key]) in (int, float) and math.isfinite(row[key]) and row[key] >= 0, f"Invalid slice metric {key}"
+    assert row["elapsed_seconds"] >= 60
+    elapsed_sum += row["elapsed_seconds"]
+    assert row["recovery_elapsed_seconds"] + 0.001 >= elapsed_sum
+    assert math.isclose(row["cpu_percent_one_core"], 100 * row["cpu_seconds"] / row["elapsed_seconds"], rel_tol=1e-8, abs_tol=1e-8)
+    for key in ("turns", "continuations", "acknowledged_deliveries", "puts", "read_bytes", "written_bytes", "remote_deadline_updates"):
+        assert type(row[key]) is int and row[key] >= 0, f"Invalid slice counter {key}"
+    assert all(type(row["due_at_start"][key]) is int and row["due_at_start"][key] >= 0 for key in ("inbound", "fanouts", "remote_sends"))
+    before, after = row["progress_before"], row["progress_after"]
+    for progress in (before, after):
+        assert all(type(progress[key]) is int and progress[key] >= 0 for key in counts)
+        assert all(type(progress[key]) is bool for key in ("active_cursor", "prepared_result"))
+        assert progress["repeated_search_starts"] == 0, "Candidate re-admitted under unchanged inputs"
+    assert all(after[key] >= before[key] for key in ("search_starts", "input_generation_changes"))
+    assert previous is None or before == previous, "Audit reset between slices"
+    previous = after
+    if index >= 3:
+        assert row["turns"] > 0 and row["remote_deadline_updates"] > 0 and row["puts"] > 0, "Measured slice must include recurring due work and flush"
+        assert row["cpu_percent_one_core"] <= 5, "Batched retry exceeded 5% of one CPU"
+assert sum(row["acknowledged_deliveries"] for row in slices) == 1
+assert all(result[key] == previous[key] for key in ("search_starts", "repeated_search_starts", "input_generation_changes"))
+restart = result["restart_progress"]
+assert all(type(restart[key]) is int and restart[key] >= 0 for key in counts)
+assert all(type(restart[key]) is bool for key in ("active_cursor", "prepared_result"))
+assert restart["search_starts"] == restart["repeated_search_starts"] == 0, "Restart readiness ran a key search"
+print("Batched protocol CPU, progress and restart evidence verified")
+BATCHED_CPU_RECEIPT
+            )
+        fi
     fi
     # The populated CPU test runs once in the ordinary nonignored core suite.
     # Nextest captures successful stdout, so CI retains its companion files with
