@@ -1,6 +1,6 @@
 {
   "enabled": true,
-  "optimized_enabled": false,
+  "optimized_enabled": true,
   "base": "74c1b1ab0bf217fbda2bb74ab607f0d336529625",
   "before": "6c11fdc511303d97a33779ff1b6ac6b6300ef5a2",
   "after": "b8c5de4fb64ea69defbfaf26253ff69f51ae5393",
