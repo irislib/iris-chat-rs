@@ -467,7 +467,15 @@ mod populated_discovery_idle {
             let receiver_relay = RelayUrl::parse(&format!("ws://{}", receiver_listener.local_addr().unwrap())).unwrap();
             let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
             let relay = RelayUrl::parse(&format!("wss://{}", listener.local_addr().unwrap())).unwrap();
-            let acceptor = tls_tests::acceptor(true, false);
+            // The server's default 256-record stateful cache cannot retain
+            // tickets for 480 isolated clients. Bound this fixture's cache for
+            // two tickets per handshake and up to eight polls per author:
+            // three warmup, at most two in each cycle, and one targeted poll.
+            // The account receiver uses plain WS and consumes no TLS tickets.
+            let session_capacity = subjects.len() * 2 * 8;
+            let acceptor = tls_tests::acceptor_with_sessions(
+                true, false, rustls::server::ServerSessionMemoryCache::new(session_capacity),
+            );
             let server_wire = wire.clone();
             let server_events = events.clone();
             let server = tokio::spawn(async move {

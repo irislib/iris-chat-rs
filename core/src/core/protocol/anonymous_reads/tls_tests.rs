@@ -3,9 +3,13 @@
 use super::*;
 use rustls::{
     pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer},
+    server::{ServerSessionMemoryCache, StoresServerSessions},
     HandshakeKind, ProtocolVersion, RootCertStore, ServerConfig,
 };
-use std::sync::Mutex;
+use std::sync::{
+    atomic::{AtomicUsize, Ordering},
+    Mutex,
+};
 use tokio::net::TcpListener;
 use tokio_rustls::TlsAcceptor;
 
@@ -22,6 +26,14 @@ pub(in crate::core) fn roots() -> RootCertStore {
 }
 
 pub(in crate::core) fn acceptor(resume: bool, tls12_only: bool) -> TlsAcceptor {
+    acceptor_with_sessions(resume, tls12_only, ServerSessionMemoryCache::new(256))
+}
+
+pub(in crate::core) fn acceptor_with_sessions(
+    resume: bool,
+    tls12_only: bool,
+    sessions: Arc<dyn StoresServerSessions>,
+) -> TlsAcceptor {
     let versions = if tls12_only {
         vec![&rustls::version::TLS12]
     } else {
@@ -39,6 +51,7 @@ pub(in crate::core) fn acceptor(resume: bool, tls12_only: bool) -> TlsAcceptor {
         )
         .unwrap();
     config.send_tls13_tickets = if resume { 2 } else { 0 };
+    config.session_storage = sessions;
     TlsAcceptor::from(Arc::new(config))
 }
 
@@ -59,9 +72,12 @@ impl Drop for Relay {
 }
 
 pub(in crate::core) async fn relay(resume: bool, tls12_only: bool, events: Vec<Event>) -> Relay {
+    relay_with_acceptor(acceptor(resume, tls12_only), events).await
+}
+
+async fn relay_with_acceptor(acceptor: TlsAcceptor, events: Vec<Event>) -> Relay {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = RelayUrl::parse(&format!("wss://{}", listener.local_addr().unwrap())).unwrap();
-    let acceptor = acceptor(resume, tls12_only);
     let wire: Wire = Arc::default();
     let handshakes: Handshakes = Arc::default();
     let recorded = wire.clone();
@@ -268,5 +284,110 @@ async fn tls_wire_preserves_full_validation_when_resumption_is_unavailable_or_tl
             "tls12_only={tls12_only}, observed handshakes: {kinds:?}"
         );
         assert_wire(&relay, &[keys.public_key()], 2);
+    }
+}
+
+#[derive(Debug)]
+struct CountedSessions {
+    storage: Arc<dyn StoresServerSessions>,
+    inserted: AtomicUsize,
+    hits: AtomicUsize,
+    misses: AtomicUsize,
+}
+
+impl CountedSessions {
+    fn new(capacity: usize) -> Self {
+        Self {
+            storage: ServerSessionMemoryCache::new(capacity),
+            inserted: AtomicUsize::new(0),
+            hits: AtomicUsize::new(0),
+            misses: AtomicUsize::new(0),
+        }
+    }
+}
+
+impl StoresServerSessions for CountedSessions {
+    fn put(&self, key: Vec<u8>, value: Vec<u8>) -> bool {
+        let stored = self.storage.put(key, value);
+        if stored {
+            self.inserted.fetch_add(1, Ordering::SeqCst);
+        }
+        stored
+    }
+
+    fn get(&self, key: &[u8]) -> Option<Vec<u8>> {
+        self.storage.get(key)
+    }
+
+    fn take(&self, key: &[u8]) -> Option<Vec<u8>> {
+        let value = self.storage.take(key);
+        if value.is_some() {
+            self.hits.fetch_add(1, Ordering::SeqCst);
+        } else {
+            self.misses.fetch_add(1, Ordering::SeqCst);
+        }
+        value
+    }
+
+    fn can_cache(&self) -> bool {
+        self.storage.can_cache()
+    }
+}
+
+#[tokio::test]
+async fn tls_wire_distinguishes_server_ticket_eviction_from_client_scope_reset() {
+    let keys = [Keys::generate(), Keys::generate(), Keys::generate()];
+    let authors = keys.iter().map(Keys::public_key).collect::<Vec<_>>();
+    for (capacity, expected_second, hits, misses) in [
+        (4, HandshakeKind::Full, 0, 3),
+        (12, HandshakeKind::Resumed, 3, 0),
+    ] {
+        let sessions = Arc::new(CountedSessions::new(capacity));
+        let events = keys
+            .iter()
+            .map(|key| {
+                EventBuilder::new(Kind::Metadata, "{}")
+                    .sign_with_keys(key)
+                    .unwrap()
+            })
+            .collect();
+        let relay = relay_with_acceptor(
+            acceptor_with_sessions(true, false, sessions.clone()),
+            events,
+        )
+        .await;
+        // Retain the same exact author/URL scopes across both ordered sweeps.
+        // Two tickets per handshake overflow four server records before the
+        // first author returns; its new tickets then evict the next author's.
+        let scopes = authors
+            .iter()
+            .map(|author| {
+                ScopedTlsConnector::new_with_roots(&relay.url, &[filter(*author)], roots()).unwrap()
+            })
+            .collect::<Vec<_>>();
+        for _ in 0..2 {
+            for (key, scope) in keys.iter().zip(&scopes) {
+                read(&relay, key, scope).await;
+            }
+        }
+        let observed = relay.handshakes.lock().unwrap().clone();
+        let expected = [HandshakeKind::Full; 3]
+            .into_iter()
+            .chain([expected_second; 3])
+            .collect::<Vec<_>>();
+        assert_eq!(
+            observed.iter().map(|row| row.0).collect::<Vec<_>>(),
+            expected
+        );
+        assert!(observed
+            .iter()
+            .all(|(_, version, fresh_dhe)| *version == ProtocolVersion::TLSv1_3 && *fresh_dhe));
+        assert_eq!(sessions.inserted.load(Ordering::SeqCst), 12);
+        // A lookup miss proves that the client offered a retained ticket; a
+        // recreated client scope would not offer a ticket or call take at all.
+        assert_eq!(sessions.hits.load(Ordering::SeqCst), hits);
+        assert_eq!(sessions.misses.load(Ordering::SeqCst), misses);
+        assert_wire(&relay, &authors, 6);
+        println!("TLS_SERVER_SESSION_CAPACITY capacity={capacity} second_sweep={expected_second:?} hits={hits} misses={misses} fresh_auth=6 sole_author_requests=6");
     }
 }
