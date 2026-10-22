@@ -20,7 +20,7 @@ on:
         description: Checks to run; retain exact source-bound coverage for unchanged components
         type: choice
         default: all
-        options: [all, cli, core, android, windows, windows-keyboard, windows-restore, apple, ios, ios-unit, macos, linux, apple-products, ios-products, macos-products, ios-ui-runner, macos-ui-runner]
+        options: [all, cli, core, inbound-retry, android, windows, windows-keyboard, windows-restore, apple, ios, ios-unit, macos, linux, apple-products, ios-products, macos-products, ios-ui-runner, macos-ui-runner]
       ios_core_seed_run:
         description: Optional exact successful core build/cache producer for Swift-only unit validation
         type: string
@@ -38,6 +38,71 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  inbound-retry:
+    if: ${{ inputs.scope == 'inbound-retry' }}
+    name: Compare exact inbound retry regression sources
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/cargo-target
+      CARGO_BUILD_JOBS: '2'
+      CARGO_TERM_COLOR: never
+      CARGO_PROFILE_TEST_OPT_LEVEL: '0'
+      CARGO_PROFILE_TEST_DEBUG_ASSERTIONS: 'true'
+    steps:
+      - name: Checkout reviewed diagnostic driver
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: retry-driver
+          persist-credentials: false
+      - name: Require admitted immutable regression inputs
+        id: inputs
+        run: python3 retry-driver/scripts/verify_inbound_retry.py preflight --output work/inbound-retry
+      - name: Checkout fixture-only before source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.inputs.outputs.before }}
+          fetch-depth: 2
+          path: iris-chat-rs
+          persist-credentials: false
+      - name: Install accepted Rust toolchain
+        run: rustup toolchain install 1.99.1 --profile minimal
+      - name: Restore existing core cache
+        id: cargo-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ${{ github.workspace }}/cargo-target
+          key: rust-${{ runner.os }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock') }}
+          restore-keys: |
+            rust-${{ runner.os }}-
+      - name: Require the allocation regression to fail for its intended reason
+        env:
+          IRIS_CACHE_REQUESTED: ${{ steps.cargo-cache.outputs.cache-primary-key }}
+          IRIS_CACHE_MATCHED: ${{ steps.cargo-cache.outputs.cache-matched-key }}
+          IRIS_CACHE_HIT: ${{ steps.cargo-cache.outputs.cache-hit }}
+        run: python3 retry-driver/scripts/verify_inbound_retry.py before --source iris-chat-rs --output work/inbound-retry
+      - name: Checkout minimal fix into the same source path
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.inputs.outputs.after }}
+          fetch-depth: 2
+          path: iris-chat-rs
+          persist-credentials: false
+      - name: Require allocation durability and whole-retry checks to pass
+        run: python3 retry-driver/scripts/verify_inbound_retry.py after --source iris-chat-rs --output work/inbound-retry
+      - name: Retain full logs and exact comparison evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: inbound-retry-${{ github.run_id }}
+          path: work/inbound-retry/
+          if-no-files-found: warn
+          retention-days: 14
+
   windows-restore:
     if: ${{ inputs.scope == 'windows-restore' }}
     name: Windows restore evaluation (.NET ${{ matrix.sdk }})

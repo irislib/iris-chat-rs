@@ -1,0 +1,91 @@
+{
+  "enabled": false,
+  "base": "9b1c95f14e99ddac87f5d88b912fe2a69714082e",
+  "before": "4ab53a830214e34b4719fbcd6b680d1f2ebc1559",
+  "after": "3bb32a7e858c6f24c47aefa14230d50f21f50886",
+  "fixture_paths": [
+    "chat-protocol/src/protocol_engine.rs",
+    "chat-protocol/src/protocol_engine/inbound_retry_backlog_tests.rs",
+    "chat-protocol/src/protocol_engine/incoming_retry_tests.rs",
+    "chat-protocol/src/protocol_engine/remote_roster_tests.rs"
+  ],
+  "before_changed_paths": [
+    "chat-protocol/src/protocol_engine.rs",
+    "chat-protocol/src/protocol_engine/inbound_retry_backlog_tests.rs",
+    "chat-protocol/src/protocol_engine/incoming_retry_tests.rs",
+    "chat-protocol/src/protocol_engine/remote_roster_tests.rs"
+  ],
+  "after_changed_paths": [
+    "chat-protocol/src/protocol_engine/engine_incoming_retry.rs"
+  ],
+  "before_test": "protocol_engine::tests::deferred_inbound_retry_allocation_is_bounded_by_due_packets",
+  "before_failure_marker": "bytes copying deferred packets",
+  "before_observation_test": "protocol_engine::tests::restored_backlog_whole_retry_at_continuation_cadence",
+  "before_observation_failure_marker": "whole retry loop still uses",
+  "tests": [
+    {
+      "name": "protocol_engine::tests::deferred_inbound_retry_allocation_is_bounded_by_due_packets",
+      "expected_count": 1,
+      "exact": true,
+      "marker": "inbound_retry packets=4214 initially_due=102 turns=32 allocated_bytes=",
+      "ignored": false,
+      "timeout_seconds": 300
+    },
+    {
+      "name": "protocol_engine::incoming_retry_tests::",
+      "expected_count": 5,
+      "exact": false,
+      "marker": null,
+      "ignored": false,
+      "timeout_seconds": 300
+    },
+    {
+      "name": "protocol_engine::tests::group_retry_",
+      "expected_count": 22,
+      "exact": false,
+      "marker": null,
+      "ignored": false,
+      "timeout_seconds": 300
+    },
+    {
+      "name": "protocol_engine::tests::group_receive_",
+      "expected_count": 1,
+      "exact": false,
+      "marker": null,
+      "ignored": false,
+      "timeout_seconds": 300
+    },
+    {
+      "name": "protocol_engine::tests::direct_message_and_handshake_wire_hide_sender_identity",
+      "expected_count": 1,
+      "exact": true,
+      "marker": null,
+      "ignored": false,
+      "timeout_seconds": 300
+    },
+    {
+      "name": "protocol_engine::tests::public_invite_cannot_identify_the_sender_of_a_private_reply",
+      "expected_count": 1,
+      "exact": true,
+      "marker": null,
+      "ignored": false,
+      "timeout_seconds": 300
+    },
+    {
+      "name": "protocol_engine::tests::checkpoint_backlog_production_counts_are_durable",
+      "expected_count": 1,
+      "exact": true,
+      "marker": "checkpoint_backlog fanouts=22702 ciphertexts=19231 checkpoint_bytes=254672896",
+      "ignored": true,
+      "timeout_seconds": 300
+    },
+    {
+      "name": "protocol_engine::tests::restored_backlog_whole_retry_at_continuation_cadence",
+      "expected_count": 1,
+      "exact": true,
+      "marker": "whole_retry_cpu ",
+      "ignored": true,
+      "timeout_seconds": 300
+    }
+  ]
+}
