@@ -237,6 +237,20 @@ fn mesh_worker_tls_is_retained_for_demand_and_equal_config_but_reset_on_scope_ch
             .iter()
             .all(|(_, version, dhe)| *version == ProtocolVersion::TLSv1_3 && *dhe));
         fixture::assert_wire(&relay, &[alice.public_key(), bob.public_key()], 10);
+        let live_key = PublicKey::parse(live.npub()).unwrap();
+        for (_, frame) in relay
+            .wire
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(_, row)| row[0] == "AUTH")
+        {
+            let event: Event = serde_json::from_value(frame[1].clone()).unwrap();
+            assert_ne!(
+                event.pubkey, live_key,
+                "live endpoint authenticated a private lookup"
+            );
+        }
         live.shutdown().await.unwrap();
     });
 }

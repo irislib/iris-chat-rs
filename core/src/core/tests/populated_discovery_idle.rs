@@ -525,6 +525,8 @@ mod populated_discovery_idle {
             // sample. The isolated endpoint only ingests public adverts; it has
             // no peers, STUN, seeds, local discovery, public listeners or TUN.
             let mesh_endpoint = discovery_test_support::endpoint().await;
+            assert!(known_identities.insert(PublicKey::parse(mesh_endpoint.npub()).unwrap()),
+                "live mesh endpoint identity must be new and forbidden for anonymous authentication");
             let mesh_adverts = events.lock().unwrap().iter()
                 .filter(|event| event.kind.as_u16() == 37195).cloned().collect::<Vec<_>>();
             assert_eq!(mesh_adverts.len(), MESH_DEVICES);

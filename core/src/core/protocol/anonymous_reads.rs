@@ -137,7 +137,12 @@ pub(in crate::core) async fn poll_relays(
         return Err("invalid scoped discovery relays or filters".into());
     }
     let jobs = (0..relays.len()).map(|index| async move {
-        background_read(&relays[index], filters, tls[index].as_ref()).await
+        let Some((relay, tls)) = relays.get(index).zip(tls.get(index)) else {
+            return Err(ReadFailure::Unavailable(
+                "invalid scoped discovery relay".into(),
+            ));
+        };
+        background_read(relay, filters, tls.as_ref()).await
     });
     collect_reads(
         stream::iter(jobs).buffer_unordered(COLD_READERS),
