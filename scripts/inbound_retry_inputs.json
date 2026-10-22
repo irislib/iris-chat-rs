@@ -2,7 +2,7 @@
   "enabled": true,
   "optimized_enabled": true,
   "batched": {
-    "enabled": false,
+    "enabled": true,
     "source": "142a90a7f9c8493cdb3ada2458d6d142372994ee",
     "base": "b8c5de4fb64ea69defbfaf26253ff69f51ae5393",
     "changed_paths": [
