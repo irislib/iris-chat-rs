@@ -582,11 +582,13 @@ private struct GroupInviteLinksView: View {
                         Text("10").tag(UInt32(10))
                         Text("100").tag(UInt32(100))
                     }
+                    .irisHoverPointer()
                     Picker("Expires", selection: $expiryDays) {
                         Text("In 7 days").tag(7)
                         Text("In 30 days").tag(30)
                         Text("Never").tag(0)
                     }
+                    .irisHoverPointer()
                     Button(manager.state.busy.creatingInvite ? "Creating…" : "Create link") {
                         manager.dispatch(.createGroupInvite(
                             groupId: details.groupId,
@@ -618,11 +620,12 @@ private struct GroupInviteLinksView: View {
                             }.buttonStyle(IrisSecondaryButtonStyle(compact: true))
                             Button("Revoke", role: .destructive) {
                                 manager.dispatch(.revokeGroupInvite(groupId: details.groupId, inviteId: invite.id))
-                            }.accessibilityIdentifier("groupInviteRevokeButton")
+                            }.irisHoverPointer().accessibilityIdentifier("groupInviteRevokeButton")
                         }.padding(.top, 8)
                     }
                 }.padding(.top, 12)
             }
+            .irisDisclosurePointer()
         }
     }
 }

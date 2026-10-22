@@ -203,6 +203,7 @@ struct InviteOpenOnJoinToggle: View {
             get: { manager.state.publicInvite?.openChatOnJoin ?? true },
             set: { manager.dispatch(.setInviteOpenOnJoin(enabled: $0)) }
         ))
+        .irisHoverPointer()
         .font(.subheadline)
         .accessibilityIdentifier("inviteOpenOnJoinToggle")
     }

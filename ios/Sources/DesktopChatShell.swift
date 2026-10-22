@@ -774,6 +774,7 @@ struct DesktopUpdateStripe: View {
             Spacer(minLength: 12)
 
             Toggle("Install automatically", isOn: $updates.autoInstall)
+            .irisHoverPointer()
                 .toggleStyle(.checkbox)
                 .irisControlTint()
                 .font(.system(.caption, design: .rounded, weight: .medium))

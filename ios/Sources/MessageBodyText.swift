@@ -27,16 +27,38 @@ struct TruncatableMessageBody: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Text(attributed)
-                .font(bodyFont)
-                .multilineTextAlignment(.leading)
-                .lineLimit(needsTruncation && !isExpanded ? collapsedLineLimit : nil)
-                .fixedSize(horizontal: false, vertical: true)
-                .irisDesktopTextSelection()
+            messageText
             if needsTruncation {
                 toggleButton(label: isExpanded ? "Show less" : "Show more")
             }
         }
+    }
+
+    @ViewBuilder
+    private var messageText: some View {
+#if os(macOS)
+        if attributed.runs.contains(where: { $0.link != nil }) {
+            IrisDesktopLinkedText(
+                attributed: attributed,
+                foreground: isOutgoing ? palette.onBubbleMine : palette.onBubbleTheirs,
+                lineLimit: needsTruncation && !isExpanded ? collapsedLineLimit : nil
+            )
+            .fixedSize(horizontal: false, vertical: true)
+        } else {
+            swiftUIText
+        }
+#else
+        swiftUIText
+#endif
+    }
+
+    private var swiftUIText: some View {
+        Text(attributed)
+            .font(bodyFont)
+            .multilineTextAlignment(.leading)
+            .lineLimit(needsTruncation && !isExpanded ? collapsedLineLimit : nil)
+            .fixedSize(horizontal: false, vertical: true)
+            .irisDesktopTextSelection()
     }
 
     private func toggleButton(label: String) -> some View {

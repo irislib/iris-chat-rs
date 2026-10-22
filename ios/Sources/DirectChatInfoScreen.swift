@@ -556,6 +556,7 @@ struct DirectChatAdvancedCard: View {
                         .foregroundStyle(palette.textPrimary)
                 }
             }
+            .irisDisclosurePointer()
         }
     }
 }

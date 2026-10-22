@@ -73,6 +73,7 @@ struct NearbySettingsRows: View {
                 .foregroundStyle(palette.textPrimary)
             Spacer()
             Toggle("", isOn: isOn)
+            .irisHoverPointer()
                 .labelsHidden()
                 .toggleStyle(.switch)
                 .irisControlTint()
@@ -108,10 +109,12 @@ struct DesktopUpdateSettingsSection: View {
             }
 
             Toggle("Check automatically", isOn: $updates.autoCheck)
+            .irisHoverPointer()
                 .irisControlTint()
                 .accessibilityIdentifier("desktopAutoCheckUpdatesToggle")
 
             Toggle("Install automatically", isOn: $updates.autoInstall)
+            .irisHoverPointer()
                 .irisControlTint()
                 .accessibilityIdentifier("desktopAutoInstallUpdatesToggle")
 
@@ -174,6 +177,7 @@ struct MailbagSettingsCard: View {
                     .font(.system(.body, design: .rounded, weight: .semibold))
                     .foregroundStyle(palette.textPrimary)
             }
+            .irisHoverPointer()
             .irisControlTint()
             .accessibilityIdentifier("mailbagSettingsToggle")
 
@@ -198,10 +202,12 @@ struct NotificationsSettingsSection: View {
 
     var body: some View {
         Toggle("Enabled", isOn: enabled)
+        .irisHoverPointer()
             .irisControlTint()
             .accessibilityIdentifier("myProfileDesktopNotificationsToggle")
 
         Toggle("Invite accepted", isOn: inviteAccepted)
+        .irisHoverPointer()
             .irisControlTint()
             .accessibilityIdentifier("myProfileInviteAcceptedNotificationsToggle")
 
@@ -223,6 +229,7 @@ struct NotificationsSettingsSection: View {
             }
         }
         .accessibilityIdentifier("myProfileNotificationsServerProjectLink")
+        .irisHoverPointer()
     }
 
     private var enabled: Binding<Bool> {
@@ -254,6 +261,7 @@ struct ImageProxySettingsSection: View {
 
     var body: some View {
         Toggle("Image proxy", isOn: imageProxyEnabled)
+        .irisHoverPointer()
             .irisControlTint()
             .accessibilityIdentifier("myProfileImageProxyToggle")
 
@@ -265,6 +273,7 @@ struct ImageProxySettingsSection: View {
                     .foregroundStyle(.secondary)
             }
         }
+        .irisHoverPointer()
         .irisControlTint()
         .disabled(!manager.state.preferences.imageProxyEnabled)
         .accessibilityIdentifier("myProfileImageProxyFallbackToggle")

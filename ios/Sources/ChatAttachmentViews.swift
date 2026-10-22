@@ -479,6 +479,7 @@ struct IrisImageViewer: View {
                     .opacity(backdropOpacity)
                     .ignoresSafeArea()
                     .onTapGesture(perform: onClose)
+                    .irisHoverPointer()
 
                 carouselContent
                     .padding(.top, geometry.safeAreaInsets.top + 64)

@@ -36,6 +36,7 @@ struct ChatMuteOptions: View {
                 get: { !manager.state.preferences.silentMentionChatIds.contains(chatId) },
                 set: { manager.dispatch(.setChatMentionNotifications(chatId: chatId, enabled: $0)) }
             ))
+            .irisHoverPointer()
         }
     }
 }

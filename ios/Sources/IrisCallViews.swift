@@ -178,6 +178,7 @@ struct IrisCallScreen: View {
         if call.phase == "ended" {
             Button("Done") { controller.end() }
                 .buttonStyle(.borderedProminent).tint(.white.opacity(0.2))
+                .irisHoverPointer()
                 .accessibilityIdentifier("dismissCallButton")
         } else if call.phase == "incoming" {
             VStack(spacing: 24) {
@@ -269,6 +270,7 @@ struct IrisCallQualitySheet: View {
                 Picker("Video quality", selection: $quality) {
                     ForEach(IrisCallQuality.allCases) { Text($0.label).tag($0) }
                 }
+                .irisHoverPointer()
                 .accessibilityIdentifier("callQualityPicker")
                 if quality == .custom {
                     VStack(alignment: .leading, spacing: 12) {
@@ -281,13 +283,14 @@ struct IrisCallQualitySheet: View {
                         Slider(value: $customKilobits, in: 100...10_000, step: 100) { editing in
                             if !editing { controller.setQuality(.custom, customKilobits: Int(customKilobits)) }
                         }
+                        .irisHoverPointer()
                         .accessibilityLabel("Maximum bitrate")
                     }
                 }
             }
             .formStyle(.grouped)
             .navigationTitle("Video quality")
-            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() }.irisHoverPointer() } }
             .onChange(of: quality) { controller.setQuality($0, customKilobits: Int(customKilobits)) }
         }
 #if os(macOS)

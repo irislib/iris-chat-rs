@@ -234,17 +234,19 @@ struct IrisCallAudioDevicesSheet: View {
                     Picker("Microphone", selection: Binding(get: { devices.input }, set: { devices.select(input: $0) })) {
                         Text("System default").tag("")
                         ForEach(devices.devices.inputs) { Text($0.name).tag($0.id) }
-                    }.labelsHidden().accessibilityIdentifier("callMicrophonePicker")
+                    }
+                    .irisHoverPointer().labelsHidden().accessibilityIdentifier("callMicrophonePicker")
                 }
                 GridRow {
                     Text("Speaker")
                     Picker("Speaker", selection: Binding(get: { devices.output }, set: { devices.select(output: $0) })) {
                         Text("System default").tag("")
                         ForEach(devices.devices.outputs) { Text($0.name).tag($0.id) }
-                    }.labelsHidden().accessibilityIdentifier("callOutputPicker")
+                    }
+                    .irisHoverPointer().labelsHidden().accessibilityIdentifier("callOutputPicker")
                 }
             }
-            HStack { Spacer(); Button("Done") { dismiss() }.keyboardShortcut(.defaultAction) }
+            HStack { Spacer(); Button("Done") { dismiss() }.irisHoverPointer().keyboardShortcut(.defaultAction) }
         }
         .padding(24).frame(minWidth: 380)
         .onAppear { devices.start() }

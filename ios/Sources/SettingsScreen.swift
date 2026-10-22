@@ -353,6 +353,7 @@ struct SettingsScreen: View {
                         }
                     )
                 )
+                .irisHoverPointer()
                 .irisControlTint()
                 .accessibilityIdentifier("myProfileStartupAtLoginToggle")
             }
@@ -380,6 +381,7 @@ struct SettingsScreen: View {
                         }
                     )
                 )
+                .irisHoverPointer()
                 .irisControlTint()
                 .accessibilityIdentifier("myProfileTypingIndicatorsToggle")
 
@@ -390,6 +392,7 @@ struct SettingsScreen: View {
                         set: { manager.dispatch(.setAllowMessageDeletionByOthers(enabled: $0)) }
                     )
                 )
+                .irisHoverPointer()
                 .irisControlTint()
                 .accessibilityIdentifier("myProfileAllowMessageDeletionToggle")
 
@@ -402,6 +405,7 @@ struct SettingsScreen: View {
                         }
                     )
                 )
+                .irisHoverPointer()
                 .irisControlTint()
                 .accessibilityIdentifier("myProfileReadReceiptsToggle")
 
@@ -414,6 +418,7 @@ struct SettingsScreen: View {
                         }
                     )
                 )
+                .irisHoverPointer()
                 .irisControlTint()
                 .accessibilityIdentifier("myProfileAcceptUnknownMessagesToggle")
 
@@ -424,6 +429,7 @@ struct SettingsScreen: View {
                         set: { manager.dispatch(.setHideBlockedGroupMessages(enabled: $0)) }
                     )
                 )
+                .irisHoverPointer()
                 .irisControlTint()
                 .accessibilityIdentifier("myProfileHideBlockedGroupMessagesToggle")
 
@@ -431,6 +437,7 @@ struct SettingsScreen: View {
                     get: { manager.state.preferences.voiceCallsEnabled },
                     set: { manager.dispatch(.setVoiceCallsEnabled(enabled: $0)) }
                 ))
+                .irisHoverPointer()
                 .irisControlTint()
                 .accessibilityIdentifier("myProfileVoiceCallsToggle")
 
@@ -438,6 +445,7 @@ struct SettingsScreen: View {
                     get: { manager.state.preferences.videoCallsEnabled },
                     set: { manager.dispatch(.setVideoCallsEnabled(enabled: $0)) }
                 ))
+                .irisHoverPointer()
                 .irisControlTint()
                 .accessibilityIdentifier("myProfileVideoCallsToggle")
 
@@ -555,6 +563,7 @@ struct SettingsScreen: View {
                     }
                 }
                 .accessibilityIdentifier("myProfileSourceCodeButton")
+                .irisHoverPointer()
             }
 
         case .legal:
@@ -618,6 +627,7 @@ struct SettingsScreen: View {
                         }
                     )
                 )
+                .irisHoverPointer()
                 .irisControlTint()
                 .accessibilityIdentifier("myProfileDebugLoggingToggle")
 

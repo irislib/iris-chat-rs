@@ -145,6 +145,7 @@ struct ProfileQrModal: View {
                         .tag(tab)
                 }
             }
+            .irisHoverPointer()
             .pickerStyle(.segmented)
             .frame(width: 218)
             .accessibilityIdentifier("profileQrTabs")

@@ -54,7 +54,7 @@ struct IrisDesktopImageZoom: ViewModifier {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(IrisKeyboardButtonStyle(visual: IrisImageZoomButtonVisualStyle()))
-                .background(IrisImageZoomCursor(zoomed: zoomed))
+                .modifier(IrisImageZoomCursor(zoomed: zoomed))
                 .accessibilityLabel(zoomed ? "Zoom out" : "Zoom in")
                 .accessibilityValue(zoomed ? "Zoomed in" : "Fit to window")
                 .accessibilityIdentifier("imageViewerZoom")
@@ -94,27 +94,14 @@ private struct IrisImageZoomButtonVisualStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View { configuration.label }
 }
 
-private struct IrisImageZoomCursor: NSViewRepresentable {
+private struct IrisImageZoomCursor: ViewModifier {
     let zoomed: Bool
 
-    func makeNSView(context: Context) -> CursorView { CursorView() }
-
-    func updateNSView(_ view: CursorView, context: Context) {
-        guard view.zoomed != zoomed else { return }
-        view.zoomed = zoomed
-        view.window?.invalidateCursorRects(for: view)
-    }
-
-    final class CursorView: NSView {
-        var zoomed = false
-        override func hitTest(_ point: NSPoint) -> NSView? { nil }
-        override func resetCursorRects() {
-            super.resetCursorRects()
-            if #available(macOS 15, *) {
-                addCursorRect(visibleRect, cursor: zoomed ? .zoomOut : .zoomIn)
-            } else {
-                addCursorRect(visibleRect, cursor: .pointingHand)
-            }
+    func body(content: Content) -> some View {
+        if #available(macOS 15, *) {
+            content.pointerStyle(zoomed ? .zoomOut : .zoomIn)
+        } else {
+            content.irisHoverPointer()
         }
     }
 }

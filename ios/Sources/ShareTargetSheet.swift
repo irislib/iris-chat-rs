@@ -140,6 +140,7 @@ struct ShareTargetSheet: View {
                 dismiss()
             }
             .buttonStyle(.borderedProminent)
+            .irisHoverPointer()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(palette.background)

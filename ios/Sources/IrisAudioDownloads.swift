@@ -95,6 +95,7 @@ struct AudioDownloadSettingsSection: View {
                     Text(value.title).tag(value.rawValue)
                 }
             }
+            .irisHoverPointer()
             .labelsHidden()
             .irisControlTint()
             .accessibilityIdentifier("audioAutoDownloadPreference")

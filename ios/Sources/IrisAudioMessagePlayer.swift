@@ -449,6 +449,7 @@ struct IrisAudioPlaybackControl: View {
                 IrisWaveformSlider(value: Binding(get: { playback.elapsed }, set: { playback.seek(to: $0) }),
                                    duration: playback.duration, peaks: playback.waveform, color: color,
                                    enabled: playback.duration > 0 && !playback.isPreparing && !playback.isLoading && playback.errorMessage == nil)
+                    .irisHoverPointer(enabled: playback.duration > 0 && !playback.isPreparing && !playback.isLoading && playback.errorMessage == nil)
                     .frame(height: 32)
                     .overlay {
                         if playback.isPreparing { ProgressView().tint(color) }

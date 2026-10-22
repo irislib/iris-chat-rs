@@ -25,6 +25,7 @@ struct IrisProfilePictureViewer: View {
                 Color.black
                     .ignoresSafeArea()
                     .onTapGesture(perform: onClose)
+                    .irisHoverPointer()
 
                 IrisAvatar(
                     label: item.label,

@@ -524,6 +524,7 @@ struct NearbyIrisScreen: View {
                 get: { manager.state.preferences.nearbyEnabled },
                 set: { manager.setNearbyEnabled($0) }
             ))
+            .irisHoverPointer()
             .labelsHidden()
             .toggleStyle(.switch)
             .irisControlTint()
@@ -561,6 +562,7 @@ struct NearbyIrisScreen: View {
                         manager.dispatch(.setNearbyMailbagEnabled(enabled: enabled))
                     }
                 ))
+                .irisHoverPointer()
                 .labelsHidden()
                 .toggleStyle(.switch)
                 .irisControlTint()
@@ -607,6 +609,7 @@ struct NearbyIrisScreen: View {
                 }
                 Spacer()
                 Toggle("", isOn: isOn)
+                .irisHoverPointer()
                     .labelsHidden()
                     .toggleStyle(.switch)
                     .irisControlTint()

@@ -86,13 +86,16 @@ struct ChatDirectFileTransferView: View {
             if transfer.canAcceptOnThisDevice {
                 HStack(spacing: 18) {
                     Button("Accept") { choosingDestination = true }
+                        .irisHoverPointer()
                         .accessibilityIdentifier("chatDirectTransferAccept-\(transfer.id)")
                     Button("Decline") { dispatch(.declineDirectFiles(chatId: chatId, transferId: transfer.id)) }
+                        .irisHoverPointer()
                         .accessibilityIdentifier("chatDirectTransferDecline-\(transfer.id)")
                 }
                 .buttonStyle(.bordered)
             } else if transfer.canCancelOnThisDevice {
                 Button("Cancel") { dispatch(.cancelDirectFiles(chatId: chatId, transferId: transfer.id)) }
+                    .irisHoverPointer()
                     .buttonStyle(.bordered)
                     .accessibilityIdentifier("chatDirectTransferCancel-\(transfer.id)")
             }

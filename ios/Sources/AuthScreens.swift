@@ -116,8 +116,10 @@ private struct OnboardingTermsAgreement: View {
 
             HStack(spacing: 14) {
                 Link("Terms", destination: irisTermsURL)
+                    .irisHoverPointer()
                     .accessibilityIdentifier("onboardingTermsLink")
                 Link("Privacy", destination: irisPrivacyURL)
+                    .irisHoverPointer()
                     .accessibilityIdentifier("onboardingPrivacyLink")
             }
             .font(.system(.caption, design: .rounded, weight: .semibold))
