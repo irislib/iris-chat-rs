@@ -45,6 +45,8 @@ mod tests {
     include!("protocol_engine/incident_first_contact_tests.rs");
     include!("protocol_engine/group_retry_budget_tests.rs");
     include!("protocol_engine/group_decrypt_budget_tests.rs");
+    #[cfg(target_os = "linux")]
+    include!("protocol_engine/batched_retry_cpu_tests.rs");
     include!("protocol_engine/group_source_event_tests.rs");
     include!("protocol_engine/checkpoint_pending_tests.rs");
     include!("protocol_engine/checkpoint_fanout_tests.rs");

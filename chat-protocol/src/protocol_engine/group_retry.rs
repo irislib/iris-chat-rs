@@ -150,6 +150,8 @@ impl ProtocolEngine {
                 (retry.inputs.get(author) != Some(input)).then_some(*author)
             })
             .collect::<HashSet<_>>();
+        #[cfg(all(test, target_os = "linux"))]
+        tests::audit_group_retry_input_changes(&changed);
         retry.inputs = inputs;
         for parsed in &self.pending_group_sender_key_messages {
             if !changed.contains(&parsed.sender_event_pubkey) {
@@ -314,6 +316,12 @@ impl ProtocolEngine {
                 let mut retry = self.group_sender_key_retry.borrow_mut();
                 if retry.active.is_none() && retry.prepared.is_none() {
                     retry.record_attempt();
+                    #[cfg(all(test, target_os = "linux"))]
+                    if message.encrypted_header.is_none() || retry.key_trials_remaining > 0 {
+                        // A candidate selected after the last trial was spent
+                        // only yields; its first real search starts next turn.
+                        tests::audit_group_retry_attempt(author, &fingerprint);
+                    }
                 }
             }
             // Leave the durable candidate in place on any error, including a

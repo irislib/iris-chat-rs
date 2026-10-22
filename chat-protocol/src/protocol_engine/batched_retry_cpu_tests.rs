@@ -1,0 +1,420 @@
+// Included only by Linux tests. The observer is outside engine snapshots so
+// rollback clones do not copy the audit, and shipping builds have no hooks.
+#[derive(Default)]
+struct RetrySearchAudit {
+    generations: std::collections::HashMap<NdrDevicePubkey, u64>,
+    seen: HashSet<(NdrDevicePubkey, u64, String)>,
+    starts: usize,
+    repeated: usize,
+    changes: usize,
+}
+
+thread_local! {
+    static RETRY_SEARCH_AUDIT: std::cell::RefCell<Option<RetrySearchAudit>> = const {
+        std::cell::RefCell::new(None)
+    };
+}
+
+pub(super) fn audit_group_retry_input_changes(changed: &HashSet<NdrDevicePubkey>) {
+    RETRY_SEARCH_AUDIT.with(|slot| {
+        if let Some(audit) = slot.borrow_mut().as_mut() {
+            for author in changed {
+                *audit.generations.entry(*author).or_default() += 1;
+                audit.changes += 1;
+            }
+        }
+    });
+}
+
+pub(super) fn audit_group_retry_attempt(author: NdrDevicePubkey, fingerprint: &str) {
+    RETRY_SEARCH_AUDIT.with(|slot| {
+        if let Some(audit) = slot.borrow_mut().as_mut() {
+            let generation = *audit.generations.entry(author).or_default();
+            audit.starts += 1;
+            if !audit
+                .seen
+                .insert((author, generation, fingerprint.to_owned()))
+            {
+                audit.repeated += 1;
+            }
+        }
+    });
+}
+
+struct RetrySearchAuditGuard;
+
+impl RetrySearchAuditGuard {
+    fn start() -> Self {
+        RETRY_SEARCH_AUDIT.with(|slot| {
+            assert!(slot.replace(Some(RetrySearchAudit::default())).is_none());
+        });
+        Self
+    }
+
+    fn counts(&self) -> (usize, usize, usize) {
+        RETRY_SEARCH_AUDIT.with(|slot| {
+            let audit = slot.borrow();
+            let audit = audit.as_ref().unwrap();
+            (audit.starts, audit.repeated, audit.changes)
+        })
+    }
+}
+
+impl Drop for RetrySearchAuditGuard {
+    fn drop(&mut self) {
+        RETRY_SEARCH_AUDIT.with(|slot| *slot.borrow_mut() = None);
+    }
+}
+
+#[test]
+fn retry_search_audit_keeps_author_generations_across_observations() {
+    let author = ndr_device(Keys::generate().public_key());
+    let other = ndr_device(Keys::generate().public_key());
+    let audit = RetrySearchAuditGuard::start();
+    audit_group_retry_input_changes(&HashSet::from([author]));
+    audit_group_retry_attempt(author, "synthetic candidate");
+    assert_eq!(audit.counts(), (1, 0, 1));
+    // Observing a slice boundary or changing another author must not forget
+    // that the original candidate already exhausted these exact inputs.
+    audit_group_retry_input_changes(&HashSet::from([other]));
+    audit_group_retry_attempt(author, "synthetic candidate");
+    assert_eq!(audit.counts(), (2, 1, 2));
+    audit_group_retry_input_changes(&HashSet::from([author]));
+    audit_group_retry_attempt(author, "synthetic candidate");
+    assert_eq!(audit.counts(), (3, 1, 3));
+    drop(audit);
+    let restarted = RetrySearchAuditGuard::start();
+    assert_eq!(restarted.counts(), (0, 0, 0));
+}
+
+fn batched_retry_progress(
+    engine: &ProtocolEngine,
+    audit: &RetrySearchAuditGuard,
+) -> serde_json::Value {
+    let retry = engine.group_sender_key_retry.borrow();
+    let (starts, repeated, changes) = audit.counts();
+    serde_json::json!({
+        "search_starts": starts, "repeated_search_starts": repeated,
+        "input_generation_changes": changes, "ready_candidates": retry.ready.len(),
+        "active_cursor": retry.active.is_some(), "prepared_result": retry.prepared.is_some(),
+        "engine_attempts": retry.total_attempts,
+    })
+}
+
+#[test]
+#[ignore = "300-second hosted batched CPU qualification with a synthetic 350 MB checkpoint; run optimized and alone"]
+fn restored_backlog_batched_retry_stays_within_cpu_budget() {
+    use std::sync::atomic::Ordering::Relaxed;
+    use std::time::{Duration, Instant};
+
+    assert!(
+        !cfg!(debug_assertions),
+        "CPU qualification requires the optimized profile"
+    );
+    const INBOUND: usize = 4_214;
+    const FANOUTS: usize = 24_990;
+    const CIPHERTEXTS: usize = 23_437;
+    const CHECKPOINT_BYTES: usize = 350_224_384;
+    let (f, _directory, storage, now_secs, clock_started) =
+        prepared_retry_backlog_fixture(INBOUND, FANOUTS, CIPHERTEXTS, CHECKPOINT_BYTES);
+    assert_eq!(f.sender.pending_decrypted_deliveries.len(), 1);
+    let setup_delivery: UnsignedEvent =
+        serde_json::from_str(&f.sender.pending_decrypted_deliveries[0].content).unwrap();
+    assert_eq!(setup_delivery.pubkey, f.peer_owner.public_key());
+    assert_eq!(setup_delivery.content, "establish receiver");
+    // Expected payloads are copied before timing, never once per retry turn.
+    let inbound_before = f.sender.pending_inbound.clone();
+    let fanouts_before = f.sender.pending_group_fanouts.clone();
+    let ciphertexts_before = f.sender.pending_group_sender_key_messages.clone();
+    let remote_before = f.sender.pending_remote_sends.clone();
+    let sessions_before = serde_json::to_value(f.sender.session_manager.snapshot()).unwrap();
+    let ticks_per_second: f64 = String::from_utf8(
+        std::process::Command::new("getconf")
+            .arg("CLK_TCK")
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap()
+    .trim()
+    .parse()
+    .unwrap();
+    drop(f.sender);
+
+    // Keep one audit epoch across restore and all five slices. Initial input
+    // admission is observed too; only the intentional final reload resets it.
+    let audit = RetrySearchAuditGuard::start();
+    let mut cpu_before = retry_process_cpu_ticks();
+    let mut puts_before = storage.puts.load(Relaxed);
+    let mut io_before = crate::storage::checkpoint_io_bytes();
+    let recovery_started = Instant::now();
+    let mut engine = ProtocolEngine::load_or_create_for_local_device(
+        storage.clone(),
+        f.owner.public_key(),
+        &f.device,
+    )
+    .unwrap();
+    let restore_seconds = recovery_started.elapsed().as_secs_f64();
+    assert_eq!(engine.checkpoint_layout.borrow().bytes, CHECKPOINT_BYTES);
+    assert_eq!(engine.pending_inbound.len(), INBOUND);
+    assert_eq!(engine.pending_group_fanouts.len(), FANOUTS);
+    assert_eq!(engine.pending_group_sender_key_messages.len(), CIPHERTEXTS);
+    let initially_ready = engine.has_ready_group_sender_key_retry_work();
+    let readiness_seconds = recovery_started.elapsed().as_secs_f64();
+    let mut first_valid_delivery_seconds = None;
+    let mut group_deliveries = 0usize;
+    let mut acknowledged_deliveries = 0usize;
+    let mut remote_deadlines = engine
+        .pending_remote_sends
+        .iter()
+        .map(|pending| pending.next_retry_at_secs)
+        .collect::<Vec<_>>();
+    let mut slices = Vec::new();
+    let mut phase_started = recovery_started;
+    for index in 0..5 {
+        let progress_before = batched_retry_progress(&engine, &audit);
+        let now = now_secs + clock_started.elapsed().as_secs();
+        let due_at_start = serde_json::json!({
+            "inbound": engine.pending_inbound.iter().filter(|p| p.next_retry_at_secs <= now).count(),
+            "fanouts": engine.pending_group_fanouts.iter().filter(|p| p.next_retry_at_secs <= now).count(),
+            "remote_sends": engine.pending_remote_sends.iter().filter(|p| p.next_retry_at_secs <= now).count(),
+        });
+        let mut turns = 0usize;
+        let mut continuations = 0usize;
+        let mut work = if index == 0 {
+            phase_started.elapsed()
+        } else {
+            Duration::ZERO
+        };
+        let mut max_turn = Duration::ZERO;
+        let ack_before = acknowledged_deliveries;
+        while phase_started.elapsed() < Duration::from_secs(60) {
+            assert!(
+                clock_started.elapsed() < Duration::from_secs(420),
+                "batched retry test exceeded its timebox"
+            );
+            let now = NdrUnixSeconds(now_secs + clock_started.elapsed().as_secs());
+            let turn = Instant::now();
+            if engine.has_due_pending_retry_work(now) {
+                // Mirrors one lifecycle.handle_messages scope. ACK and the
+                // outermost SQLite flush both belong to this measured turn.
+                engine.enter_batch();
+                let batch = engine.retry_pending_protocol(now).unwrap();
+                assert!(
+                    batch.effects.is_empty() && batch.group_result.effects.is_empty(),
+                    "missing recipients must not produce an identified fallback"
+                );
+                let delivered = batch.group_result.events.len();
+                group_deliveries += delivered;
+                if !batch.direct_messages.is_empty() {
+                    acknowledged_deliveries += batch.direct_messages.len();
+                    engine.ack_pending_decrypted_deliveries().unwrap();
+                }
+                engine.exit_batch().unwrap();
+                assert_eq!(engine.batch_depth.get(), 0);
+                if delivered > 0 && first_valid_delivery_seconds.is_none() {
+                    first_valid_delivery_seconds = Some(recovery_started.elapsed().as_secs_f64());
+                }
+                turns += 1;
+            }
+            let ready = engine.has_ready_group_sender_key_retry_work();
+            let elapsed = turn.elapsed();
+            work += elapsed;
+            max_turn = max_turn.max(elapsed);
+            let delay = if ready {
+                continuations += 1;
+                Duration::from_millis(25)
+            } else {
+                Duration::from_secs(2)
+            };
+            std::thread::sleep(
+                delay.min(Duration::from_secs(60).saturating_sub(phase_started.elapsed())),
+            );
+        }
+        let elapsed_seconds = phase_started.elapsed().as_secs_f64();
+        let cpu_after = retry_process_cpu_ticks();
+        let cpu_seconds = (cpu_after - cpu_before) as f64 / ticks_per_second;
+        let io_after = crate::storage::checkpoint_io_bytes();
+        let puts_after = storage.puts.load(Relaxed);
+        let mut remote_deadline_updates = 0;
+        for (old, current) in remote_deadlines
+            .iter_mut()
+            .zip(&engine.pending_remote_sends)
+        {
+            remote_deadline_updates += usize::from(*old != current.next_retry_at_secs);
+            *old = current.next_retry_at_secs;
+        }
+        let slice = serde_json::json!({
+            "stage": if index < 3 { "settle" } else { "measure" },
+            "stage_index": if index < 3 { index } else { index - 3 },
+            "elapsed_seconds": elapsed_seconds, "recovery_elapsed_seconds": recovery_started.elapsed().as_secs_f64(),
+            "cpu_seconds": cpu_seconds, "cpu_percent_one_core": 100.0 * cpu_seconds / elapsed_seconds,
+            "work_seconds": work.as_secs_f64(), "max_turn_seconds": max_turn.as_secs_f64(),
+            "turns": turns, "continuations": continuations,
+            "acknowledged_deliveries": acknowledged_deliveries - ack_before,
+            "puts": puts_after - puts_before, "read_bytes": io_after.0 - io_before.0,
+            "written_bytes": io_after.1 - io_before.1, "due_at_start": due_at_start,
+            "remote_deadline_updates": remote_deadline_updates,
+            "progress_before": progress_before, "progress_after": batched_retry_progress(&engine, &audit),
+        });
+        eprintln!("batched_retry_slice {slice}");
+        slices.push(slice);
+        cpu_before = retry_process_cpu_ticks();
+        puts_before = storage.puts.load(Relaxed);
+        io_before = crate::storage::checkpoint_io_bytes();
+        phase_started = Instant::now();
+    }
+    let (search_starts, repeated_search_starts, input_generation_changes) = audit.counts();
+    drop(audit);
+
+    assert_eq!(
+        group_deliveries, 1,
+        "valid recovery must deliver exactly once"
+    );
+    assert_eq!(
+        acknowledged_deliveries, 1,
+        "the measured turns must acknowledge the exact setup journal delivery"
+    );
+    assert_eq!(engine.pending_inbound.len(), INBOUND);
+    assert_eq!(engine.pending_remote_sends.len(), 44);
+    assert_eq!(
+        engine.pending_group_sender_key_messages.len(),
+        CIPHERTEXTS - 1
+    );
+    assert!(engine
+        .pending_group_sender_key_messages
+        .iter()
+        .eq(ciphertexts_before.iter().skip(1)));
+    for (index, (actual, original)) in engine
+        .pending_inbound
+        .iter()
+        .zip(&inbound_before)
+        .enumerate()
+    {
+        let mut expected = original.clone();
+        expected.next_retry_at_secs = actual.next_retry_at_secs;
+        assert!(
+            actual == &expected,
+            "inbound packet {index} changed beyond its retry deadline"
+        );
+    }
+    assert!(engine.pending_group_fanouts.len() >= FANOUTS);
+    for (index, (actual, original)) in engine
+        .pending_group_fanouts
+        .iter()
+        .zip(&fanouts_before)
+        .enumerate()
+    {
+        let mut expected = original.clone();
+        expected.next_retry_at_secs = actual.next_retry_at_secs;
+        assert!(
+            actual == &expected,
+            "fanout {index} changed beyond its retry deadline"
+        );
+    }
+    for (index, (actual, original)) in engine
+        .pending_remote_sends
+        .iter()
+        .zip(&remote_before)
+        .enumerate()
+    {
+        let mut expected = original.clone();
+        expected.next_retry_at_secs = actual.next_retry_at_secs;
+        assert!(
+            serde_json::to_value(actual).unwrap() == serde_json::to_value(expected).unwrap(),
+            "remote send {index} changed beyond its retry deadline"
+        );
+    }
+    assert!(
+        serde_json::to_value(engine.session_manager.snapshot()).unwrap() == sessions_before,
+        "unavailable traffic must not advance direct ratchets"
+    );
+    assert!(engine.pending_decrypted_deliveries.is_empty());
+    engine.persist().unwrap();
+    let restart_audit = RetrySearchAuditGuard::start();
+    let restored =
+        ProtocolEngine::load_or_create_for_local_device(storage, f.owner.public_key(), &f.device)
+            .unwrap();
+    assert!(
+        restored.pending_inbound == engine.pending_inbound,
+        "restart changed inbound packets"
+    );
+    assert!(
+        restored.pending_group_fanouts == engine.pending_group_fanouts,
+        "restart changed fanouts"
+    );
+    assert!(
+        restored.pending_group_sender_key_messages == engine.pending_group_sender_key_messages,
+        "restart changed unresolved ciphertexts"
+    );
+    assert!(
+        serde_json::to_value(&restored.pending_remote_sends).unwrap()
+            == serde_json::to_value(&engine.pending_remote_sends).unwrap(),
+        "restart changed remote sends"
+    );
+    assert!(
+        restored.group_manager.snapshot() == engine.group_manager.snapshot(),
+        "restart changed group ratchets"
+    );
+    assert!(
+        serde_json::to_value(restored.session_manager.snapshot()).unwrap() == sessions_before,
+        "restart changed direct ratchets"
+    );
+    assert!(restored.pending_decrypted_deliveries.is_empty());
+    let restart_ready = restored.has_ready_group_sender_key_retry_work();
+    let restart_progress = batched_retry_progress(&restored, &restart_audit);
+    assert!(
+        restart_ready,
+        "reload must retain the unresolved candidates"
+    );
+    assert_eq!(
+        restart_audit.counts().0,
+        0,
+        "readiness alone must not run a key search"
+    );
+    let receipt = serde_json::json!({
+        "schema": "iris-batched-retry-cpu/v1", "fixture": "restored-mixed-backlog-v1", "synthetic": true,
+        "pending_inbound": INBOUND, "initially_due_inbound": 102, "fanouts": FANOUTS,
+        "initially_due_fanouts": 10462, "ciphertexts": CIPHERTEXTS, "remote_sends": 44,
+        "checkpoint_bytes": CHECKPOINT_BYTES, "outer_batch": true, "ack_and_flush_in_turn": true,
+        "continuation_delay_ms": 25, "liveness_delay_ms": 2000, "settle_seconds": 180,
+        "measurement_windows": 2, "window_seconds": 60, "debug_assertions": cfg!(debug_assertions),
+        "restore_seconds": restore_seconds, "initially_ready": initially_ready,
+        "readiness_seconds": readiness_seconds, "first_valid_delivery_seconds": first_valid_delivery_seconds,
+        "group_deliveries": group_deliveries, "acknowledged_deliveries": acknowledged_deliveries,
+        "search_starts": search_starts, "repeated_search_starts": repeated_search_starts,
+        "input_generation_changes": input_generation_changes, "wire_effect_count": 0,
+        "remaining_inbound": engine.pending_inbound.len(), "remaining_fanouts": engine.pending_group_fanouts.len(),
+        "remaining_ciphertexts": engine.pending_group_sender_key_messages.len(), "remaining_remote_sends": 44,
+        "preservation_checked": true, "restart_checked": true, "restart_ready": restart_ready,
+        "restart_progress": restart_progress, "slices": slices,
+    });
+    eprintln!("batched_retry_cpu {receipt}");
+    assert!(
+        restore_seconds <= 180.0 && initially_ready && readiness_seconds <= 180.0,
+        "restoration and scheduler readiness exceeded the settle deadline"
+    );
+    assert!(
+        first_valid_delivery_seconds.is_some_and(|seconds| seconds <= 180.0),
+        "valid delivery exceeded the settle deadline"
+    );
+    assert!(
+        search_starts > 0 && repeated_search_starts == 0,
+        "unchanged input generation re-admitted an exhausted candidate"
+    );
+    for slice in &slices[3..] {
+        assert!(
+            slice["turns"].as_u64().unwrap() > 0
+                && slice["remote_deadline_updates"].as_u64().unwrap() > 0,
+            "measurement must exercise recurring due work, not only a quiet gap"
+        );
+        assert!(
+            slice["cpu_percent_one_core"].as_f64().unwrap() <= 5.0,
+            "batched steady retry loop still exceeds 5% of one CPU: {slice}"
+        );
+    }
+    assert!(
+        clock_started.elapsed() < Duration::from_secs(420),
+        "batched retry test exceeded its timebox"
+    );
+}

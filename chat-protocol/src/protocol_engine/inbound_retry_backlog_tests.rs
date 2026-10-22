@@ -189,19 +189,21 @@ fn due_fanout_retry_allocations_do_not_scale_with_deferred_inbound() {
 }
 
 #[cfg(target_os = "linux")]
-#[test]
-#[ignore = "60-second hosted CPU qualification with a synthetic 350 MB checkpoint; run alone"]
-fn restored_backlog_whole_retry_at_continuation_cadence() {
-    use std::sync::atomic::Ordering::Relaxed;
-    use std::time::{Duration, Instant};
-
+fn prepared_retry_backlog_fixture(
+    inbound: usize,
+    fanouts: usize,
+    ciphertext_count: usize,
+    checkpoint_bytes: usize,
+) -> (
+    RemoteSendFixture,
+    tempfile::TempDir,
+    Arc<GroupRetryCountingStorage>,
+    u64,
+    std::time::Instant,
+) {
     let now_secs = unix_now().get();
-    let clock_started = Instant::now();
-    const INBOUND: usize = 4_214;
-    const FANOUTS: usize = 24_990;
-    const CIPHERTEXTS: usize = 23_437;
-    const CHECKPOINT_BYTES: usize = 350_224_384;
-    let mut f = checkpoint_backlog_fixture(FANOUTS, 0);
+    let clock_started = std::time::Instant::now();
+    let mut f = checkpoint_backlog_fixture(fanouts, 0);
     let (mut group, sender, sender_device) = queued_group_history(1);
     long_group_candidate(&mut group, &sender_device, 700);
     let mut group_state = group.group_manager.snapshot();
@@ -218,7 +220,7 @@ fn restored_backlog_whole_retry_at_continuation_cadence() {
     let valid = group.pending_group_sender_key_messages[0].clone();
     let mut ciphertexts = vec![valid.clone()];
     let mut unavailable = nostr_double_ratchet::SenderKeyState::new(999, [99; 32], 0);
-    for index in 1..CIPHERTEXTS {
+    for index in 1..ciphertext_count {
         let mut parsed = valid.clone();
         let (number, ciphertext) = unavailable
             .encrypt_to_bytes(format!("unresolved-{index}:{}", "x".repeat(768)).as_bytes())
@@ -227,7 +229,7 @@ fn restored_backlog_whole_retry_at_continuation_cadence() {
         parsed.ciphertext = ciphertext;
         ciphertexts.push(parsed);
     }
-    f.sender.pending_inbound = synthetic_pending_inbound(&mut f.sender, INBOUND, 102, now_secs);
+    f.sender.pending_inbound = synthetic_pending_inbound(&mut f.sender, inbound, 102, now_secs);
     f.sender.pending_group_sender_key_messages = ciphertexts.into();
     for (index, pending) in f.sender.pending_group_fanouts.iter_mut().enumerate() {
         pending.created_at_secs = now_secs - 4_933 - (index as u64 % 34_274);
@@ -277,8 +279,24 @@ fn restored_backlog_whole_retry_at_continuation_cadence() {
     });
     f.sender.storage = storage.clone();
     f.sender.persist().unwrap();
-    f.sender.checkpoint_layout.borrow_mut().bytes = CHECKPOINT_BYTES;
+    f.sender.checkpoint_layout.borrow_mut().bytes = checkpoint_bytes;
     f.sender.persist().unwrap();
+    (f, directory, storage, now_secs, clock_started)
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore = "60-second hosted CPU qualification with a synthetic 350 MB checkpoint; run alone"]
+fn restored_backlog_whole_retry_at_continuation_cadence() {
+    use std::sync::atomic::Ordering::Relaxed;
+    use std::time::{Duration, Instant};
+
+    const INBOUND: usize = 4_214;
+    const FANOUTS: usize = 24_990;
+    const CIPHERTEXTS: usize = 23_437;
+    const CHECKPOINT_BYTES: usize = 350_224_384;
+    let (f, _directory, storage, now_secs, clock_started) =
+        prepared_retry_backlog_fixture(INBOUND, FANOUTS, CIPHERTEXTS, CHECKPOINT_BYTES);
     // Exercise the real restore path before timing, with no test-only outer batch.
     drop(f.sender);
     let mut engine = ProtocolEngine::load_or_create_for_local_device(
