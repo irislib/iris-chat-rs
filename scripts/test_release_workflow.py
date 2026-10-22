@@ -345,6 +345,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("subject-path: artifacts/*", workflow)
         self.assertIn("git cat-file -t", workflow)
         self.assertIn("git merge-base --is-ancestor HEAD origin/main", workflow)
+        self.assertIn('python3 scripts/validate-haps-manifest.py --tag "$RELEASE_TAG"', workflow)
         self.assertIn("gh release verify-asset", workflow)
         self.assertIn("--json isImmutable", workflow)
         self.assertIn("if: steps.existing.outputs.exists != 'true'", workflow)

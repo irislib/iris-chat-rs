@@ -71,6 +71,8 @@ jobs:
             --tag "$RELEASE_TAG" \
             --notes RELEASE_NOTES.md
 
+          python3 scripts/validate-haps-manifest.py --tag "$RELEASE_TAG"
+
           if [[ -f release-platforms.json ]]; then
             scripts/release-manifest.py list-assets --tag "$RELEASE_TAG" >/dev/null
           fi
