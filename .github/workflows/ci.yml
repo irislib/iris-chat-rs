@@ -20,7 +20,7 @@ on:
         description: Checks to run; retain exact source-bound coverage for unchanged components
         type: choice
         default: all
-        options: [all, cli, core, android, windows, windows-keyboard, apple, ios, ios-unit, macos, linux, apple-products, ios-products, macos-products, ios-ui-runner, macos-ui-runner]
+        options: [all, cli, core, android, windows, windows-keyboard, windows-restore, apple, ios, ios-unit, macos, linux, apple-products, ios-products, macos-products, ios-ui-runner, macos-ui-runner]
       ios_core_seed_run:
         description: Optional exact successful core build/cache producer for Swift-only unit validation
         type: string
@@ -38,6 +38,31 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  windows-restore:
+    if: ${{ inputs.scope == 'windows-restore' }}
+    name: Windows restore evaluation (.NET ${{ matrix.sdk }})
+    runs-on: windows-2025
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        sdk: ['8.0.420', '10.0.402']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ matrix.sdk }}
+      - name: Evaluate and test locked Windows restore
+        shell: pwsh
+        run: ./scripts/test-windows-restore.ps1 -SdkVersion '${{ matrix.sdk }}' -OutputDirectory 'work/windows-restore-${{ matrix.sdk }}'
+      - name: Retain restore evaluation and original outputs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-restore-${{ matrix.sdk }}
+          path: work/windows-restore-${{ matrix.sdk }}/
+          retention-days: 14
+
   apple-validation-products:
     if: ${{ inputs.scope == 'apple-products' || inputs.scope == 'ios-products' || inputs.scope == 'macos-products' || inputs.scope == 'ios-ui-runner' || inputs.scope == 'macos-ui-runner' }}
     uses: ./.github/workflows/apple-validation-products.yml
