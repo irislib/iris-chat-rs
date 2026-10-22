@@ -7,9 +7,10 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 ### GitHub
 
 - Cache public message-server addresses briefly during discovery, with bounded storage and refresh after failed connections, loss of connectivity or returning to the foreground. Keep sockets, anonymous authentication and TLS sessions isolated by author and message server.
-- Reuse unchanged queued group payloads when saving protocol state, preserving atomic writes and crash recovery.
+- Reuse unchanged queued group payloads when saving protocol state, preserving atomic writes and crash recovery. Avoid queuing repeated requests for the same missing group key while preserving existing pending work and distinct recovery requests.
 - Update the protocol source package and registry CLI consumer to the corrected protocol implementation.
 - Add `iris invite create --full` for durable invite links that do not require a file upload. Preserve account recovery and existing group-invite authorization.
+- Save conversation acceptance after verifying an explicitly accepted direct invite, so the first incoming message can receive an encrypted delivery confirmation. Preserve later rejection and blocking decisions.
 - Pin Windows binding generation to its reviewed commit, select the intended Windows SDK explicitly, and verify locked package versions and content hashes before building the app.
 - Keep sign-in hidden while a saved account restores, including slow restores, and preserve background storage protection.
 - Stop republishing unchanged connection adverts every two seconds; retain immediate endpoint updates and refresh before expiration.
@@ -23,6 +24,7 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 
 - Reduce repeated network work while Iris is open.
 - Reduce processing when many group deliveries are pending.
+- Show delivery confirmations after accepting a chat invitation.
 - Prevent a brief sign-in screen while your saved account loads.
 - Keep your place when loading older messages on iPhone.
 - Show the hand cursor on clickable controls and message links on Mac.
@@ -31,6 +33,7 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 
 - Reduce repeated network work while Iris is open.
 - Reduce processing when many group deliveries are pending.
+- Show delivery confirmations after accepting a chat invitation.
 - Reduce repeated network startup while restoring your account.
 
 ## v2026.10.22.4
