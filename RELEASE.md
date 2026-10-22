@@ -15,10 +15,19 @@ exact, attested files from an immutable GitHub Release.
 | TestFlight | The exact GitHub IPA | Run **iOS Distribution** with `testflight` (internal) or `testflight-public` (public beta) |
 | Apple App Store | The exact GitHub IPA | Run the **iOS Distribution** workflow with `app-store` |
 | Google Play | A signed AAB is built, but upload is not automated | Roadmap |
-| crates.io | Existing packages are outside this release process | Legacy |
+| crates.io | Protocol library and CLI source packages | Publish verified source packages separately |
 
 The release builds Android arm64, iOS, macOS arm64, Windows x64, Linux x64,
 and CLI archives for macOS arm64/x64 and Linux x64.
+
+The existing crates.io packages use separate semantic versions. When updating
+`iris-chat-protocol`, advance its version and the exact local consumer pins and
+lockfiles. Update the `iris-chat` package too when its published CLI would
+otherwise retain an older protocol. Run the Rust gates and package verification,
+publish the protocol first, then verify and publish the CLI source package.
+Check the registry archives and dependency pins after publication. Do not use
+the unsupported scripts under `scripts/legacy/release`. This source publication
+does not replace any tagged binary or satisfy a binary distribution gate.
 
 An explicitly authorized iOS omission is recorded for its exact tag in
 `release-platforms.json` before tagging. All other tags still require the full
@@ -181,6 +190,14 @@ exact message-server URL; a quiet gap alone does not satisfy the CPU gate. Signe
 checks must keep each peer separate from account receiving and authentication.
 Retain its CPU/wire receipt and full child log with the private-control test
 artifact. The relayless resource fixture alone does not cover this workload.
+
+The Rust suite also exercises a 254,672,896-byte protocol checkpoint with 22,702
+queued group repairs and 19,231 encrypted group messages. Small incoming and
+outgoing batches must reuse unchanged payload serialization, commit once and
+write less than 4 MiB of the existing checkpoint. Failed saves and reopening
+must preserve pending work and the exact ratchet state. This mandatory storage
+regression complements physical CPU checks; it does not establish a device's
+CPU usage, and the storage adapter still compares the full checkpoint on a save.
 
 ## 2. Tag the Latest `main`
 
