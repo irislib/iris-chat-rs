@@ -146,7 +146,9 @@ mod incoming_retry_tests {
         for response in responses {
             receiver.observe_invite_response_event(&response).unwrap();
         }
+        let deferred = super::tests::synthetic_pending_inbound(&mut receiver, 4_214, 0, 200);
         receiver.pending_inbound = pending;
+        receiver.pending_inbound.extend(deferred.clone());
         let storage = Arc::new(FailingStorage {
             inner: InMemoryStorage::new(),
             fail: std::sync::atomic::AtomicBool::new(false),
@@ -161,7 +163,7 @@ mod incoming_retry_tests {
             .is_err());
         assert_eq!(
             receiver.pending_inbound.len(),
-            2,
+            2 + deferred.len(),
             "a failed first receive must retain later events"
         );
         assert_eq!(
@@ -180,10 +182,11 @@ mod incoming_retry_tests {
             2,
             "each pending message is offered exactly once per batch"
         );
-        assert!(receiver.pending_inbound.is_empty());
+        assert_eq!(receiver.pending_inbound, deferred);
         let mut restored =
             ProtocolEngine::load_or_create_for_local_device(storage, owner.public_key(), &device)
                 .unwrap();
+        assert_eq!(restored.pending_inbound, deferred);
         assert_eq!(
             restored
                 .retry_pending_protocol(NdrUnixSeconds(201))
@@ -194,6 +197,7 @@ mod incoming_retry_tests {
             "both deliveries survive restart before the app acknowledges them"
         );
         restored.ack_pending_decrypted_deliveries().unwrap();
+        assert_eq!(restored.pending_inbound, deferred);
         assert!(restored
             .retry_pending_protocol(NdrUnixSeconds(202))
             .unwrap()
