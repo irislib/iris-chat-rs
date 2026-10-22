@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet('doctor', 'rust', 'bindings', 'dotnet', 'build', 'installer', 'zip', 'artifacts', 'run', 'call-tests', 'direct-file-tests', 'nearby-avatar-tests')]
+    [ValidateSet('doctor', 'restore', 'rust', 'bindings', 'dotnet', 'build', 'installer', 'zip', 'artifacts', 'run', 'call-tests', 'direct-file-tests', 'nearby-avatar-tests')]
     [string] $Command = 'artifacts'
 )
 
@@ -156,8 +156,23 @@ function Build-Bindings {
     Copy-Item $library (Join-Path $frameworks 'iris_chat_core.dll') -Force
 }
 
-function Build-Dotnet {
+function Restore-DotnetInputs {
     Add-ToolPaths
+    Invoke-Checked { dotnet --info } 'record .NET toolchain'
+    Invoke-Checked {
+        dotnet restore $Project -r win-x64 --locked-mode --force `
+            -p:RestoreForceEvaluate=false -p:Configuration=$Configuration
+    } 'locked dotnet restore'
+    $projectDirectory = Split-Path -Parent $Project
+    Assert-PinnedDownloadPackages `
+        -AssetsPath (Join-Path $projectDirectory 'obj\project.assets.json') `
+        -PinsPath (Join-Path $projectDirectory 'sdk-packages.json')
+}
+
+function Build-Dotnet {
+    param([switch] $InputsRestored)
+    Add-ToolPaths
+    if (-not $InputsRestored) { Restore-DotnetInputs }
     $parts = Get-VersionParts
     $assemblyVersion = $parts -join '.'
     $informationalVersion = "$VersionName+$BuildSha"
@@ -174,14 +189,6 @@ function Build-Dotnet {
             Wait-Process -Id $_.Id -ErrorAction SilentlyContinue
         }
     Invoke-Checked {
-        dotnet restore $Project -r win-x64 --locked-mode --force `
-            -p:RestoreForceEvaluate=false -p:Configuration=$Configuration
-    } 'locked dotnet restore'
-    $projectDirectory = Split-Path -Parent $Project
-    Assert-PinnedDownloadPackages `
-        -AssetsPath (Join-Path $projectDirectory 'obj\project.assets.json') `
-        -PinsPath (Join-Path $projectDirectory 'sdk-packages.json')
-    Invoke-Checked {
         dotnet publish $Project -c $Configuration -r win-x64 --self-contained true --no-restore `
             -p:WindowsPackageType=None "-p:Version=$VersionName" `
             "-p:AssemblyVersion=$assemblyVersion" "-p:FileVersion=$assemblyVersion" `
@@ -193,9 +200,10 @@ function Build-Dotnet {
 }
 
 function Build-All {
+    Restore-DotnetInputs
     Build-Rust
     Build-Bindings
-    Build-Dotnet
+    Build-Dotnet -InputsRestored
 }
 
 function Build-Zip {
@@ -249,6 +257,7 @@ function Run-App {
 
 switch ($Command) {
     'doctor' { Invoke-Doctor }
+    'restore' { Restore-DotnetInputs }
     'rust' { Build-Rust }
     'bindings' { Build-Bindings }
     'dotnet' { Build-Dotnet }

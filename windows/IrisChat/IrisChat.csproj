@@ -24,7 +24,10 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <FrameworkReference Update="Microsoft.Windows.SDK.NET.Ref" RuntimeFrameworkVersion="$(WindowsSdkPackageVersion)" />
+    <!-- Newer SDKs only add the Windows profile implicitly. Pin the base pack
+         too, so RuntimeFrameworkVersion cannot select a .NET version for it. -->
+    <FrameworkReference Remove="Microsoft.Windows.SDK.NET.Ref" />
+    <FrameworkReference Include="Microsoft.Windows.SDK.NET.Ref" RuntimeFrameworkVersion="$(WindowsSdkPackageVersion)" IsImplicitlyDefined="true" Pack="false" PrivateAssets="All" />
   </ItemGroup>
 
   <!-- Native Rust DLL produced by scripts/windows-build, copied next to exe.
