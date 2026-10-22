@@ -6,11 +6,12 @@ use nostr::EventId;
 use std::sync::OnceLock;
 use tokio::sync::Semaphore;
 use tokio_tungstenite::{
-    connect_async_tls_with_config,
+    client_async_tls_with_config,
     tungstenite::{protocol::WebSocketConfig, Message},
     Connector,
 };
 
+mod relay_addresses;
 mod scoped_tls;
 pub(in crate::core) use scoped_tls::ScopedTlsConnector;
 
@@ -21,6 +22,10 @@ const MAX_RESULT_BYTES: usize = 16 * 1024 * 1024;
 const MAX_RESULT_EVENTS: usize = 16_384;
 static COLD_SLOTS: OnceLock<Semaphore> = OnceLock::new();
 static BACKGROUND_SLOTS: OnceLock<Semaphore> = OnceLock::new();
+
+pub(in crate::core) fn invalidate_relay_addresses() {
+    relay_addresses::clear();
+}
 
 #[cfg(test)]
 mod memory_tests;
@@ -303,6 +308,23 @@ async fn read_socket(
     collected: &mut Collection,
     connector: Option<Connector>,
 ) -> anyhow::Result<()> {
+    read_socket_with_transport(
+        relay,
+        filters,
+        collected,
+        connector,
+        relay_addresses::connect(relay),
+    )
+    .await
+}
+
+async fn read_socket_with_transport(
+    relay: &RelayUrl,
+    filters: &[Filter],
+    collected: &mut Collection,
+    connector: Option<Connector>,
+    transport: impl std::future::Future<Output = std::io::Result<tokio::net::TcpStream>>,
+) -> anyhow::Result<()> {
     anyhow::ensure!(!filters.is_empty(), "no discovery filters");
     let authors = filters
         .iter()
@@ -320,8 +342,11 @@ async fn read_socket(
         max_frame_size: Some(MAX_FRAME_BYTES),
         ..Default::default()
     };
+    let transport = transport.await?;
+    // The original URL remains authoritative for Host, SNI and certificate
+    // verification. Only DNS answers are shared; every read owns a fresh socket.
     let (mut socket, _) =
-        connect_async_tls_with_config(relay.as_str(), Some(config), false, connector).await?;
+        client_async_tls_with_config(relay.as_str(), transport, Some(config), connector).await?;
     let id = SubscriptionId::generate();
     let mut request = vec![serde_json::json!("REQ"), serde_json::json!(id)];
     for filter in filters {

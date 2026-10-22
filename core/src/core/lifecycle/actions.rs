@@ -88,6 +88,9 @@ impl AppCore {
                 client_label,
             } => self.set_current_device_labels(&device_label, &client_label),
             AppAction::AppForegrounded => {
+                if !self.app_in_foreground {
+                    crate::core::protocol::anonymous_reads::invalidate_relay_addresses();
+                }
                 self.app_in_foreground = true;
                 self.handle_app_foregrounded();
             }

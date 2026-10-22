@@ -1297,6 +1297,7 @@ impl AppCore {
             RelayStatus::Disconnected | RelayStatus::Terminated | RelayStatus::Sleeping
                 if was_connected && !is_connected =>
             {
+                anonymous_reads::invalidate_relay_addresses();
                 self.schedule_protocol_subscription_liveness_check(Duration::from_secs(
                     PROTOCOL_RECONNECT_CHECK_SECS,
                 ));

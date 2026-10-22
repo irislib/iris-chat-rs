@@ -58,10 +58,31 @@ pub(in crate::core) fn acceptor_with_sessions(
 pub(in crate::core) type Wire = Arc<Mutex<Vec<(usize, serde_json::Value)>>>;
 pub(in crate::core) type Handshakes = Arc<Mutex<Vec<(HandshakeKind, ProtocolVersion, bool)>>>;
 
+struct RecordHost(Arc<Mutex<Vec<String>>>);
+
+impl tokio_tungstenite::tungstenite::handshake::server::Callback for RecordHost {
+    fn on_request(
+        self,
+        request: &tokio_tungstenite::tungstenite::handshake::server::Request,
+        response: tokio_tungstenite::tungstenite::handshake::server::Response,
+    ) -> Result<
+        tokio_tungstenite::tungstenite::handshake::server::Response,
+        tokio_tungstenite::tungstenite::handshake::server::ErrorResponse,
+    > {
+        self.0
+            .lock()
+            .unwrap()
+            .push(request.headers()["host"].to_str().unwrap().to_owned());
+        Ok(response)
+    }
+}
+
 pub(in crate::core) struct Relay {
     pub(in crate::core) url: RelayUrl,
     pub(in crate::core) wire: Wire,
     pub(in crate::core) handshakes: Handshakes,
+    pub(in crate::core) server_names: Arc<Mutex<Vec<Option<String>>>>,
+    pub(in crate::core) request_hosts: Arc<Mutex<Vec<String>>>,
     task: tokio::task::JoinHandle<()>,
 }
 
@@ -80,8 +101,12 @@ async fn relay_with_acceptor(acceptor: TlsAcceptor, events: Vec<Event>) -> Relay
     let url = RelayUrl::parse(&format!("wss://{}", listener.local_addr().unwrap())).unwrap();
     let wire: Wire = Arc::default();
     let handshakes: Handshakes = Arc::default();
+    let server_names = Arc::new(Mutex::new(Vec::new()));
+    let request_hosts = Arc::new(Mutex::new(Vec::new()));
     let recorded = wire.clone();
     let observed = handshakes.clone();
+    let names = server_names.clone();
+    let hosts = request_hosts.clone();
     let events = Arc::new(events);
     let task = tokio::spawn(async move {
         let mut children = tokio::task::JoinSet::new();
@@ -94,17 +119,20 @@ async fn relay_with_acceptor(acceptor: TlsAcceptor, events: Vec<Event>) -> Relay
                     let acceptor = acceptor.clone();
                     let wire = recorded.clone();
                     let handshakes = observed.clone();
+                    let names = names.clone();
+                    let hosts = hosts.clone();
                     let events = events.clone();
                     children.spawn(async move {
                         // Rejected certificates are an expected negative case.
                         let Ok(stream) = acceptor.accept(stream).await else { return; };
                         let connection = stream.get_ref().1;
+                        names.lock().unwrap().push(connection.server_name().map(str::to_owned));
                         handshakes.lock().unwrap().push((
                             connection.handshake_kind().unwrap(),
                             connection.protocol_version().unwrap(),
                             connection.negotiated_key_exchange_group().is_some(),
                         ));
-                        let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
+                        let mut socket = tokio_tungstenite::accept_hdr_async(stream, RecordHost(hosts)).await.unwrap();
                         socket.send(Message::Text(serde_json::json!(["AUTH", format!("tls-fixture-{id}")]).to_string())).await.unwrap();
                         let mut authenticated = false;
                         while let Some(Ok(Message::Text(text))) = socket.next().await {
@@ -142,6 +170,8 @@ async fn relay_with_acceptor(acceptor: TlsAcceptor, events: Vec<Event>) -> Relay
         url,
         wire,
         handshakes,
+        server_names,
+        request_hosts,
         task,
     }
 }
