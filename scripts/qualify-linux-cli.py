@@ -79,7 +79,8 @@ def main(source, output):
                'workflow_run_attempt': os.environ['GITHUB_RUN_ATTEMPT'],
                'limits': {'compile_seconds': 1200, 'target_bytes': 12*GIB,
                           'free_floor_bytes': 8*GIB, 'jobs': 2, 'affinity_cpus': 2},
-               'no_app_runtime': True, 'release_binary_or_attestation_claim': False,
+               'cli_parser_smoke_only': True, 'no_account_service_network_runtime': True,
+               'release_binary_or_attestation_claim': False,
                'started_at_unix': time.time(), 'resource_samples': []}
 
     def git(*args):
@@ -196,6 +197,15 @@ def main(source, output):
             run([*argv, str(binary)], label, 30)
         versions = re.findall(r'GLIBC_(\d+)\.(\d+)', (output/'elf-symbol-versions.stdout').read_text())
         require(versions and max((int(a), int(b)) for a, b in versions) <= (2, 39), 'Incompatible libc requirement')
+        smoke_data = output/'smoke-data-must-remain-absent'
+        require(not smoke_data.exists(), 'Smoke data path already exists')
+        os.environ['IRIS_DATA_DIR'] = str(smoke_data)
+        run([str(binary), '--version'], 'smoke-version', 15)
+        run([str(binary), 'invite', 'create', '--help'], 'smoke-full-invite-help', 15)
+        require((output/'smoke-version.stdout').read_text().startswith('iris '), 'CLI version smoke failed')
+        require('--full' in (output/'smoke-full-invite-help.stdout').read_text(), 'Full invite option missing')
+        require(not smoke_data.exists(), 'Parser smoke unexpectedly created application data')
+        receipt['parser_smoke_passed'] = True
         receipt['artifact_manifest'] = bind(output/'artifact-manifest.json')
         receipt['compiler_artifact'] = artifact
         receipt['binary'] = manifest['binary']
