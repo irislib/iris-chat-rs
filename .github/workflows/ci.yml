@@ -20,7 +20,7 @@ on:
         description: Checks to run; retain exact source-bound coverage for unchanged components
         type: choice
         default: all
-        options: [all, cli, core, inbound-retry, android, windows, windows-keyboard, windows-restore, apple, ios, ios-unit, macos, linux, apple-products, ios-products, macos-products, ios-ui-runner, macos-ui-runner]
+        options: [all, cli, core, inbound-retry, inbound-retry-release, android, windows, windows-keyboard, windows-restore, apple, ios, ios-unit, macos, linux, apple-products, ios-products, macos-products, ios-ui-runner, macos-ui-runner]
       ios_core_seed_run:
         description: Optional exact successful core build/cache producer for Swift-only unit validation
         type: string
@@ -39,8 +39,8 @@ env:
 
 jobs:
   inbound-retry:
-    if: ${{ inputs.scope == 'inbound-retry' }}
-    name: Compare exact inbound retry regression sources
+    if: ${{ inputs.scope == 'inbound-retry' || inputs.scope == 'inbound-retry-release' }}
+    name: ${{ inputs.scope == 'inbound-retry-release' && 'Measure optimized whole retry on unchanged source' || 'Compare exact inbound retry regression sources' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
@@ -49,6 +49,10 @@ jobs:
       CARGO_TERM_COLOR: never
       CARGO_PROFILE_TEST_OPT_LEVEL: '0'
       CARGO_PROFILE_TEST_DEBUG_ASSERTIONS: 'true'
+      CARGO_PROFILE_RELEASE_OPT_LEVEL: '3'
+      CARGO_PROFILE_RELEASE_DEBUG: '1'
+      CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS: 'false'
+      DEBUGINFOD_URLS: ''
     steps:
       - name: Checkout reviewed diagnostic driver
         uses: actions/checkout@v4
@@ -58,11 +62,11 @@ jobs:
           persist-credentials: false
       - name: Require admitted immutable regression inputs
         id: inputs
-        run: python3 retry-driver/scripts/verify_inbound_retry.py preflight --output work/inbound-retry
-      - name: Checkout fixture-only before source
+        run: python3 retry-driver/scripts/verify_inbound_retry.py preflight --mode "${{ inputs.scope == 'inbound-retry-release' && 'optimized' || 'comparison' }}" --output work/inbound-retry
+      - name: Checkout first immutable diagnostic source
         uses: actions/checkout@v4
         with:
-          ref: ${{ steps.inputs.outputs.before }}
+          ref: ${{ inputs.scope == 'inbound-retry-release' && steps.inputs.outputs.after || steps.inputs.outputs.before }}
           fetch-depth: 2
           path: iris-chat-rs
           persist-credentials: false
@@ -80,12 +84,14 @@ jobs:
           restore-keys: |
             rust-${{ runner.os }}-
       - name: Require the allocation regression to fail for its intended reason
+        if: ${{ inputs.scope == 'inbound-retry' }}
         env:
           IRIS_CACHE_REQUESTED: ${{ steps.cargo-cache.outputs.cache-primary-key }}
           IRIS_CACHE_MATCHED: ${{ steps.cargo-cache.outputs.cache-matched-key }}
           IRIS_CACHE_HIT: ${{ steps.cargo-cache.outputs.cache-hit }}
         run: python3 retry-driver/scripts/verify_inbound_retry.py before --source iris-chat-rs --output work/inbound-retry
       - name: Checkout minimal fix into the same source path
+        if: ${{ inputs.scope == 'inbound-retry' }}
         uses: actions/checkout@v4
         with:
           ref: ${{ steps.inputs.outputs.after }}
@@ -93,7 +99,15 @@ jobs:
           path: iris-chat-rs
           persist-credentials: false
       - name: Require allocation durability and whole-retry checks to pass
+        if: ${{ inputs.scope == 'inbound-retry' }}
         run: python3 retry-driver/scripts/verify_inbound_retry.py after --source iris-chat-rs --output work/inbound-retry
+      - name: Measure optimized unchanged whole retry and optionally attribute CPU failure
+        if: ${{ inputs.scope == 'inbound-retry-release' }}
+        env:
+          IRIS_CACHE_REQUESTED: ${{ steps.cargo-cache.outputs.cache-primary-key }}
+          IRIS_CACHE_MATCHED: ${{ steps.cargo-cache.outputs.cache-matched-key }}
+          IRIS_CACHE_HIT: ${{ steps.cargo-cache.outputs.cache-hit }}
+        run: python3 retry-driver/scripts/verify_inbound_retry.py optimized --source iris-chat-rs --output work/inbound-retry
       - name: Retain full logs and exact comparison evidence
         if: always()
         uses: actions/upload-artifact@v4

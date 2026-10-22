@@ -33,7 +33,7 @@ def git(root, *args):
     return subprocess.check_output(["git", "-C", str(root), *args], timeout=30).decode().strip()
 
 
-def contract():
+def contract(mode="comparison"):
     data = json.loads(INPUTS.read_text())
     assert data["enabled"] is True, "Diagnostic disabled: exact source/fixture owner inputs are not admitted"
     assert all(re.fullmatch(r"[0-9a-f]{40}", data[key] or "") for key in ("base", "before", "after"))
@@ -44,14 +44,16 @@ def contract():
     assert all(re.fullmatch(r"[A-Za-z0-9_:]+", t["name"]) and 0 < t["timeout_seconds"] <= 300 and isinstance(t["ignored"], bool) and isinstance(t["exact"], bool) and t["expected_count"] > 0 for t in tests)
     assert data["before_test"] in {t["name"] for t in tests} and data["before_failure_marker"]
     assert data["before_observation_test"] in {t["name"] for t in tests} and data["before_observation_failure_marker"]
+    if mode == "optimized":
+        assert data["optimized_enabled"] is True, "Optimized diagnostic disabled pending review"
     return data
 
 
-def preflight(out, data):
+def preflight(out, data, mode="comparison"):
     root = Path(__file__).resolve().parent.parent
     assert not git(root, "status", "--porcelain"), "Driver must be a clean committed checkout"
     receipt = {"inputs": data, "inputs_sha256": sha(INPUTS), "driver_source": git(root, "rev-parse", "HEAD"),
-               "toolchain": TOOLCHAIN, "deadline_unix": time.time() + 1500, "workflow_timeout_seconds": 1800}
+               "mode": mode, "toolchain": TOOLCHAIN, "deadline_unix": time.time() + 1500, "workflow_timeout_seconds": 1800}
     save(out / "preflight.json", receipt)
     with open(os.environ["GITHUB_OUTPUT"], "a") as stream:
         stream.write(f"before={data['before']}\nafter={data['after']}\n")
@@ -154,9 +156,12 @@ def bounded(command, root, out, name, timeout, deadline, target):
 
 
 def stage(which, root, out, data):
+    optimized = which == "optimized"
+    source_key = "after" if optimized else which
     pre = json.loads((out / "preflight.json").read_text())
     assert pre["inputs"] == data and pre["inputs_sha256"] == sha(INPUTS)
-    assert git(root, "rev-parse", "HEAD") == data[which] and not git(root, "status", "--porcelain")
+    assert pre["mode"] == ("optimized" if optimized else "comparison")
+    assert git(root, "rev-parse", "HEAD") == data[source_key] and not git(root, "status", "--porcelain")
     if which == "after":
         assert json.loads((out / "before/receipt.json").read_text())["accepted"] is True
     parent = data["base"] if which == "before" else data["before"]
@@ -164,7 +169,7 @@ def stage(which, root, out, data):
     changed = git(root, "diff", "--name-only", "HEAD^", "HEAD").splitlines()
     expected_changed = data["before_changed_paths"] if which == "before" else data["after_changed_paths"]
     assert sorted(changed) == sorted(expected_changed), "Source exceeds reviewed diagnostic scope"
-    source = {"commit": data[which], "parent": parent, "changed_paths": changed, "tree": git(root, "rev-parse", "HEAD^{tree}"),
+    source = {"commit": data[source_key], "parent": parent, "changed_paths": changed, "tree": git(root, "rev-parse", "HEAD^{tree}"),
               "protocol_tree": git(root, "rev-parse", "HEAD:chat-protocol"),
               "fixtures": {path: sha(root / path) for path in data["fixture_paths"]},
               "protocol_lock_sha256": sha(root / "chat-protocol/Cargo.lock")}
@@ -184,7 +189,7 @@ def stage(which, root, out, data):
         assert versions == json.loads((out / "before/toolchain.json").read_text())
     target = Path(os.environ["CARGO_TARGET_DIR"]).resolve()
     target.mkdir(parents=True, exist_ok=True)
-    if which == "before":
+    if which == "before" or optimized:
         save(out / "cache.json", {key: os.environ.get(key, "") for key in ("IRIS_CACHE_REQUESTED", "IRIS_CACHE_MATCHED", "IRIS_CACHE_HIT")})
         # Other branch/tag caches may be inaccessible. Seed the exact locked
         # dependencies once; both source compilations below remain offline.
@@ -192,6 +197,8 @@ def stage(which, root, out, data):
         fetch, _ = bounded(fetch_command, root, output, "fetch", 300, pre["deadline_unix"], target)
         assert fetch["exit_code"] == 0, "Dependency fetch failed; no regression result"
     command = ["cargo", f"+{TOOLCHAIN}", "test", "--manifest-path", "chat-protocol/Cargo.toml", "--locked", "--offline", "--lib", "--no-run", "--message-format=json", "--jobs", "2"]
+    if optimized:
+        command.append("--release")
     build, text = bounded(command, root, output, "build", 600, pre["deadline_unix"], target)
     assert build["exit_code"] == 0, "Compilation failed; this is not the expected regression"
     artifacts = []
@@ -204,15 +211,26 @@ def stage(which, root, out, data):
             artifacts.append(value)
     assert len(artifacts) == 1, "Expected exactly one protocol test executable"
     profile = artifacts[0]["profile"]
-    assert profile["opt_level"] == "0" and profile["debug_assertions"] is True and profile["test"] is True
+    assert profile["test"] is True
+    if optimized:
+        assert profile["opt_level"] == "3" and profile["debug_assertions"] is False and profile["debuginfo"] == 1
+        interpretation = "Release optimization with debug symbols, not official release binary equivalence. Standalone public API without the Mac lifecycle outer batch."
+    else:
+        assert profile["opt_level"] == "0" and profile["debug_assertions"] is True
+        interpretation = "Default test opt0/debug diagnostic, not release-build equivalence."
+    interpretation += " Deadline mix describes the seeded snapshot; actual eligibility advances during setup and the measured minute."
     binary = Path(artifacts[0]["executable"]).resolve()
     assert binary.is_file(), "Test executable is missing"
     assert binary.is_relative_to(target), "Test binary is outside the shared target"
     binary_sha256 = sha(binary)
     save(output / "test-binary.json", {"path": str(binary), "sha256": binary_sha256, "cargo_test_profile": profile,
-         "cpu_interpretation": "Default test opt0/debug diagnostic, not release-build equivalence. Deadline mix describes the seeded snapshot; actual eligibility advances during setup and the measured minute."})
+         "cpu_interpretation": interpretation})
     selected = data["tests"] if which == "after" else [t for t in data["tests"] if t["name"] in (data["before_test"], data["before_observation_test"])]
+    if optimized:
+        selected = [t for t in data["tests"] if t["name"] == data["before_observation_test"]]
+        assert len(selected) == 1 and selected[0]["exact"] and selected[0]["expected_count"] == 1
     checks = []
+    cpu_failure = False
     for index, test in enumerate(selected):
         command = [str(binary), test["name"], "--nocapture", "--test-threads=1"]
         if test["exact"]:
@@ -226,38 +244,60 @@ def stage(which, root, out, data):
             expected_failure = None
             if which == "before" and test["name"] == data["before_test"]:
                 expected_failure = data["before_failure_marker"]
-            elif which == "before" and run["exit_code"] != 0:
+            elif (which == "before" or optimized) and run["exit_code"] != 0:
                 expected_failure = data["before_observation_failure_marker"]
             if test["name"] == data["before_observation_test"]:
                 check["whole_retry_cpu"] = whole_retry_metrics(text)
             check["counts"] = check_result(text, test, run["exit_code"], expected_failure)
-            check["accepted"] = True
+            cpu_failure = optimized and expected_failure is not None
+            if optimized:
+                assert (check["whole_retry_cpu"]["cpu_percent_one_core"] > 5) == cpu_failure, "CPU assertion and metric disagree"
+                check["counts"]["expected_regression_failure"] = False
+            check["accepted"] = not cpu_failure
         except BaseException as error:
             check["error"] = f"{type(error).__name__}: {error}"
             raise
         finally:
             save(output / "test-results.json", checks)
     assert not git(root, "status", "--porcelain"), "Tests changed the source checkout"
-    receipt = {"accepted": True, "stage": which, "source": source, "source_path": str(root), "target_path": str(target),
+    assert sha(binary) == binary_sha256, "Test executable changed during measurement"
+    receipt = {"accepted": not cpu_failure, "stage": which, "source": source, "source_path": str(root), "target_path": str(target),
                "test_binary_sha256": binary_sha256, "build": build, "tests": checks, "toolchain": versions,
                "cargo_test_profile": profile, "physical_cpu_acceptance": False,
-               "cpu_interpretation": "Default test profile, opt-level 0 with debug assertions; diagnostic comparison only, not release-build CPU equivalence."}
+               "cpu_interpretation": interpretation, "unprofiled_cpu_failure": cpu_failure}
     save(output / "receipt.json", receipt)
-    print(json.dumps({"accepted": True, "stage": which, "source": data[which], "test_counts": [t["counts"] for t in checks]}))
+    print(json.dumps({"accepted": not cpu_failure, "stage": which, "source": data[source_key], "test_counts": [t["counts"] for t in checks]}), flush=True)
+    if cpu_failure:
+        from inbound_retry_perf import sample_failure
+        sampling = sample_failure(command, root, output, pre["deadline_unix"], target, bounded, sha)
+        if sampling["status"] == "sampled":
+            sampled_text = (output / sampling["test_log"]).read_text(errors="replace")
+            try:
+                sampled_code = sampling["run"]["exit_code"]
+                sampling["test_counts"] = check_result(sampled_text, selected[0], sampled_code,
+                    data["before_observation_failure_marker"] if sampled_code else None)
+                sampling["whole_retry_cpu"] = whole_retry_metrics(sampled_text)
+            except Exception as error:
+                sampling["test_result_error"] = f"{type(error).__name__}: {error}"
+        save(output / "sampling.json", sampling)
+        assert sha(binary) == binary_sha256, "Test executable changed during sampling"
+        raise AssertionError("Optimized unprofiled whole retry CPU exceeds the unchanged 5% limit; sampling is diagnostic only")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("stage", choices=("preflight", "before", "after"))
+    parser.add_argument("stage", choices=("preflight", "before", "after", "optimized"))
+    parser.add_argument("--mode", choices=("comparison", "optimized"), default="comparison")
     parser.add_argument("--source", type=Path)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     out = args.output.resolve()
     out.mkdir(parents=True, exist_ok=True)
     try:
-        inputs = contract()
+        mode = "optimized" if args.stage == "optimized" else args.mode
+        inputs = contract(mode)
         if args.stage == "preflight":
-            preflight(out, inputs)
+            preflight(out, inputs, mode)
         else:
             assert args.source is not None
             stage(args.stage, args.source.resolve(), out, inputs)
