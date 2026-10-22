@@ -20,7 +20,11 @@ on:
         description: Checks to run; retain exact source-bound coverage for unchanged components
         type: choice
         default: all
-        options: [all, cli, core, android, windows, windows-keyboard, windows-restore, apple, ios, ios-unit, macos, linux, apple-products, ios-products, macos-products, ios-ui-runner, macos-ui-runner]
+        options: [all, cli, core, source-package, android, windows, windows-keyboard, windows-restore, apple, ios, ios-unit, macos, linux, apple-products, ios-products, macos-products, ios-ui-runner, macos-ui-runner]
+      source_package_protocol_sha256:
+        description: Accepted published iris-chat-protocol 0.3.4 archive SHA256 (source-package only)
+        type: string
+        default: ''
       ios_core_seed_run:
         description: Optional exact successful core build/cache producer for Swift-only unit validation
         type: string
@@ -38,6 +42,70 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  source-package:
+    if: ${{ inputs.scope == 'source-package' }}
+    name: Verify exact CLI source package
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/cargo-target
+      CARGO_BUILD_JOBS: '2'
+      CARGO_TERM_COLOR: never
+      IRIS_PACKAGE_TOOLCHAIN: '1.99.1' # Recorded by corrected core run 39836346270.
+      IRIS_PROTOCOL_SHA256: ${{ inputs.source_package_protocol_sha256 }}
+    steps:
+      - name: Checkout reviewed workflow driver
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: package-driver
+          persist-credentials: false
+      - name: Checkout qualified production source
+        uses: actions/checkout@v4
+        with:
+          ref: 9b1c95f14e99ddac87f5d88b912fe2a69714082e
+          path: iris-chat-rs
+          persist-credentials: false
+      - name: Install accepted Rust toolchain
+        run: |
+          [[ "$IRIS_PACKAGE_TOOLCHAIN" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          [[ "$IRIS_PROTOCOL_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          rustup toolchain install "$IRIS_PACKAGE_TOOLCHAIN" --profile minimal
+      - name: Verify clean source and published protocol before cache or compile
+        run: |
+          python3 package-driver/scripts/verify_source_package.py preflight \
+            --source iris-chat-rs --output work/source-package \
+            --toolchain "$IRIS_PACKAGE_TOOLCHAIN" --protocol-sha256 "$IRIS_PROTOCOL_SHA256"
+      - name: Install native Ubuntu dependencies
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libdbus-1-dev pkg-config
+      - name: Restore accepted core cache
+        id: cargo-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ${{ github.workspace }}/cargo-target
+          key: rust-${{ runner.os }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock') }}
+          restore-keys: |
+            rust-${{ runner.os }}-
+      - name: Verify CLI source archive with bounded resources
+        env:
+          IRIS_CACHE_REQUESTED: ${{ steps.cargo-cache.outputs.cache-primary-key }}
+          IRIS_CACHE_MATCHED: ${{ steps.cargo-cache.outputs.cache-matched-key }}
+          IRIS_CACHE_HIT: ${{ steps.cargo-cache.outputs.cache-hit }}
+        run: |
+          python3 package-driver/scripts/verify_source_package.py verify \
+            --source iris-chat-rs --output work/source-package
+      - name: Retain full package logs, source proof and actual archives
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: source-package-9b1c95f14e99ddac87f5d88b912fe2a69714082e
+          path: work/source-package/
+          if-no-files-found: warn
+          retention-days: 14
+
   windows-restore:
     if: ${{ inputs.scope == 'windows-restore' }}
     name: Windows restore evaluation (.NET ${{ matrix.sdk }})
