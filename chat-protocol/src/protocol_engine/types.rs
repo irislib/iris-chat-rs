@@ -14,6 +14,13 @@ fn group_chat_id(group_id: &str) -> String {
 #[derive(Debug, Serialize, Deserialize)]
 struct ProtocolEnginePersistedState {
     version: u32,
+    // Keep large, mostly unchanged queues before frequently changing session
+    // and direct-send records. Inserting a small later record must not shift
+    // every backlog page in the incremental SQLite checkpoint.
+    #[serde(default)]
+    pending_group_sender_key_messages: PendingGroupMessages,
+    #[serde(default)]
+    pending_group_fanouts: Vec<ProtocolPendingGroupFanout>,
     session_manager: SessionManagerSnapshot,
     group_manager: GroupManagerSnapshot,
     /// Owners whose current roster was installed through trusted AppKeys ingestion.
@@ -39,8 +46,6 @@ struct ProtocolEnginePersistedState {
     #[serde(default)]
     pending_inbound: Vec<ProtocolPendingInbound>,
     #[serde(default)]
-    pending_group_fanouts: Vec<ProtocolPendingGroupFanout>,
-    #[serde(default)]
     ready_group_publications: BTreeMap<String, ProtocolReadyGroupPublish>,
     #[serde(default)]
     pending_local_sibling_sends: Vec<ProtocolPendingLocalSiblingSend>,
@@ -48,8 +53,6 @@ struct ProtocolEnginePersistedState {
     pending_remote_sends: Vec<ProtocolPendingRemoteSend>,
     #[serde(default)]
     pending_group_pairwise_payloads: Vec<ProtocolPendingGroupPairwisePayload>,
-    #[serde(default)]
-    pending_group_sender_key_messages: PendingGroupMessages,
     #[serde(default)]
     pending_group_sender_key_repairs: Vec<ProtocolPendingGroupSenderKeyRepair>,
     #[serde(default)]
@@ -122,7 +125,7 @@ pub struct ProtocolPendingInboundTestDebug {
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 struct ProtocolPendingGroupFanout {
     group_id: String,
-    fanout: GroupPendingFanout,
+    fanout: CheckpointGroupFanout,
     // None until the roster is known (also for legacy persisted queues).
     #[serde(default)]
     remaining_devices: Option<BTreeSet<NdrDevicePubkey>>,

@@ -801,7 +801,7 @@ impl ProtocolEngine {
             if let GroupPendingFanout::Remote {
                 recipient_owner,
                 payload,
-            } = &pending.fanout
+            } = pending.fanout.as_ref()
             {
                 if self.held_direct_chats.contains(&recipient_owner.to_hex())
                     && serde_json::from_slice::<UnsignedEvent>(payload)
@@ -812,7 +812,7 @@ impl ProtocolEngine {
                 }
             }
             if self.local_owner_is_inactive_for_group(&pending.group_id) {
-                let payload = match &pending.fanout {
+                let payload = match pending.fanout.as_ref() {
                     GroupPendingFanout::Remote { payload, .. }
                     | GroupPendingFanout::LocalSiblings { payload } => payload,
                 };
@@ -839,10 +839,10 @@ impl ProtocolEngine {
             let mut rng = OsRng;
             let mut ctx = ProtocolContext::new(now, &mut rng);
             if let Some(devices) = pending.remaining_devices.as_mut() {
-                let owner = match pending.fanout {
+                let owner = match pending.fanout.as_ref() {
                     GroupPendingFanout::Remote {
                         recipient_owner, ..
-                    } => recipient_owner,
+                    } => *recipient_owner,
                     GroupPendingFanout::LocalSiblings { .. } => self.local_owner,
                 };
                 if let Some(current) = user_record_snapshot(&self.session_manager.snapshot(), owner)
@@ -860,7 +860,7 @@ impl ProtocolEngine {
             // The original send already reached every device absent from this
             // set. Retrying the entire owner causes duplicate encryption and
             // relay traffic for each unavailable linked device.
-            let prepared = match (&pending.fanout, &pending.remaining_devices) {
+            let prepared = match (pending.fanout.as_ref(), &pending.remaining_devices) {
                 (
                     GroupPendingFanout::Remote {
                         recipient_owner,
@@ -895,7 +895,9 @@ impl ProtocolEngine {
                     .session_manager
                     .prepare_local_sibling_send_reusing_all_sessions(&mut ctx, payload.clone()),
             }
-            .map(|prepared| group_publish_from_prepared_send(prepared, pending.fanout.clone()));
+            .map(|prepared| {
+                group_publish_from_prepared_send(prepared, pending.fanout.as_ref().clone())
+            });
             let prepared = match prepared {
                 Ok(prepared) => {
                     if !prepared.deliveries.is_empty()
@@ -914,7 +916,7 @@ impl ProtocolEngine {
                 }
             };
             let remaining_devices =
-                self.group_fanout_missing_devices(&pending.fanout, &prepared.relay_gaps);
+                self.group_fanout_missing_devices(pending.fanout.as_ref(), &prepared.relay_gaps);
             persist_needed |= pending.remaining_devices != remaining_devices;
             pending.remaining_devices = remaining_devices;
             let still_has_gap = !prepared.relay_gaps.is_empty();
@@ -930,7 +932,7 @@ impl ProtocolEngine {
                 chat_id,
                 &mut event_ids,
             )?;
-            let payload = match &pending.fanout {
+            let payload = match pending.fanout.as_ref() {
                 GroupPendingFanout::Remote { payload, .. }
                 | GroupPendingFanout::LocalSiblings { payload } => payload,
             };
@@ -939,10 +941,10 @@ impl ProtocolEngine {
                 .is_ok_and(|event| event.kind.as_u16() == 21_113)
             {
                 ready_publications_changed |= !ready.is_empty();
-                let recipient = match pending.fanout {
+                let recipient = match pending.fanout.as_ref() {
                     GroupPendingFanout::Remote {
                         recipient_owner, ..
-                    } => Some(recipient_owner),
+                    } => Some(*recipient_owner),
                     GroupPendingFanout::LocalSiblings { .. } => None,
                 };
                 self.retain_group_publications(&ready, recipient)?;

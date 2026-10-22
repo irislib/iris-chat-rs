@@ -8,7 +8,7 @@ fn pending_local_group_fanout(
         group_id: group_id.to_string(),
         fanout: GroupPendingFanout::LocalSiblings {
             payload: payload.to_vec(),
-        },
+        }.into(),
         remaining_devices: None,
         inner_event_id: inner_event_id.map(str::to_string),
         created_at_secs,

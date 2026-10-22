@@ -57,6 +57,14 @@ for crate in core chat-protocol protocol-ffi; do
     else
         cargo test -q "${args[@]}"
     fi
+    if [[ "$crate" == chat-protocol ]]; then
+        # A large pending protocol backlog is independent of visible message
+        # history. Keep this allocation/serialization/durability regression in
+        # both CI and the tagged release gate, with its aggregate work counts.
+        cargo test "${args[@]}" --lib \
+            protocol_engine::tests::checkpoint_backlog_production_counts_are_durable \
+            -- --ignored --exact --test-threads=1 --nocapture
+    fi
     # The populated CPU test runs once in the ordinary nonignored core suite.
     # Nextest captures successful stdout, so CI retains its companion files with
     # the existing native private-control artifact instead of rerunning it.

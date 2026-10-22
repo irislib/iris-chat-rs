@@ -56,10 +56,16 @@ impl ProtocolEngine {
             subscription_generation: self.subscription_generation,
         };
         let pending = self.pending_group_sender_key_messages.serialized()?;
-        let (json, layout) = layout_protocol_checkpoint_with_pending(
+        let fanouts = self
+            .pending_group_fanouts
+            .iter()
+            .map(|pending| pending.fanout.serialized())
+            .collect::<Result<Vec<_>, _>>()?;
+        let (json, layout) = layout_protocol_checkpoint_with_cached_fields(
             serde_json::to_string(&state)?,
             &self.checkpoint_layout.borrow(),
             Some(&pending),
+            &fanouts,
         );
         self.storage.put(PROTOCOL_ENGINE_STATE_KEY, json)?;
         self.batch_persist_dirty.set(false);

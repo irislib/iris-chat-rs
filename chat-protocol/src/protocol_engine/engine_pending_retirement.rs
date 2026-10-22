@@ -27,7 +27,7 @@ impl ProtocolEngine {
                 let GroupPendingFanout::Remote {
                     recipient_owner,
                     payload,
-                } = &pending.fanout
+                } = pending.fanout.as_ref()
                 else {
                     return true;
                 };

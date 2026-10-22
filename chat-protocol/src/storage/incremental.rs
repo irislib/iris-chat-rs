@@ -4,6 +4,16 @@ use rusqlite::{blob::Blob, Connection, DatabaseName, OptionalExtension};
 const PAGE_BYTES: usize = 4096;
 const MIN_INCREMENTAL_BYTES: usize = 64 * 1024;
 
+#[cfg(test)]
+thread_local! {
+    static IO_BYTES: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) };
+}
+
+#[cfg(test)]
+pub(super) fn io_bytes() -> (usize, usize) {
+    IO_BYTES.with(std::cell::Cell::get)
+}
+
 // SQLite's ordinary TEXT replacement frees and rewrites all overflow pages,
 // including unchanged bytes. Incremental I/O preserves those pages. A savepoint
 // makes every changed region one atomic durable update, also inside outer txns.
@@ -18,8 +28,22 @@ pub(super) fn try_put(
         conn,
         (owner, device, key),
         value,
-        |blob, bytes, offset| blob.read_at_exact(bytes, offset),
-        |blob, bytes, offset| blob.write_at(bytes, offset),
+        |blob, bytes, offset| {
+            #[cfg(test)]
+            IO_BYTES.with(|count| {
+                let (read, written) = count.get();
+                count.set((read + bytes.len(), written));
+            });
+            blob.read_at_exact(bytes, offset)
+        },
+        |blob, bytes, offset| {
+            #[cfg(test)]
+            IO_BYTES.with(|count| {
+                let (read, written) = count.get();
+                count.set((read, written + bytes.len()));
+            });
+            blob.write_at(bytes, offset)
+        },
         |blob| blob.close(),
     )
 }

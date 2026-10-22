@@ -167,7 +167,7 @@ impl ProtocolEngine {
             .rev()
         {
             let keep = if pending.inner_event_id.is_none()
-                && matches!(&pending.fanout, GroupPendingFanout::LocalSiblings { .. })
+                && matches!(pending.fanout.as_ref(), GroupPendingFanout::LocalSiblings { .. })
             {
                 seen_groups.insert(pending.group_id.clone())
             } else {

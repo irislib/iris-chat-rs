@@ -77,7 +77,7 @@ fn private_group_wake_and_broadcast_share_one_rollback_safe_checkpoint() {
         }
     }
     assert_eq!((broadcast, wakes), (0, 1));
-    let is_wake = |pending: &ProtocolPendingGroupFanout| match &pending.fanout {
+    let is_wake = |pending: &ProtocolPendingGroupFanout| match pending.fanout.as_ref() {
         GroupPendingFanout::Remote { payload, .. }
         | GroupPendingFanout::LocalSiblings { payload } => {
             serde_json::from_slice::<serde_json::Value>(payload)
@@ -221,7 +221,7 @@ fn private_group_wake_ready_queue_is_bounded_and_respects_block_and_leave() {
         .all(|pending| pending.wake_recipient.is_none()));
     assert!(
         fixture.sender.pending_group_fanouts.iter().all(|pending| {
-            let GroupPendingFanout::Remote { payload, .. } = &pending.fanout else {
+            let GroupPendingFanout::Remote { payload, .. } = pending.fanout.as_ref() else {
                 return true;
             };
             !serde_json::from_slice::<UnsignedEvent>(payload)

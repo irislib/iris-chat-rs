@@ -209,7 +209,7 @@ impl ProtocolEngine {
         }
         for pending in &mut self.pending_group_fanouts {
             if matches!(
-                &pending.fanout,
+                pending.fanout.as_ref(),
                 GroupPendingFanout::Remote {
                     recipient_owner,
                     ..
@@ -398,7 +398,7 @@ impl ProtocolEngine {
         for fanout in &prepared.pending_fanouts {
             let pending = ProtocolPendingGroupFanout {
                 group_id: group_id.to_string(),
-                fanout: fanout.clone(),
+                fanout: fanout.clone().into(),
                 remaining_devices: self.group_fanout_missing_devices(fanout, &prepared.relay_gaps),
                 inner_event_id: inner_event_id.clone(),
                 created_at_secs: unix_now().get(),
@@ -445,7 +445,7 @@ impl ProtocolEngine {
         let mut targets = self
             .pending_group_fanouts
             .iter()
-            .map(|pending| match &pending.fanout {
+            .map(|pending| match pending.fanout.as_ref() {
                 GroupPendingFanout::Remote {
                     recipient_owner, ..
                 } => recipient_owner.to_hex(),

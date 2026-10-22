@@ -651,7 +651,7 @@ fn removed_group_member_cannot_retry_messages_after_restart_but_controls_survive
         }
     }
     fn pending_command(pending: &ProtocolPendingGroupFanout) -> GroupPairwiseCommand {
-        let payload = match &pending.fanout {
+        let payload = match pending.fanout.as_ref() {
             GroupPendingFanout::Remote { payload, .. }
             | GroupPendingFanout::LocalSiblings { payload } => payload,
         };

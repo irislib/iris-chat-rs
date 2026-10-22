@@ -11,6 +11,11 @@ struct ProtocolCheckpointLayout {
 const CHECKPOINT_PAGE: usize = 4096;
 const CHECKPOINT_RESERVE: usize = 64 * 1024;
 
+#[cfg(test)]
+thread_local! {
+    static CHECKPOINT_LAYOUT_SCANNED_BYTES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct CheckpointRecord {
     end: usize,
@@ -27,15 +32,40 @@ fn checkpoint_records_with_cached_pending(
     initial_depth: usize,
     pending: Option<&SerializedPendingGroupMessages>,
 ) -> Vec<CheckpointRecord> {
+    checkpoint_records_with_cached_fields(json, initial_depth, pending, &[])
+}
+
+fn checkpoint_records_with_cached_fields(
+    json: &str,
+    initial_depth: usize,
+    pending: Option<&SerializedPendingGroupMessages>,
+    fanouts: &[Arc<serde_json::value::RawValue>],
+) -> Vec<CheckpointRecord> {
     let mut records = Vec::new();
     let mut stack: Vec<(u8, usize)> = Vec::new();
     let mut quoted = false;
     let mut escaped = false;
     let mut string_start = 0;
     let mut pending_start = None;
+    let mut fanout_start = None;
+    let mut fanout_index = 0;
     let bytes = json.as_bytes();
     let mut index = 0;
+    #[cfg(test)]
+    let mut scanned_bytes = 0;
     while index < bytes.len() {
+        if fanout_start == Some(index) {
+            if let Some(fanout) = fanouts.get(fanout_index) {
+                let end = index + fanout.get().len();
+                if json.get(index..end) == Some(fanout.get()) {
+                    // This value is inside a pending record (depth three),
+                    // so no nested object qualifies as a checkpoint record.
+                    index = end;
+                    fanout_index += 1;
+                    continue;
+                }
+            }
+        }
         if pending_start == Some(index) {
             if let Some(pending) = pending {
                 let end = index + pending.json.get().len();
@@ -51,6 +81,8 @@ fn checkpoint_records_with_cached_pending(
             }
         }
         let character = bytes[index];
+        #[cfg(test)]
+        { scanned_bytes += 1; }
         if quoted {
             if escaped {
                 escaped = false;
@@ -58,6 +90,23 @@ fn checkpoint_records_with_cached_pending(
                 escaped = true;
             } else if character == b'"' {
                 quoted = false;
+                if initial_depth == 0
+                    && stack.len() == 3
+                    && stack.last().is_some_and(|(kind, _)| *kind == b'{')
+                    && &bytes[string_start..=index] == b"\"fanout\""
+                {
+                    let mut value = index + 1;
+                    while bytes.get(value).is_some_and(u8::is_ascii_whitespace) {
+                        value += 1;
+                    }
+                    if bytes.get(value) == Some(&b':') {
+                        value += 1;
+                        while bytes.get(value).is_some_and(u8::is_ascii_whitespace) {
+                            value += 1;
+                        }
+                        fanout_start = Some(value);
+                    }
+                }
                 // Recognize only a real top-level key, never matching field
                 // names, brackets or escape sequences inside string values.
                 if pending.is_some()
@@ -113,6 +162,8 @@ fn checkpoint_records_with_cached_pending(
         }
         index += 1;
     }
+    #[cfg(test)]
+    CHECKPOINT_LAYOUT_SCANNED_BYTES.with(|count| count.set(count.get() + scanned_bytes));
     records
 }
 
@@ -139,15 +190,25 @@ fn layout_protocol_checkpoint(
     layout_protocol_checkpoint_with_pending(json, previous, None)
 }
 
+#[cfg(test)]
 fn layout_protocol_checkpoint_with_pending(
     json: String,
     previous: &ProtocolCheckpointLayout,
     pending: Option<&SerializedPendingGroupMessages>,
 ) -> (String, ProtocolCheckpointLayout) {
+    layout_protocol_checkpoint_with_cached_fields(json, previous, pending, &[])
+}
+
+fn layout_protocol_checkpoint_with_cached_fields(
+    json: String,
+    previous: &ProtocolCheckpointLayout,
+    pending: Option<&SerializedPendingGroupMessages>,
+    fanouts: &[Arc<serde_json::value::RawValue>],
+) -> (String, ProtocolCheckpointLayout) {
     if json.len() < CHECKPOINT_RESERVE {
         return (json, ProtocolCheckpointLayout::default());
     }
-    let records = checkpoint_records_with_cached_pending(&json, 0, pending);
+    let records = checkpoint_records_with_cached_fields(&json, 0, pending, fanouts);
     // Parsed legacy/pretty/padded JSON remains readable without growing again.
     // Production serialization is compact and has no whitespace after objects.
     if records.iter().any(|record| record.end != record.padded_end)
@@ -176,10 +237,7 @@ fn layout_protocol_checkpoint_with_pending(
                 output.len()
             }
         });
-        output.extend(std::iter::repeat_n(
-            ' ',
-            target.saturating_sub(output.len()),
-        ));
+        append_checkpoint_padding(&mut output, target);
         layout.record_ends.push(output.len());
         copied = record.end;
     }
@@ -189,7 +247,7 @@ fn layout_protocol_checkpoint_with_pending(
     } else {
         output.len().div_ceil(CHECKPOINT_RESERVE) * CHECKPOINT_RESERVE
     };
-    output.extend(std::iter::repeat_n(' ', target - output.len()));
+    append_checkpoint_padding(&mut output, target);
     layout.bytes = output.len();
     (output, layout)
 }

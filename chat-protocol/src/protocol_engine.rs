@@ -23,6 +23,7 @@ include!("protocol_engine/engine_resolution.rs");
 include!("protocol_engine/engine_sender_key_repair.rs");
 include!("protocol_engine/checkpoint_layout.rs");
 include!("protocol_engine/checkpoint_pending.rs");
+include!("protocol_engine/checkpoint_fanout.rs");
 include!("protocol_engine/engine_persistence.rs");
 include!("protocol_engine/free_functions.rs");
 
@@ -46,6 +47,7 @@ mod tests {
     include!("protocol_engine/group_decrypt_budget_tests.rs");
     include!("protocol_engine/group_source_event_tests.rs");
     include!("protocol_engine/checkpoint_pending_tests.rs");
+    include!("protocol_engine/checkpoint_fanout_tests.rs");
 
     #[test]
     fn sender_owner_resolution_keeps_claimed_device_pending_until_owner_verified() {
@@ -920,7 +922,7 @@ mod tests {
             pending.group_id == "group-a"
                 && pending.inner_event_id.is_none()
                 && matches!(
-                    &pending.fanout,
+                    pending.fanout.as_ref(),
                     GroupPendingFanout::LocalSiblings { payload } if payload == b"new"
                 )
         }));
@@ -947,7 +949,7 @@ mod tests {
 
         assert_eq!(engine.pending_group_fanouts.len(), 1);
         assert!(matches!(
-            &engine.pending_group_fanouts[0].fanout,
+            engine.pending_group_fanouts[0].fanout.as_ref(),
             GroupPendingFanout::LocalSiblings { payload } if payload == b"new"
         ));
     }

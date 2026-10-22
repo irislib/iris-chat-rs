@@ -1,5 +1,10 @@
 mod incremental;
 
+#[cfg(test)]
+pub(crate) fn checkpoint_io_bytes() -> (usize, usize) {
+    incremental::io_bytes()
+}
+
 use super::SharedConnection;
 use std::collections::HashMap;
 use std::fs;
