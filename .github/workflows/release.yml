@@ -120,6 +120,7 @@ jobs:
         run: |
           set -Eeuo pipefail
           python3 scripts/test_release_notes.py
+          mkdir -p work/private-controls
           IRIS_PRIVATE_CONTROL_FIXTURE_OUTPUT="$PWD/work/private-controls/native-private-controls.json" scripts/verify.sh fast
           scripts/test_release_publish_guard
           scripts/test_homebrew_tap

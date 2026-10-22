@@ -312,6 +312,33 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertNotIn("    if:", publish)
         self.assertNotIn("continue-on-error:", jobs["release"])
 
+    def test_hosted_release_gate_can_write_its_first_fixture_in_a_clean_checkout(self) -> None:
+        workflow = (ROOT / ".github/workflows/release.yml").read_text()
+        step = workflow.split("      - name: Run hosted release gate\n", 1)[1]
+        script = textwrap.dedent(step.split("        run: |\n", 1)[1].split("\n      - name:", 1)[0])
+        with tempfile.TemporaryDirectory() as directory:
+            checkout = Path(directory)
+            scripts = checkout / "scripts"
+            scripts.mkdir()
+            (scripts / "test_release_notes.py").write_text("")
+            # Stand in for the first native fixture writer, which does not
+            # depend on a different test creating its output directory.
+            (scripts / "verify.sh").write_text(textwrap.dedent("""\
+                #!/usr/bin/env python3
+                import os
+                from pathlib import Path
+                Path(os.environ["IRIS_PRIVATE_CONTROL_FIXTURE_OUTPUT"]).write_text("fixture")
+                """))
+            for name in ("test_release_publish_guard", "test_homebrew_tap"):
+                (scripts / name).write_text("#!/bin/sh\nexit 0\n")
+            for name in ("verify.sh", "test_release_publish_guard", "test_homebrew_tap"):
+                (scripts / name).chmod(0o755)
+            result = subprocess.run(["bash", "-c", script], cwd=checkout,
+                                    capture_output=True, text=True, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual((checkout / "work/private-controls/native-private-controls.json").read_text(),
+                             "fixture")
+
     def test_release_builds_manifest_and_attests_every_file(self) -> None:
         workflow = (ROOT / ".github/workflows/release.yml").read_text()
         self.assertIn("scripts/release-manifest.py create", workflow)
