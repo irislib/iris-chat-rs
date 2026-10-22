@@ -1,0 +1,70 @@
+name: Qualify macOS development CLI
+
+on:
+  push:
+    branches: [codex/macos-cli-invite-fix-0bcc193]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-cli-development-0bcc193
+  cancel-in-progress: false
+
+jobs:
+  qualify:
+    if: github.event.repository.private == false
+    runs-on: macos-15
+    timeout-minutes: 40
+    env:
+      SOURCE_COMMIT: 0bcc193ecd43e3740291ea6d774290c84dcada46
+      SOURCE_TREE: 5f4fd4c6285fe919d68a3ff8a4b6a4241ff3c6d5
+      CARGO_TARGET_DIR: ${{ github.workspace }}/cargo-target
+      CARGO_BUILD_JOBS: '2'
+      RUSTUP_TOOLCHAIN: 1.95.0
+      IRIS_BUILD_GIT_SHA: 0bcc193ecd43e3740291ea6d774290c84dcada46
+      IRIS_BUILD_CHANNEL: debug
+      IRIS_FIPS_WEBSOCKET_SEED_URLS: ''
+      TOKIO_WORKER_THREADS: '2'
+      RAYON_NUM_THREADS: '2'
+    steps:
+      - name: Checkout qualification instructions
+        uses: actions/checkout@v4
+        with:
+          path: driver
+          persist-credentials: false
+      - name: Checkout exact application source
+        uses: actions/checkout@v4
+        with:
+          ref: 0bcc193ecd43e3740291ea6d774290c84dcada46
+          path: source
+          persist-credentials: false
+      - name: Check runner resource headroom
+        run: |
+          python3 - <<'PY'
+          import os, shutil
+          assert shutil.disk_usage(os.environ['GITHUB_WORKSPACE']).free >= 20 * 1024**3
+          assert os.uname().sysname == 'Darwin' and os.uname().machine == 'arm64'
+          PY
+      - name: Install native prerequisites and fixed Rust compiler
+        run: |
+          python3 -c 'import sys; assert sys.version_info >= (3, 11)'
+          xcrun --sdk macosx --show-sdk-path
+          xcrun --find clang
+          cmake --version
+          rustup toolchain install 1.95.0 --profile minimal
+      - name: Build and qualify the normal development CLI
+        run: >-
+          python3 driver/scripts/qualify-macos-cli.py
+          --source "$GITHUB_WORKSPACE/source"
+          --output "$RUNNER_TEMP/iris-cli-qualification"
+      - name: Retain development binary and source-bound evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: iris-macos-cli-DEV-0bcc193-${{ github.run_id }}
+          path: ${{ runner.temp }}/iris-cli-qualification/
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
