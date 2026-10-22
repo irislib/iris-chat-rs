@@ -117,6 +117,7 @@ pub enum AppAction {
         picture_filename: String,
     },
     CreatePublicInvite,
+    CreateFullInvite,
     CreateGroupInvite {
         group_id: String,
         max_uses: Option<u32>,

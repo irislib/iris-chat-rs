@@ -225,4 +225,5 @@ include!("tests/mentions.rs");
 include!("tests/nhash_previews.rs");
 
 include!("tests/issued_invites.rs");
+include!("tests/full_invites.rs");
 include!("tests/fips_provider_privacy.rs");

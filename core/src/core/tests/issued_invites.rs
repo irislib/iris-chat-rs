@@ -6,6 +6,7 @@ fn publish_personal_invite_for_test(core: &mut AppCore) {
 
 fn publish_issued_invite_for_test(core: &mut AppCore, group: Option<&str>, limit: Option<u32>, expires: Option<u64>) -> (String, super::issued_invites::IssuedInvite) {
     let (key, issued) = core.prepare_issued_invite(group, limit, expires).unwrap();
+    core.ensure_local_app_keys_for_public_invite();
     let login = core.logged_in.as_ref().unwrap();
     let owner = login.owner_pubkey.to_hex();
     let device = login.device_keys.public_key().to_hex();

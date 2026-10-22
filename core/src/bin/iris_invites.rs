@@ -1,7 +1,14 @@
 fn handle_invite_device_command(cli: &CliApp, command: InviteDeviceTopCommands) -> Result<Value> {
     match command {
-        InviteDeviceTopCommands::Invite(InviteCommands::Create) => {
-            cli.dispatch_and_wait(AppAction::CreatePublicInvite, Duration::from_secs(40))?;
+        InviteDeviceTopCommands::Invite(InviteCommands::Create { full }) => {
+            cli.dispatch_and_wait(
+                if full {
+                    AppAction::CreateFullInvite
+                } else {
+                    AppAction::CreatePublicInvite
+                },
+                Duration::from_secs(40),
+            )?;
             let state = cli.app.state();
             fail_on_toast(&state)?;
             let invite = state.public_invite.context("No invite was created.")?;

@@ -327,7 +327,11 @@ enum ChatCommands {
 
 #[derive(Subcommand)]
 enum InviteCommands {
-    Create,
+    Create {
+        /// Include everything in the link, without uploading it to a file server.
+        #[arg(long)]
+        full: bool,
+    },
     Group {
         group: String,
         #[arg(long)]
