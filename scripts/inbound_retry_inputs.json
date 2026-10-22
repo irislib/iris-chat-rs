@@ -1,6 +1,26 @@
 {
   "enabled": true,
   "optimized_enabled": true,
+  "batched": {
+    "enabled": false,
+    "source": "142a90a7f9c8493cdb3ada2458d6d142372994ee",
+    "base": "b8c5de4fb64ea69defbfaf26253ff69f51ae5393",
+    "changed_paths": [
+      "chat-protocol/src/protocol_engine.rs",
+      "chat-protocol/src/protocol_engine/inbound_retry_backlog_tests.rs",
+      "chat-protocol/src/protocol_engine/group_retry.rs",
+      "chat-protocol/src/protocol_engine/batched_retry_cpu_tests.rs"
+    ],
+    "failure_marker": "batched steady retry loop still exceeds 5% of one CPU:",
+    "test": {
+      "name": "protocol_engine::tests::restored_backlog_batched_retry_stays_within_cpu_budget",
+      "expected_count": 1,
+      "exact": true,
+      "marker": "batched_retry_cpu ",
+      "ignored": true,
+      "timeout_seconds": 420
+    }
+  },
   "base": "74c1b1ab0bf217fbda2bb74ab607f0d336529625",
   "before": "6c11fdc511303d97a33779ff1b6ac6b6300ef5a2",
   "after": "b8c5de4fb64ea69defbfaf26253ff69f51ae5393",
