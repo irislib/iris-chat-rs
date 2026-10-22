@@ -2,6 +2,32 @@
 
 Each release has channel-specific notes. The release tag must match the `##` heading exactly.
 
+## v2026.10.22.4
+
+### GitHub
+
+- Keep sign-in hidden while a saved account restores, including slow restores, and preserve background storage protection.
+- Stop republishing unchanged connection adverts every two seconds; retain immediate endpoint updates and refresh before expiration.
+- Reuse TLS 1.3 sessions only within an unchanged, single-author discovery scope and exact message-server URL, with fresh key exchange and anonymous authentication on every connection.
+- Keep nearby-device discovery on its quiet schedule when accepted connection adverts are renewed or replayed, while preserving signed expiry and cache recovery.
+- Measure recurring discovery work across two complete polling windows, with serialized checks for separate identities and fresh anonymous authentication.
+- Check aggregate discovery limits independently of network deadlines, retain real-wire scope checks, and bound failure diagnostics.
+- Preserve the visible message when an older page finishes loading just after a held drag ends.
+- Show the hand cursor over clickable Mac controls and message links while preserving text selection and image zoom.
+- Add Haps source-install recipes for the desktop app and CLI, with checks that keep package metadata and build versions aligned with the tag. Locally built packages remain distinct from signed release binaries.
+
+### Apple
+
+- Prevent a brief sign-in screen while your saved account loads.
+- Reduce repeated connection work while Iris is open.
+- Keep your place when loading older messages on iPhone.
+- Show the hand cursor on clickable controls and message links on Mac.
+
+### Zapstore
+
+- Reduce repeated network startup while restoring your account.
+- Reduce repeated connection work while Iris is open.
+
 ## v2026.10.22.3
 
 ### GitHub
