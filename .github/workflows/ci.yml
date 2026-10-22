@@ -485,6 +485,7 @@ jobs:
         run: |
           rustup toolchain install stable --profile minimal
           rustup default stable
+          rustup target add x86_64-pc-windows-msvc
           choco install cmake nasm --no-progress -y
       - name: Cache Cargo
         uses: actions/cache@v4
@@ -495,6 +496,8 @@ jobs:
             ${{ github.workspace }}/cargo-target
           key: all-builds-windows-${{ hashFiles('iris-chat-rs/**/Cargo.lock', 'iris-chat-rs/windows/**/*.csproj') }}
           restore-keys: all-builds-windows-
+      - name: Check Windows build input pins
+        run: ./scripts/test-windows-build-inputs.ps1
       - name: Build native app
         id: native-build
         run: ./scripts/windows-build-local.ps1 build

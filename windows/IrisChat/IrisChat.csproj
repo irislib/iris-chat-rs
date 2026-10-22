@@ -12,12 +12,20 @@
     <Platforms>x64</Platforms>
     <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
     <SelfContained>true</SelfContained>
+    <RuntimeFrameworkVersion>8.0.26</RuntimeFrameworkVersion>
+    <WindowsSdkPackageVersion>10.0.17763.56</WindowsSdkPackageVersion>
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+    <RestoreLockedMode>true</RestoreLockedMode>
     <PublishSingleFile>false</PublishSingleFile>
     <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
     <LangVersion>latest</LangVersion>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <ApplicationIcon>Resources\IrisChat.ico</ApplicationIcon>
   </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Update="Microsoft.Windows.SDK.NET.Ref" RuntimeFrameworkVersion="$(WindowsSdkPackageVersion)" />
+  </ItemGroup>
 
   <!-- Native Rust DLL produced by scripts/windows-build, copied next to exe.
        Generated C# bindings under Bindings/ are picked up by the SDK's default

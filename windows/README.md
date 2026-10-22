@@ -56,10 +56,28 @@ inside the VM (handled by the Parallels Tools install plus the user's prior
 - Rust toolchain (`rustup`) with the `x86_64-pc-windows-msvc` target
 - Visual Studio C++ Build Tools with the **MSVC v143 - x64/x86 build tools**
   workload (provides the `link.exe` cargo needs)
-- Windows SDK
+- Windows SDK and .NET 8 SDK
 - LLVM (provides `clang.exe` for some `cc-rs` builds; default search path is
   `C:\Program Files\LLVM\bin`)
 - Parallels Tools' "User home directory" host sharing turned on
+
+The build requires the Rust target to be installed already; it does not install
+or update the toolchain. CI installs that prerequisite before invoking the same
+build entrypoint. If C# binding generation needs `uniffi-bindgen-cs`, the entrypoint
+installs the reviewed full Git commit for `v0.10.0+v0.29.4` with Cargo's locked
+dependencies. `IRIS_WINDOWS_BINDGEN_CS_GIT_REF` overrides must be full commit
+hashes; tags and branches are rejected. An already installed tool must have Cargo
+metadata matching that repository and commit; the build invokes the checked
+Cargo executable directly, ignoring other copies on `PATH`.
+
+.NET restores use the committed `windows/IrisChat/packages.lock.json` in locked
+mode. Changing a dependency version or package hash makes the restore fail.
+NuGet does not put SDK download packages in that lock: their exact versions and
+SHA-512 hashes are recorded separately in `windows/IrisChat/sdk-packages.json`.
+After restoring, the entrypoint checks every SDK download archive against those
+pins before publishing with `--no-restore`. Unknown SDK download packages fail
+closed. Dependency updates must review and update the relevant locks and pins;
+the installed SDK and native compilers remain declared build prerequisites.
 
 Once those are present, `just windows-build` produces a self-contained
 `IrisChat.exe` under

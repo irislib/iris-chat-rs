@@ -13,11 +13,16 @@ $Project = Join-Path $Root 'windows\IrisChat\IrisChat.csproj'
 $Target = if ($env:IRIS_WINDOWS_TARGET) { $env:IRIS_WINDOWS_TARGET } else { 'x86_64-pc-windows-msvc' }
 $Configuration = if ($env:IRIS_WINDOWS_DOTNET_CONFIG) { $env:IRIS_WINDOWS_DOTNET_CONFIG } else { 'Release' }
 $RustProfile = if ($env:IRIS_WINDOWS_RUST_PROFILE) { $env:IRIS_WINDOWS_RUST_PROFILE } else { 'release' }
-$BindgenRef = if ($env:IRIS_WINDOWS_BINDGEN_CS_GIT_REF) { $env:IRIS_WINDOWS_BINDGEN_CS_GIT_REF } else { 'v0.10.0+v0.29.4' }
+# v0.10.0+v0.29.4, pinned to its reviewed upstream commit.
+$BindgenRef = if ($env:IRIS_WINDOWS_BINDGEN_CS_GIT_REF) { $env:IRIS_WINDOWS_BINDGEN_CS_GIT_REF } else { 'e4f18be96ca812571fd85fc39555646158b06b9c' }
+if ($BindgenRef -notmatch '^[0-9a-fA-F]{40}$') {
+    throw 'IRIS_WINDOWS_BINDGEN_CS_GIT_REF must be a full 40-character commit hash; mutable tags and branches are not supported.'
+}
 $VersionName = if ($env:IRIS_APP_VERSION_NAME) { $env:IRIS_APP_VERSION_NAME } else { '0.1.0' }
 $VersionCode = if ($env:IRIS_APP_VERSION_CODE) { $env:IRIS_APP_VERSION_CODE } else { '1' }
 $BuildSha = if ($env:IRIS_BUILD_GIT_SHA) { $env:IRIS_BUILD_GIT_SHA } else { 'unknown' }
 $Dist = Join-Path $Root 'dist\windows'
+. (Join-Path $PSScriptRoot 'windows-build-inputs.ps1')
 
 function Invoke-Checked {
     param([scriptblock] $Script, [string] $Description)
@@ -106,7 +111,11 @@ function Invoke-Doctor {
 function Build-Rust {
     Import-VisualStudioEnvironment
     Add-ToolPaths
-    Invoke-Checked { rustup target add $Target | Out-Null } "rustup target add $Target"
+    $installedTargets = @(rustup target list --installed)
+    if ($LASTEXITCODE -ne 0) { throw 'Could not read installed Rust targets.' }
+    if ($Target -notin $installedTargets) {
+        throw "Rust target $Target is required. Install it before building with: rustup target add $Target"
+    }
     Push-Location $Core
     try {
         if ($RustProfile -eq 'release') {
@@ -121,11 +130,14 @@ function Build-Rust {
 
 function Build-Bindings {
     Add-ToolPaths
-    $bindgen = Get-Command uniffi-bindgen-cs -ErrorAction SilentlyContinue
+    $cargoRoot = if ($env:CARGO_HOME) { [IO.Path]::GetFullPath($env:CARGO_HOME) } else { Join-Path $env:USERPROFILE '.cargo' }
+    $bindgen = Get-PinnedBindgen -CargoRoot $cargoRoot -Revision $BindgenRef
     if (-not $bindgen) {
         Invoke-Checked {
-            cargo install uniffi-bindgen-cs --git https://github.com/NordSecurity/uniffi-bindgen-cs --tag $BindgenRef --locked
+            cargo install --root $cargoRoot uniffi-bindgen-cs --git https://github.com/NordSecurity/uniffi-bindgen-cs --rev $BindgenRef --locked
         } 'install uniffi-bindgen-cs'
+        $bindgen = Get-PinnedBindgen -CargoRoot $cargoRoot -Revision $BindgenRef
+        if (-not $bindgen) { throw 'Pinned uniffi-bindgen-cs was not installed.' }
     }
     $library = Join-Path (Get-CargoTargetDirectory) "$Target\$RustProfile\iris_chat_core.dll"
     if (-not (Test-Path $library)) { throw "Rust DLL was not found: $library" }
@@ -136,7 +148,7 @@ function Build-Bindings {
     Push-Location $Core
     try {
         Invoke-Checked {
-            uniffi-bindgen-cs --library --out-dir $bindings --config (Join-Path $Core 'uniffi.toml') $library
+            & $bindgen --library --out-dir $bindings --config (Join-Path $Core 'uniffi.toml') $library
         } 'uniffi-bindgen-cs'
     } finally {
         Pop-Location
@@ -162,7 +174,15 @@ function Build-Dotnet {
             Wait-Process -Id $_.Id -ErrorAction SilentlyContinue
         }
     Invoke-Checked {
-        dotnet publish $Project -c $Configuration -r win-x64 --self-contained true `
+        dotnet restore $Project -r win-x64 --locked-mode --force `
+            -p:RestoreForceEvaluate=false -p:Configuration=$Configuration
+    } 'locked dotnet restore'
+    $projectDirectory = Split-Path -Parent $Project
+    Assert-PinnedDownloadPackages `
+        -AssetsPath (Join-Path $projectDirectory 'obj\project.assets.json') `
+        -PinsPath (Join-Path $projectDirectory 'sdk-packages.json')
+    Invoke-Checked {
+        dotnet publish $Project -c $Configuration -r win-x64 --self-contained true --no-restore `
             -p:WindowsPackageType=None "-p:Version=$VersionName" `
             "-p:AssemblyVersion=$assemblyVersion" "-p:FileVersion=$assemblyVersion" `
             "-p:InformationalVersion=$informationalVersion"

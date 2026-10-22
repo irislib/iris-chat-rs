@@ -21,7 +21,8 @@ resolve_shared_build_metadata "$ROOT"
 
 PROFILE="${IRIS_WINDOWS_RUST_PROFILE:-debug}"
 TARGET="${IRIS_WINDOWS_TARGET:-x86_64-pc-windows-msvc}"
-BINDGEN_CS_GIT_REF="${IRIS_WINDOWS_BINDGEN_CS_GIT_REF:-v0.10.0+v0.29.4}"
+# Empty selects the immutable default in windows-build-local.ps1.
+BINDGEN_CS_GIT_REF="${IRIS_WINDOWS_BINDGEN_CS_GIT_REF:-}"
 LLVM_BIN="${IRIS_WINDOWS_LLVM_BIN:-C:\\Program Files\\LLVM\\bin}"
 DOTNET_CONFIG="${IRIS_WINDOWS_DOTNET_CONFIG:-Debug}"
 
@@ -50,7 +51,7 @@ env knobs:
   IRIS_WINDOWS_GUEST_REPO_PATH    Repo path on the Windows host (default: C:\src\iris-chat-rs)
   IRIS_WINDOWS_TARGET             Rust target triple (default: x86_64-pc-windows-msvc)
   IRIS_WINDOWS_LLVM_BIN           LLVM bin dir for ring/sha2 cc-rs builds
-  IRIS_WINDOWS_BINDGEN_CS_GIT_REF Tag/branch of NordSec/uniffi-bindgen-cs
+  IRIS_WINDOWS_BINDGEN_CS_GIT_REF Full commit hash override for uniffi-bindgen-cs
   IRIS_WINDOWS_RUST_PROFILE       debug|release (default: debug)
   IRIS_WINDOWS_DOTNET_CONFIG      Debug|Release (default: Debug)
   IRIS_WINDOWS_SETUP_INSTALL_NSIS Set to 1 to include installer tooling
@@ -358,7 +359,7 @@ run_doctor() {
   echo "VM:                $vm"
   echo "Shared repo path:  $shared_repo"
   echo "Rust target:       $TARGET"
-  echo "Bindgen-cs ref:    $BINDGEN_CS_GIT_REF"
+  echo "Bindgen-cs ref:    ${BINDGEN_CS_GIT_REF:-pinned in windows-build-local.ps1}"
   echo "LLVM bin:          $LLVM_BIN"
 
   ps_run "$vm" "$(cat <<PS
