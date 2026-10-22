@@ -1,6 +1,7 @@
 use super::*;
 
 mod input;
+mod lookup;
 pub(super) use input::chat_invite_url;
 #[cfg(test)]
 pub(super) use input::parse_public_invite_input;
@@ -30,6 +31,7 @@ pub(super) struct PendingOutgoingInviteAcceptance {
     pub(super) record: Option<crate::invite_record::InviteRecord>,
     pub(super) claimed_owner: PublicKey,
     pub(super) queued_at_secs: u64,
+    pub(super) acceptance_intent: device_sync::InviteAcceptanceIntent,
 }
 
 impl AppCore {
@@ -557,7 +559,15 @@ impl AppCore {
                 return;
             };
             let request_id = uuid::Uuid::new_v4().to_string();
-            self.pending_private_invite_lookup = Some(request_id.clone());
+            let intent = match self.capture_invite_acceptance(None) {
+                Ok(intent) => intent,
+                Err(_) => {
+                    self.state.toast = Some("Could not save conversation acceptance.".into());
+                    self.emit_state();
+                    return;
+                }
+            };
+            self.pending_private_invite_lookup = Some((request_id.clone(), intent));
             self.state.busy.accepting_invite = true;
             self.emit_state();
             let reference = reference.to_string();
@@ -576,51 +586,14 @@ impl AppCore {
             });
             return;
         }
-        self.accept_invite_input(invite_input, None);
-    }
-
-    pub(super) fn finish_private_invite_lookup(
-        &mut self,
-        request_id: String,
-        owner: String,
-        result: Result<crate::invite_record::InviteRecord, String>,
-    ) {
-        if self.pending_private_invite_lookup.as_ref() != Some(&request_id)
-            || self
-                .logged_in
-                .as_ref()
-                .map(|login| login.owner_pubkey.to_hex())
-                .as_ref()
-                != Some(&owner)
-        {
-            return;
-        }
-        self.pending_private_invite_lookup = None;
-        match result.and_then(|record| {
-            if record
-                .expires_at
-                .is_some_and(|expiry| expiry <= unix_now().get())
-            {
-                return Err("This invite has expired.".to_string());
-            }
-            record
-                .legacy_url()
-                .map(|url| (url, record))
-                .map_err(|e| e.to_string())
-        }) {
-            Ok((url, record)) => self.accept_invite_input(&url, Some(record)),
-            Err(error) => {
-                self.state.busy.accepting_invite = false;
-                self.state.toast = Some(error);
-                self.emit_state();
-            }
-        }
+        self.accept_invite_input(invite_input, None, None);
     }
 
     fn accept_invite_input(
         &mut self,
         invite_input: &str,
         record: Option<crate::invite_record::InviteRecord>,
+        acceptance_intent: Option<device_sync::InviteAcceptanceIntent>,
     ) {
         if !self.can_use_chats() {
             self.state.toast = Some(chat_unavailable_message(self.logged_in.as_ref()).to_string());
@@ -643,6 +616,10 @@ impl AppCore {
         let result = match parse_public_invite_or_direct_chat_input(trimmed) {
             Ok(PublicInviteInput::Invite(invite)) => {
                 resolve_invite_owner(&invite, None).and_then(|owner_pubkey| {
+                    let acceptance_intent = match acceptance_intent {
+                        Some(intent) => intent,
+                        None => self.capture_invite_acceptance(Some(&owner_pubkey.to_hex()))?,
+                    };
                     if owner_pubkey != invite.inviter || self.defer_owner_app_keys_publish {
                         self.pending_outgoing_invite_acceptance =
                             Some(PendingOutgoingInviteAcceptance {
@@ -650,6 +627,7 @@ impl AppCore {
                                 record: record.clone(),
                                 claimed_owner: owner_pubkey,
                                 queued_at_secs: unix_now().get(),
+                                acceptance_intent,
                             });
                         match self.try_pending_outgoing_invite_acceptance(owner_pubkey)? {
                             Some(chat_id) => Ok(AcceptInviteDispatch::Completed(chat_id)),
@@ -660,9 +638,14 @@ impl AppCore {
                             }
                         }
                     } else {
-                        self.accept_parsed_invite(invite, owner_pubkey, record.as_ref())?
-                            .map(AcceptInviteDispatch::Completed)
-                            .ok_or_else(|| anyhow::anyhow!("Invite authorization is unavailable."))
+                        self.accept_parsed_invite(
+                            invite,
+                            owner_pubkey,
+                            record.as_ref(),
+                            &acceptance_intent,
+                        )?
+                        .map(AcceptInviteDispatch::Completed)
+                        .ok_or_else(|| anyhow::anyhow!("Invite authorization is unavailable."))
                     }
                 })
             }
@@ -712,6 +695,7 @@ impl AppCore {
         invite: Invite,
         owner_pubkey: PublicKey,
         record: Option<&crate::invite_record::InviteRecord>,
+        acceptance_intent: &device_sync::InviteAcceptanceIntent,
     ) -> anyhow::Result<Option<String>> {
         if self.defer_owner_app_keys_publish {
             self.recover_deferred_owner_registration();
@@ -741,6 +725,12 @@ impl AppCore {
                 record.group_id.as_deref().unwrap_or_default()
             )));
         }
+        // Choosing a verified direct invite accepts this conversation, including
+        // its first incoming message. Unsolicited responses do not take this path.
+        anyhow::ensure!(
+            self.sync_invite_acceptance(&chat_id, acceptance_intent),
+            "Could not save conversation acceptance."
+        );
         self.ensure_thread_record(&chat_id, unix_now().get())
             .unread_count = 0;
         self.remember_recent_handshake_peer(
@@ -775,7 +765,12 @@ impl AppCore {
                 "Could not verify the invite owner's device list. Reopen the invite to retry."
             );
         }
-        let accepted = self.accept_parsed_invite(pending.invite, owner, pending.record.as_ref())?;
+        let accepted = self.accept_parsed_invite(
+            pending.invite,
+            owner,
+            pending.record.as_ref(),
+            &pending.acceptance_intent,
+        )?;
         if accepted.is_some() {
             self.pending_outgoing_invite_acceptance = None;
         }

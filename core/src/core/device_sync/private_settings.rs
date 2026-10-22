@@ -188,7 +188,7 @@ impl AppCore {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(in crate::core) struct RequestDecision {
     chat_id: String,
@@ -217,7 +217,72 @@ pub(super) fn request_decision_version(event: &PrivateEvent) -> Option<(u64, u8)
         },
     ))
 }
+/// A local explicit choice, frozen before either private-link lookup or owner proof.
+/// This is never published; only successful verified acceptance is synced privately.
+#[derive(Clone, Debug)]
+pub(in crate::core) struct InviteAcceptanceIntent {
+    requested_at_ms: u64,
+    decisions: BTreeMap<String, RequestDecision>,
+}
+
 impl AppCore {
+    pub(in crate::core) fn capture_invite_acceptance(
+        &self,
+        target: Option<&str>,
+    ) -> anyhow::Result<InviteAcceptanceIntent> {
+        let requested_at_ms = unix_now_ms();
+        let mut decisions = BTreeMap::new();
+        if let Some(target) = target {
+            if let Some(state) = self.request_decision(target) {
+                decisions.insert(target.to_owned(), state);
+            }
+        } else {
+            // A private link does not reveal its owner until fetched. Read only
+            // request-decision heads, never the message/history record stream.
+            let owner = self
+                .logged_in
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("No account"))?
+                .owner_pubkey;
+            let start = format!(
+                "iris-chat-sync-record-v1:{}:private-state:[\"privateEvent\",\"requestDecision\",",
+                owner.to_hex()
+            );
+            let end = format!("{start}\u{10ffff}");
+            let shared = self.app_store.shared();
+            let conn = shared.lock().map_err(|_| anyhow::anyhow!("Storage lock"))?;
+            let mut query =
+                conn.prepare("SELECT value FROM app_meta WHERE key>=?1 AND key<?2 ORDER BY key")?;
+            for row in query.query_map([start, end], |row| row.get::<_, String>(0))? {
+                if let DeviceSyncRecord::PrivateEvent { event } = serde_json::from_str(&row?)? {
+                    let state = request_decision_state(&event)
+                        .ok_or_else(|| anyhow::anyhow!("Invalid request decision"))?;
+                    decisions.insert(state.chat_id.clone(), state);
+                }
+            }
+        }
+        Ok(InviteAcceptanceIntent {
+            requested_at_ms,
+            decisions,
+        })
+    }
+
+    pub(in crate::core) fn sync_invite_acceptance(
+        &mut self,
+        target: &str,
+        intent: &InviteAcceptanceIntent,
+    ) -> bool {
+        let previous = intent.decisions.get(target);
+        // Even a same-millisecond reset/rejection during either async step wins.
+        if self.request_decision(target).as_ref() != previous {
+            return true;
+        }
+        let millis = intent
+            .requested_at_ms
+            .max(previous.map_or(0, |state| state.updated_at_ms.saturating_add(1)));
+        self.sync_request_acceptance_at(target, millis)
+    }
+
     pub(in crate::core) fn request_decision(&self, target: &str) -> Option<RequestDecision> {
         let key = serde_json::json!(["privateEvent", "requestDecision", target]).to_string();
         match self.load_sync_record(&records::RecordLocator::Head(key))? {

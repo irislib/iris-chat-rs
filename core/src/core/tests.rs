@@ -135,6 +135,7 @@ include!("tests/app_keys_device_labels.rs");
 include!("tests/app_keys_publishing.rs");
 include!("tests/app_keys_invites_requests.rs");
 include!("tests/direct_message_request_acceptance.rs");
+include!("tests/explicit_direct_invite_acceptance.rs");
 include!("tests/pending_device_link.rs");
 include!("tests/signer_login.rs");
 include!("tests/signer_login_lookup.rs");
