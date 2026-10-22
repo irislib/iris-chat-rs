@@ -18,7 +18,7 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 - Keep nearby-device discovery on its quiet schedule when accepted connection adverts are renewed or replayed, while preserving signed expiry and cache recovery.
 - Preserve the visible message when an older page finishes loading just after a held drag ends.
 - Show the hand cursor over clickable Mac controls and message links while preserving text selection and image zoom.
-- Add Haps source-install recipes for the desktop app and CLI, with checks that keep package metadata and build versions aligned with the tag. Locally built packages remain distinct from signed release binaries.
+- Add Haps source-install recipes for the desktop app and CLI, with checks that keep package metadata and build versions aligned with the tag. Include a Start Menu shortcut and icon for Windows Haps installs. Locally built packages remain distinct from signed release binaries.
 
 ### Apple
 
