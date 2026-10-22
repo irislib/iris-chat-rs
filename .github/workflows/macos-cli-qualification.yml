@@ -44,7 +44,10 @@ jobs:
         run: |
           python3 - <<'PY'
           import os, shutil
-          assert shutil.disk_usage(os.environ['GITHUB_WORKSPACE']).free >= 20 * 1024**3
+          free = shutil.disk_usage(os.environ['GITHUB_WORKSPACE']).free
+          print({'initial_free_bytes': free, 'required_free_bytes': 20 * 1024**3,
+                 'system': os.uname().sysname, 'architecture': os.uname().machine}, flush=True)
+          assert free >= 20 * 1024**3
           assert os.uname().sysname == 'Darwin' and os.uname().machine == 'arm64'
           PY
       - name: Install native prerequisites and fixed Rust compiler
