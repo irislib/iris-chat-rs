@@ -61,9 +61,18 @@ for crate in core chat-protocol protocol-ffi; do
         # A large pending protocol backlog is independent of visible message
         # history. Keep this allocation/serialization/durability regression in
         # both CI and the tagged release gate, with its aggregate work counts.
-        cargo test "${args[@]}" --lib \
+        if ! checkpoint_output="$(cargo test "${args[@]}" --lib \
             protocol_engine::tests::checkpoint_backlog_production_counts_are_durable \
-            -- --ignored --exact --test-threads=1 --nocapture
+            -- --ignored --exact --test-threads=1 --nocapture 2>&1)"; then
+            printf '%s\n' "$checkpoint_output"
+            exit 1
+        fi
+        printf '%s\n' "$checkpoint_output"
+        if [[ "$checkpoint_output" != *"test result: ok. 1 passed; 0 failed; 0 ignored;"* ||
+              "$checkpoint_output" != *"checkpoint_backlog fanouts=22702 ciphertexts=19231 checkpoint_bytes=254672896"* ]]; then
+            echo "Required protocol backlog checkpoint regression did not execute" >&2
+            exit 1
+        fi
     fi
     # The populated CPU test runs once in the ordinary nonignored core suite.
     # Nextest captures successful stdout, so CI retains its companion files with
