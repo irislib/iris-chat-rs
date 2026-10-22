@@ -6,6 +6,10 @@ use nostr_pubsub::{
 };
 use nostr_pubsub_fips::FipsPubsubClient;
 mod privacy;
+#[cfg(all(test, target_os = "linux"))]
+pub(in crate::core) use privacy::tls_tests as discovery_test_support;
+#[cfg(all(test, target_os = "linux"))]
+pub(in crate::core) use privacy::PrivateMeshDiscovery;
 pub(in crate::core) use privacy::PrivateMeshProviders;
 
 pub(super) const MESH_REPLAY_EVENTS: usize = 64;

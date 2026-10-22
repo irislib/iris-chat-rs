@@ -28,12 +28,15 @@ fn live_peer_advert_queries_have_one_anonymous_subject_and_no_own_receive_contex
         );
         let adapter = PrivateMeshProviders::new(Vec::new(), None, Vec::new(), vec![relay]);
         for peer in peers {
+            let filters = vec![Filter::new().kind(Kind::Custom(37195)).author(peer)];
+            let tls = adapter.advert_tls(&filters);
             adapter
                 .discover(
-                    vec![Filter::new().kind(Kind::Custom(37195)).author(peer)],
+                    filters,
                     endpoint.clone(),
                     flume::unbounded().0,
                     &mut DiscoveryObservations::default(),
+                    &tls,
                 )
                 .await;
         }
@@ -113,7 +116,7 @@ fn mesh_advert_quiet_delay_respects_expiry_without_expired_spin() {
 }
 
 #[test]
-fn mesh_quiet_cadence_changes_only_on_new_event_ids_and_explicit_demand() {
+fn mesh_nonadvert_cadence_changes_only_on_new_event_ids_and_explicit_demand() {
     let keys = Keys::generate();
     let first = EventBuilder::new(Kind::Metadata, "first")
         .sign_with_keys(&keys)
@@ -506,13 +509,16 @@ fn mesh_failed_anonymous_reads_back_off_and_explicit_demand_resets() {
         let live = discovery_endpoint().await;
         let mut observations = DiscoveryObservations::default();
         let mut cadence = DiscoveryCadence::default();
+        let filters = vec![Filter::new().kind(Kind::Custom(37195)).author(author)];
+        let tls = providers.advert_tls(&filters);
         for expected in [30, 60, 120, 120] {
             let poll = providers
                 .discover(
-                    vec![Filter::new().kind(Kind::Custom(37195)).author(author)],
+                    filters.clone(),
                     live.clone(),
                     flume::unbounded().0,
                     &mut observations,
+                    &tls,
                 )
                 .await;
             assert!(poll.attempted);

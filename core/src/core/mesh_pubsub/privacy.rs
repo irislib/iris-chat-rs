@@ -1,4 +1,5 @@
 use super::*;
+use crate::core::protocol::anonymous_reads::ScopedTlsConnector;
 use crate::core::protocol::private_reads::DiscoveryCadence;
 use fips_core::config::{PeerConfig, TransportInstances, UdpConfig, WebSocketConfig};
 use fips_core::{Config, FipsEndpoint};
@@ -19,32 +20,48 @@ struct DiscoveryObservations {
     seen: HashSet<nostr::EventId>,
     order: std::collections::VecDeque<nostr::EventId>,
     advert_valid_until: Option<u64>,
+    advert: Option<Event>,
 }
 
 impl DiscoveryObservations {
     fn remember(&mut self, event: &Event, advert_ttl_secs: u64) -> bool {
-        if !self.seen.insert(event.id) {
-            return false;
-        }
-        self.order.push_back(event.id);
-        if self.order.len() > 128 {
-            if let Some(old) = self.order.pop_front() {
-                self.seen.remove(&old);
+        let unseen = self.seen.insert(event.id);
+        if unseen {
+            self.order.push_back(event.id);
+            if self.order.len() > 128 {
+                if let Some(old) = self.order.pop_front() {
+                    self.seen.remove(&old);
+                }
             }
         }
         if event.kind.as_u16() == 37195 {
             // FIPS also limits the signed expiration by its local maximum
             // advert age. Never let quiet polling sleep past either bound.
-            self.advert_valid_until = event.tags.expiration().map(|expiration| {
-                expiration.as_secs().min(
-                    event
-                        .created_at
-                        .as_secs()
-                        .saturating_add(advert_ttl_secs.saturating_mul(2)),
-                )
-            });
+            let max_age_until = event
+                .created_at
+                .as_secs()
+                .saturating_add(advert_ttl_secs.saturating_mul(2));
+            self.advert_valid_until =
+                Some(event.tags.expiration().map_or(max_age_until, |expiration| {
+                    expiration.as_secs().min(max_age_until)
+                }));
+            // Renewed signatures/timestamps/expiration are liveness, not new
+            // endpoint semantics. Every accepted event still reaches FIPS and
+            // updates this signed deadline, including an identical replay.
+            // Multiple different adverts from one signed timestamp can all
+            // remain acceptable to FIPS. Replaying A then B must not restart
+            // the fast cadence on every poll just because their fields differ.
+            let changed = unseen
+                && self.advert.as_ref().is_none_or(|previous| {
+                    previous.pubkey != event.pubkey
+                        || previous.kind != event.kind
+                        || previous.content != event.content
+                        || !advert_semantic_tags(previous).eq(advert_semantic_tags(event))
+                });
+            self.advert = Some(event.clone());
+            return changed;
         }
-        true
+        unseen
     }
 
     fn delay(&mut self, quiet_delay: Duration, adverts: bool, now: u64) -> Duration {
@@ -67,6 +84,13 @@ impl DiscoveryObservations {
     }
 }
 
+fn advert_semantic_tags(event: &Event) -> impl Iterator<Item = &nostr::Tag> {
+    event
+        .tags
+        .iter()
+        .filter(|tag| tag.as_slice().first().map(String::as_str) != Some("expiration"))
+}
+
 #[derive(Default)]
 struct DiscoveryPoll {
     attempted: bool,
@@ -82,6 +106,8 @@ impl DiscoveryPoll {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+pub(in crate::core) mod tls_tests;
 
 /// Public infrastructure only. Never inherit contacts, account discovery,
 /// listeners, local rendezvous, host BLE, or an identified endpoint's key.
@@ -93,6 +119,8 @@ pub(in crate::core) struct PrivateMeshProviders {
     discovery_slots: Arc<tokio::sync::Semaphore>,
     relays: Vec<RelayUrl>,
     key: String,
+    #[cfg(test)]
+    tls_test_roots: Vec<(RelayUrl, rustls::RootCertStore)>,
 }
 
 impl PrivateMeshProviders {
@@ -137,7 +165,47 @@ impl PrivateMeshProviders {
             discovery_slots: Arc::new(tokio::sync::Semaphore::new(2)),
             relays,
             key,
+            #[cfg(test)]
+            tls_test_roots: Vec::new(),
         }
+    }
+
+    fn advert_tls(&self, filters: &[Filter]) -> Vec<Option<ScopedTlsConnector>> {
+        self.relays
+            .iter()
+            .map(|relay| {
+                #[cfg(test)]
+                if let Some((_, roots)) = self.tls_test_roots.iter().find(|(url, _)| url == relay) {
+                    return ScopedTlsConnector::new_with_roots(relay, filters, roots.clone());
+                }
+                ScopedTlsConnector::new(relay, filters)
+            })
+            .collect()
+    }
+
+    #[cfg(test)]
+    pub(in crate::core) fn set_test_tls_roots(
+        &mut self,
+        relay: &RelayUrl,
+        certificates: Vec<Vec<u8>>,
+    ) -> Result<(), String> {
+        use sha2::Digest;
+        if !self.relays.contains(relay) || certificates.is_empty() {
+            return Err("test roots require an exact configured mesh relay".into());
+        }
+        let mut roots = rustls::RootCertStore::empty();
+        let mut digest = sha2::Sha256::new();
+        for certificate in certificates {
+            digest.update(&certificate);
+            roots
+                .add(rustls::pki_types::CertificateDer::from(certificate))
+                .map_err(|error| error.to_string())?;
+        }
+        self.tls_test_roots.retain(|(url, _)| url != relay);
+        self.tls_test_roots.push((relay.clone(), roots));
+        self.key
+            .push_str(&format!(":test-roots:{relay}:{:x}", digest.finalize()));
+        Ok(())
     }
 
     pub(in crate::core) fn available(&self) -> bool {
@@ -193,6 +261,7 @@ impl PrivateMeshProviders {
         live: Arc<FipsEndpoint>,
         sender: Sender<CoreMsg>,
         observations: &mut DiscoveryObservations,
+        advert_tls: &[Option<ScopedTlsConnector>],
     ) -> DiscoveryPoll {
         let mut poll = DiscoveryPoll::default();
         let Some(filter) = filters.first() else {
@@ -213,10 +282,10 @@ impl PrivateMeshProviders {
             .collect::<Vec<_>>();
         if !adverts.is_empty() && !self.relays.is_empty() {
             poll.attempted = true;
-            if let Ok(events) = crate::core::protocol::anonymous_reads::fetch(
+            if let Ok(events) = crate::core::protocol::anonymous_reads::poll_relays(
                 &self.relays,
-                adverts,
-                Duration::from_secs(3),
+                &adverts,
+                advert_tls,
             )
             .await
             {
@@ -282,7 +351,8 @@ impl PrivateMeshProviders {
             // its app/schema/freshness. Re-ingesting an equal advert reports
             // Replaced too, so that boolean alone is not a change detector.
             // Still offer it to FIPS: an exact-peer demand may be repairing an
-            // evicted cache entry. Seen IDs suppress cadence resets, not repair.
+            // evicted cache entry. Semantic equality suppresses only cadence
+            // resets, never this cache repair or signed lifetime update.
             if !live
                 .ingest_nostr_discovery_event(event.clone())
                 .await
@@ -316,7 +386,7 @@ impl Drop for PrivateEndpoint {
 }
 
 #[derive(Default)]
-pub(super) struct PrivateMeshDiscovery {
+pub(in crate::core) struct PrivateMeshDiscovery {
     provider_key: String,
     workers: BTreeMap<String, DiscoveryWorker>,
 }
@@ -351,7 +421,7 @@ impl PrivateMeshDiscovery {
         }
     }
 
-    pub(super) fn update(
+    pub(in crate::core) fn update(
         &mut self,
         providers: Arc<PrivateMeshProviders>,
         filters: Vec<Filter>,
@@ -412,6 +482,15 @@ impl PrivateMeshDiscovery {
             let requested = wake.clone();
             let worker_filters = filters.clone();
             let task = runtime.spawn(async move {
+                // TLS tickets and key-exchange hints belong only to this exact
+                // worker configuration. Ordinary demand retains them; dropping
+                // or replacing the worker drops them even during a blocked read.
+                let advert_filters = worker_filters
+                    .iter()
+                    .filter(|filter| is_peer_advert_filter(filter))
+                    .cloned()
+                    .collect::<Vec<_>>();
+                let advert_tls = providers.advert_tls(&advert_filters);
                 let mut observations = DiscoveryObservations::default();
                 let mut cadence = DiscoveryCadence::default();
                 loop {
@@ -421,13 +500,14 @@ impl PrivateMeshDiscovery {
                             live.clone(),
                             sender.clone(),
                             &mut observations,
+                            &advert_tls,
                         )
                         .await;
                     if poll.closed {
                         break;
                     }
                     // Unchanged and failed reads both back off. Only accepted
-                    // unseen data or explicit demand resets the quiet schedule.
+                    // changed semantics or explicit demand resets the quiet schedule.
                     let Some(delay) = poll.next_delay(&mut cadence) else {
                         break;
                     };

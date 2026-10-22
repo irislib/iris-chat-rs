@@ -76,7 +76,18 @@ pub(in crate::core) async fn fetch(
             }
         })
     });
-    let mut reads = stream::iter(jobs).buffer_unordered(COLD_READERS);
+    collect_reads(
+        stream::iter(jobs).buffer_unordered(COLD_READERS),
+        allow_history,
+    )
+    .await
+}
+
+async fn collect_reads(
+    reads: impl futures_util::Stream<Item = Result<Vec<Event>, ReadFailure>>,
+    allow_history: bool,
+) -> Result<Vec<Event>, String> {
+    futures_util::pin_mut!(reads);
     let mut collected = Collection::new(allow_history);
     let mut succeeded = false;
     let mut last_error = "anonymous discovery unavailable".to_string();
@@ -106,17 +117,52 @@ pub(super) async fn poll(
     filters: Vec<Filter>,
     tls: Option<&ScopedTlsConnector>,
 ) -> Result<Vec<Event>, String> {
+    background_read(relay, &filters, tls)
+        .await
+        .map_err(ReadFailure::message)
+}
+
+/// A retained one-author worker uses background admission, preserving cold
+/// capacity for invites. Relay fan-out and aggregate result limits remain
+/// bounded just as for cold reads; a safety-limit failure is never partial success.
+pub(in crate::core) async fn poll_relays(
+    relays: &[RelayUrl],
+    filters: &[Filter],
+    tls: &[Option<ScopedTlsConnector>],
+) -> Result<Vec<Event>, String> {
+    if relays.is_empty()
+        || relays.len() != tls.len()
+        || scoped_tls::sole_public_author(filters).is_none()
+    {
+        return Err("invalid scoped discovery relays or filters".into());
+    }
+    let jobs = (0..relays.len()).map(|index| async move {
+        background_read(&relays[index], filters, tls[index].as_ref()).await
+    });
+    collect_reads(
+        stream::iter(jobs).buffer_unordered(COLD_READERS),
+        filters.iter().any(requests_message_history),
+    )
+    .await
+}
+
+async fn background_read(
+    relay: &RelayUrl,
+    filters: &[Filter],
+    tls: Option<&ScopedTlsConnector>,
+) -> Result<Vec<Event>, ReadFailure> {
     let _permit = BACKGROUND_SLOTS
         .get_or_init(|| Semaphore::new(BACKGROUND_READERS))
         .acquire()
         .await
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| ReadFailure::Unavailable(error.to_string()))?;
     // Bound an unresponsive subject's turn; Tokio's semaphore is FIFO, so
     // every retained author eventually runs even when all relays are offline.
-    let connector = tls.map(|tls| tls.connector(relay, &filters)).transpose()?;
-    read_one_with_connector(relay, &filters, Duration::from_secs(3), connector)
-        .await
-        .map_err(ReadFailure::message)
+    let connector = tls
+        .map(|tls| tls.connector(relay, filters))
+        .transpose()
+        .map_err(ReadFailure::Unavailable)?;
+    read_one_with_connector(relay, filters, Duration::from_secs(3), connector).await
 }
 
 fn requests_message_history(filter: &Filter) -> bool {

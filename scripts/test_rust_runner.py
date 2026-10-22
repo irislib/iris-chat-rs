@@ -86,13 +86,15 @@ class RustRunnerTests(unittest.TestCase):
                     sample = {"seconds": 35.0, "cpu_percent_one_core": 0.2,
                               "application_wire_bytes": 0, "connections": 0}
                     cycle = {"seconds": 125.0, "cpu_percent_one_core": 0.4,
-                             "application_wire_bytes": 1000000, "connections": 384,
+                             "application_wire_bytes": 1000000, "connections": 480,
                              "every_author_polled": True, "tls_full_handshakes": 0,
-                             "tls_resumed_handshakes": 384}
+                             "tls_resumed_handshakes": 480}
                     measurements = {"database_bytes": 100 * 1024 * 1024,
                                     "message_rows": 30000, "contacts": 96,
                                     "peer_devices": 288, "own_devices": 3, "groups": 8,
                                     "discovery_subjects": 384, "readiness_round_min": 3,
+                                    "mesh_discovery_subjects": 96, "total_discovery_subjects": 480,
+                                    "completed_peer_polls": 1440, "fresh_anonymous_authentications": 1441,
                                     "revoked_stale_records": 96,
                                     "targeted_fresh_proof_delivered": True,
                                     "privacy_wire_passed": True,
@@ -120,6 +122,22 @@ class RustRunnerTests(unittest.TestCase):
                         measurements["full_cycle_tls_samples"][0]["tls_full_handshakes"] = 1
                     elif cpu_receipt == "no-cycle-polls":
                         measurements["full_cycle_tls_samples"][0]["tls_resumed_handshakes"] = 0
+                    elif cpu_receipt == "missing-mesh-subjects":
+                        del measurements["mesh_discovery_subjects"]
+                    elif cpu_receipt == "missing-total-subjects":
+                        del measurements["total_discovery_subjects"]
+                    elif cpu_receipt == "too-few-mesh-subjects":
+                        measurements["mesh_discovery_subjects"] = 95
+                    elif cpu_receipt == "wrong-total-subjects":
+                        measurements["total_discovery_subjects"] = 479
+                    elif cpu_receipt == "mesh-not-warmed-up":
+                        measurements["completed_peer_polls"] = 1152
+                    elif cpu_receipt == "missing-fresh-mesh-auth":
+                        measurements["fresh_anonymous_authentications"] = 1440
+                    elif cpu_receipt == "ordinary-only-tls-cycle":
+                        measurements["full_cycle_tls_samples"][1]["tls_resumed_handshakes"] = 384
+                    elif cpu_receipt == "ordinary-only-connection-cycle":
+                        measurements["full_cycle_tls_samples"][1]["connections"] = 384
                     (output / "populated-discovery-idle.log").write_bytes(child_log)
                     (output / "populated-discovery-idle.json").write_text(json.dumps(receipt))
             if approval_relay is not None:
@@ -194,7 +212,10 @@ class RustRunnerTests(unittest.TestCase):
     def test_linux_requires_valid_populated_companion_evidence(self):
         for nextest in (True, False):
             for mode in ("passed", "missing", "failed", "wrong-log", "excess-cpu", "tiny-fixture",
-                         "missing-cycles", "partial-cycle", "excess-cycle-cpu", "unresumed-cycle", "no-cycle-polls"):
+                         "missing-cycles", "partial-cycle", "excess-cycle-cpu", "unresumed-cycle", "no-cycle-polls",
+                         "missing-mesh-subjects", "missing-total-subjects", "too-few-mesh-subjects", "wrong-total-subjects",
+                         "mesh-not-warmed-up", "missing-fresh-mesh-auth", "ordinary-only-tls-cycle",
+                         "ordinary-only-connection-cycle"):
                 with self.subTest(nextest=nextest, receipt=mode):
                     result, calls = self.run_runner(nextest, platform="Linux", cpu_receipt=mode)
                     if mode == "passed":

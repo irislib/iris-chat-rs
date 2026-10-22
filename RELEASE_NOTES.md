@@ -6,24 +6,20 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 
 ### GitHub
 
-- Bound and deduplicate pending LAN discovery hints and per-peer address candidates, processing a limited batch each tick.
-- Preserve an advertised initial connection fallback when delayed traffic arrives on the first path, while retaining established-session and rekey arbitration.
-- Update `nvpn-fips-core` and `nvpn-fips-endpoint` to `0.4.108`, `nvpn-fips-tcp-endpoint` to `0.2.43`, and `nostr-pubsub-fips` to `0.5.38`.
 - Add Haps source-install recipes for the desktop app and CLI, with release checks that keep package metadata and build versions aligned with the tag. Locally built packages remain distinct from the signed release binaries.
 - Stop a changing expiry timestamp from republishing unchanged connection adverts every two seconds; retain immediate endpoint updates and refresh before expiration.
 - Reuse TLS 1.3 sessions only within an unchanged, single-author discovery scope and exact message-server URL, with fresh key exchange and anonymous authentication on every connection. Keep older TLS connections fully validated without session reuse.
+- Keep nearby-device discovery on its quiet schedule when accepted connection adverts are renewed or replayed, while preserving signed expiry and cache recovery.
 - Measure recurring TLS discovery work across two complete polling windows, with serialized checks for separate identities and fresh anonymous authentication.
 - Preserve the visible message when an older page finishes loading just after a held drag ends.
 
 ### Apple
 
-- Improve connection reliability between nearby devices.
 - Reduce repeated connection work while Iris is open.
 - Keep your place when loading older messages on iPhone.
 
 ### Zapstore
 
-- Improve connection reliability between nearby devices.
 - Reduce repeated connection work while Iris is open.
 
 ## v2026.10.22.2

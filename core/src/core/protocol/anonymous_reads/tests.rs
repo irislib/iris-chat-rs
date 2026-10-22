@@ -350,7 +350,50 @@ async fn anonymous_reads_timeout_and_oversized_frames_fail_without_partial_succe
         )
         .await
         .is_err());
+        assert!(
+            poll_relays(&relays, &[filter(peer.public_key())], &[None, None])
+                .await
+                .is_err()
+        );
     }
+}
+
+#[tokio::test]
+async fn anonymous_background_relay_polls_keep_aggregate_bounds_and_reject_mixed_authors() {
+    let peer = Keys::generate();
+    let filters = [filter(peer.public_key())];
+    let payload = "x".repeat(MAX_FRAME_BYTES - 2048);
+    let per_relay = MAX_RESULT_BYTES / payload.len() / 2 + 1;
+    let events = (0..per_relay * 2)
+        .map(|index| profile(&peer, &format!("{index}:{payload}")))
+        .collect::<Vec<_>>();
+    let (first, wire, _) = relay(events[..per_relay].to_vec(), None).await;
+    let (second, _, _) = relay(events[per_relay..].to_vec(), None).await;
+    let relays = [first, second];
+    assert_eq!(
+        poll_relays(&relays[..1], &filters, &[None])
+            .await
+            .unwrap()
+            .len(),
+        per_relay
+    );
+    let error = poll_relays(&relays, &filters, &[None, None])
+        .await
+        .unwrap_err();
+    assert!(error.contains("result exceeds safety bound"), "{error}");
+    let before = wire.lock().unwrap().len();
+    assert!(poll_relays(
+        &relays,
+        &[filters[0].clone(), filter(Keys::generate().public_key())],
+        &[None, None],
+    )
+    .await
+    .is_err());
+    assert_eq!(
+        wire.lock().unwrap().len(),
+        before,
+        "invalid scope opened a socket"
+    );
 }
 
 #[tokio::test]

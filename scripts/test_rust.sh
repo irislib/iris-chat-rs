@@ -79,6 +79,10 @@ result = receipt["measurements"][0]
 assert result["database_bytes"] >= 100 * 1024 * 1024 and result["message_rows"] >= 20800
 assert (result["contacts"], result["peer_devices"], result["own_devices"], result["groups"]) == (96, 288, 3, 8)
 assert result["discovery_subjects"] == 384 and result["readiness_round_min"] >= 3
+assert result["mesh_discovery_subjects"] == 96
+assert result["total_discovery_subjects"] == result["discovery_subjects"] + result["mesh_discovery_subjects"] == 480
+assert result["completed_peer_polls"] >= result["total_discovery_subjects"] * result["readiness_round_min"]
+assert result["fresh_anonymous_authentications"] >= result["completed_peer_polls"] + 1
 assert result["revoked_stale_records"] >= 96
 assert result["targeted_fresh_proof_delivered"] is True and result["privacy_wire_passed"] is True
 samples = result["quiet_samples"]
@@ -93,8 +97,8 @@ for cycle in cycles:
     assert math.isfinite(cycle["cpu_percent_one_core"]) and 0 <= cycle["cpu_percent_one_core"] <= 5
     assert cycle["every_author_polled"] is True
     assert cycle["tls_full_handshakes"] == 0
-    assert cycle["tls_resumed_handshakes"] >= result["discovery_subjects"]
-    assert cycle["connections"] >= result["discovery_subjects"] and cycle["application_wire_bytes"] > 0
+    assert cycle["tls_resumed_handshakes"] >= result["total_discovery_subjects"]
+    assert cycle["connections"] >= result["total_discovery_subjects"] and cycle["application_wire_bytes"] > 0
 print("Populated discovery CPU/wire companion evidence verified")
 CPU_RECEIPT
     fi

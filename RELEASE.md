@@ -170,7 +170,8 @@ maintenance, must pass before GitHub release publication; their receipt
 remains a workflow artifact and is excluded from the app release files.
 
 The mandatory Rust suite also restores a generated 100 MiB account database with
-96 contacts, three devices per contact, three own devices and eight groups.
+96 contacts, three devices per contact, three own devices and eight groups,
+plus 96 separate live-endpoint discovery scopes.
 Its populated-discovery test waits for all anonymous author scopes to settle,
 then requires two 35-second windows below 5% of one CPU core with no repeated
 application requests. Two further 125-second windows cover actual recurring

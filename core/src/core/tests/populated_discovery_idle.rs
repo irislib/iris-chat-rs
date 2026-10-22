@@ -2,6 +2,9 @@
 // rosters and history are generated; this never opens an existing account.
 #[cfg(target_os = "linux")]
 mod populated_discovery_idle {
+    use super::super::mesh_pubsub::{
+        discovery_test_support, PrivateMeshDiscovery, PrivateMeshProviders,
+    };
     use super::super::protocol::anonymous_reads::tls_tests;
     use super::*;
     use futures_util::{SinkExt, StreamExt};
@@ -18,6 +21,7 @@ mod populated_discovery_idle {
     const CHILD: &str = "IRIS_TEST_POPULATED_DISCOVERY_IDLE_CHILD";
     const CONTACTS: usize = 96;
     const DEVICES: usize = 3;
+    const MESH_DEVICES: usize = 96;
 
     #[derive(Default)]
     struct Wire {
@@ -391,7 +395,7 @@ mod populated_discovery_idle {
         }
         let filters = fixture.core.recent_protocol_metadata_filters(unix_now());
         let (receiver, discovery) = fixture.core.split_private_discovery_filters(filters);
-        let subjects = discovery
+        let mut subjects = discovery
             .iter()
             .flat_map(|f| f.authors.iter().flatten())
             .map(PublicKey::to_hex)
@@ -414,10 +418,35 @@ mod populated_discovery_idle {
                     && !subjects.contains(&key.to_hex())),
             "authentication deny set must include identities outside active discovery subjects"
         );
+        let discovery_subjects = subjects.len();
+        let now = unix_now().get();
+        let mut mesh_filters = Vec::new();
+        for _ in 0..MESH_DEVICES {
+            let keys = Keys::generate();
+            let author = keys.public_key();
+            assert!(
+                subjects.insert(author.to_hex()),
+                "mesh scope must be distinct"
+            );
+            assert!(
+                known_identities.insert(author),
+                "mesh device identity must be new"
+            );
+            mesh_filters.push(Filter::new().kind(Kind::Custom(37195)).author(author));
+            // Long-lived static signed adverts isolate recurring discovery CPU;
+            // freshly re-signed advert cadence has a separate causal regression.
+            events.push(discovery_test_support::advert(
+                &keys,
+                now,
+                now + 3_600,
+                "mesh-a.invalid:9000",
+            ));
+        }
+        assert_eq!(subjects.len(), discovery_subjects + MESH_DEVICES);
         // Freeze the exact serialized plans before either set is moved into
         // production subscription setup; do not normalize away selectors.
         let mut expected_discovery = BTreeMap::<String, HashSet<String>>::new();
-        for filter in &discovery {
+        for filter in discovery.iter().chain(&mesh_filters) {
             let authors = filter.authors.as_ref().unwrap();
             assert_eq!(authors.len(), 1);
             expected_discovery
@@ -492,6 +521,26 @@ mod populated_discovery_idle {
             for worker in workers {
                 worker.set_test_tls_roots(&relay, tls_tests::certificates()).unwrap();
             }
+            // Real mesh workers share the same WSS server and process CPU
+            // sample. The isolated endpoint only ingests public adverts; it has
+            // no peers, STUN, seeds, local discovery, public listeners or TUN.
+            let mesh_endpoint = discovery_test_support::endpoint().await;
+            let mesh_adverts = events.lock().unwrap().iter()
+                .filter(|event| event.kind.as_u16() == 37195).cloned().collect::<Vec<_>>();
+            assert_eq!(mesh_adverts.len(), MESH_DEVICES);
+            for event in mesh_adverts {
+                assert!(mesh_endpoint.ingest_nostr_discovery_event(event).await.unwrap(),
+                    "every CPU fixture mesh advert must pass the real FIPS validator");
+            }
+            let mut mesh_providers = PrivateMeshProviders::new(
+                Vec::new(), None, Vec::new(), vec![relay.clone()],
+            );
+            mesh_providers.set_test_tls_roots(&relay, tls_tests::certificates()).unwrap();
+            let mut mesh_discovery = PrivateMeshDiscovery::default();
+            mesh_discovery.update(
+                Arc::new(mesh_providers), mesh_filters, mesh_endpoint.clone(),
+                fixture.core.core_sender.clone(), &fixture.core.runtime,
+            );
             let settling = Instant::now();
             loop {
                 assert!(!server.is_finished(), "wire fixture failed");
@@ -605,7 +654,9 @@ mod populated_discovery_idle {
             println!("POPULATED_DISCOVERY_IDLE_RESULT={}", serde_json::json!({
                 "database_bytes": fixture.database_bytes, "message_rows": fixture.rows,
                 "contacts": CONTACTS, "peer_devices": CONTACTS * DEVICES, "own_devices": 3,
-                "groups": 8, "discovery_subjects": subjects.len(), "settle_seconds": settle_seconds,
+                "groups": 8, "discovery_subjects": discovery_subjects,
+                "mesh_discovery_subjects": MESH_DEVICES, "total_discovery_subjects": subjects.len(),
+                "settle_seconds": settle_seconds,
                 "readiness_round_min": readiness_round_min, "completed_peer_polls": completed_peer_polls,
                 "quiet_samples": samples, "full_cycle_tls_samples": cycle_samples,
                 "targeted_fresh_proof_delivered": true,
@@ -616,6 +667,8 @@ mod populated_discovery_idle {
                 "test_source_sha256": format!("{:x}", sha2::Sha256::digest(include_bytes!("populated_discovery_idle.rs")))
             }));
             fixture.core.private_discovery_subscriptions(Vec::new()).unwrap();
+            discovery_test_support::shutdown(&mut mesh_discovery).await;
+            mesh_endpoint.shutdown().await.unwrap();
             client.shutdown().await;
             server.abort();
             let _ = server.await;

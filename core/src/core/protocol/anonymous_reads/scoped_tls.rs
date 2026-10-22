@@ -113,7 +113,7 @@ impl ScopedTlsConnector {
     }
 }
 
-fn sole_public_author(filters: &[Filter]) -> Option<PublicKey> {
+pub(super) fn sole_public_author(filters: &[Filter]) -> Option<PublicKey> {
     let mut expected = None;
     for filter in filters {
         let authors = filter.authors.as_ref()?;
