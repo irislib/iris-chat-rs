@@ -104,6 +104,46 @@ impl MeshProtocolSubscriptions {
 }
 
 impl AppCore {
+    pub(super) fn handle_fips_peer_discovery_needed(&self, event: InternalEvent) {
+        let InternalEvent::FipsPeerDiscoveryNeeded {
+            generation,
+            author,
+            requires_pending_work,
+        } = event
+        else {
+            return;
+        };
+        if generation == self.fips_connection_generation
+            && (!requires_pending_work || self.has_private_mesh_discovery_demand(author))
+        {
+            self.refresh_private_mesh_discovery_for_author(author);
+        }
+    }
+
+    pub(super) fn has_private_mesh_discovery_demand(&self, author: PublicKey) -> bool {
+        self.active_call_targets_device(author)
+            || self.device_sync.as_ref().is_some_and(|mesh| {
+                let Some(peer) = super::device_sync::fips_peer_from_hex(&author.to_hex()) else {
+                    return false;
+                };
+                mesh.nearby_outbox
+                    .read()
+                    .is_ok_and(|outbox| outbox.has_pending_private_for_peer(&peer.npub()))
+            })
+    }
+
+    pub(super) fn refresh_private_mesh_discovery_for_author(&self, author: PublicKey) {
+        if let Some(mesh) = &self.device_sync {
+            mesh.protocol_subscriptions.discovery.refresh_author(author);
+        }
+    }
+
+    pub(super) fn refresh_private_mesh_discovery(&self) {
+        if let Some(mesh) = &self.device_sync {
+            mesh.protocol_subscriptions.discovery.refresh_all();
+        }
+    }
+
     fn mesh_group_replay_groups(&self) -> storage::mesh_group_envelopes::AllowedGroups {
         self.groups
             .values()

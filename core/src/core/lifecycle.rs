@@ -236,6 +236,7 @@ impl AppCore {
                 InternalEvent::MeshEvent(_) => "MeshEvent",
                 InternalEvent::FipsNearbyPacket { .. } => "FipsNearbyPacket",
                 InternalEvent::FipsNearbyPeersChanged { .. } => "FipsNearbyPeersChanged",
+                InternalEvent::FipsPeerDiscoveryNeeded { .. } => "FipsPeerDiscoveryNeeded",
                 InternalEvent::FetchCatchUpEvents(_) => "FetchCatchUpEvents",
                 InternalEvent::ProfileMetadataFetchFinished { .. } => {
                     "ProfileMetadataFetchFinished"
@@ -650,6 +651,9 @@ impl AppCore {
                 if generation == self.fips_connection_generation {
                     self.update_fips_connection_links(peers);
                 }
+            }
+            event @ InternalEvent::FipsPeerDiscoveryNeeded { .. } => {
+                self.handle_fips_peer_discovery_needed(event);
             }
             InternalEvent::FetchTrackedPeerCatchUp { token } => {
                 if token

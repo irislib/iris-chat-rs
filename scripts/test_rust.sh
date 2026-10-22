@@ -57,4 +57,36 @@ for crate in core chat-protocol protocol-ffi; do
     else
         cargo test -q "${args[@]}"
     fi
+    # The populated CPU test runs once in the ordinary nonignored core suite.
+    # Nextest captures successful stdout, so CI retains its companion files with
+    # the existing native private-control artifact instead of rerunning it.
+    if [[ "$crate" == core && "$(uname -s)" == Linux && -n "${IRIS_PRIVATE_CONTROL_FIXTURE_OUTPUT:-}" ]]; then
+        python3 - "$IRIS_PRIVATE_CONTROL_FIXTURE_OUTPUT" <<'CPU_RECEIPT'
+import hashlib
+import json
+import math
+from pathlib import Path
+import sys
+
+root = Path(sys.argv[1]).parent
+receipt = json.loads((root / "populated-discovery-idle.json").read_text())
+log = (root / "populated-discovery-idle.log").read_bytes()
+assert receipt["schema"] == "iris-populated-discovery-idle/v1"
+assert receipt["passed"] is True and receipt["timed_out"] is False and receipt["exit_code"] == 0
+assert receipt["log_bytes"] == len(log) and receipt["log_sha256"] == hashlib.sha256(log).hexdigest()
+assert len(receipt["measurements"]) == 1
+result = receipt["measurements"][0]
+assert result["database_bytes"] >= 100 * 1024 * 1024 and result["message_rows"] >= 20800
+assert (result["contacts"], result["peer_devices"], result["own_devices"], result["groups"]) == (96, 288, 3, 8)
+assert result["discovery_subjects"] == 384 and result["readiness_round_min"] >= 3
+assert result["revoked_stale_records"] >= 96
+assert result["targeted_fresh_proof_delivered"] is True and result["privacy_wire_passed"] is True
+samples = result["quiet_samples"]
+assert len(samples) == 2 and sum(sample["seconds"] for sample in samples) >= 70
+for sample in samples:
+    assert math.isfinite(sample["cpu_percent_one_core"]) and 0 <= sample["cpu_percent_one_core"] <= 5
+    assert sample["application_wire_bytes"] == sample["connections"] == 0
+print("Populated discovery CPU/wire companion evidence verified")
+CPU_RECEIPT
+    fi
 done

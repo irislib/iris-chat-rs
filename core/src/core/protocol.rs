@@ -1280,6 +1280,8 @@ impl AppCore {
         );
         match status {
             RelayStatus::Connected if !was_connected && is_connected => {
+                self.refresh_private_discovery();
+                self.refresh_private_mesh_discovery();
                 self.recover_private_contact_history();
                 self.request_user_discovery_refresh(false);
                 self.reconcile_protocol_subscriptions("relay_connected", false);

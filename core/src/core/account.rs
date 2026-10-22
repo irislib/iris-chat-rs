@@ -73,6 +73,8 @@ impl AppCore {
             self.push_debug_log("messages.expired", format!("removed={expired}"));
         }
         self.push_debug_log("app.foreground", "refresh relay session");
+        self.refresh_private_discovery();
+        self.refresh_private_mesh_discovery();
         self.start_private_contact_sync();
         self.reconcile_device_sync();
         self.refresh_device_sync_on_foreground();

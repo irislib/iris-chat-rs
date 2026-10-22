@@ -1,4 +1,7 @@
+import hashlib
+import json
 import os
+import sys
 import pathlib
 import shutil
 import subprocess
@@ -29,7 +32,7 @@ class RustRunnerTests(unittest.TestCase):
         return commands
 
     def run_runner(self, nextest, target=None, fail_on=None, approval_relay=None,
-                   fail_relay=False, platform="Darwin"):
+                   fail_relay=False, platform="Darwin", cpu_receipt=None):
         with tempfile.TemporaryDirectory(prefix="iris-rust-runner-") as tmp:
             directory = pathlib.Path(tmp)
             binary_dir = directory / "bin"
@@ -43,7 +46,10 @@ class RustRunnerTests(unittest.TestCase):
             python = binary_dir / "python3"
             python.write_text(
                 '#!/bin/sh\n'
-                'if [ "$1" = "-" ]; then echo 45678; exit; fi\n'
+                'if [ "$1" = "-" ]; then\n'
+                '  if [ "$#" = 1 ]; then echo 45678; exit; fi\n'
+                '  exec "$IRIS_TEST_REAL_PYTHON" "$@"\n'
+                'fi\n'
                 'printf "%s\\t" "$@" >> "$IRIS_TEST_RELAY_LOG"\n'
                 'printf "\\n" >> "$IRIS_TEST_RELAY_LOG"\n'
                 'if [ "$2" = "start" ] && [ "$IRIS_TEST_RELAY_FAIL" = "1" ]; then exit 37; fi\n'
@@ -66,10 +72,41 @@ class RustRunnerTests(unittest.TestCase):
                 os.environ, PATH=str(binary_dir), IRIS_TEST_LOG=str(log),
                 IRIS_TEST_RELAY_LOG=str(relay_log), IRIS_TEST_RELAY_FAIL=str(int(fail_relay)),
                 IRIS_TEST_EXPECTED_RELAY=approval_relay or "ws://127.0.0.1:45678",
-                IRIS_TEST_PLATFORM=platform,
+                IRIS_TEST_PLATFORM=platform, IRIS_TEST_REAL_PYTHON=sys.executable,
             )
             env.pop("CARGO_TARGET_DIR", None)
             env.pop("IRIS_DEVICE_APPROVAL_RELAY_URL", None)
+            env.pop("IRIS_PRIVATE_CONTROL_FIXTURE_OUTPUT", None)
+            if cpu_receipt is not None:
+                output = directory / "fixture"
+                output.mkdir()
+                env["IRIS_PRIVATE_CONTROL_FIXTURE_OUTPUT"] = str(output / "native-private-controls.json")
+                if cpu_receipt != "missing":
+                    child_log = b"Synthetic companion child log\n"
+                    sample = {"seconds": 35.0, "cpu_percent_one_core": 0.2,
+                              "application_wire_bytes": 0, "connections": 0}
+                    measurements = {"database_bytes": 100 * 1024 * 1024,
+                                    "message_rows": 30000, "contacts": 96,
+                                    "peer_devices": 288, "own_devices": 3, "groups": 8,
+                                    "discovery_subjects": 384, "readiness_round_min": 3,
+                                    "revoked_stale_records": 96,
+                                    "targeted_fresh_proof_delivered": True,
+                                    "privacy_wire_passed": True,
+                                    "quiet_samples": [dict(sample), dict(sample)]}
+                    receipt = {"schema": "iris-populated-discovery-idle/v1", "passed": True,
+                               "timed_out": False, "exit_code": 0,
+                               "log_bytes": len(child_log), "log_sha256": hashlib.sha256(child_log).hexdigest(),
+                               "measurements": [measurements]}
+                    if cpu_receipt == "failed":
+                        receipt["passed"] = False
+                    elif cpu_receipt == "wrong-log":
+                        receipt["log_sha256"] = "0" * 64
+                    elif cpu_receipt == "excess-cpu":
+                        measurements["quiet_samples"][0]["cpu_percent_one_core"] = 5.1
+                    elif cpu_receipt == "tiny-fixture":
+                        measurements["database_bytes"] = 2 * 1024 * 1024
+                    (output / "populated-discovery-idle.log").write_bytes(child_log)
+                    (output / "populated-discovery-idle.json").write_text(json.dumps(receipt))
             if approval_relay is not None:
                 env["IRIS_DEVICE_APPROVAL_RELAY_URL"] = approval_relay
             if target is not None:
@@ -126,6 +163,31 @@ class RustRunnerTests(unittest.TestCase):
                 result, calls = self.run_runner(nextest, platform="Linux", fail_on=command)
                 self.assertEqual(result.returncode, 23, result.stderr)
                 self.assertEqual(calls, [command])
+
+    def test_populated_discovery_runs_nonignored_in_the_core_suite(self):
+        source = (ROOT / "core/src/core/tests/populated_discovery_idle.rs").read_text()
+        self.assertRegex(source, r"#\[test\]\s+fn populated_account_discovery_stays_quiet_and_targeted_demand_progresses\(\)")
+        self.assertNotRegex(source, r"#\[ignore(?:\s|=|\])")
+        self.assertIn('include!("tests/populated_discovery_idle.rs");',
+                      (ROOT / "core/src/core/tests.rs").read_text())
+        # Both ordinary runners select the full core suite once; there is no
+        # separate expensive CPU invocation to silently duplicate the fixture.
+        for nextest in (True, False):
+            self.assertFalse(any("populated_account_discovery_stays_quiet" in arg
+                                 for command in self.commands(nextest, "Linux") for arg in command))
+
+    def test_linux_requires_valid_populated_companion_evidence(self):
+        for nextest in (True, False):
+            for mode in ("passed", "missing", "failed", "wrong-log", "excess-cpu", "tiny-fixture"):
+                with self.subTest(nextest=nextest, receipt=mode):
+                    result, calls = self.run_runner(nextest, platform="Linux", cpu_receipt=mode)
+                    if mode == "passed":
+                        self.assertEqual(result.returncode, 0, result.stderr)
+                        self.assertEqual(calls, self.commands(nextest, "Linux"))
+                    else:
+                        self.assertNotEqual(result.returncode, 0)
+                        stages = 3 if nextest else 2
+                        self.assertEqual(calls, self.commands(nextest, "Linux")[:stages])
 
     def test_preserves_explicit_approval_relay_without_managing_it(self):
         result, calls = self.run_runner(True, approval_relay="ws://127.0.0.1:4888")

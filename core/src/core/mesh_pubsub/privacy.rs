@@ -1,11 +1,84 @@
 use super::*;
+use crate::core::protocol::private_reads::DiscoveryCadence;
 use fips_core::config::{PeerConfig, TransportInstances, UdpConfig, WebSocketConfig};
 use fips_core::{Config, FipsEndpoint};
 use nostr_pubsub::QueryOptions;
 use nostr_pubsub_fips::{FipsAnonymousPublisher, FipsDiscoveryScope, FipsPubsubClientOptions};
 
 const OPERATION_TIMEOUT: Duration = Duration::from_secs(12);
-const DISCOVERY_INTERVAL: Duration = Duration::from_secs(30);
+
+fn is_peer_advert_filter(filter: &Filter) -> bool {
+    filter
+        .kinds
+        .as_ref()
+        .is_some_and(|kinds| !kinds.is_empty() && kinds.iter().all(|kind| kind.as_u16() == 37195))
+}
+
+#[derive(Default)]
+struct DiscoveryObservations {
+    seen: HashSet<nostr::EventId>,
+    order: std::collections::VecDeque<nostr::EventId>,
+    advert_valid_until: Option<u64>,
+}
+
+impl DiscoveryObservations {
+    fn remember(&mut self, event: &Event, advert_ttl_secs: u64) -> bool {
+        if !self.seen.insert(event.id) {
+            return false;
+        }
+        self.order.push_back(event.id);
+        if self.order.len() > 128 {
+            if let Some(old) = self.order.pop_front() {
+                self.seen.remove(&old);
+            }
+        }
+        if event.kind.as_u16() == 37195 {
+            // FIPS also limits the signed expiration by its local maximum
+            // advert age. Never let quiet polling sleep past either bound.
+            self.advert_valid_until = event.tags.expiration().map(|expiration| {
+                expiration.as_secs().min(
+                    event
+                        .created_at
+                        .as_secs()
+                        .saturating_add(advert_ttl_secs.saturating_mul(2)),
+                )
+            });
+        }
+        true
+    }
+
+    fn delay(&mut self, quiet_delay: Duration, adverts: bool, now: u64) -> Duration {
+        if !adverts {
+            return quiet_delay;
+        }
+        match self
+            .advert_valid_until
+            .and_then(|until| until.checked_sub(now))
+        {
+            Some(remaining) if remaining > 0 => quiet_delay.min(Duration::from_secs(remaining)),
+            // With no future deadline there is nothing to refresh before.
+            // Quiet missing/expired adverts back off too; real route demand
+            // wakes the exact peer. Admission/network time remains additional.
+            _ => {
+                self.advert_valid_until = None;
+                quiet_delay
+            }
+        }
+    }
+}
+
+#[derive(Default)]
+struct DiscoveryPoll {
+    attempted: bool,
+    changed: bool,
+    closed: bool,
+}
+
+impl DiscoveryPoll {
+    fn next_delay(&self, cadence: &mut DiscoveryCadence) -> Option<Duration> {
+        self.attempted.then(|| cadence.after_poll(self.changed))
+    }
+}
 
 #[cfg(test)]
 mod tests;
@@ -119,29 +192,27 @@ impl PrivateMeshProviders {
         filters: Vec<Filter>,
         live: Arc<FipsEndpoint>,
         sender: Sender<CoreMsg>,
-    ) {
+        observations: &mut DiscoveryObservations,
+    ) -> DiscoveryPoll {
+        let mut poll = DiscoveryPoll::default();
         let Some(filter) = filters.first() else {
-            return;
+            return poll;
         };
         let Ok(scope) = FipsDiscoveryScope::from_filter(filter) else {
-            return;
+            return poll;
         };
         let Ok(_slot) = self.discovery_slots.acquire().await else {
-            return;
+            return poll;
         };
         // FIPS's External mode never opens its own relay client. Cold live-peer
         // adverts are fetched here on a one-author anonymous context instead.
         let adverts = filters
             .iter()
-            .filter(|filter| {
-                filter
-                    .kinds
-                    .as_ref()
-                    .is_some_and(|kinds| kinds.iter().all(|kind| kind.as_u16() == 37195))
-            })
+            .filter(|filter| is_peer_advert_filter(filter))
             .cloned()
             .collect::<Vec<_>>();
         if !adverts.is_empty() && !self.relays.is_empty() {
+            poll.attempted = true;
             if let Ok(events) = crate::core::protocol::anonymous_reads::fetch(
                 &self.relays,
                 adverts,
@@ -150,15 +221,17 @@ impl PrivateMeshProviders {
             .await
             {
                 for event in events {
-                    let _ = live.ingest_nostr_discovery_event(event).await;
+                    self.deliver_discovery(event, &live, &sender, observations, &mut poll)
+                        .await;
                 }
             }
         }
         if !self.available() {
-            return;
+            return poll;
         }
+        poll.attempted = true;
         let Ok(endpoint) = self.endpoint().await else {
-            return;
+            return poll;
         };
         let Ok(client) = FipsPubsubClient::start_anonymous_discovery(
             endpoint.0.clone(),
@@ -167,7 +240,7 @@ impl PrivateMeshProviders {
         )
         .await
         else {
-            return;
+            return poll;
         };
         if let Ok(result) = EventBus::query(
             &client,
@@ -179,16 +252,55 @@ impl PrivateMeshProviders {
         .await
         {
             for delivery in result.events {
-                let event = delivery.event.into_event();
-                if event.kind.as_u16() == 37195 {
-                    let _ = live.ingest_nostr_discovery_event(event).await;
-                } else {
-                    let _ =
-                        sender.send(CoreMsg::Internal(Box::new(InternalEvent::MeshEvent(event))));
-                }
+                self.deliver_discovery(
+                    delivery.event.into_event(),
+                    &live,
+                    &sender,
+                    observations,
+                    &mut poll,
+                )
+                .await;
             }
         }
         client.shutdown_shared().await;
+        poll
+    }
+
+    async fn deliver_discovery(
+        &self,
+        event: Event,
+        live: &FipsEndpoint,
+        sender: &Sender<CoreMsg>,
+        observations: &mut DiscoveryObservations,
+        poll: &mut DiscoveryPoll,
+    ) {
+        if event.kind.as_u16() != 37195 && observations.seen.contains(&event.id) {
+            return;
+        }
+        if event.kind.as_u16() == 37195 {
+            // An event is new discovery data only after the endpoint accepts
+            // its app/schema/freshness. Re-ingesting an equal advert reports
+            // Replaced too, so that boolean alone is not a change detector.
+            // Still offer it to FIPS: an exact-peer demand may be repairing an
+            // evicted cache entry. Seen IDs suppress cadence resets, not repair.
+            if !live
+                .ingest_nostr_discovery_event(event.clone())
+                .await
+                .unwrap_or(false)
+            {
+                return;
+            }
+        } else if sender
+            .send(CoreMsg::Internal(Box::new(InternalEvent::MeshEvent(
+                event.clone(),
+            ))))
+            .is_err()
+        {
+            poll.closed = true;
+            return;
+        }
+        poll.changed |=
+            observations.remember(&event, self.config.node.discovery.nostr.advert_ttl_secs);
     }
 }
 
@@ -205,20 +317,40 @@ impl Drop for PrivateEndpoint {
 
 #[derive(Default)]
 pub(super) struct PrivateMeshDiscovery {
-    filters: Vec<Filter>,
     provider_key: String,
-    tasks: Vec<tokio::task::JoinHandle<()>>,
+    workers: BTreeMap<String, DiscoveryWorker>,
 }
 
-impl Drop for PrivateMeshDiscovery {
+struct DiscoveryWorker {
+    filters: Vec<Filter>,
+    author: PublicKey,
+    wake: Arc<tokio::sync::Notify>,
+    task: tokio::task::JoinHandle<()>,
+}
+
+impl Drop for DiscoveryWorker {
     fn drop(&mut self) {
-        for task in &self.tasks {
-            task.abort();
-        }
+        self.task.abort();
     }
 }
 
 impl PrivateMeshDiscovery {
+    pub(in crate::core) fn refresh_author(&self, author: PublicKey) {
+        for worker in self
+            .workers
+            .values()
+            .filter(|worker| worker.author == author)
+        {
+            worker.wake.notify_one();
+        }
+    }
+
+    pub(in crate::core) fn refresh_all(&self) {
+        for worker in self.workers.values() {
+            worker.wake.notify_one();
+        }
+    }
+
     pub(super) fn update(
         &mut self,
         providers: Arc<PrivateMeshProviders>,
@@ -227,19 +359,21 @@ impl PrivateMeshDiscovery {
         sender: Sender<CoreMsg>,
         runtime: &tokio::runtime::Runtime,
     ) {
-        if self.filters == filters && self.provider_key == providers.key {
-            return;
+        if self.provider_key != providers.key {
+            self.workers.clear();
+            self.provider_key.clone_from(&providers.key);
         }
-        for task in self.tasks.drain(..) {
-            task.abort();
-        }
-        self.filters = filters.clone();
-        self.provider_key.clone_from(&providers.key);
         if !providers.available() && providers.relays.is_empty() {
+            self.workers.clear();
             return;
         }
         let mut scopes = std::collections::BTreeMap::<String, Vec<Filter>>::new();
         for filter in filters {
+            // Without an explicit FIPS provider, only adverts have a usable
+            // source (the anonymous relay reader). Do not retain no-I/O timers.
+            if !providers.available() && !is_peer_advert_filter(&filter) {
+                continue;
+            }
             let Ok(scope) = FipsDiscoveryScope::from_filter(&filter) else {
                 continue;
             };
@@ -247,20 +381,74 @@ impl PrivateMeshDiscovery {
         }
         // Refuse excess scopes rather than combining unrelated lookup subjects.
         if scopes.len() > 512 {
+            self.workers.clear();
             return;
         }
-        for filters in scopes.into_values() {
+        self.workers
+            .retain(|key, worker| scopes.get(key) == Some(&worker.filters));
+        for (key, filters) in scopes {
+            if self.workers.contains_key(&key) {
+                continue;
+            }
+            let Some(scope) = filters
+                .first()
+                .and_then(|filter| FipsDiscoveryScope::from_filter(filter).ok())
+            else {
+                continue;
+            };
+            let author = match scope {
+                FipsDiscoveryScope::Author(author) | FipsDiscoveryScope::Device(author) => author,
+            };
+            let adverts = filters.iter().any(|filter| {
+                filter
+                    .kinds
+                    .as_ref()
+                    .is_some_and(|kinds| kinds.iter().any(|kind| kind.as_u16() == 37195))
+            });
             let providers = providers.clone();
             let live = live.clone();
             let sender = sender.clone();
-            self.tasks.push(runtime.spawn(async move {
+            let wake = Arc::new(tokio::sync::Notify::new());
+            let requested = wake.clone();
+            let worker_filters = filters.clone();
+            let task = runtime.spawn(async move {
+                let mut observations = DiscoveryObservations::default();
+                let mut cadence = DiscoveryCadence::default();
                 loop {
-                    providers
-                        .discover(filters.clone(), live.clone(), sender.clone())
+                    let poll = providers
+                        .discover(
+                            worker_filters.clone(),
+                            live.clone(),
+                            sender.clone(),
+                            &mut observations,
+                        )
                         .await;
-                    sleep(DISCOVERY_INTERVAL).await;
+                    if poll.closed {
+                        break;
+                    }
+                    // Unchanged and failed reads both back off. Only accepted
+                    // unseen data or explicit demand resets the quiet schedule.
+                    let Some(delay) = poll.next_delay(&mut cadence) else {
+                        break;
+                    };
+                    let delay = observations.delay(delay, adverts, unix_now().get());
+                    // A real demand is coalesced during a busy query. It never
+                    // interrupts the in-flight anonymous authentication/read.
+                    tokio::select! {
+                        _ = sleep(delay) => {},
+                        _ = requested.notified() => cadence.reset(),
+                    }
                 }
-            }));
+            });
+            self.workers.insert(
+                key,
+                DiscoveryWorker {
+                    filters,
+                    author,
+                    wake,
+                    task,
+                },
+            );
         }
     }
 }

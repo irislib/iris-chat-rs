@@ -43,6 +43,30 @@ fn event_and_receipt_round_trip() {
 }
 
 #[test]
+fn discovery_demand_requires_unacknowledged_exact_private_target() {
+    let mut outbox = FipsNearbyOutbox::default();
+    outbox.insert_for_targets("public".into(), vec![], None);
+    outbox.insert_for_targets("unresolved".into(), vec![], Some(BTreeSet::new()));
+    outbox.insert_for_targets(
+        "another-peer".into(),
+        vec![],
+        Some(BTreeSet::from(["other".into()])),
+    );
+    assert!(!outbox.has_pending_private_for_peer("peer"));
+    outbox.insert_for_targets(
+        "private".into(),
+        vec![],
+        Some(BTreeSet::from(["peer".into()])),
+    );
+    assert!(outbox.has_pending_private_for_peer("peer"));
+    outbox.mark_sent_on_link("peer", 7, &["private".into()]);
+    assert!(outbox.has_pending_private_for_peer("peer"));
+    outbox.acknowledge("peer", "private");
+    assert!(!outbox.has_pending_private_for_peer("peer"));
+    assert!(outbox.has_pending_private_for_peer("other"));
+}
+
+#[test]
 fn nearby_outbox_replays_unacknowledged_links_and_scopes_receipts() {
     let mut outbox = FipsNearbyOutbox::default();
     let event_id = event_id();

@@ -50,6 +50,19 @@ fn synthetic_history_free_space(path: &std::path::Path, required: u64) {
 }
 
 fn synthetic_history_fixture(mib: u64, contacts: usize, groups: usize) -> SyntheticHistory {
+    synthetic_history_fixture_with_devices(mib, contacts, groups, 1).0
+}
+
+// The populated discovery regression reuses the same durable SQL/session/FTS
+// generator. The original benchmark keeps its one-device setup unchanged.
+fn synthetic_history_fixture_with_devices(
+    mib: u64,
+    contacts: usize,
+    groups: usize,
+    devices_per_contact: usize,
+) -> (SyntheticHistory, Vec<Event>) {
+    assert!((1..=3).contains(&devices_per_contact));
+    let mut discovery_events = Vec::new();
     let owner = Keys::generate();
     let device = Keys::generate();
     let (mut core, updates, directory) =
@@ -68,10 +81,98 @@ fn synthetic_history_fixture(mib: u64, contacts: usize, groups: usize) -> Synthe
     let mut engine = core.protocol_engine.take().unwrap();
     engine.enter_batch();
     observe_current_device_appkeys_for_test(&mut engine, &owner, &device);
+    if devices_per_contact > 1 {
+        let own_devices = [
+            device.public_key(),
+            Keys::generate().public_key(),
+            Keys::generate().public_key(),
+        ];
+        let created_at = unix_now().get() + 1;
+        let own_roster = AppKeys::new(
+            own_devices
+                .into_iter()
+                .map(|key| DeviceEntry::new(key, created_at))
+                .collect(),
+        );
+        let event = own_roster
+            .get_event_at(owner.public_key(), created_at)
+            .sign_with_keys(&owner)
+            .unwrap();
+        engine.ingest_app_keys_event(&event).unwrap();
+        core.capture_authorization_event(&event).unwrap();
+        core.app_keys.insert(
+            owner.public_key().to_hex(),
+            account_app_keys::known_app_keys_from_ndr(owner.public_key(), &own_roster, created_at),
+        );
+        discovery_events.push(event);
+    }
     let mut chat_ids = Vec::new();
     for (index, peer) in peers.iter().enumerate() {
         let peer_device = Keys::generate();
+        if devices_per_contact > 1 {
+            // A real old signed roster/invite followed by exclusion leaves a
+            // revoked, stale record in the durable protocol checkpoint.
+            let revoked = Keys::generate();
+            observe_peer_device_invite_for_test(&mut engine, peer, &revoked, 1);
+        }
         observe_peer_device_invite_for_test(&mut engine, peer, &peer_device, 2);
+        let devices = std::iter::once(peer_device.clone())
+            .chain((1..devices_per_contact).map(|_| Keys::generate()))
+            .collect::<Vec<_>>();
+        let roster_created_at = if devices_per_contact == 1 { 2 } else { 5 };
+        let roster = AppKeys::new(
+            devices
+                .iter()
+                .map(|key| DeviceEntry::new(key.public_key(), roster_created_at))
+                .collect(),
+        );
+        if devices_per_contact > 1 {
+            let event = roster
+                .get_event_at(peer.public_key(), 5)
+                .sign_with_keys(peer)
+                .unwrap();
+            engine.ingest_app_keys_event(&event).unwrap();
+            core.capture_authorization_event(&event).unwrap();
+            discovery_events.push(event);
+            if index == 0 {
+                // Withheld by the wire fixture until a real proof demand. This
+                // is signed by the same owner; no fabricated metadata bypass.
+                discovery_events.push(
+                    roster
+                        .get_event_at(peer.public_key(), 6)
+                        .sign_with_keys(peer)
+                        .unwrap(),
+                );
+            }
+            discovery_events.push(
+                EventBuilder::new(
+                    Kind::Metadata,
+                    format!("{{\"name\":\"Synthetic contact {index}\"}}"),
+                )
+                .sign_with_keys(peer)
+                .unwrap(),
+            );
+            for (device_index, key) in devices.iter().enumerate() {
+                // One device has current public evidence, one only old public
+                // evidence and one is offline (its roster remains authoritative).
+                if device_index == 2 {
+                    continue;
+                }
+                let created_at = if device_index == 0 {
+                    unix_now().get()
+                } else {
+                    2
+                };
+                let invite =
+                    Invite::create_new(key.public_key(), Some(key.public_key().to_hex()), None)
+                        .unwrap();
+                let mut unsigned = nostr_double_ratchet::invite_unsigned_event(&invite).unwrap();
+                unsigned.created_at = Timestamp::from_secs(created_at);
+                let event = unsigned.sign_with_keys(key).unwrap();
+                engine.observe_invite_event(&event).unwrap();
+                discovery_events.push(event);
+            }
+        }
         let chat_id = peer.public_key().to_hex();
         // Establish a real send-capable session, without publishing its effects.
         engine
@@ -80,15 +181,19 @@ fn synthetic_history_fixture(mib: u64, contacts: usize, groups: usize) -> Synthe
                 &chat_id,
                 "Synthetic setup",
                 None,
-                UnixSeconds(3),
+                UnixSeconds(if devices_per_contact == 1 {
+                    3
+                } else {
+                    unix_now().get() + 2
+                }),
             )
             .unwrap();
         core.app_keys.insert(
             chat_id.clone(),
             account_app_keys::known_app_keys_from_ndr(
                 peer.public_key(),
-                &AppKeys::new(vec![DeviceEntry::new(peer_device.public_key(), 2)]),
-                2,
+                &roster,
+                roster_created_at,
             ),
         );
         core.owner_profiles.insert(
@@ -109,7 +214,11 @@ fn synthetic_history_fixture(mib: u64, contacts: usize, groups: usize) -> Synthe
             .create_group(
                 format!("Synthetic group {index}"),
                 peers.iter().take(4).map(Keys::public_key).collect(),
-                UnixSeconds(4),
+                UnixSeconds(if devices_per_contact == 1 {
+                    4
+                } else {
+                    unix_now().get() + 3
+                }),
             )
             .unwrap()
             .snapshot
@@ -228,14 +337,17 @@ fn synthetic_history_fixture(mib: u64, contacts: usize, groups: usize) -> Synthe
     }
     core.rebuild_state();
     core.emit_state();
-    SyntheticHistory {
-        core,
-        updates,
-        directory,
-        chat_ids,
-        rows,
-        database_bytes,
-    }
+    (
+        SyntheticHistory {
+            core,
+            updates,
+            directory,
+            chat_ids,
+            rows,
+            database_bytes,
+        },
+        discovery_events,
+    )
 }
 
 fn synthetic_history_app(

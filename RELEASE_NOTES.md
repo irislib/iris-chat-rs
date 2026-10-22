@@ -9,15 +9,21 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 - Keep sign-in hidden while a saved account is still restoring, including restores longer than eight seconds. Preserve genuine restore errors and background storage protection.
 - Fade in the loading label after two seconds, respecting reduced-motion settings.
 - Add slow-restore transition checks on iOS and macOS, including background storage acknowledgement and macOS screen captures.
+- Reduce repeated discovery requests for unchanged contacts and devices, while refreshing promptly when an invite or live connection needs them. Preserve separate anonymous lookup and publication connections.
+- Check sustained discovery work with a large synthetic database containing multiple devices for the account and its contacts.
+- Show the hand cursor over clickable Mac controls and message links, preserving text selection, link handling and image zoom cursors.
 
 ### Apple
 
 - Prevent a brief sign-in screen while your saved account loads.
 - Gently show the loading label only when startup takes more than two seconds.
+- Reduce repeated network requests while Iris is open.
+- Show the hand cursor on clickable controls and message links on Mac.
 
 ### Zapstore
 
 - Reduce repeated network startup while restoring your account.
+- Reduce repeated network requests while Iris is open.
 
 ## v2026.10.22
 

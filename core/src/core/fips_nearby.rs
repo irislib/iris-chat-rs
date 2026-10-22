@@ -189,6 +189,16 @@ pub(super) struct FipsNearbyOutbox {
 }
 
 impl FipsNearbyOutbox {
+    pub(super) fn has_pending_private_for_peer(&self, peer_npub: &str) -> bool {
+        self.entries.iter().any(|entry| {
+            entry
+                .recipient_targets
+                .as_ref()
+                .is_some_and(|targets| targets.contains(peer_npub))
+                && !entry.acknowledged_by(peer_npub)
+        })
+    }
+
     #[cfg(test)]
     pub(super) fn insert(&mut self, event_id: String, payload: Vec<u8>) {
         let targets = private_targets::encoded_private_targets(&payload);
@@ -390,15 +400,32 @@ impl AppCore {
         let Some(payload) = encode_fips_nearby_event(event) else {
             return;
         };
-        if let Ok(mut outbox) = runtime.nearby_outbox.write() {
-            outbox.insert_for_targets(
-                event.id.to_string(),
-                payload.clone(),
-                recipient_targets.clone(),
-            );
+        let event_id = event.id.to_string();
+        let new_demand = if let Ok(mut outbox) = runtime.nearby_outbox.write() {
+            let new_demand = !outbox.entries.iter().any(|entry| {
+                entry.event_id == event_id && entry.recipient_targets == recipient_targets
+            });
+            outbox.insert_for_targets(event_id.clone(), payload.clone(), recipient_targets.clone());
+            new_demand
+        } else {
+            false
+        };
+        if new_demand {
+            for author in recipient_targets
+                .iter()
+                .flatten()
+                .filter_map(|peer| PublicKey::parse(peer).ok())
+                .filter(|author| {
+                    !self
+                        .fips_nearby_links
+                        .iter()
+                        .any(|link| link.device_pubkey_hex == author.to_hex())
+                })
+            {
+                self.refresh_private_mesh_discovery_for_author(author);
+            }
         }
         let outbox = runtime.nearby_outbox.clone();
-        let event_id = event.id.to_string();
         let cancelled = self.publication_task_token(&event_id);
         let local_hex = self
             .logged_in

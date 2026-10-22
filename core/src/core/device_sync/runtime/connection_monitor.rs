@@ -1,7 +1,79 @@
 use super::*;
 use crate::core::fips_nearby::{FipsNearbyOutbox, FIPS_NEARBY_PORT};
 use crate::updates::FipsNearbyLinkSnapshot;
-use fips_core::FipsEndpointOutboundDatagram;
+use fips_core::{FipsEndpointOutboundDatagram, FipsEndpointPeer};
+
+#[derive(Clone, Copy)]
+struct DiscoveryPeerState {
+    connected: bool,
+    retries: u32,
+    failures: u32,
+}
+
+#[derive(Default)]
+struct DiscoveryRouteEdges {
+    previous: BTreeMap<PublicKey, DiscoveryPeerState>,
+    last_retry_poke: BTreeMap<PublicKey, std::time::Instant>,
+}
+
+impl DiscoveryRouteEdges {
+    fn observe(&mut self, peers: &[FipsEndpointPeer]) -> Vec<(PublicKey, bool)> {
+        self.update(
+            peers
+                .iter()
+                .filter_map(|peer| {
+                    let author = PublicKey::from_hex(peer_key_hex(&peer.npub)?).ok()?;
+                    Some((
+                        author,
+                        DiscoveryPeerState {
+                            connected: peer.connected,
+                            retries: peer.direct_probe_retry_count,
+                            failures: peer.nostr_traversal_consecutive_failures,
+                        },
+                    ))
+                })
+                .collect(),
+            std::time::Instant::now(),
+        )
+    }
+
+    fn update(
+        &mut self,
+        current: BTreeMap<PublicKey, DiscoveryPeerState>,
+        now: std::time::Instant,
+    ) -> Vec<(PublicKey, bool)> {
+        let mut needed = Vec::new();
+        for (author, previous) in &self.previous {
+            match current.get(author) {
+                Some(next) if previous.connected && !next.connected => {
+                    needed.push((*author, false));
+                    self.last_retry_poke.insert(*author, now);
+                }
+                None if previous.connected => {
+                    needed.push((*author, false));
+                }
+                Some(next)
+                    if (next.retries > previous.retries || next.failures > previous.failures)
+                        && self.last_retry_poke.get(author).is_none_or(|last| {
+                            now.saturating_duration_since(*last) >= Duration::from_secs(30)
+                        }) =>
+                {
+                    // Configured peers retry autonomously. Core must additionally
+                    // require exact private outbound/call demand before querying.
+                    needed.push((*author, true));
+                    self.last_retry_poke.insert(*author, now);
+                }
+                _ => {}
+            }
+        }
+        self.last_retry_poke
+            .retain(|author, _| current.contains_key(author));
+        // The first snapshot is a baseline, not a reason to wake every author.
+        // Link loss is immediate; automatic retries cannot bypass quiet cadence.
+        self.previous = current;
+        needed
+    }
+}
 
 pub(super) async fn run(
     endpoint: Arc<FipsEndpoint>,
@@ -15,6 +87,7 @@ pub(super) async fn run(
     let mut current_bootstrap = Vec::new();
     let mut bootstrap_revision = 0_u64;
     let mut reported_links = Vec::new();
+    let mut discovery_edges = DiscoveryRouteEdges::default();
     let carrier = debug_snapshot_file_writes_enabled()
         .then(|| {
             endpoint
@@ -69,6 +142,15 @@ pub(super) async fn run(
                 return;
             }
         };
+        for (author, requires_pending_work) in discovery_edges.observe(&peers) {
+            let _ = core_sender.send(CoreMsg::Internal(Box::new(
+                InternalEvent::FipsPeerDiscoveryNeeded {
+                    generation,
+                    author,
+                    requires_pending_work,
+                },
+            )));
+        }
         let mut current_links = peers
             .iter()
             .filter(|peer| peer.connected)
@@ -183,6 +265,136 @@ fn report_links(
 mod tests {
     use super::*;
     use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, UdpSocket};
+
+    fn discovery_state(connected: bool, retries: u32, failures: u32) -> DiscoveryPeerState {
+        DiscoveryPeerState {
+            connected,
+            retries,
+            failures,
+        }
+    }
+
+    #[test]
+    fn discovery_route_demand_is_exact_author_and_edge_triggered() {
+        let a = Keys::generate().public_key();
+        let b = Keys::generate().public_key();
+        let mut edges = DiscoveryRouteEdges::default();
+        let now = std::time::Instant::now();
+        let initial = BTreeMap::from([
+            (a, discovery_state(true, 0, 0)),
+            (b, discovery_state(false, 5, 2)),
+        ]);
+        assert!(
+            edges.update(initial.clone(), now).is_empty(),
+            "initial scope sweep must not force every author"
+        );
+        assert!(edges.update(initial, now).is_empty());
+        let retry = BTreeMap::from([
+            (a, discovery_state(true, 0, 0)),
+            (b, discovery_state(false, 6, 2)),
+        ]);
+        assert_eq!(edges.update(retry.clone(), now), vec![(b, true)]);
+        assert!(
+            edges.update(retry, now).is_empty(),
+            "stable failed peer must not wake each1s tick"
+        );
+        let failure = BTreeMap::from([
+            (a, discovery_state(true, 0, 0)),
+            (b, discovery_state(false, 6, 3)),
+        ]);
+        assert!(edges
+            .update(failure, now + Duration::from_secs(1))
+            .is_empty());
+        let disconnected = BTreeMap::from([
+            (a, discovery_state(false, 0, 0)),
+            (b, discovery_state(false, 6, 3)),
+        ]);
+        assert_eq!(
+            edges.update(disconnected.clone(), now + Duration::from_secs(2)),
+            vec![(a, false)]
+        );
+        assert!(edges
+            .update(disconnected, now + Duration::from_secs(3))
+            .is_empty());
+    }
+
+    #[test]
+    fn discovery_autonomous_retry_edges_require_work_and_are_throttled() {
+        let author = Keys::generate().public_key();
+        let mut edges = DiscoveryRouteEdges::default();
+        let now = std::time::Instant::now();
+        assert!(edges
+            .update(
+                BTreeMap::from([(author, discovery_state(false, 0, 0))]),
+                now
+            )
+            .is_empty());
+        let mut observations = Vec::new();
+        for second in 1..=90_u32 {
+            for (peer, requires_pending_work) in edges.update(
+                BTreeMap::from([(author, discovery_state(false, second, second))]),
+                now + Duration::from_secs(u64::from(second)),
+            ) {
+                assert_eq!(peer, author);
+                assert!(
+                    requires_pending_work,
+                    "idle retries must never force a query"
+                );
+                observations.push(second);
+            }
+        }
+        assert_eq!(observations, vec![1, 31, 61]);
+    }
+
+    #[test]
+    fn discovery_link_loss_bypasses_retry_throttle_once() {
+        let author = Keys::generate().public_key();
+        let mut edges = DiscoveryRouteEdges::default();
+        let now = std::time::Instant::now();
+        edges.update(BTreeMap::from([(author, discovery_state(true, 0, 0))]), now);
+        assert_eq!(
+            edges.update(BTreeMap::from([(author, discovery_state(true, 1, 0))]), now),
+            vec![(author, true)]
+        );
+        let disconnected = BTreeMap::from([(author, discovery_state(false, 2, 1))]);
+        assert_eq!(
+            edges.update(disconnected.clone(), now + Duration::from_secs(1)),
+            vec![(author, false)]
+        );
+        assert!(edges
+            .update(disconnected, now + Duration::from_secs(2))
+            .is_empty());
+        assert!(edges
+            .update(
+                BTreeMap::from([(author, discovery_state(false, 3, 2))]),
+                now + Duration::from_secs(3),
+            )
+            .is_empty());
+    }
+
+    #[test]
+    fn discovery_route_disappearance_pokes_once_and_new_scope_starts_normally() {
+        let author = Keys::generate().public_key();
+        let mut edges = DiscoveryRouteEdges::default();
+        let now = std::time::Instant::now();
+        assert!(edges
+            .update(BTreeMap::from([(author, discovery_state(true, 0, 0))]), now)
+            .is_empty());
+        assert_eq!(edges.update(BTreeMap::new(), now), vec![(author, false)]);
+        assert!(edges.update(BTreeMap::new(), now).is_empty());
+        assert!(edges
+            .update(
+                BTreeMap::from([(author, discovery_state(false, 1, 1))]),
+                now
+            )
+            .is_empty());
+        assert!(edges
+            .update(BTreeMap::from([(author, discovery_state(true, 0, 0))]), now)
+            .is_empty());
+        assert!(edges
+            .update(BTreeMap::from([(author, discovery_state(true, 0, 0))]), now)
+            .is_empty());
+    }
 
     #[test]
     fn displayed_peer_keys_preserve_identity_validation() {

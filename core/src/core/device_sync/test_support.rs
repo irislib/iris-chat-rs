@@ -34,6 +34,16 @@ impl AppCore {
         tcp: DeviceSyncTcpSender,
         siblings: Vec<FipsPeerIdentity>,
     ) {
+        self.install_device_sync_endpoint_for_test(endpoint);
+        let runtime = self.device_sync.as_mut().expect("device sync runtime");
+        runtime.tcp = Some(tcp);
+        runtime.siblings = siblings;
+    }
+
+    pub(in crate::core) fn install_device_sync_endpoint_for_test(
+        &mut self,
+        endpoint: Arc<FipsEndpoint>,
+    ) {
         self.device_sync = Some(DeviceSyncRuntime {
             direct_files: None,
             calls_tx: None,
@@ -41,8 +51,8 @@ impl AppCore {
             peer_refresh_key: "test".to_string(),
             endpoint,
             configured_direct_peers: Default::default(),
-            tcp: Some(tcp),
-            siblings,
+            tcp: None,
+            siblings: Vec::new(),
             snapshot_pending: false,
             history: history::HistoryState::default(),
             nearby_enabled: false,

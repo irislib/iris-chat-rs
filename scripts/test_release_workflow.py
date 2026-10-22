@@ -303,6 +303,9 @@ class ReleaseWorkflowTests(unittest.TestCase):
                 self.assertNotIn("continue-on-error:", jobs[name])
         self.assertIn("ref: ${{ needs.validate.outputs.sha }}", jobs["verify"])
         self.assertIn("scripts/verify.sh fast", jobs["verify"])
+        self.assertIn('IRIS_PRIVATE_CONTROL_FIXTURE_OUTPUT="$PWD/work/private-controls/native-private-controls.json"', jobs["verify"])
+        self.assertIn("name: populated-discovery-cpu-and-privacy", jobs["verify"])
+        self.assertIn("path: iris-chat-rs/work/private-controls/", jobs["verify"])
         publish = jobs["release"].split("    runs-on:", 1)[0]
         self.assertEqual(re.findall(r"^      - (.+)$", publish, re.MULTILINE),
                          ["validate", "verify", "build", "mesh-resource"])

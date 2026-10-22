@@ -169,6 +169,15 @@ and bandwidth checks, including two 65-second idle windows covering periodic
 maintenance, must pass before GitHub release publication; their receipt
 remains a workflow artifact and is excluded from the app release files.
 
+The mandatory Rust suite also restores a generated 100 MiB account database with
+96 contacts, three devices per contact, three own devices and eight groups.
+Its populated-discovery test waits for all anonymous author scopes to settle,
+then requires two 35-second windows below 5% of one CPU core with no repeated
+application requests, followed by prompt targeted proof recovery. Signed wire
+checks must keep each peer separate from account receiving and authentication.
+Retain its CPU/wire receipt and full child log with the private-control test
+artifact. The relayless resource fixture alone does not cover this workload.
+
 ## 2. Tag the Latest `main`
 
 Merge the release notes and all intended changes first. Then:

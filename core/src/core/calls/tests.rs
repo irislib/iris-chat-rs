@@ -9,6 +9,31 @@ const CALL_ID: &str = "00112233445566778899aabbccddeeff";
 const NEXT_CALL_ID: &str = "112233445566778899aabbccddeeff00";
 
 #[test]
+fn route_discovery_demand_tracks_only_active_call_devices() {
+    let mut f = Fixture::new();
+    let devices = f
+        .devices
+        .iter()
+        .map(|device| PublicKey::from_hex(device).unwrap())
+        .collect::<Vec<_>>();
+    assert!(devices
+        .iter()
+        .all(|device| !f.core.active_call_targets_device(*device)));
+    f.outgoing(false);
+    assert!(devices
+        .iter()
+        .all(|device| f.core.active_call_targets_device(*device)));
+    assert!(!f
+        .core
+        .active_call_targets_device(PublicKey::from_hex(&f.owner).unwrap()));
+    f.core.calls.active.as_mut().unwrap().peer = Some(f.devices[0].clone());
+    assert!(f.core.active_call_targets_device(devices[0]));
+    assert!(!f.core.active_call_targets_device(devices[1]));
+    f.core.calls.active = None;
+    assert!(!f.core.active_call_targets_device(devices[0]));
+}
+
+#[test]
 fn received_audio_is_not_silenced_by_stale_remote_mute_status() {
     let mut f = Fixture::new();
     f.connected_incoming(false);

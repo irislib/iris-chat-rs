@@ -209,6 +209,7 @@ include!("tests/contact_identity.rs");
 include!("tests/public_follow.rs");
 
 include!("tests/synthetic_history_scale.rs");
+include!("tests/populated_discovery_idle.rs");
 include!("tests/synthetic_protocol_checkpoint.rs");
 
 include!("tests/message_mutations.rs");

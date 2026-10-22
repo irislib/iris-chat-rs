@@ -120,9 +120,18 @@ jobs:
         run: |
           set -Eeuo pipefail
           python3 scripts/test_release_notes.py
-          scripts/verify.sh fast
+          IRIS_PRIVATE_CONTROL_FIXTURE_OUTPUT="$PWD/work/private-controls/native-private-controls.json" scripts/verify.sh fast
           scripts/test_release_publish_guard
           scripts/test_homebrew_tap
+
+      - name: Upload populated discovery CPU and privacy evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: populated-discovery-cpu-and-privacy
+          path: iris-chat-rs/work/private-controls/
+          if-no-files-found: warn
+          retention-days: 14
 
   mesh-resource:
     name: Relayless recovery and resource budgets

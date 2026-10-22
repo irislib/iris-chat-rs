@@ -156,6 +156,16 @@ impl AppCore {
                     .get(owner)
                     .is_some_and(|t| t.messages.iter().any(|m| m.is_outgoing)))
     }
+    pub(super) fn active_call_targets_device(&self, device: PublicKey) -> bool {
+        let device = device.to_hex();
+        self.calls.active.as_ref().is_some_and(|active| {
+            active
+                .peer
+                .as_ref()
+                .map_or_else(|| active.targets.contains(&device), |peer| peer == &device)
+        })
+    }
+
     fn call_signal(&self, targets: Vec<String>, signal: Signal) {
         let Some(endpoint) = self.device_sync.as_ref().map(|r| r.endpoint.clone()) else {
             return;
@@ -163,6 +173,14 @@ impl AppCore {
         let Ok(data) = serde_json::to_vec(&signal) else {
             return;
         };
+        if matches!(signal.kind.as_str(), "offer" | "answer") {
+            for author in targets
+                .iter()
+                .filter_map(|key| PublicKey::from_hex(key).ok())
+            {
+                self.refresh_private_mesh_discovery_for_author(author);
+            }
+        }
         self.runtime.spawn(async move {
             for peer in targets.into_iter().filter_map(|v| fips_peer_from_hex(&v)) {
                 let _ = endpoint.send_datagram(peer, PORT, PORT, data.clone()).await;

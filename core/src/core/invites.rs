@@ -223,6 +223,7 @@ impl AppCore {
             );
             self.retry_pending_private_invite_responses(owner_pubkey);
             self.request_protocol_subscription_refresh();
+            self.refresh_private_discovery_for_author(owner_pubkey);
             return PrivateInviteResponseDisposition::Handled;
         }
 
@@ -640,6 +641,7 @@ impl AppCore {
                             Some(chat_id) => Ok(AcceptInviteDispatch::Completed(chat_id)),
                             None => {
                                 self.request_protocol_subscription_refresh();
+                                self.refresh_private_discovery_for_author(owner_pubkey);
                                 Ok(AcceptInviteDispatch::Pending)
                             }
                         }
