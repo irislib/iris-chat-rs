@@ -1,0 +1,68 @@
+name: Qualify Linux development CLI
+
+on:
+  push:
+    branches: [codex/linux-cli-6c22a0c]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: linux-cli-development-6c22a0c
+  cancel-in-progress: false
+
+jobs:
+  qualify:
+    if: github.event.repository.private == false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      SOURCE_COMMIT: 6c22a0c7136e8a6a4e1abcd02d554ef19f0f23b9
+      SOURCE_TREE: ac5e066e1ffde5f4ea8826ef6b4eb69f9e03ee7b
+      CARGO_TARGET_DIR: ${{ github.workspace }}/cargo-target
+      CARGO_BUILD_JOBS: '2'
+      RUSTUP_TOOLCHAIN: 1.95.0
+      IRIS_BUILD_GIT_SHA: 6c22a0c7136e8a6a4e1abcd02d554ef19f0f23b9
+      IRIS_BUILD_CHANNEL: debug
+      IRIS_FIPS_WEBSOCKET_SEED_URLS: ''
+      TOKIO_WORKER_THREADS: '2'
+      RAYON_NUM_THREADS: '2'
+    steps:
+      - name: Checkout qualification instructions
+        uses: actions/checkout@v4
+        with:
+          path: driver
+          persist-credentials: false
+      - name: Checkout exact application source
+        uses: actions/checkout@v4
+        with:
+          ref: 6c22a0c7136e8a6a4e1abcd02d554ef19f0f23b9
+          path: source
+          persist-credentials: false
+      - name: Check runner resource headroom
+        run: |
+          python3 - <<'PY'
+          import os, shutil
+          assert shutil.disk_usage(os.environ['GITHUB_WORKSPACE']).free >= 20 * 1024**3
+          assert os.uname().machine == 'x86_64'
+          PY
+      - name: Install native prerequisites and fixed Rust compiler
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends cmake libclang-18-dev libdbus-1-dev pkg-config
+          rustup toolchain install 1.95.0 --profile minimal
+      - name: Build and qualify the normal development CLI
+        run: >-
+          python3 driver/scripts/qualify-linux-cli.py
+          --source "$GITHUB_WORKSPACE/source"
+          --output "$RUNNER_TEMP/iris-cli-qualification"
+      - name: Retain development binary and source-bound evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: iris-linux-cli-DEV-6c22a0c-${{ github.run_id }}
+          path: ${{ runner.temp }}/iris-cli-qualification/
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
