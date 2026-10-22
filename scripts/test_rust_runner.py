@@ -12,6 +12,17 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 CRATES = ("core", "chat-protocol", "protocol-ffi")
 MEMORY_TEST = "core::protocol::anonymous_reads::memory_tests::populated_account_discovery_under_memory_limit"
+CHECKPOINT_TEST = "protocol_engine::tests::checkpoint_backlog_production_counts_are_durable"
+CHECKPOINT_MARKER = "checkpoint_backlog fanouts=22702 ciphertexts=19231 checkpoint_bytes=254672896"
+CHECKPOINT_RESULT = "test result: ok. 1 passed; 0 failed; 0 ignored;"
+
+
+def checkpoint_command():
+    return [
+        "test", "--manifest-path", str(ROOT / "chat-protocol/Cargo.toml"), "--locked",
+        "--lib", CHECKPOINT_TEST,
+        "--", "--ignored", "--exact", "--test-threads=1", "--nocapture",
+    ]
 
 
 class RustRunnerTests(unittest.TestCase):
@@ -29,10 +40,13 @@ class RustRunnerTests(unittest.TestCase):
                 commands.append(["test", "-q", "--doc", *args])
             else:
                 commands.append(["test", "-q", *args])
+            if crate == "chat-protocol":
+                commands.append(checkpoint_command())
         return commands
 
     def run_runner(self, nextest, target=None, fail_on=None, approval_relay=None,
-                   fail_relay=False, platform="Darwin", cpu_receipt=None):
+                   fail_relay=False, platform="Darwin", cpu_receipt=None,
+                   checkpoint_output="passed"):
         with tempfile.TemporaryDirectory(prefix="iris-rust-runner-") as tmp:
             directory = pathlib.Path(tmp)
             binary_dir = directory / "bin"
@@ -57,11 +71,21 @@ class RustRunnerTests(unittest.TestCase):
             python.chmod(0o755)
             cargo = binary_dir / "cargo"
             cargo.write_text(
-                '#!/bin/sh\n'
-                '[ "$IRIS_DEVICE_APPROVAL_RELAY_URL" = "$IRIS_TEST_EXPECTED_RELAY" ] || exit 38\n'
-                'printf "%s\\t" "$PWD" "$CARGO_TARGET_DIR" "$@" >> "$IRIS_TEST_LOG"\n'
-                'printf "\\n" >> "$IRIS_TEST_LOG"\n'
-                '[ "$*" != "${IRIS_TEST_FAIL_COMMAND:-}" ] || exit 23\n'
+                f'#!{sys.executable}\n'
+                'import json, os, sys\n'
+                'env = os.environ\n'
+                'if env["IRIS_DEVICE_APPROVAL_RELAY_URL"] != env["IRIS_TEST_EXPECTED_RELAY"]: sys.exit(38)\n'
+                'with open(env["IRIS_TEST_LOG"], "a") as log:\n'
+                '    log.write("\\t".join([os.getcwd(), env["CARGO_TARGET_DIR"], *sys.argv[1:]]) + "\\n")\n'
+                'if sys.argv[1:] == json.loads(env["IRIS_TEST_FAIL_COMMAND"]): sys.exit(23)\n'
+                f'if sys.argv[1:] == {checkpoint_command()!r}:\n'
+                '    mode = env["IRIS_TEST_CHECKPOINT_OUTPUT"]\n'
+                '    if mode != "missing-marker":\n'
+                f'        marker = {CHECKPOINT_MARKER!r}\n'
+                '        print(marker.replace("ciphertexts=19231", "ciphertexts=19230") if mode == "wrong-counts" else marker)\n'
+                '    if mode != "missing-result":\n'
+                f'        result = {CHECKPOINT_RESULT!r}\n'
+                '        print(result.replace("1 passed", "0 passed") if mode == "zero-tests" else result)\n'
             )
             cargo.chmod(0o755)
             if nextest:
@@ -73,6 +97,7 @@ class RustRunnerTests(unittest.TestCase):
                 IRIS_TEST_RELAY_LOG=str(relay_log), IRIS_TEST_RELAY_FAIL=str(int(fail_relay)),
                 IRIS_TEST_EXPECTED_RELAY=approval_relay or "ws://127.0.0.1:45678",
                 IRIS_TEST_PLATFORM=platform, IRIS_TEST_REAL_PYTHON=sys.executable,
+                IRIS_TEST_CHECKPOINT_OUTPUT=checkpoint_output,
             )
             env.pop("CARGO_TARGET_DIR", None)
             env.pop("IRIS_DEVICE_APPROVAL_RELAY_URL", None)
@@ -144,7 +169,7 @@ class RustRunnerTests(unittest.TestCase):
                 env["IRIS_DEVICE_APPROVAL_RELAY_URL"] = approval_relay
             if target is not None:
                 env["CARGO_TARGET_DIR"] = target
-            env["IRIS_TEST_FAIL_COMMAND"] = " ".join(fail_on or [])
+            env["IRIS_TEST_FAIL_COMMAND"] = json.dumps(fail_on or [])
             result = subprocess.run(
                 [shutil.which("bash"), str(ROOT / "scripts/test_rust.sh")],
                 cwd=directory,
@@ -174,6 +199,20 @@ class RustRunnerTests(unittest.TestCase):
                 result, calls = self.run_runner(nextest)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(calls, self.commands(nextest))
+                self.assertEqual(result.stdout.count(CHECKPOINT_MARKER), 1)
+                self.assertEqual(result.stdout.count(CHECKPOINT_RESULT), 1)
+
+    def test_checkpoint_requires_execution_result_and_exact_work_counts(self):
+        for nextest in (True, False):
+            commands = self.commands(nextest)
+            checkpoint_index = commands.index(checkpoint_command())
+            for mode in ("zero-tests", "missing-marker", "wrong-counts", "missing-result"):
+                with self.subTest(nextest=nextest, checkpoint_output=mode):
+                    result, calls = self.run_runner(nextest, checkpoint_output=mode)
+                    self.assertEqual(result.returncode, 1, result.stderr)
+                    self.assertIn("Required protocol backlog checkpoint regression did not execute",
+                                  result.stderr)
+                    self.assertEqual(calls, commands[:checkpoint_index + 1])
 
     def test_preserves_explicit_target_directory(self):
         for nextest in (True, False):
@@ -242,7 +281,10 @@ class RustRunnerTests(unittest.TestCase):
             for index, command in enumerate(commands):
                 with self.subTest(nextest=nextest, stage=index):
                     result, calls = self.run_runner(nextest, fail_on=command)
-                    self.assertEqual(result.returncode, 23, result.stderr)
+                    # The checkpoint wrapper prints Cargo's captured diagnostics
+                    # and returns 1; other stages preserve the direct exit status.
+                    expected_status = 1 if command == checkpoint_command() else 23
+                    self.assertEqual(result.returncode, expected_status, result.stderr)
                     self.assertEqual(calls, commands[:index + 1])
 
 
