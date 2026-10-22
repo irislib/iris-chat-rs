@@ -35,6 +35,10 @@
        Compile glob — no explicit ItemGroup needed. -->
   <ItemGroup>
     <Resource Include="Resources\IrisLogo.png" />
+    <Content Include="Resources\IrisChat.ico">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </Content>
     <Content Include="..\..\DESKTOP_MEDIA_LICENSES.txt"><Link>DESKTOP_MEDIA_LICENSES.txt</Link><CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory><CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory></Content>
     <Content Include="Frameworks\iris_chat_core.dll" Condition="Exists('Frameworks\iris_chat_core.dll')">
       <Link>iris_chat_core.dll</Link>

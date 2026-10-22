@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[1]
 CHECKER = ROOT / "scripts/validate-haps-manifest.py"
@@ -80,10 +81,35 @@ class HapsManifestTests(unittest.TestCase):
                     self.validate(manifest)
 
     def test_rejects_changed_published_layout(self):
-        manifest = copy.deepcopy(self.manifest)
-        manifest["targets"]["x86_64-pc-windows-msvc"]["package"]["commands"]["iris-chat"] = "IrisChat/IrisChat.exe"
-        with self.assertRaisesRegex(ValueError, "metadata"):
-            self.validate(manifest)
+        for changed in ("command", "missing-desktop", "icon"):
+            with self.subTest(changed=changed):
+                manifest = copy.deepcopy(self.manifest)
+                package = manifest["targets"]["x86_64-pc-windows-msvc"]["package"]
+                if changed == "command":
+                    package["commands"]["iris-chat"] = "IrisChat/IrisChat.exe"
+                elif changed == "missing-desktop":
+                    package.pop("desktop", None)
+                else:
+                    package["desktop"]["icon"] = "IrisChat.ico"
+                with self.assertRaisesRegex(ValueError, "metadata"):
+                    self.validate(manifest)
+
+    def test_windows_desktop_entry_uses_packaged_application_icon(self):
+        target = "x86_64-pc-windows-msvc"
+        desktop = {"name": "Iris Chat", "command": "iris-chat", "icon": "Resources/IrisChat.ico"}
+        published = next(package for package in self.config["packages"]
+                         if package["name"] == "iris-chat" and package["target"] == target)
+        self.assertEqual(published.get("desktop"), desktop)
+        self.assertEqual(self.manifest["targets"][target]["package"].get("desktop"), desktop)
+        project_dir = ROOT / "windows/IrisChat"
+        project = ET.parse(project_dir / "IrisChat.csproj").getroot()
+        icon = project.findtext("PropertyGroup/ApplicationIcon")
+        self.assertEqual(icon.replace("\\", "/"), desktop["icon"])
+        content = project.find(f"ItemGroup/Content[@Include='{icon}']")
+        self.assertIsNotNone(content, "The shortcut icon must be included in the published app.")
+        for field in ("CopyToOutputDirectory", "CopyToPublishDirectory"):
+            self.assertEqual(content.findtext(field), "PreserveNewest")
+        self.assertTrue((project_dir / desktop["icon"]).is_file())
 
     def test_validates_date_and_revision_mapping(self):
         self.assertEqual(self.checker.release_versions("v2026.10.22.3"),

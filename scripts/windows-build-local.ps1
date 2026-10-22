@@ -196,6 +196,7 @@ function Build-Dotnet {
     } 'dotnet publish'
     $publish = Get-PublishDirectory
     if (-not (Test-Path (Join-Path $publish 'IrisChat.exe'))) { throw "Published app was not found: $publish" }
+    if (-not (Test-Path (Join-Path $publish 'Resources\IrisChat.ico') -PathType Leaf)) { throw 'Published app is missing its Start Menu icon' }
     if (-not (Test-Path (Join-Path $publish 'iris_chat_core.dll'))) { throw 'Published app is missing iris_chat_core.dll' }
 }
 

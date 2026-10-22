@@ -45,8 +45,9 @@ commands = [["env", "IRIS_APP_VERSION_NAME=2026.10.22.5", "cargo", "build", "--m
 
 [targets.x86_64-pc-windows-msvc.package]
 commands = { iris-chat = "IrisChat.exe" }
+desktop = { name = "Iris Chat", command = "iris-chat", icon = "Resources/IrisChat.ico" }
 
-# Requires PowerShell, the Windows build tools in windows/README.md, and Haps 0.1.18.
+# Requires PowerShell, the Windows build tools in windows/README.md, and Haps 0.1.20.
 # The root directory mapping preserves the published Windows package layout.
 [targets.x86_64-pc-windows-msvc.build]
 commands = [["pwsh", "-NoProfile", "-NonInteractive", "-Command", "$ErrorActionPreference = 'Stop'; $env:IRIS_APP_VERSION_NAME = '2026.10.22.5'; $env:IRIS_APP_VERSION_CODE = '2026102205'; $env:IRIS_BUILD_GIT_SHA = git rev-parse --short=12 HEAD; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; $env:IRIS_WINDOWS_TARGET = '{target}'; $env:IRIS_WINDOWS_DOTNET_CONFIG = 'Release'; $env:IRIS_WINDOWS_RUST_PROFILE = 'release'; $env:CARGO_TARGET_DIR = 'target/haps-core'; & ./scripts/windows-build-local.ps1 build; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }"]]

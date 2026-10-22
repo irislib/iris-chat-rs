@@ -34,6 +34,11 @@
       "description": "Private messaging without a phone number.",
       "commands": {
         "iris-chat": "IrisChat.exe"
+      },
+      "desktop": {
+        "name": "Iris Chat",
+        "command": "iris-chat",
+        "icon": "Resources/IrisChat.ico"
       }
     },
     {
