@@ -122,10 +122,28 @@ fn restored_backlog_batched_retry_stays_within_cpu_budget() {
         serde_json::from_str(&f.sender.pending_decrypted_deliveries[0].content).unwrap();
     assert_eq!(setup_delivery.pubkey, f.peer_owner.public_key());
     assert_eq!(setup_delivery.content, "establish receiver");
+    let setup_journal = f.sender.pending_decrypted_deliveries[0].clone();
+    let setup_id = setup_journal.event_id.clone().unwrap();
     // Expected payloads are copied before timing, never once per retry turn.
     let inbound_before = f.sender.pending_inbound.clone();
     let fanouts_before = f.sender.pending_group_fanouts.clone();
     let ciphertexts_before = f.sender.pending_group_sender_key_messages.clone();
+    let group_message = f
+        .sender
+        .group_sender_key_message_from_parsed(&ciphertexts_before[0])
+        .unwrap();
+    let group_id = format!(
+        "group-delivery:{}",
+        group_sender_key_fingerprint(&group_message)
+    );
+    let group_sender = f
+        .sender
+        .group_manager
+        .snapshot()
+        .sender_keys
+        .into_iter()
+        .find(|record| record.sender_event_pubkey == group_message.sender_event_pubkey)
+        .unwrap();
     let remote_before = f.sender.pending_remote_sends.clone();
     let sessions_before = serde_json::to_value(f.sender.session_manager.snapshot()).unwrap();
     let ticks_per_second: f64 = String::from_utf8(
@@ -164,6 +182,9 @@ fn restored_backlog_batched_retry_stays_within_cpu_budget() {
     let mut first_valid_delivery_seconds = None;
     let mut group_deliveries = 0usize;
     let mut acknowledged_deliveries = 0usize;
+    let mut acknowledged_ids = HashSet::new();
+    let mut acknowledged_setup_deliveries = 0usize;
+    let mut acknowledged_group_deliveries = 0usize;
     let mut remote_deadlines = engine
         .pending_remote_sends
         .iter()
@@ -207,6 +228,37 @@ fn restored_backlog_batched_retry_stays_within_cpu_budget() {
                 let delivered = batch.group_result.events.len();
                 group_deliveries += delivered;
                 if !batch.direct_messages.is_empty() {
+                    // This journal contains both the inherited direct reply and
+                    // the newly recovered group message. Verify each before ACK.
+                    for delivery in &batch.direct_messages {
+                        let id = delivery.event_id.as_ref().unwrap();
+                        assert!(acknowledged_ids.insert(id.clone()), "duplicate delivery");
+                        if id == &setup_id {
+                            assert_eq!(delivery.sender, setup_journal.sender);
+                            assert_eq!(delivery.sender_device, setup_journal.sender_device);
+                            assert_eq!(
+                                delivery.conversation_owner,
+                                setup_journal.conversation_owner
+                            );
+                            assert_eq!(delivery.created_at_secs, setup_journal.created_at_secs);
+                            assert_eq!(delivery.content, setup_journal.content);
+                            acknowledged_setup_deliveries += 1;
+                        } else {
+                            assert_eq!(id, &group_id, "unexpected journal delivery");
+                            let Some(GroupIncomingEvent::Message(received)) =
+                                engine.pending_group_decrypted_delivery(id).unwrap()
+                            else {
+                                panic!("authenticated group journal required");
+                            };
+                            assert_eq!(received.group_id, "queued-group");
+                            assert_eq!(received.revision, 1);
+                            assert_eq!(received.sender_owner, group_sender.sender_owner);
+                            assert_eq!(received.sender_device, Some(group_sender.sender_device));
+                            assert_eq!(received.body, b"last recoverable position");
+                            assert_eq!(delivery.created_at_secs, group_message.created_at.get());
+                            acknowledged_group_deliveries += 1;
+                        }
+                    }
                     acknowledged_deliveries += batch.direct_messages.len();
                     engine.ack_pending_decrypted_deliveries().unwrap();
                 }
@@ -272,9 +324,11 @@ fn restored_backlog_batched_retry_stays_within_cpu_budget() {
         "valid recovery must deliver exactly once"
     );
     assert_eq!(
-        acknowledged_deliveries, 1,
-        "the measured turns must acknowledge the exact setup journal delivery"
+        acknowledged_deliveries, 2,
+        "the measured turns must acknowledge the setup reply and recovered group message"
     );
+    assert_eq!(acknowledged_setup_deliveries, 1);
+    assert_eq!(acknowledged_group_deliveries, 1);
     assert_eq!(engine.pending_inbound.len(), INBOUND);
     assert_eq!(engine.pending_remote_sends.len(), 44);
     assert_eq!(
@@ -382,6 +436,8 @@ fn restored_backlog_batched_retry_stays_within_cpu_budget() {
         "restore_seconds": restore_seconds, "initially_ready": initially_ready,
         "readiness_seconds": readiness_seconds, "first_valid_delivery_seconds": first_valid_delivery_seconds,
         "group_deliveries": group_deliveries, "acknowledged_deliveries": acknowledged_deliveries,
+        "acknowledged_setup_deliveries": acknowledged_setup_deliveries,
+        "acknowledged_group_deliveries": acknowledged_group_deliveries,
         "search_starts": search_starts, "repeated_search_starts": repeated_search_starts,
         "input_generation_changes": input_generation_changes, "wire_effect_count": 0,
         "remaining_inbound": engine.pending_inbound.len(), "remaining_fanouts": engine.pending_group_fanouts.len(),

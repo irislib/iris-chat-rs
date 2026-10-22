@@ -106,7 +106,8 @@ expected = {
     "checkpoint_bytes": 350224384, "outer_batch": True, "ack_and_flush_in_turn": True,
     "continuation_delay_ms": 25, "liveness_delay_ms": 2000, "settle_seconds": 180,
     "measurement_windows": 2, "window_seconds": 60, "debug_assertions": False,
-    "initially_ready": True, "group_deliveries": 1, "acknowledged_deliveries": 1,
+    "initially_ready": True, "group_deliveries": 1, "acknowledged_deliveries": 2,
+    "acknowledged_setup_deliveries": 1, "acknowledged_group_deliveries": 1,
     "repeated_search_starts": 0, "wire_effect_count": 0, "remaining_inbound": 4214,
     "remaining_ciphertexts": 23436, "remaining_remote_sends": 44,
     "preservation_checked": True, "restart_checked": True, "restart_ready": True,
@@ -143,7 +144,7 @@ for index, row in enumerate(slices):
     if index >= 3:
         assert row["turns"] > 0 and row["remote_deadline_updates"] > 0 and row["puts"] > 0, "Measured slice must include recurring due work and flush"
         assert row["cpu_percent_one_core"] <= 5, "Batched retry exceeded 5% of one CPU"
-assert sum(row["acknowledged_deliveries"] for row in slices) == 1
+assert sum(row["acknowledged_deliveries"] for row in slices) == 2
 assert all(result[key] == previous[key] for key in ("search_starts", "repeated_search_starts", "input_generation_changes"))
 restart = result["restart_progress"]
 assert all(type(restart[key]) is int and restart[key] >= 0 for key in counts)
