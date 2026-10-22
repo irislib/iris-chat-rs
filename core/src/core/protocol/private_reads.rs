@@ -104,11 +104,13 @@ impl PrivateDiscoveryClient {
                 };
                 snapshots.resize_with(current.relays.len(), DiscoverySnapshot::default);
                 let mut changed = false;
+                let mut read_succeeded = false;
                 let cycle = async {
                     for (relay, snapshot) in current.relays.iter().zip(snapshots.iter_mut()) {
                         if let Ok(events) =
                             super::anonymous_reads::poll(relay, current.filters.clone()).await
                         {
+                            read_succeeded = true;
                             let response_changed = snapshot.observe(&events);
                             changed |= response_changed;
                             if !response_changed && !redeliver {
@@ -153,7 +155,10 @@ impl PrivateDiscoveryClient {
                         continue;
                     },
                 }
-                redeliver = false;
+                // A failed attempt does not satisfy explicit recovery demand.
+                if read_succeeded {
+                    redeliver = false;
+                }
                 // A demand coalesces while a query is running. Consume it
                 // after completion instead of cancelling a useful catch-up.
                 tokio::select! {
