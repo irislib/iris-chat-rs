@@ -1384,13 +1384,14 @@ final class IrisChatTests: XCTestCase {
         let pendingStore = InMemoryPendingDeviceLinkSecretStore()
         let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: tempDir) }
-        _ = AppManager(
+        let manager = AppManager(
             rust: rust,
             secretStore: InMemorySecretStore(),
             pendingDeviceLinkSecretStore: pendingStore,
             dataDir: tempDir,
             environment: [:]
         )
+        defer { withExtendedLifetime(manager) {} }
 
         rust.emit(.persistPendingDeviceLink(deviceNsec: "nsec1device", approvalBootstrapJson: "{}"))
         let persisted = await waitUntil { pendingStore.link != nil }; XCTAssertTrue(persisted)
