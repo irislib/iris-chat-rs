@@ -514,7 +514,7 @@ jobs:
           dotnet run --project windows/ThemeTests/ThemeTests.csproj -c Release -- work/themes
           if ($LASTEXITCODE -ne 0) { throw 'Native theme contrast tests failed' }
       - name: Exercise native direct files and WPF transfer controls
-        if: ${{ !cancelled() && steps.native-build.outcome == 'success' && (inputs.scope == '' || inputs.scope == 'all') }}
+        if: ${{ !cancelled() && steps.native-build.outcome == 'success' && (inputs.scope == '' || inputs.scope == 'all' || inputs.scope == 'windows') }}
         run: ./scripts/windows-build-local.ps1 direct-file-tests
       - name: Exercise WPF nearby avatars and chat headers
         if: ${{ !cancelled() && steps.native-build.outcome == 'success' && (inputs.scope == '' || inputs.scope == 'all' || inputs.scope == 'windows') }}
@@ -531,7 +531,7 @@ jobs:
             iris-chat-rs/work/themes/*.png
           retention-days: 14
       - name: Upload Windows transfer and nearby results
-        if: ${{ always() && (inputs.scope == '' || inputs.scope == 'all') }}
+        if: ${{ always() && (inputs.scope == '' || inputs.scope == 'all' || inputs.scope == 'windows') }}
         uses: actions/upload-artifact@v4
         with:
           name: windows-transfer-and-nearby-tests
