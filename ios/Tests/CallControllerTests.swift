@@ -659,23 +659,28 @@ final class CallControllerTests: XCTestCase {
 
     @MainActor
     private func assertCaptureBatchHandoff(frameCount: Int) async throws {
+        // This checks batch capacity/order while MainActor is deliberately held.
+        // Use one clock so slow simulator scheduling cannot expire valid test
+        // frames; testTwoHopsShareOriginal100msDeadline checks actual expiry.
+        let clock = CallMediaTestClock()
         let captureQueue = DispatchQueue(label: "test.call.capture.handoff")
-        let capture = IrisCallAudioCaptureQueue(queue: captureQueue)
+        let capture = IrisCallAudioCaptureQueue(queue: captureQueue,
+                                               now: { UInt64(clock.now() * 1_000_000_000) })
         let encoder = try CallAudioCodec()
         let sendQueue = DispatchQueue(label: "test.call.core.handoff")
-        let sender = IrisCallMediaDispatch(queue: sendQueue)
-        let firstFrames = expectation(description: "initial frames dispatched")
-        firstFrames.expectedFulfillmentCount = 4
+        let sender = IrisCallMediaDispatch(queue: sendQueue, now: clock.now)
+        let allFrames = expectation(description: "complete capture batch dispatched")
+        allFrames.expectedFulfillmentCount = frameCount
         var timestamps: [UInt64] = [] // Read and written only on sendQueue.
         let controller = IrisCallController(dispatch: { _ in }, showError: { XCTFail($0) },
             sendMedia: { action, allowed in
                 sender.send(action, allowed: allowed) { action in
                     if case .sendCallMedia(_, _, let timestamp, _, _) = action {
                         timestamps.append(timestamp)
-                        if timestamps.count <= 4 { firstFrames.fulfill() }
+                        allFrames.fulfill()
                     }
                 }
-            }, mediaForTesting: CallMediaProbe())
+            }, mediaForTesting: CallMediaProbe(), mediaNow: clock.now)
         controller.update(connectedCall(id: "batch"))
         let frames = (0..<frameCount).map { frame in
             (0..<960).map { sample in
@@ -692,7 +697,7 @@ final class CallControllerTests: XCTestCase {
         // Keep MainActor occupied until the complete real capture callback has
         // queued its encoded frames. No sleeps or microphone hardware needed.
         captureQueue.sync {}
-        await fulfillment(of: [firstFrames], timeout: 2)
+        await fulfillment(of: [allFrames], timeout: 2)
         let delivered = sendQueue.sync { timestamps }
         XCTAssertEqual(delivered, (0..<frameCount).map { 1_000_000 + UInt64($0) * 20_000 })
     }
