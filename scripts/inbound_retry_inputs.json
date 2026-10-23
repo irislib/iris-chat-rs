@@ -2,8 +2,24 @@
   "enabled": true,
   "optimized_enabled": true,
   "batched": {
-    "enabled": true,
+    "enabled": false,
     "correctness_tests": [
+      {
+        "name": "protocol_engine::tests::deferred_inbound_deadline_scans_are_bounded_across_32_continuations",
+        "expected_count": 1,
+        "exact": true,
+        "marker": null,
+        "ignored": false,
+        "timeout_seconds": 300
+      },
+      {
+        "name": "protocol_engine::tests::inbound_deadline_",
+        "expected_count": 4,
+        "exact": false,
+        "marker": null,
+        "ignored": false,
+        "timeout_seconds": 300
+      },
       {
         "name": "protocol_engine::tests::remote_retry_",
         "expected_count": 4,
@@ -46,6 +62,22 @@
       },
       {
         "name": "protocol_engine::tests::group_fanout_retry_processes_a_bounded_due_batch",
+        "expected_count": 1,
+        "exact": true,
+        "marker": null,
+        "ignored": false,
+        "timeout_seconds": 300
+      },
+      {
+        "name": "protocol_engine::incoming_retry_tests::pending_receive_save_failure_preserves_entire_queue_and_delivery_journal",
+        "expected_count": 1,
+        "exact": true,
+        "marker": null,
+        "ignored": false,
+        "timeout_seconds": 300
+      },
+      {
+        "name": "protocol_engine::incoming_retry_tests::invalid_pending_ciphertext_does_not_starve_other_senders",
         "expected_count": 1,
         "exact": true,
         "marker": null,
