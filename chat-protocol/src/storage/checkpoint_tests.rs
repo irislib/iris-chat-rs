@@ -368,7 +368,16 @@ fn shared_chunked_checkpoint() -> StorageCheckpoint {
     checkpoint(&[shared.clone(), shared], &[11, 22], "shared")
 }
 
-fn checkpoint_rows(conn: &SharedConnection) -> Vec<Vec<Vec<rusqlite::types::Value>>> {
+#[derive(PartialEq)]
+enum CheckpointCell {
+    Null,
+    Integer(i64),
+    Real(u64),
+    Text(Vec<u8>),
+    Blob(Vec<u8>),
+}
+
+fn checkpoint_rows(conn: &SharedConnection) -> Vec<Vec<Vec<CheckpointCell>>> {
     let conn = conn.lock().unwrap();
     [
         "ndr_kv",
@@ -384,7 +393,18 @@ fn checkpoint_rows(conn: &SharedConnection) -> Vec<Vec<Vec<rusqlite::types::Valu
         let columns = stmt.column_count();
         let rows = stmt
             .query_map([], |row| {
-                (0..columns).map(|column| row.get(column)).collect()
+                (0..columns)
+                    .map(|column| {
+                        use rusqlite::types::ValueRef;
+                        Ok(match row.get_ref(column)? {
+                            ValueRef::Null => CheckpointCell::Null,
+                            ValueRef::Integer(n) => CheckpointCell::Integer(n),
+                            ValueRef::Real(n) => CheckpointCell::Real(n.to_bits()),
+                            ValueRef::Text(bytes) => CheckpointCell::Text(bytes.to_vec()),
+                            ValueRef::Blob(bytes) => CheckpointCell::Blob(bytes.to_vec()),
+                        })
+                    })
+                    .collect()
             })
             .unwrap();
         rows.collect::<rusqlite::Result<Vec<_>>>().unwrap()
@@ -460,5 +480,158 @@ fn checkpoint_records_payload_shape_corruption_preserves_existing_rows() {
         assert!(checkpoint_rows(&conn) == before, "failed replacement changed rows: {case}");
         assert_eq!(pages(&conn), written, "failed replacement dirtied pages: {case}");
         assert!(reopen(&dir).get("state").is_err(), "corruption must survive rejection: {case}");
+    }
+}
+
+fn descriptor_checkpoint(
+    records: &[Arc<StorageCheckpointBody>],
+    labels: &[(&str, &str)],
+) -> StorageCheckpoint {
+    assert_eq!(records.len(), labels.len());
+    let mut value = StorageCheckpoint::new();
+    value.push_inline("open", "[".into(), 0);
+    for (index, (record, (before, after))) in records.iter().zip(labels).enumerate() {
+        value.push_record(
+            0,
+            record.clone(),
+            format!(
+                "{}{{\"before\":{},\"body\":",
+                if index == 0 { "" } else { "," },
+                serde_json::to_string(before).unwrap()
+            ),
+            format!(",\"after\":{}}}", serde_json::to_string(after).unwrap()),
+            0,
+        );
+    }
+    value.push_inline("close", "]".into(), 65536);
+    value
+}
+
+#[test]
+fn checkpoint_records_warmed_put_allocation_does_not_scale_with_descriptors() {
+    use crate::protocol_engine::tests::remote_roster_tests::allocated_bytes;
+
+    fn measure(label_bytes: usize) -> usize {
+        let (dir, conn, storage) = database();
+        let shared = body(1);
+        let records = vec![shared; 64];
+        let label = "a".repeat(label_bytes);
+        let labels = vec![(label.as_str(), label.as_str()); records.len()];
+        let value = descriptor_checkpoint(&records, &labels);
+        storage.put_checkpoint("state", &value).unwrap();
+        storage.put_checkpoint("state", &value).unwrap();
+        let before = pages(&conn);
+        let (result, allocated) = allocated_bytes(|| storage.put_checkpoint("state", &value));
+        result.unwrap();
+        assert_eq!(pages(&conn), before, "warmed no-op must not dirty pages");
+        let expected = value.materialize().unwrap();
+        assert_eq!(storage.get("state").unwrap(), Some(expected.clone()));
+        assert_eq!(reopen(&dir).get("state").unwrap(), Some(expected));
+        allocated
+    }
+
+    let small = measure(16);
+    let large = measure(4096);
+    eprintln!("checkpoint_descriptor_allocations nodes=64 small={small} large={large} maximum_growth=65536");
+    // The same keys, bodies and links have 522,240 additional descriptor bytes.
+    // Reading those bytes must not allocate an owned copy on every save.
+    assert!(
+        large <= small + 65536,
+        "warmed put allocation scales with stored descriptors: small={small}, large={large}"
+    );
+}
+
+#[test]
+fn checkpoint_records_descriptor_updates_order_and_external_writes_stay_fresh() {
+    let (dir, conn, storage) = database();
+    let a = body(1);
+    let b = body(2);
+    let values = [
+        descriptor_checkpoint(
+            &[a.clone(), b.clone(), a.clone()],
+            &[("a0a0", "0000"), ("b0b0", "1111"), ("a1a1", "2222")],
+        ),
+        // Independently change prefix and suffix without changing their byte lengths.
+        descriptor_checkpoint(
+            &[a.clone(), b.clone(), a.clone()],
+            &[("x0x0", "0000"), ("b0b0", "9999"), ("a1a1", "2222")],
+        ),
+        descriptor_checkpoint(
+            &[b, a.clone(), a.clone()],
+            &[("b0b0", "9999"), ("x0x0", "0000"), ("a1a1", "2222")],
+        ),
+        descriptor_checkpoint(&[a.clone(), a], &[("a0a0", "0000"), ("a1a1", "2222")]),
+    ];
+    for value in &values {
+        storage.put_checkpoint("state", value).unwrap();
+        let expected = value.materialize().unwrap();
+        assert_eq!(storage.get("state").unwrap(), Some(expected.clone()));
+        assert_eq!(reopen(&dir).get("state").unwrap(), Some(expected));
+        let before = pages(&conn);
+        storage.put_checkpoint("state", value).unwrap();
+        assert_eq!(
+            pages(&conn),
+            before,
+            "unchanged descriptors must remain a no-op"
+        );
+    }
+    let value = values.last().unwrap();
+    let expected = value.materialize().unwrap();
+    let writer = Connection::open(dir.path().join("checkpoint.sqlite3")).unwrap();
+    assert_eq!(writer.execute("UPDATE ndr_kv_checkpoint_nodes SET prefix=replace(prefix,'a0a0','z9z9') WHERE owner_pubkey_hex='owner' AND device_pubkey_hex='device' AND key='state' AND instr(prefix,'a0a0')>0", []).unwrap(), 1);
+    assert_eq!(
+        storage.get("state").unwrap(),
+        Some(expected.replace("a0a0", "z9z9"))
+    );
+    let before = pages(&conn);
+    storage.put_checkpoint("state", value).unwrap();
+    assert!(
+        pages(&conn) > before,
+        "fresh external descriptor changes must be restored"
+    );
+    assert_eq!(reopen(&dir).get("state").unwrap(), Some(expected));
+    let before = pages(&conn);
+    storage.put_checkpoint("state", value).unwrap();
+    assert_eq!(pages(&conn), before);
+}
+
+#[test]
+fn checkpoint_records_invalid_descriptors_in_retained_or_retired_rows_are_rejected() {
+    for column in ["prefix", "suffix"] {
+        for invalid_utf8 in [false, true] {
+            for retire in [false, true] {
+                let (dir, conn, storage) = database();
+                let records = [body(1), body(2)];
+                let value =
+                    descriptor_checkpoint(&records, &[("first", "tail1"), ("other", "tail2")]);
+                let replacement = descriptor_checkpoint(&records[..1], &[("first", "tail1")]);
+                storage.put_checkpoint("state", &value).unwrap();
+                let expression = if invalid_utf8 {
+                    format!("CAST(x'ff'||substr(CAST({column} AS BLOB),2) AS TEXT)")
+                } else {
+                    format!("CAST({column} AS BLOB)")
+                };
+                // The second record is absent from replacement, but its old descriptor
+                // still belongs to the stored generation and must be validated.
+                conn.lock().unwrap().execute_batch(&format!("UPDATE ndr_kv_checkpoint_nodes SET {column}={expression} WHERE rowid=(SELECT max(rowid) FROM ndr_kv_checkpoint_nodes WHERE substr(node_key,1,1)=x'01')")).unwrap();
+                let before = checkpoint_rows(&conn);
+                let written = pages(&conn);
+                assert!(
+                    storage.get("state").is_err(),
+                    "{column}, invalid_utf8={invalid_utf8}"
+                );
+                let proposed = if retire { &replacement } else { &value };
+                assert!(
+                    storage.put_checkpoint("state", proposed).is_err(),
+                    "{column}, invalid_utf8={invalid_utf8}, retire={retire}"
+                );
+                assert!(
+                    checkpoint_rows(&conn) == before,
+                    "rejected descriptor changed stored rows"
+                );
+                assert_eq!(pages(&conn), written, "rejected descriptor dirtied pages");
+                assert!(reopen(&dir).get("state").is_err());
+            }
+        }
     }
 }

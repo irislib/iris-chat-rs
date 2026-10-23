@@ -128,6 +128,7 @@ impl ProtocolEngine {
             self.session_manager = session_checkpoint;
             self.invalidate_pending_inbound_retry_deadline();
             self.pending_inbound = pending_inbound_checkpoint;
+            self.invalidate_pending_group_fanout_retry_deadline();
             self.pending_group_fanouts = pending_group_fanouts_checkpoint;
             self.pending_group_pairwise_payloads = pending_group_pairwise_checkpoint;
             self.invalidate_known_message_author_cache();

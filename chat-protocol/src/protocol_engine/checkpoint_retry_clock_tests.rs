@@ -15,6 +15,7 @@ fn checkpoint_remote_expiry_flushes_retry_clocks_without_rewriting_inbound_bodie
         pending.created_at_secs = NOW - 1_000;
         pending.next_retry_at_secs = NOW;
     }
+    fixture.sender.invalidate_pending_group_fanout_retry_deadline();
     fixture.sender.pending_remote_sends = missing_roster_remote_retries(2, NOW);
     for (index, pending) in fixture.sender.pending_remote_sends.iter_mut().enumerate() {
         let expires = NOW + 60 * (index as u64 + 1);
@@ -393,6 +394,7 @@ fn checkpoint_retry_clock_flush_prepares_node_update_once() {
         pending.created_at_secs = NOW - 1_000;
         pending.next_retry_at_secs = NOW;
     }
+    fixture.sender.invalidate_pending_group_fanout_retry_deadline();
     fixture.sender.pending_remote_sends = missing_roster_remote_retries(1, NOW);
     fixture.sender.pending_remote_sends[0].expires_at_secs = Some(NOW);
     let (mut fixture, directory, connection, storage) = checkpoint_growth_install_storage(fixture);

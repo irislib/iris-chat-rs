@@ -10,8 +10,9 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 - Reuse cached payloads while saving and retain existing accounts, pending messages and encryption state during the storage migration. Migrated checkpoints require this version or newer.
 - Save incoming-message retry timers without copying or rewriting their encrypted payloads. Preserve pending work and encryption state after a failed save or restart.
 - Reuse database update statements while saving queued-message metadata to avoid repeated SQL compilation.
-- Borrow saved-message metadata during comparisons and share one payload-validation map, preserving corruption checks and transactional recovery.
+- Compare queued-message descriptors directly from SQLite rows and borrow proposed metadata, avoiding copies while preserving corruption checks and transactional recovery.
 - Recognize ready recovery work before scanning deferred queues, without advancing encryption state or changing retry deadlines.
+- Remember the next group-delivery retry deadline after checking deferred work, and refresh it after queue changes or failed-save recovery.
 - Skip publication preparation when group retries have no deliverable messages, preserving pending recipients, retry clocks and queue limits.
 - Preserve unreadable or unsupported saved state and return an error instead of replacing it with a fresh session.
 - Add physical SQLite write checks for growth, queue admission, successful retry retirement, unchanged saves and failed-commit recovery.

@@ -26,6 +26,7 @@ impl ProtocolEngine {
             pending_inbound_retry_deadline: std::cell::Cell::new(None),
             failed_inbound_receives: BTreeMap::new(),
             pending_group_fanouts: Vec::new(),
+            pending_group_fanout_retry_deadline: std::cell::Cell::new(None),
             ready_group_publications: BTreeMap::new(),
             pending_local_sibling_sends: Vec::new(),
             held_direct_chats: BTreeSet::new(),
@@ -118,6 +119,7 @@ impl ProtocolEngine {
             pending_inbound_retry_deadline: std::cell::Cell::new(None),
             failed_inbound_receives: BTreeMap::new(),
             pending_group_fanouts: state.pending_group_fanouts,
+            pending_group_fanout_retry_deadline: std::cell::Cell::new(None),
             ready_group_publications: state.ready_group_publications,
             pending_local_sibling_sends: state.pending_local_sibling_sends,
             held_direct_chats: BTreeSet::new(),
@@ -185,7 +187,11 @@ impl ProtocolEngine {
         }
         compacted.reverse();
         self.pending_group_fanouts = compacted;
-        self.pending_group_fanouts.len() != original_len
+        let changed = self.pending_group_fanouts.len() != original_len;
+        if changed {
+            self.invalidate_pending_group_fanout_retry_deadline();
+        }
+        changed
     }
 
     fn hydrate_pending_inbound_metadata(&mut self) {

@@ -71,11 +71,7 @@ impl ProtocolEngine {
         &mut self,
         now: NdrUnixSeconds,
     ) -> anyhow::Result<ProtocolGroupIncomingResult> {
-        if !self
-            .pending_group_fanouts
-            .iter()
-            .any(|pending| pending.next_retry_at_secs <= now.get())
-        {
+        if !self.has_due_pending_group_fanout_retry(now) {
             return Ok(ProtocolGroupIncomingResult::default());
         }
         self.with_group_fanout_checkpoint(|engine, undo| {
@@ -294,6 +290,9 @@ impl ProtocolEngine {
             } else {
                 updates.push((index, None));
             }
+        }
+        if !updates.is_empty() {
+            self.invalidate_pending_group_fanout_retry_deadline();
         }
         undo.apply(&mut self.pending_group_fanouts, updates);
         if session_changed {

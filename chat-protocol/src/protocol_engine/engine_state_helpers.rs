@@ -162,6 +162,7 @@ impl ProtocolEngine {
         let mut undo = GroupFanoutRetryUndo::default();
         let result = operation(self, &mut undo);
         if result.is_err() {
+            self.invalidate_pending_group_fanout_retry_deadline();
             undo.restore(&mut self.pending_group_fanouts);
             self.session_manager = checkpoint.0;
             self.ready_group_publications = checkpoint.1;
@@ -205,6 +206,7 @@ impl ProtocolEngine {
         self.group_manager = checkpoint.group_manager;
         self.invalidate_pending_inbound_retry_deadline();
         self.pending_inbound = checkpoint.pending_inbound;
+        self.invalidate_pending_group_fanout_retry_deadline();
         self.pending_group_fanouts = checkpoint.pending_group_fanouts;
         self.ready_group_publications = checkpoint.ready_group_publications;
         self.pending_local_sibling_sends = checkpoint.pending_local_sibling_sends;

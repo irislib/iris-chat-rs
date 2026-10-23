@@ -23,6 +23,7 @@ impl ProtocolEngine {
                 + engine.pending_local_sibling_sends.len()
                 + engine.ready_group_publications.len()
                 + engine.pending_group_fanouts.len();
+            let fanouts_before = engine.pending_group_fanouts.len();
             engine.pending_group_fanouts.retain(|pending| {
                 let GroupPendingFanout::Remote {
                     recipient_owner,
@@ -38,6 +39,9 @@ impl ProtocolEngine {
                         pending_direct_authored_at(payload, pending.created_at_secs) > cutoff
                     })
             });
+            if engine.pending_group_fanouts.len() != fanouts_before {
+                engine.invalidate_pending_group_fanout_retry_deadline();
+            }
             engine.ready_group_publications.retain(|_, pending| {
                 pending.wake_recipient != Some(ndr_owner(peer))
                     || through.is_some_and(|cutoff| {

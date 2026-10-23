@@ -128,6 +128,7 @@ fn due_fanout_retry_allocations_do_not_scale_with_deferred_inbound() {
         for pending in &mut f.sender.pending_group_fanouts {
             pending.next_retry_at_secs = now;
         }
+        f.sender.invalidate_pending_group_fanout_retry_deadline();
         let mut expected_fanouts = f.sender.pending_group_fanouts.clone();
         let sessions = serde_json::to_value(f.sender.session_manager.snapshot()).unwrap();
         let ((), allocated) = remote_roster_tests::allocated_bytes(|| {

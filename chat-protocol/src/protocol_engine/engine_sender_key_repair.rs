@@ -307,6 +307,7 @@ impl ProtocolEngine {
             self.group_manager = checkpoint.0;
             self.session_manager = checkpoint.1;
             self.pending_group_sender_key_repairs = checkpoint.2;
+            self.invalidate_pending_group_fanout_retry_deadline();
             self.pending_group_fanouts = checkpoint.3;
             self.processed_group_sender_key_messages = checkpoint.4;
             self.pending_decrypted_deliveries = checkpoint.5;

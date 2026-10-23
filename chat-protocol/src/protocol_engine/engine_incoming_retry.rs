@@ -49,6 +49,41 @@ impl ProtocolEngine {
             .is_some_and(|next_retry| next_retry <= now.get())
     }
 
+    fn invalidate_pending_group_fanout_retry_deadline(&self) {
+        self.pending_group_fanout_retry_deadline.set(None);
+    }
+
+    fn has_due_pending_group_fanout_retry(&self, now: NdrUnixSeconds) -> bool {
+        if let Some(deadline) = self
+            .pending_group_fanout_retry_deadline
+            .get()
+            .filter(|deadline| deadline.queue_len == self.pending_group_fanouts.len())
+        {
+            return deadline
+                .next_retry_at_secs
+                .is_some_and(|next_retry| next_retry <= now.get());
+        }
+        let mut next_retry_at_secs: Option<u64> = None;
+        for pending in &self.pending_group_fanouts {
+            #[cfg(test)]
+            tests::record_fanout_retry_deadline_scan();
+            let next_retry = pending.next_retry_at_secs;
+            // Preserve the early positive query across successive due batches;
+            // only a fully deferred queue needs a cached minimum.
+            if next_retry <= now.get() {
+                return true;
+            }
+            next_retry_at_secs =
+                Some(next_retry_at_secs.map_or(next_retry, |earliest| earliest.min(next_retry)));
+        }
+        self.pending_group_fanout_retry_deadline
+            .set(Some(PendingGroupFanoutRetryDeadline {
+                queue_len: self.pending_group_fanouts.len(),
+                next_retry_at_secs,
+            }));
+        false
+    }
+
     pub fn has_due_pending_retry_work(&self, now: NdrUnixSeconds) -> bool {
         if !self.pending_decrypted_deliveries.is_empty() {
             return true;
@@ -70,10 +105,7 @@ impl ProtocolEngine {
                 .iter()
                 .any(|pending| pending.next_retry_at_secs <= now_secs)
             || self.has_due_pending_inbound_retry(now)
-            || self
-                .pending_group_fanouts
-                .iter()
-                .any(|pending| pending.next_retry_at_secs <= now_secs)
+            || self.has_due_pending_group_fanout_retry(now)
             || self
                 .pending_group_pairwise_payloads
                 .iter()

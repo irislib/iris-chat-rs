@@ -417,6 +417,12 @@ struct PendingInboundRetryDeadline {
     next_retry_at_secs: Option<u64>,
 }
 
+#[derive(Clone, Copy)]
+struct PendingGroupFanoutRetryDeadline {
+    queue_len: usize,
+    next_retry_at_secs: Option<u64>,
+}
+
 pub struct ProtocolEngine {
     owner_pubkey: PublicKey,
     local_owner: NdrOwnerPubkey,
@@ -431,6 +437,9 @@ pub struct ProtocolEngine {
     pending_inbound_retry_deadline: std::cell::Cell<Option<PendingInboundRetryDeadline>>,
     failed_inbound_receives: BTreeMap<nostr::EventId, FailedInboundReceive>,
     pending_group_fanouts: Vec<ProtocolPendingGroupFanout>,
+    /// Runtime-only hint, populated after finding no due fanouts. Queue changes
+    /// and restoration discard it; durable and rollback checkpoints exclude it.
+    pending_group_fanout_retry_deadline: std::cell::Cell<Option<PendingGroupFanoutRetryDeadline>>,
     ready_group_publications: BTreeMap<String, ProtocolReadyGroupPublish>,
     pending_local_sibling_sends: Vec<ProtocolPendingLocalSiblingSend>,
     held_direct_chats: BTreeSet<String>,

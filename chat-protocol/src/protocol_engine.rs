@@ -31,7 +31,7 @@ include!("protocol_engine/engine_persistence.rs");
 include!("protocol_engine/free_functions.rs");
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     include!("protocol_engine/invite_owner_tests.rs");
@@ -59,6 +59,7 @@ mod tests {
     include!("protocol_engine/checkpoint_growth_tests.rs");
     include!("protocol_engine/checkpoint_retry_clock_tests.rs");
     include!("protocol_engine/fanout_retry_tests.rs");
+    include!("protocol_engine/fanout_retry_deadline_tests.rs");
     include!("protocol_engine/inbound_retry_ciphertext_fixture_tests.rs");
     include!("protocol_engine/inbound_retry_backlog_tests.rs");
     include!("protocol_engine/inbound_retry_deadline_tests.rs");

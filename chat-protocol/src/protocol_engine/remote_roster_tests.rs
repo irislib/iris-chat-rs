@@ -1,4 +1,4 @@
-mod remote_roster_tests {
+pub(crate) mod remote_roster_tests {
     use super::*;
     use std::alloc::{GlobalAlloc, Layout, System};
     use std::cell::Cell;
@@ -52,7 +52,7 @@ mod remote_roster_tests {
     #[global_allocator]
     static ALLOCATOR: CountedAllocator = CountedAllocator;
 
-    pub(super) fn allocated_bytes<T>(operation: impl FnOnce() -> T) -> (T, usize) {
+    pub(crate) fn allocated_bytes<T>(operation: impl FnOnce() -> T) -> (T, usize) {
         struct Reset;
         impl Drop for Reset {
             fn drop(&mut self) {

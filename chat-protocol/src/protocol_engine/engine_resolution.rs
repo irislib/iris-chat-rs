@@ -207,6 +207,7 @@ impl ProtocolEngine {
                 pending.next_retry_at_secs = 0;
             }
         }
+        let mut fanout_deadline_changed = false;
         for pending in &mut self.pending_group_fanouts {
             if matches!(
                 pending.fanout.as_ref(),
@@ -215,8 +216,12 @@ impl ProtocolEngine {
                     ..
                 } if *recipient_owner == owner
             ) {
+                fanout_deadline_changed |= pending.next_retry_at_secs != 0;
                 pending.next_retry_at_secs = 0;
             }
+        }
+        if fanout_deadline_changed {
+            self.invalidate_pending_group_fanout_retry_deadline();
         }
 
         self.invalidate_pending_inbound_retry_deadline();
@@ -432,6 +437,9 @@ impl ProtocolEngine {
         }
         if inner_event_id.is_none() {
             changed |= self.prune_superseded_local_group_sync_fanouts();
+        }
+        if changed {
+            self.invalidate_pending_group_fanout_retry_deadline();
         }
         changed
     }

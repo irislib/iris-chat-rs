@@ -57,14 +57,14 @@ struct Meta {
     count: usize,
     head: Option<Vec<u8>>,
 }
-#[derive(PartialEq, Eq)]
-struct Node {
+struct Node<T> {
     next: Option<Vec<u8>>,
     payload: Vec<u8>,
     bytes: usize,
-    prefix: String,
-    suffix: String,
+    prefix_len: usize,
+    suffix_len: usize,
     padding: usize,
+    descriptors: T,
 }
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct NodeView<'a> {
@@ -84,27 +84,30 @@ impl NodeView<'_> {
             + 16
     }
 }
-impl Node {
-    fn view(&self) -> NodeView<'_> {
-        NodeView {
-            next: self.next.as_deref(),
-            payload: &self.payload,
-            bytes: self.bytes,
-            prefix: &self.prefix,
-            suffix: &self.suffix,
-            padding: self.padding,
-        }
-    }
-    fn stored_bytes(&self) -> usize {
-        self.view().stored_bytes()
-    }
+impl<T> Node<T> {
     fn logical_bytes(&self) -> StorageResult<usize> {
         self.bytes
-            .checked_add(self.prefix.len())
-            .and_then(|n| n.checked_add(self.suffix.len()))
+            .checked_add(self.prefix_len)
+            .and_then(|n| n.checked_add(self.suffix_len))
             .and_then(|n| n.checked_add(self.padding))
             .ok_or_else(invalid)
     }
+}
+
+fn proposed_node(value: &StorageCheckpoint, index: usize) -> NodeView<'_> {
+    let part = &value.parts[index];
+    NodeView {
+        next: value.parts.get(index + 1).map(|p| p.key.as_slice()),
+        payload: &part.payload_key,
+        bytes: part.bytes.bytes().len(),
+        prefix: &part.prefix,
+        suffix: &part.suffix,
+        padding: part.padding,
+    }
+}
+
+fn owned_descriptors(_: &[u8], node: NodeView<'_>) -> (String, String) {
+    (node.prefix.to_owned(), node.suffix.to_owned())
 }
 
 fn metadata(conn: &Connection, ns: Namespace<'_>) -> StorageResult<Option<Meta>> {
@@ -140,30 +143,42 @@ fn metadata(conn: &Connection, ns: Namespace<'_>) -> StorageResult<Option<Meta>>
     Ok(None)
 }
 
-fn nodes(
+fn nodes<T>(
     conn: &Connection,
     ns: Namespace<'_>,
     meta: &Meta,
-) -> StorageResult<BTreeMap<Vec<u8>, Node>> {
+    mut descriptors: impl FnMut(&[u8], NodeView<'_>) -> T,
+) -> StorageResult<BTreeMap<Vec<u8>, Node<T>>> {
     let mut stmt = conn.prepare("SELECT node_key,next_key,payload_key,byte_length,prefix,suffix,padding FROM ndr_kv_checkpoint_nodes WHERE owner_pubkey_hex=?1 AND device_pubkey_hex=?2 AND key=?3").map_err(err)?;
     let mut rows = stmt.query(ns).map_err(err)?;
     let mut result = BTreeMap::new();
     while let Some(row) = rows.next().map_err(err)? {
         let key: Vec<u8> = row.get(0).map_err(err)?;
-        let node = Node {
-            next: row.get(1).map_err(err)?,
-            payload: row.get(2).map_err(err)?,
+        let next: Option<Vec<u8>> = row.get(1).map_err(err)?;
+        let payload: Vec<u8> = row.get(2).map_err(err)?;
+        let view = NodeView {
+            next: next.as_deref(),
+            payload: &payload,
             bytes: number(row.get(3).map_err(err)?)?,
-            prefix: row.get(4).map_err(err)?,
-            suffix: row.get(5).map_err(err)?,
+            prefix: row.get_ref(4).map_err(err)?.as_str().map_err(err)?,
+            suffix: row.get_ref(5).map_err(err)?.as_str().map_err(err)?,
             padding: number(row.get(6).map_err(err)?)?,
         };
-        if !matches!(node.payload.first(), Some(0 | 1))
-            || (node.payload[0] == 1 && node.payload.len() != 33)
+        if !matches!(view.payload.first(), Some(0 | 1))
+            || (view.payload[0] == 1 && view.payload.len() != 33)
         {
             return Err(invalid());
         }
-        segmented::account_io(key.len() + node.stored_bytes(), 0);
+        segmented::account_io(key.len() + view.stored_bytes(), 0);
+        let node = Node {
+            bytes: view.bytes,
+            prefix_len: view.prefix.len(),
+            suffix_len: view.suffix.len(),
+            padding: view.padding,
+            descriptors: descriptors(&key, view),
+            next,
+            payload,
+        };
         if result.insert(key, node).is_some() {
             return Err(invalid());
         }
@@ -197,10 +212,10 @@ struct PayloadCheck {
     bytes: usize,
     next_chunk: usize,
 }
-fn payloads<'a>(
+fn payloads<'a, T>(
     conn: &Connection,
     ns: Namespace<'_>,
-    nodes: &'a BTreeMap<Vec<u8>, Node>,
+    nodes: &'a BTreeMap<Vec<u8>, Node<T>>,
 ) -> StorageResult<BTreeMap<&'a [u8], PayloadCheck>> {
     let mut expected = BTreeMap::new();
     for node in nodes.values() {
@@ -252,7 +267,7 @@ pub(super) fn get_in_snapshot(
     let Some(meta) = metadata(conn, ns)? else {
         return Ok(None);
     };
-    let nodes = nodes(conn, ns, &meta)?;
+    let nodes = nodes(conn, ns, &meta, owned_descriptors)?;
     payloads(conn, ns, &nodes)?;
     let mut output = String::new();
     output.try_reserve_exact(meta.bytes).map_err(err)?;
@@ -260,7 +275,7 @@ pub(super) fn get_in_snapshot(
     let mut stmt = conn.prepare("SELECT data FROM ndr_kv_checkpoint_chunks WHERE owner_pubkey_hex=?1 AND device_pubkey_hex=?2 AND key=?3 AND payload_key=?4 ORDER BY chunk_index").map_err(err)?;
     while let Some(key) = next {
         let node = nodes.get(key).ok_or_else(invalid)?;
-        output.push_str(&node.prefix);
+        output.push_str(&node.descriptors.0);
         let mut bytes = Vec::new();
         bytes.try_reserve_exact(node.bytes).map_err(err)?;
         let mut rows = stmt.query((ns.0, ns.1, ns.2, &node.payload)).map_err(err)?;
@@ -278,7 +293,7 @@ pub(super) fn get_in_snapshot(
             return Err(invalid());
         }
         output.push_str(std::str::from_utf8(&bytes).map_err(|_| invalid())?);
-        output.push_str(&node.suffix);
+        output.push_str(&node.descriptors.1);
         append_padding(&mut output, node.padding);
         next = node.next.as_ref();
     }
@@ -292,7 +307,7 @@ pub(super) fn clear_in_snapshot(conn: &Connection, ns: Namespace<'_>) -> Storage
     let Some(meta) = metadata(conn, ns)? else {
         return Ok(());
     };
-    let old = nodes(conn, ns, &meta)?;
+    let old = nodes(conn, ns, &meta, owned_descriptors)?;
     payloads(conn, ns, &old)?;
     for table in [
         "ndr_kv_checkpoint_chunks",
@@ -389,27 +404,31 @@ pub(super) fn put(
     let tx = conn.savepoint().map_err(err)?;
     schema(&tx, true)?;
     let previous = metadata(&tx, ns)?;
+    let mut current = BTreeMap::new();
+    for (index, part) in value.parts.iter().enumerate() {
+        if current.insert(part.key.as_slice(), index).is_some() {
+            return Err(invalid());
+        }
+    }
+    let mut changed = vec![true; value.parts.len()];
     let old = previous
         .as_ref()
-        .map(|meta| nodes(&tx, ns, meta))
+        .map(|meta| {
+            // Compare every stored descriptor while its SQLite row is borrowed.
+            // Retired rows still receive all type, UTF-8 and graph validation.
+            nodes(&tx, ns, meta, |key, stored| {
+                if let Some(&index) = current.get(key) {
+                    changed[index] = stored != proposed_node(value, index);
+                }
+            })
+        })
         .transpose()?
         .unwrap_or_default();
     let old_payloads = payloads(&tx, ns, &old)?;
     let mut update_node = tx.prepare("INSERT INTO ndr_kv_checkpoint_nodes(owner_pubkey_hex,device_pubkey_hex,key,node_key,next_key,payload_key,byte_length,prefix,suffix,padding) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10) ON CONFLICT(owner_pubkey_hex,device_pubkey_hex,key,node_key) DO UPDATE SET next_key=excluded.next_key,payload_key=excluded.payload_key,byte_length=excluded.byte_length,prefix=excluded.prefix,suffix=excluded.suffix,padding=excluded.padding").map_err(err)?;
-    let mut current = BTreeSet::new();
     let mut current_payloads = BTreeSet::new();
     for (index, part) in value.parts.iter().enumerate() {
-        if !current.insert(part.key.as_slice()) {
-            return Err(invalid());
-        }
-        let node = NodeView {
-            next: value.parts.get(index + 1).map(|p| p.key.as_slice()),
-            payload: &part.payload_key,
-            bytes: part.bytes.bytes().len(),
-            prefix: &part.prefix,
-            suffix: &part.suffix,
-            padding: part.padding,
-        };
+        let node = proposed_node(value, index);
         if current_payloads.insert(part.payload_key.as_slice()) {
             let old_bytes = old_payloads
                 .get(part.payload_key.as_slice())
@@ -420,7 +439,7 @@ pub(super) fn put(
                 return Err(invalid());
             }
         }
-        if old.get(&part.key).map(Node::view) != Some(node) {
+        if changed[index] {
             update_node
                 .execute(rusqlite::params![
                     ns.0,
@@ -438,7 +457,10 @@ pub(super) fn put(
             segmented::account_io(0, part.key.len() + node.stored_bytes());
         }
     }
-    for key in old.keys().filter(|key| !current.contains(key.as_slice())) {
+    for key in old
+        .keys()
+        .filter(|key| !current.contains_key(key.as_slice()))
+    {
         tx.execute("DELETE FROM ndr_kv_checkpoint_nodes WHERE owner_pubkey_hex=?1 AND device_pubkey_hex=?2 AND key=?3 AND node_key=?4",(ns.0,ns.1,ns.2,key)).map_err(err)?;
     }
     for key in old_payloads
