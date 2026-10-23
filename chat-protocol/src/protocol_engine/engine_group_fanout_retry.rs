@@ -1,6 +1,9 @@
 #[cfg(test)]
 thread_local! {
     static GROUP_FANOUT_RETRY_VISITED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static GROUP_FANOUT_RETRY_PREPARE_ATTEMPTS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static GROUP_FANOUT_RETRY_PUBLICATION_CONVERSIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static GROUP_FANOUT_RETRY_PAYLOAD_CLASSIFICATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 #[derive(Default)]
@@ -182,6 +185,8 @@ impl ProtocolEngine {
             // The original send already reached every device absent from this
             // set. Retrying the entire owner causes duplicate encryption and
             // relay traffic for each unavailable linked device.
+            #[cfg(test)]
+            GROUP_FANOUT_RETRY_PREPARE_ATTEMPTS.with(|count| count.set(count.get() + 1));
             let prepared = match (pending.fanout.as_ref(), &pending.remaining_devices) {
                 (
                     GroupPendingFanout::Remote {
@@ -217,19 +222,17 @@ impl ProtocolEngine {
                     .session_manager
                     .prepare_local_sibling_send_reusing_all_sessions(&mut ctx, payload.clone()),
             }
-            .map(|prepared| {
-                group_publish_from_prepared_send(prepared, pending.fanout.as_ref().clone())
+            .map(|prepared| GroupPreparedPublish {
+                deliveries: prepared.deliveries,
+                invite_responses: prepared.invite_responses,
+                sender_key_messages: Vec::new(),
+                relay_gaps: prepared.relay_gaps,
+                // The retry queue below already retains unresolved fanouts.
+                // Publication conversion does not consume this field.
+                pending_fanouts: Vec::new(),
             });
             let prepared = match prepared {
-                Ok(prepared) => {
-                    if !prepared.deliveries.is_empty()
-                        || !prepared.invite_responses.is_empty()
-                        || !prepared.sender_key_messages.is_empty()
-                    {
-                        session_changed = true;
-                    }
-                    prepared
-                }
+                Ok(prepared) => prepared,
                 Err(_) => {
                     pending.next_retry_at_secs =
                         next_pending_retry_at_secs(pending.created_at_secs, now);
@@ -237,6 +240,10 @@ impl ProtocolEngine {
                     continue;
                 }
             };
+            let has_outputs = !prepared.deliveries.is_empty()
+                || !prepared.invite_responses.is_empty()
+                || !prepared.sender_key_messages.is_empty();
+            session_changed |= has_outputs;
             let remaining_devices =
                 self.group_fanout_missing_devices(pending.fanout.as_ref(), &prepared.relay_gaps);
             persist_needed |= pending.remaining_devices != remaining_devices;
@@ -245,33 +252,41 @@ impl ProtocolEngine {
             // Save progress and removed targets, but keep backoff-only retries
             // in memory instead of serializing unchanged ratchet state.
             persist_needed |= !still_has_gap;
-            let mut event_ids = Vec::new();
-            let chat_id = group_chat_id(&pending.group_id);
-            let ready = protocol_effects_from_group_prepared_publish(
-                &prepared,
-                self,
-                pending.inner_event_id.clone(),
-                chat_id,
-                &mut event_ids,
-            )?;
-            let payload = match pending.fanout.as_ref() {
-                GroupPendingFanout::Remote { payload, .. }
-                | GroupPendingFanout::LocalSiblings { payload } => payload,
-            };
-            let inner = decode_local_sibling_payload(payload).map(|(_, _, payload)| payload);
-            if serde_json::from_slice::<UnsignedEvent>(inner.as_deref().unwrap_or(payload))
-                .is_ok_and(|event| event.kind.as_u16() == 21_113)
-            {
-                ready_publications_changed |= !ready.is_empty();
-                let recipient = match pending.fanout.as_ref() {
-                    GroupPendingFanout::Remote {
-                        recipient_owner, ..
-                    } => Some(*recipient_owner),
-                    GroupPendingFanout::LocalSiblings { .. } => None,
+            // Empty publication batches need no conversion or wake parsing.
+            // Preserve the capacity error for wakes in already oversized state.
+            if has_outputs || self.ready_group_publications.len() > MAX_READY_GROUP_PUBLICATIONS {
+                let mut event_ids = Vec::new();
+                let chat_id = group_chat_id(&pending.group_id);
+                #[cfg(test)]
+                GROUP_FANOUT_RETRY_PUBLICATION_CONVERSIONS.with(|count| count.set(count.get() + 1));
+                let ready = protocol_effects_from_group_prepared_publish(
+                    &prepared,
+                    self,
+                    pending.inner_event_id.clone(),
+                    chat_id,
+                    &mut event_ids,
+                )?;
+                let payload = match pending.fanout.as_ref() {
+                    GroupPendingFanout::Remote { payload, .. }
+                    | GroupPendingFanout::LocalSiblings { payload } => payload,
                 };
-                self.retain_group_publications(&ready, recipient)?;
+                #[cfg(test)]
+                GROUP_FANOUT_RETRY_PAYLOAD_CLASSIFICATIONS.with(|count| count.set(count.get() + 1));
+                let inner = decode_local_sibling_payload(payload).map(|(_, _, payload)| payload);
+                if serde_json::from_slice::<UnsignedEvent>(inner.as_deref().unwrap_or(payload))
+                    .is_ok_and(|event| event.kind.as_u16() == 21_113)
+                {
+                    ready_publications_changed |= !ready.is_empty();
+                    let recipient = match pending.fanout.as_ref() {
+                        GroupPendingFanout::Remote {
+                            recipient_owner, ..
+                        } => Some(*recipient_owner),
+                        GroupPendingFanout::LocalSiblings { .. } => None,
+                    };
+                    self.retain_group_publications(&ready, recipient)?;
+                }
+                effects.extend(ready);
             }
-            effects.extend(ready);
             if still_has_gap {
                 pending.next_retry_at_secs =
                     next_pending_retry_at_secs(pending.created_at_secs, now);

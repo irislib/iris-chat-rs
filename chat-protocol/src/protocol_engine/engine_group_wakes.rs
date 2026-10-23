@@ -1,3 +1,5 @@
+const MAX_READY_GROUP_PUBLICATIONS: usize = 4_096;
+
 impl ProtocolEngine {
     fn ready_group_publication_is_allowed(&self, pending: &ProtocolReadyGroupPublish) -> bool {
         !pending
@@ -43,7 +45,8 @@ impl ProtocolEngine {
             })
             .count();
         anyhow::ensure!(
-            self.ready_group_publications.len().saturating_add(added) <= 4096,
+            self.ready_group_publications.len().saturating_add(added)
+                <= MAX_READY_GROUP_PUBLICATIONS,
             "Outgoing group queue is full"
         );
         for effect in effects {
