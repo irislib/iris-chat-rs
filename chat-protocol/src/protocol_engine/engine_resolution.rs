@@ -219,6 +219,7 @@ impl ProtocolEngine {
             }
         }
 
+        self.invalidate_pending_inbound_retry_deadline();
         if !self.pending_inbound.is_empty() {
             // Copy ratchets at most once, only if cached owner metadata cannot
             // resolve an event. Repeating that copy stalls foreground work.
@@ -542,6 +543,7 @@ impl ProtocolEngine {
             if pending.event_id.is_empty() {
                 pending.event_id = event_id;
             }
+            self.invalidate_pending_inbound_retry_deadline();
             self.pending_inbound.push(pending);
             self.persist()?;
         }

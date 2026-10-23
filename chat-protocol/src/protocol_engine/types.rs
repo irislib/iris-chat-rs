@@ -406,6 +406,12 @@ pub struct ProtocolMessageSessionDebugSnapshot {
     pub has_receiving_capability: bool,
 }
 
+#[derive(Clone, Copy)]
+struct PendingInboundRetryDeadline {
+    queue_len: usize,
+    next_retry_at_secs: Option<u64>,
+}
+
 pub struct ProtocolEngine {
     owner_pubkey: PublicKey,
     local_owner: NdrOwnerPubkey,
@@ -415,6 +421,9 @@ pub struct ProtocolEngine {
     session_manager: SessionManager,
     group_manager: GroupEventManager,
     pending_inbound: Vec<ProtocolPendingInbound>,
+    /// Runtime-only scheduling hint. Unknown after restoration or queue/deadline mutation;
+    /// never copied into a durable or rollback checkpoint.
+    pending_inbound_retry_deadline: std::cell::Cell<Option<PendingInboundRetryDeadline>>,
     pending_group_fanouts: Vec<ProtocolPendingGroupFanout>,
     ready_group_publications: BTreeMap<String, ProtocolReadyGroupPublish>,
     pending_local_sibling_sends: Vec<ProtocolPendingLocalSiblingSend>,
