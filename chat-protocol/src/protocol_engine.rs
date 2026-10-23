@@ -19,6 +19,7 @@ include!("protocol_engine/handshake_proof_cache.rs");
 include!("protocol_engine/roster_helpers.rs");
 include!("protocol_engine/own_mutation_admission.rs");
 include!("protocol_engine/engine_incoming_retry.rs");
+include!("protocol_engine/engine_group_fanout_retry.rs");
 include!("protocol_engine/engine_resolution.rs");
 include!("protocol_engine/engine_sender_key_repair.rs");
 include!("protocol_engine/checkpoint_layout.rs");
@@ -52,6 +53,7 @@ mod tests {
     include!("protocol_engine/group_source_event_tests.rs");
     include!("protocol_engine/checkpoint_pending_tests.rs");
     include!("protocol_engine/checkpoint_fanout_tests.rs");
+    include!("protocol_engine/fanout_retry_tests.rs");
     include!("protocol_engine/inbound_retry_backlog_tests.rs");
 
     #[test]

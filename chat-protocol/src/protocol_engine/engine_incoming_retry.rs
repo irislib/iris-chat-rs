@@ -567,11 +567,12 @@ impl ProtocolEngine {
         let pending = self
             .pending_inbound
             .iter()
-            .filter(|pending| pending.next_retry_at_secs <= now.get())
-            .cloned()
+            .enumerate()
+            .filter(|(_, pending)| pending.next_retry_at_secs <= now.get())
+            .map(|(index, pending)| (index, pending.clone()))
             .collect::<Vec<_>>();
         let mut messages = Vec::new();
-        for pending in pending {
+        for (original_index, pending) in pending {
             match self.decrypt_pending_direct_message_event(&pending) {
                 Ok(DirectReceive::Message(message)) => {
                     self.pending_inbound
@@ -591,12 +592,26 @@ impl ProtocolEngine {
                     // One undecryptable event must not block other senders or
                     // outgoing acknowledgements. Retain it with backoff so a
                     // later handshake can still make it decryptable.
-                    if let Some(item) = self
+                    // Failed receives normally leave the queue in place. Reuse
+                    // that position instead of searching the whole queue for
+                    // every failed packet. Earlier deliveries can remove entries,
+                    // so verify the ID and fall back to a search after a shift.
+                    let matches_id = |item: &ProtocolPendingInbound| {
+                        #[cfg(test)]
+                        tests::record_inbound_retry_lookup();
+                        item.event.id == pending.event.id
+                    };
+                    let index = if self
                         .pending_inbound
-                        .iter_mut()
-                        .find(|item| item.event.id == pending.event.id)
+                        .get(original_index)
+                        .is_some_and(matches_id)
                     {
-                        item.next_retry_at_secs =
+                        Some(original_index)
+                    } else {
+                        self.pending_inbound.iter().position(matches_id)
+                    };
+                    if let Some(index) = index {
+                        self.pending_inbound[index].next_retry_at_secs =
                             next_pending_retry_at_secs(pending.created_at_secs, now);
                     }
                 }
@@ -798,207 +813,6 @@ impl ProtocolEngine {
             self.persist()?;
         }
         Ok(result)
-    }
-
-    fn retry_pending_group_fanouts(
-        &mut self,
-        now: NdrUnixSeconds,
-    ) -> anyhow::Result<ProtocolGroupIncomingResult> {
-        if !self
-            .pending_group_fanouts
-            .iter()
-            .any(|pending| pending.next_retry_at_secs <= now.get())
-        {
-            return Ok(ProtocolGroupIncomingResult::default());
-        }
-        self.with_group_fanout_checkpoint(|engine| engine.retry_pending_group_fanouts_inner(now))
-    }
-
-    fn retry_pending_group_fanouts_inner(
-        &mut self,
-        now: NdrUnixSeconds,
-    ) -> anyhow::Result<ProtocolGroupIncomingResult> {
-        let pending = std::mem::take(&mut self.pending_group_fanouts);
-        let mut still_pending = Vec::new();
-        let mut effects = Vec::new();
-        let mut persist_needed = false;
-        let mut session_changed = false;
-        let mut ready_publications_changed = false;
-        let mut processed_due = 0usize;
-        for mut pending in pending {
-            if let GroupPendingFanout::Remote {
-                recipient_owner,
-                payload,
-            } = pending.fanout.as_ref()
-            {
-                if self.held_direct_chats.contains(&recipient_owner.to_hex())
-                    && serde_json::from_slice::<UnsignedEvent>(payload)
-                        .is_ok_and(|event| event.kind.as_u16() == 21_113)
-                {
-                    persist_needed = true;
-                    continue;
-                }
-            }
-            if self.local_owner_is_inactive_for_group(&pending.group_id) {
-                let payload = match pending.fanout.as_ref() {
-                    GroupPendingFanout::Remote { payload, .. }
-                    | GroupPendingFanout::LocalSiblings { payload } => payload,
-                };
-                // Creation can queue sender-key handoffs without a message ID.
-                // After removal, only membership metadata may still be sent.
-                if !matches!(
-                    JsonGroupPayloadCodecV1.decode_pairwise_command(payload),
-                    Ok(Some(GroupPairwiseCommand::MetadataSnapshot { snapshot }))
-                        if snapshot.group_id == pending.group_id
-                ) {
-                    persist_needed = true;
-                    continue;
-                }
-            }
-            if pending.next_retry_at_secs > now.get() {
-                still_pending.push(pending);
-                continue;
-            }
-            if processed_due >= PENDING_GROUP_FANOUT_RETRY_BATCH_SIZE {
-                still_pending.push(pending);
-                continue;
-            }
-            processed_due = processed_due.saturating_add(1);
-            let mut rng = OsRng;
-            let mut ctx = ProtocolContext::new(now, &mut rng);
-            if let Some(devices) = pending.remaining_devices.as_mut() {
-                let owner = match pending.fanout.as_ref() {
-                    GroupPendingFanout::Remote {
-                        recipient_owner, ..
-                    } => *recipient_owner,
-                    GroupPendingFanout::LocalSiblings { .. } => self.local_owner,
-                };
-                if let Some(current) = self.session_manager.roster(owner) {
-                    let previous_len = devices.len();
-                    devices.retain(|device| current.get_device(device).is_some());
-                    persist_needed |= devices.len() != previous_len;
-                }
-                if devices.is_empty() {
-                    persist_needed = true;
-                    continue;
-                }
-            }
-            // The original send already reached every device absent from this
-            // set. Retrying the entire owner causes duplicate encryption and
-            // relay traffic for each unavailable linked device.
-            let prepared = match (pending.fanout.as_ref(), &pending.remaining_devices) {
-                (
-                    GroupPendingFanout::Remote {
-                        recipient_owner,
-                        payload,
-                    },
-                    Some(devices),
-                ) => self.session_manager.prepare_remote_send_to_devices(
-                    &mut ctx,
-                    *recipient_owner,
-                    devices.iter().copied(),
-                    payload.clone(),
-                ),
-                (GroupPendingFanout::LocalSiblings { payload }, Some(devices)) => {
-                    self.session_manager.prepare_local_sibling_send_to_devices(
-                        &mut ctx,
-                        devices.iter().copied(),
-                        payload.clone(),
-                    )
-                }
-                (
-                    GroupPendingFanout::Remote {
-                        recipient_owner,
-                        payload,
-                    },
-                    None,
-                ) => self.session_manager.prepare_remote_send(
-                    &mut ctx,
-                    *recipient_owner,
-                    payload.clone(),
-                ),
-                (GroupPendingFanout::LocalSiblings { payload }, None) => self
-                    .session_manager
-                    .prepare_local_sibling_send_reusing_all_sessions(&mut ctx, payload.clone()),
-            }
-            .map(|prepared| {
-                group_publish_from_prepared_send(prepared, pending.fanout.as_ref().clone())
-            });
-            let prepared = match prepared {
-                Ok(prepared) => {
-                    if !prepared.deliveries.is_empty()
-                        || !prepared.invite_responses.is_empty()
-                        || !prepared.sender_key_messages.is_empty()
-                    {
-                        session_changed = true;
-                    }
-                    prepared
-                }
-                Err(_) => {
-                    pending.next_retry_at_secs =
-                        next_pending_retry_at_secs(pending.created_at_secs, now);
-                    still_pending.push(pending);
-                    continue;
-                }
-            };
-            let remaining_devices =
-                self.group_fanout_missing_devices(pending.fanout.as_ref(), &prepared.relay_gaps);
-            persist_needed |= pending.remaining_devices != remaining_devices;
-            pending.remaining_devices = remaining_devices;
-            let still_has_gap = !prepared.relay_gaps.is_empty();
-            // Save progress and removed targets, but keep backoff-only retries
-            // in memory instead of serializing unchanged ratchet state.
-            persist_needed |= !still_has_gap;
-            let mut event_ids = Vec::new();
-            let chat_id = group_chat_id(&pending.group_id);
-            let ready = protocol_effects_from_group_prepared_publish(
-                &prepared,
-                self,
-                pending.inner_event_id.clone(),
-                chat_id,
-                &mut event_ids,
-            )?;
-            let payload = match pending.fanout.as_ref() {
-                GroupPendingFanout::Remote { payload, .. }
-                | GroupPendingFanout::LocalSiblings { payload } => payload,
-            };
-            let inner = decode_local_sibling_payload(payload).map(|(_, _, payload)| payload);
-            if serde_json::from_slice::<UnsignedEvent>(inner.as_deref().unwrap_or(payload))
-                .is_ok_and(|event| event.kind.as_u16() == 21_113)
-            {
-                ready_publications_changed |= !ready.is_empty();
-                let recipient = match pending.fanout.as_ref() {
-                    GroupPendingFanout::Remote {
-                        recipient_owner, ..
-                    } => Some(*recipient_owner),
-                    GroupPendingFanout::LocalSiblings { .. } => None,
-                };
-                self.retain_group_publications(&ready, recipient)?;
-            }
-            effects.extend(ready);
-            if still_has_gap {
-                pending.next_retry_at_secs =
-                    next_pending_retry_at_secs(pending.created_at_secs, now);
-                still_pending.push(pending);
-            }
-        }
-        self.pending_group_fanouts = still_pending;
-        if session_changed {
-            self.invalidate_known_message_author_cache();
-        }
-        if persist_needed || session_changed {
-            // A late recipient's ready wake must survive the same checkpoint
-            // that removes its plaintext intent and advances its session.
-            if ready_publications_changed {
-                self.persist_now()?;
-            } else {
-                self.persist()?;
-            }
-        }
-        Ok(ProtocolGroupIncomingResult {
-            effects,
-            ..Default::default()
-        })
     }
 }
 

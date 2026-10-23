@@ -1,3 +1,41 @@
+thread_local! {
+    static INBOUND_RETRY_LOOKUP_COMPARISONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+pub(super) fn record_inbound_retry_lookup() {
+    INBOUND_RETRY_LOOKUP_COMPARISONS.with(|count| count.set(count.get() + 1));
+}
+
+#[test]
+fn due_inbound_retry_backoff_lookup_is_linear_in_packet_count() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let mut engine = test_engine(&owner, &device);
+    let now = NdrUnixSeconds(20_000_000);
+    engine.pending_inbound = synthetic_pending_inbound(&mut engine, 4_214, 4_214, now.get());
+    let mut expected = engine.pending_inbound.clone();
+    for item in &mut expected {
+        item.next_retry_at_secs = now.get() + 60;
+    }
+    let sessions = serde_json::to_value(engine.session_manager.snapshot()).unwrap();
+    INBOUND_RETRY_LOOKUP_COMPARISONS.with(|count| count.set(0));
+    assert!(engine.retry_pending_protocol(now).unwrap().is_empty());
+    let comparisons = INBOUND_RETRY_LOOKUP_COMPARISONS.with(|count| count.get());
+    assert!(
+        (4_214..=2 * 4_214).contains(&comparisons),
+        "backoff lookup visited {comparisons} queue entries"
+    );
+    assert!(
+        engine.pending_inbound == expected,
+        "backoff changed signed packets or queue order"
+    );
+    assert!(engine.pending_decrypted_deliveries.is_empty());
+    assert!(
+        serde_json::to_value(engine.session_manager.snapshot()).unwrap() == sessions,
+        "failed ciphertext advanced a ratchet"
+    );
+}
+
 // Synthetic packets only. The counts and deadline mix come from aggregate
 // checkpoint diagnostics; no account payloads or identities enter this fixture.
 pub(super) fn synthetic_pending_inbound(

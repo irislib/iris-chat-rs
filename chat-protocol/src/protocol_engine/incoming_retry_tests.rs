@@ -39,69 +39,85 @@ mod incoming_retry_tests {
 
     #[test]
     fn invalid_pending_ciphertext_does_not_starve_other_senders() {
-        let owner = Keys::generate();
-        let device = Keys::generate();
-        let mut receiver = test_engine(&owner, &device);
-        let sender = Keys::generate();
-        let invite = receiver.local_invite().unwrap();
-        let (mut session, response) = invite
-            .accept_with_owner(
-                sender.public_key(),
-                sender.secret_key().to_secret_bytes(),
-                Some(sender.public_key().to_hex()),
-                Some(sender.public_key()),
-            )
-            .unwrap();
-        let plan = session
-            .plan_send(b"valid retry", NdrUnixSeconds(100))
-            .unwrap();
-        let sent = session.apply_send(plan);
-        let valid_event = message_event(&sent.envelope).unwrap();
-        let mut damaged = sent.envelope;
-        damaged.ciphertext = "invalid ciphertext".to_owned();
-        let bad_event = message_event(&damaged).unwrap();
-        bad_event.verify().unwrap();
-        let (healthy_event, healthy_response) = direct_message_before_receiver_observes_response(
-            &receiver,
-            &Keys::generate(),
-            "other sender still arrives",
-            100,
-        );
-        for event in [&bad_event, &healthy_event] {
-            assert!(receiver
-                .process_direct_message_event(event)
-                .unwrap()
-                .is_none());
-        }
-        let pending = std::mem::take(&mut receiver.pending_inbound);
-        receiver
-            .observe_invite_response_event(&invite_response_event(&response).unwrap())
-            .unwrap();
-        receiver
-            .observe_invite_response_event(&healthy_response)
-            .unwrap();
-        receiver.pending_inbound = pending;
-
-        let batch = receiver
-            .retry_pending_protocol(NdrUnixSeconds(200))
-            .unwrap();
-        assert_eq!(batch.direct_messages.len(), 1);
-        assert_eq!(
-            batch.direct_messages[0].content,
-            "other sender still arrives"
-        );
-        assert_eq!(receiver.pending_inbound.len(), 1);
-        assert_eq!(receiver.pending_inbound[0].event.id, bad_event.id);
-        assert!(receiver.pending_inbound[0].next_retry_at_secs > 200);
-        assert_eq!(
+        for healthy_first in [false, true] {
+            let owner = Keys::generate();
+            let device = Keys::generate();
+            let mut receiver = test_engine(&owner, &device);
+            let sender = Keys::generate();
+            let invite = receiver.local_invite().unwrap();
+            let (mut session, response) = invite
+                .accept_with_owner(
+                    sender.public_key(),
+                    sender.secret_key().to_secret_bytes(),
+                    Some(sender.public_key().to_hex()),
+                    Some(sender.public_key()),
+                )
+                .unwrap();
+            let plan = session
+                .plan_send(b"valid retry", NdrUnixSeconds(100))
+                .unwrap();
+            let sent = session.apply_send(plan);
+            let valid_event = message_event(&sent.envelope).unwrap();
+            let mut damaged = sent.envelope;
+            damaged.ciphertext = "invalid ciphertext".to_owned();
+            let bad_event = message_event(&damaged).unwrap();
+            bad_event.verify().unwrap();
+            let (healthy_event, healthy_response) =
+                direct_message_before_receiver_observes_response(
+                    &receiver,
+                    &Keys::generate(),
+                    "other sender still arrives",
+                    100,
+                );
+            let order = if healthy_first {
+                [&healthy_event, &bad_event]
+            } else {
+                [&bad_event, &healthy_event]
+            };
+            for event in order {
+                assert!(receiver
+                    .process_direct_message_event(event)
+                    .unwrap()
+                    .is_none());
+            }
+            let pending = std::mem::take(&mut receiver.pending_inbound);
             receiver
-                .process_direct_message_event(&valid_event)
-                .unwrap()
-                .unwrap()
-                .content,
-            "valid retry",
-            "failed ciphertext must not advance the sender's session"
-        );
+                .observe_invite_response_event(&invite_response_event(&response).unwrap())
+                .unwrap();
+            receiver
+                .observe_invite_response_event(&healthy_response)
+                .unwrap();
+            let mut deferred =
+                super::tests::synthetic_pending_inbound(&mut receiver, 1, 0, 200).remove(0);
+            deferred.next_retry_at_secs = u64::MAX;
+            receiver.pending_inbound = pending;
+            receiver.pending_inbound.push(deferred.clone());
+
+            let batch = receiver
+                .retry_pending_protocol(NdrUnixSeconds(200))
+                .unwrap();
+            assert_eq!(batch.direct_messages.len(), 1);
+            assert_eq!(
+                batch.direct_messages[0].content,
+                "other sender still arrives"
+            );
+            assert_eq!(receiver.pending_inbound.len(), 2);
+            assert_eq!(receiver.pending_inbound[0].event.id, bad_event.id);
+            assert!(
+                receiver.pending_inbound[1] == deferred,
+                "shifted lookup changed a deferred packet"
+            );
+            assert!(receiver.pending_inbound[0].next_retry_at_secs > 200);
+            assert_eq!(
+                receiver
+                    .process_direct_message_event(&valid_event)
+                    .unwrap()
+                    .unwrap()
+                    .content,
+                "valid retry",
+                "failed ciphertext must not advance the sender's session"
+            );
+        }
     }
 
     #[test]
