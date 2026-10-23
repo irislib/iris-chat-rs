@@ -38,6 +38,7 @@ mod tests {
     include!("protocol_engine/own_mutation_admission_tests.rs");
     include!("protocol_engine/pending_retirement_tests.rs");
     include!("protocol_engine/remote_send_tests.rs");
+    include!("protocol_engine/remote_retry_persistence_tests.rs");
     include!("protocol_engine/metadata_privacy_tests.rs");
     include!("protocol_engine/group_wake_tests.rs");
     include!("protocol_engine/remote_roster_tests.rs");

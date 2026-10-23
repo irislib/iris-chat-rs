@@ -147,6 +147,7 @@ impl ProtocolEngine {
         self.with_state_checkpoint(|engine| {
             let mut effects = Vec::new();
             let mut processed = 0usize;
+            let mut persist_needed = false;
             for mut pending in std::mem::take(&mut engine.pending_remote_sends) {
                 if engine.held_direct_chats.contains(&pending.chat_id)
                     || pending.next_retry_at_secs > now.get()
@@ -157,8 +158,16 @@ impl ProtocolEngine {
                 }
                 processed += 1;
                 let sessions = engine.session_manager.clone();
+                let missing_roster = engine
+                    .session_manager
+                    .roster(pending.recipient_owner)
+                    .is_none();
                 match engine.prepare_pending_remote_send(&mut pending, now) {
                     Ok((ready, complete)) => {
+                        // Only the missing-roster branch is known to change
+                        // nothing except its retry clock. Empty effects from a
+                        // known roster can still accompany device/session work.
+                        persist_needed |= !missing_roster || complete || !ready.is_empty();
                         effects.extend(ready);
                         if !complete {
                             engine.pending_remote_sends.push(pending);
@@ -166,11 +175,16 @@ impl ProtocolEngine {
                     }
                     Err(_) => {
                         engine.session_manager = sessions;
+                        // Target revocations applied before preparation failed
+                        // must remain durable even when session work rolls back.
+                        persist_needed = true;
                         engine.pending_remote_sends.push(pending);
                     }
                 }
             }
-            engine.persist()?;
+            if persist_needed {
+                engine.persist()?;
+            }
             Ok(effects)
         })
     }

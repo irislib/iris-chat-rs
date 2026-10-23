@@ -208,6 +208,9 @@ flush, with 25 ms ready continuations and 2-second liveness checks. Restore,
 scheduler readiness and the valid message must complete within the three
 60-second settling slices. Two further 60-second slices must each use at most
 5% of one CPU core while exercising recurring due work and durable saves.
+Two additional expiring controls retire in separate measured minutes, and each
+retirement must flush in its own retry turn. All 44 unresolved outgoing messages
+remain queued. Backoff-only retries must not substitute for real durable work.
 Unresolved work must survive, unchanged inputs must not restart exhausted
 searches, and a reload must preserve queues and ratchets. Missing-key searches
 may still make finite progress during measurement.
@@ -215,7 +218,7 @@ may still make finite progress during measurement.
 The gate uses release optimization level 3, debug info level 1 and disabled
 debug assertions, with two build jobs and the existing Cargo target/cache.
 Retain its complete stdout, including all five `batched_retry_slice` records and
-the `iris-batched-retry-cpu/v1` summary. The runner rejects missing execution,
+the `iris-batched-retry-cpu/v2` summary. The runner rejects missing execution,
 incomplete measurements or a CPU failure. Keep standalone retry diagnostic
 results and the physical-device CPU gates as separate evidence.
 

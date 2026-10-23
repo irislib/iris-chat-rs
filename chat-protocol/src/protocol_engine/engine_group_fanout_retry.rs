@@ -1,3 +1,8 @@
+#[cfg(test)]
+thread_local! {
+    static GROUP_FANOUT_RETRY_VISITED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 #[derive(Default)]
 struct GroupFanoutRetryUndo {
     replaced: Vec<(usize, ProtocolPendingGroupFanout)>,
@@ -80,10 +85,21 @@ impl ProtocolEngine {
         now: NdrUnixSeconds,
     ) -> Vec<(usize, Option<ProtocolPendingGroupFanout>)> {
         let mut candidates = Vec::new();
-        let mut inactive_groups = BTreeMap::new();
+        // This copies group metadata only, never sender-key state. With no
+        // inactive group or held peer, the tail cannot require retirement.
+        let inactive_groups = self
+            .group_manager
+            .groups()
+            .into_iter()
+            .filter(|group| !group.members.contains(&self.local_owner))
+            .map(|group| group.group_id)
+            .collect::<HashSet<_>>();
+        let can_stop_after_due = self.held_direct_chats.is_empty() && inactive_groups.is_empty();
         let mut held_owners = BTreeMap::new();
         let mut due = 0;
         for (index, pending) in self.pending_group_fanouts.iter().enumerate() {
+            #[cfg(test)]
+            GROUP_FANOUT_RETRY_VISITED.with(|visited| visited.set(visited.get() + 1));
             let held_wake = match pending.fanout.as_ref() {
                 GroupPendingFanout::Remote {
                     recipient_owner,
@@ -96,10 +112,7 @@ impl ProtocolEngine {
                 }
                 _ => false,
             };
-            let inactive = *inactive_groups
-                .entry(pending.group_id.as_str())
-                .or_insert_with(|| self.local_owner_is_inactive_for_group(&pending.group_id));
-            let revoked_payload = inactive && {
+            let revoked_payload = inactive_groups.contains(&pending.group_id) && {
                 let payload = match pending.fanout.as_ref() {
                     GroupPendingFanout::Remote { payload, .. }
                     | GroupPendingFanout::LocalSiblings { payload } => payload,
@@ -119,6 +132,9 @@ impl ProtocolEngine {
             {
                 due += 1;
                 candidates.push((index, Some(pending.clone())));
+                if can_stop_after_due && due == PENDING_GROUP_FANOUT_RETRY_BATCH_SIZE {
+                    break;
+                }
             }
         }
         candidates

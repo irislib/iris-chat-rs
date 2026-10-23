@@ -36,9 +36,10 @@ def batched_command():
 
 def batched_output(mode):
     result = {
-        "schema": "iris-batched-retry-cpu/v1", "fixture": "restored-mixed-backlog-v1", "synthetic": True,
+        "schema": "iris-batched-retry-cpu/v2", "fixture": "restored-mixed-backlog-with-expiring-controls-v2", "synthetic": True,
         "pending_inbound": 4214, "initially_due_inbound": 102, "fanouts": 24990,
         "initially_due_fanouts": 10462, "ciphertexts": 23437, "remote_sends": 44,
+        "expiring_controls": 2, "initial_remote_sends": 46, "retired_expiring_controls": 2,
         "checkpoint_bytes": 350224384, "outer_batch": True, "ack_and_flush_in_turn": True,
         "continuation_delay_ms": 25, "liveness_delay_ms": 2000, "settle_seconds": 180,
         "measurement_windows": 2, "window_seconds": 60, "debug_assertions": False,
@@ -69,6 +70,7 @@ def batched_output(mode):
             "max_turn_seconds": 1.0, "turns": 20, "continuations": 20,
             "acknowledged_deliveries": 2 * int(index == 0), "puts": 1, "read_bytes": 350224384,
             "written_bytes": 4096, "remote_deadline_updates": 1,
+            "expired_control_retirements": int(index >= 3),
             "due_at_start": {"inbound": 0, "fanouts": 0, "remote_sends": 1},
             "progress_before": before, "progress_after": dict(progress),
         })
@@ -89,6 +91,9 @@ def batched_output(mode):
         "excess-second": lambda: result["slices"][4].update(cpu_seconds=3.06, cpu_percent_one_core=5.1),
         "nonfinite": lambda: result["slices"][-1].update(cpu_percent_one_core=float("nan")),
         "no-due": lambda: result["slices"][-1].update(remote_deadline_updates=0),
+        "no-controls": lambda: result.update(expiring_controls=0),
+        "no-control-retirement": lambda: result["slices"][-1].update(expired_control_retirements=0),
+        "early-control-retirement": lambda: result["slices"][2].update(expired_control_retirements=1),
         "no-puts": lambda: result["slices"][-1].update(puts=0),
         "no-progress": lambda: result.update(search_starts=0),
         "no-restart-ready": lambda: result.update(restart_ready=False),
@@ -360,7 +365,7 @@ class RustRunnerTests(unittest.TestCase):
         modes = ("zero-tests", "missing-result", "duplicate-result", "missing-marker", "duplicate-marker",
                  "missing-slice", "mismatched-slice", "wrong-schema", "wrong-counts", "no-batch", "no-flush",
                  "debug-mode", "late-delivery", "no-ack", "restart-unchecked", "repeated-search", "reset-audit",
-                 "short-window", "wrong-stage", "excess-first", "excess-second", "nonfinite", "no-due", "no-puts",
+                 "short-window", "wrong-stage", "excess-first", "excess-second", "nonfinite", "no-due", "no-puts", "no-controls", "no-control-retirement", "early-control-retirement",
                  "no-progress", "no-restart-ready", "bad-phase", "missing-phase", "nested-exceeds-parent")
         for nextest in (True, False):
             commands = self.commands(nextest, "Linux")
