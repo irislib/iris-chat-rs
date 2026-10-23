@@ -20,7 +20,7 @@ on:
         description: Checks to run; retain exact source-bound coverage for unchanged components
         type: choice
         default: all
-        options: [all, cli, core, inbound-retry, inbound-retry-release, inbound-retry-batched, inbound-deadline, checkpoint-update, receive-cache, persist-attribution, ndr-blind-allocation, ndr-session-allocation, ndr-source-package, ndr-pairwise-source-package, android, windows, windows-keyboard, windows-restore, apple, ios, ios-unit, macos, linux, apple-products, ios-products, macos-products, ios-ui-runner, macos-ui-runner]
+        options: [all, cli, core, inbound-retry, inbound-retry-release, inbound-retry-batched, inbound-deadline, checkpoint-update, receive-cache, persist-attribution, ndr-blind-allocation, ndr-session-allocation, ndr-kdf-reuse, ndr-source-package, ndr-pairwise-source-package, android, windows, windows-keyboard, windows-restore, apple, ios, ios-unit, macos, linux, apple-products, ios-products, macos-products, ios-ui-runner, macos-ui-runner]
       ios_core_seed_run:
         description: Optional exact successful core build/cache producer for Swift-only unit validation
         type: string
@@ -173,12 +173,12 @@ jobs:
           retention-days: 14
 
   ndr-blind-allocation:
-    if: ${{ inputs.scope == 'ndr-blind-allocation' || inputs.scope == 'ndr-session-allocation' }}
-    name: Compare exact NDR allocation sources
+    if: ${{ inputs.scope == 'ndr-blind-allocation' || inputs.scope == 'ndr-session-allocation' || inputs.scope == 'ndr-kdf-reuse' }}
+    name: ${{ inputs.scope == 'ndr-kdf-reuse' && 'Compare exact NDR fixed-salt extraction sources' || 'Compare exact NDR allocation sources' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
-      NDR_ALLOCATION_DRIVER: ${{ inputs.scope == 'ndr-session-allocation' && 'verify_ndr_session_allocation.py' || 'verify_ndr_blind_allocation.py' }}
+      NDR_ALLOCATION_DRIVER: ${{ inputs.scope == 'ndr-kdf-reuse' && 'verify_ndr_kdf_reuse.py' || inputs.scope == 'ndr-session-allocation' && 'verify_ndr_session_allocation.py' || 'verify_ndr_blind_allocation.py' }}
       NDR_ALLOCATION_OUTPUT: work/${{ inputs.scope }}
       CARGO_TARGET_DIR: ${{ github.workspace }}/cargo-target
       CARGO_BUILD_JOBS: '2'

@@ -1,0 +1,114 @@
+{
+  "enabled": false,
+  "repository": "irislib/nostr-double-ratchet",
+  "base": "4c52dd532b59f01cf79ac20432b0f5c687d237cb",
+  "before": "b23e4e74c56d9fe0153d112e22540723965aac62",
+  "after": "8e27286c501dcfd838a69f0de15e9d2151dfe8ce",
+  "before_changed_paths": [
+    "rust/crates/nostr-double-ratchet/src/sender_key.rs",
+    "rust/crates/nostr-double-ratchet/src/sender_key/blind.rs",
+    "rust/crates/nostr-double-ratchet/src/sender_key/kdf_reuse_tests.rs"
+  ],
+  "after_changed_paths": [
+    "rust/crates/nostr-double-ratchet/src/sender_key.rs",
+    "rust/crates/nostr-double-ratchet/src/sender_key/blind.rs"
+  ],
+  "tests": [
+    {
+      "kind": "lib",
+      "target": "nostr_double_ratchet",
+      "name": "sender_key::blind::kdf_reuse_tests::blind_kdf_initializes_fixed_salt_once_per_forward_advance",
+      "expected_count": 1,
+      "exact": true,
+      "marker": "blind_kdf_initializations ",
+      "ignored": false,
+      "timeout_seconds": 300
+    },
+    {
+      "kind": "lib",
+      "target": "nostr_double_ratchet",
+      "name": "sender_key::tests::",
+      "expected_count": 11,
+      "exact": false,
+      "marker": null,
+      "ignored": false,
+      "timeout_seconds": 300
+    },
+    {
+      "kind": "lib",
+      "target": "nostr_double_ratchet",
+      "name": "sender_key::blind::tests::",
+      "expected_count": 6,
+      "exact": false,
+      "marker": null,
+      "ignored": false,
+      "timeout_seconds": 300
+    },
+    {
+      "kind": "lib",
+      "target": "nostr_double_ratchet",
+      "name": "sender_key::blind::kdf_reuse_tests::blind_kdf_reference_keys_match_partitioned_boundary_states",
+      "expected_count": 1,
+      "exact": true,
+      "marker": null,
+      "ignored": false,
+      "timeout_seconds": 300
+    },
+    {
+      "kind": "lib",
+      "target": "nostr_double_ratchet",
+      "name": "sender_key::blind::kdf_reuse_tests::blind_kdf_corrupt_mac_preserves_exhaustion_and_skipped_only_work",
+      "expected_count": 1,
+      "exact": true,
+      "marker": null,
+      "ignored": false,
+      "timeout_seconds": 300
+    },
+    {
+      "kind": "test",
+      "target": "sender_key_test",
+      "name": "",
+      "expected_count": 3,
+      "exact": false,
+      "marker": null,
+      "ignored": false,
+      "timeout_seconds": 300
+    },
+    {
+      "kind": "test",
+      "target": "group_manager_sender_key_basic",
+      "name": "bounded_receive_",
+      "expected_count": 6,
+      "exact": false,
+      "marker": null,
+      "ignored": false,
+      "timeout_seconds": 300
+    },
+    {
+      "kind": "test",
+      "target": "sender_key_blind_allocations",
+      "name": "blind_search_exhaustion_has_constant_bookkeeping_allocations",
+      "expected_count": 1,
+      "exact": true,
+      "marker": null,
+      "ignored": false,
+      "timeout_seconds": 300
+    }
+  ],
+  "benchmark": {
+    "name": "sender_key::blind::kdf_reuse_tests::blind_kdf_corrupt_mac_microbenchmark",
+    "expected_count": 1,
+    "exact": true,
+    "ignored": true,
+    "marker": "blind_kdf_benchmark ",
+    "timeout_seconds": 300,
+    "samples": 7,
+    "searches_per_sample": 16,
+    "trials_per_sample": 160016,
+    "budget": 256,
+    "ciphertext_bytes": 1091,
+    "warmup_samples": 1
+  },
+  "profiling": false,
+  "release_cpu_acceptance": false
+}
