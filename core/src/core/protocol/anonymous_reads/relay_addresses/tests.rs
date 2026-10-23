@@ -438,6 +438,7 @@ async fn dns_wire_keeps_hostname_validation_and_anonymous_author_tls_scopes() {
                 &mut collected,
                 Some(scope.connector(&url, filters).unwrap()),
                 transport,
+                None,
             )
             .await
             .unwrap();
@@ -483,6 +484,7 @@ async fn dns_wire_keeps_hostname_validation_and_anonymous_author_tls_scopes() {
             &mut collected,
             Some(wrong_tls.connector(&wrong, &alice_filters).unwrap()),
             transport,
+            None,
         )
         .await
         .unwrap_err();

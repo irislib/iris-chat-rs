@@ -101,15 +101,17 @@ fn test_tls_roots(certificates: &[Vec<u8>]) -> Result<rustls::RootCertStore, Str
     Ok(roots)
 }
 
-/// Retained state is configuration, bounded author/relay TLS tickets and a
-/// cancellable task, never an SDK client/cache or idle socket. Dropping the last
-/// descriptor cancels even a queued read and releases its TLS session state.
+/// Retained state is configuration, bounded author/relay TLS tickets and positive
+/// signature tuples, and a cancellable task, never an SDK client or idle socket.
+/// Dropping the last descriptor cancels even a queued read and releases its state.
 #[derive(Debug)]
 pub(in crate::core) struct PrivateDiscoveryClient {
     config: tokio::sync::watch::Sender<Option<DiscoveryConfig>>,
     refresh: Arc<tokio::sync::Notify>,
     task: tokio::task::JoinHandle<()>,
     cancelled: std::sync::atomic::AtomicBool,
+    #[cfg(test)]
+    signature_calls: Arc<std::sync::atomic::AtomicUsize>,
 }
 
 pub(in crate::core) type PrivateDiscoverySubscription =
@@ -126,6 +128,9 @@ impl PrivateDiscoveryClient {
         let (config, mut updates) = tokio::sync::watch::channel(None::<DiscoveryConfig>);
         let refresh = Arc::new(tokio::sync::Notify::new());
         let demanded = refresh.clone();
+        let mut verification = super::anonymous_reads::VerificationCache::default();
+        #[cfg(test)]
+        let signature_calls = verification.signature_calls.clone();
         let task = runtime.spawn(async move {
             let mut seen = HashSet::new();
             let mut order = std::collections::VecDeque::new();
@@ -145,8 +150,10 @@ impl PrivateDiscoveryClient {
                 snapshots.resize_with(current.relays.len(), DiscoverySnapshot::default);
                 // A watch update can arrive between a completed sleep and
                 // borrow_and_update, without selecting the changed branch.
-                // Bind retained tickets to the actual configuration as well.
+                // Bind retained tickets and signature results to the actual
+                // configuration, including the ordering of relay indices.
                 if tls_config.as_ref() != Some(&current) {
+                    verification.clear();
                     tls_connectors = current
                         .relays
                         .iter()
@@ -157,16 +164,18 @@ impl PrivateDiscoveryClient {
                 let mut changed = false;
                 let mut read_succeeded = false;
                 let cycle = async {
-                    for ((relay, snapshot), tls) in current
+                    for (relay_index, ((relay, snapshot), tls)) in current
                         .relays
                         .iter()
                         .zip(snapshots.iter_mut())
                         .zip(&tls_connectors)
+                        .enumerate()
                     {
-                        if let Ok(events) = super::anonymous_reads::poll(
+                        if let Ok(events) = super::anonymous_reads::poll_retained(
                             relay,
                             current.filters.clone(),
                             tls.as_ref(),
+                            verification.relay(relay_index),
                         )
                         .await
                         {
@@ -214,6 +223,7 @@ impl PrivateDiscoveryClient {
                         snapshots.clear();
                         tls_connectors.clear();
                         tls_config = None;
+                        verification.clear();
                         continue;
                     },
                 }
@@ -235,6 +245,7 @@ impl PrivateDiscoveryClient {
                         snapshots.clear();
                         tls_connectors.clear();
                         tls_config = None;
+                        verification.clear();
                     },
                 }
             }
@@ -244,6 +255,8 @@ impl PrivateDiscoveryClient {
             refresh,
             task,
             cancelled: std::sync::atomic::AtomicBool::new(false),
+            #[cfg(test)]
+            signature_calls,
         }
     }
 
@@ -494,6 +507,8 @@ pub(in crate::core) async fn apply_private_discovery_subscriptions(
 
 #[cfg(test)]
 mod tls_tests;
+#[cfg(test)]
+mod verification_tests;
 
 #[cfg(test)]
 mod tests {

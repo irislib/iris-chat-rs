@@ -2,6 +2,23 @@
 
 Each release has channel-specific notes. The release tag must match the `##` heading exactly.
 
+## v2026.10.24
+
+### GitHub
+
+- Avoid repeating signature checks for unchanged public discovery records. Keep a bounded cache within each author's message-server configuration, recompute every event ID, and apply current filters on every response.
+- Discard cached verification when discovery settings change. Preserve separate author scopes, fresh anonymous authentication, restart recovery and explicit redelivery.
+- Add tampering, eviction, configuration-change and serialized request tests for retained discovery verification.
+- Update the CLI source package to 0.1.49.
+
+### Apple
+
+- Reduce repeated processing while checking for connection updates.
+
+### Zapstore
+
+- Reduce repeated processing while checking for connection updates.
+
 ## v2026.10.23.1
 
 ### GitHub

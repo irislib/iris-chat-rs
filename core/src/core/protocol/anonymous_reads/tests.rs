@@ -135,6 +135,70 @@ fn filter(author: PublicKey) -> Filter {
 }
 
 #[tokio::test]
+async fn retained_signature_cache_still_matches_current_filters_and_uses_fresh_auth() {
+    let peer = Keys::generate();
+    let event = profile(&peer, "{};");
+    let mut tampered = event.clone();
+    tampered.content.push('!');
+    let (url, wire, _) = relay(vec![event.clone(), tampered], None).await;
+    let mut cache = VerificationCache::default();
+    for (kind, expected) in [
+        (Kind::Metadata, vec![event.clone()]),
+        (Kind::TextNote, vec![]),
+        (Kind::Metadata, vec![event.clone()]),
+    ] {
+        // Deliberately retain the low-level cache while changing the filter:
+        // a valid signature hit must never bypass matching the current request.
+        assert_eq!(
+            poll_retained(
+                &url,
+                vec![Filter::new().author(peer.public_key()).kind(kind)],
+                None,
+                cache.relay(0),
+            )
+            .await
+            .unwrap(),
+            expected
+        );
+    }
+    assert_eq!(cache.signature_calls.load(Ordering::Relaxed), 1);
+    // Cold reads keep their existing full verification path and reject the
+    // same tampered event even after the retained worker has a positive hit.
+    assert_eq!(
+        fetch(
+            &[url],
+            vec![filter(peer.public_key())],
+            Duration::from_secs(2)
+        )
+        .await
+        .unwrap(),
+        vec![event]
+    );
+    let rows = wire.lock().unwrap();
+    let mut signers = HashSet::new();
+    let mut connections = HashSet::new();
+    for (connection, value) in rows.iter() {
+        match value[0].as_str() {
+            Some("AUTH") => {
+                let auth: Event = serde_json::from_value(value[1].clone()).unwrap();
+                auth.verify().unwrap();
+                assert_ne!(auth.pubkey, peer.public_key());
+                assert!(signers.insert(auth.pubkey));
+            }
+            Some("REQ") => {
+                assert_eq!(value[2]["authors"], json!([peer.public_key().to_hex()]));
+                assert!(value[2].get("#p").is_none());
+                connections.insert(*connection);
+            }
+            Some("EVENT") => panic!("discovery read published an event"),
+            _ => {}
+        }
+    }
+    assert_eq!(signers.len(), 4);
+    assert_eq!(connections.len(), 4);
+}
+
+#[tokio::test]
 async fn anonymous_reads_wire_isolates_authors_retries_and_validates_delivery() {
     let peer = Keys::generate();
     let other = Keys::generate();

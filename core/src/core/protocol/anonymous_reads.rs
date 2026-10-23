@@ -14,6 +14,9 @@ use tokio_tungstenite::{
 mod relay_addresses;
 mod scoped_tls;
 pub(in crate::core) use scoped_tls::ScopedTlsConnector;
+mod verification_cache;
+use verification_cache::RelayVerification;
+pub(super) use verification_cache::VerificationCache;
 
 pub(super) const COLD_READERS: usize = 4;
 pub(super) const BACKGROUND_READERS: usize = 16;
@@ -117,12 +120,25 @@ async fn collect_reads(
     }
 }
 
+#[cfg(test)]
 pub(super) async fn poll(
     relay: &RelayUrl,
     filters: Vec<Filter>,
     tls: Option<&ScopedTlsConnector>,
 ) -> Result<Vec<Event>, String> {
-    background_read(relay, &filters, tls)
+    background_read(relay, &filters, tls, None)
+        .await
+        .map_err(ReadFailure::message)
+}
+
+pub(super) async fn poll_retained(
+    relay: &RelayUrl,
+    filters: Vec<Filter>,
+    tls: Option<&ScopedTlsConnector>,
+    verification: RelayVerification<'_>,
+) -> Result<Vec<Event>, String> {
+    let verification = scoped_tls::sole_public_author(&filters).map(|_| verification);
+    background_read(relay, &filters, tls, verification)
         .await
         .map_err(ReadFailure::message)
 }
@@ -147,7 +163,7 @@ pub(in crate::core) async fn poll_relays(
                 "invalid scoped discovery relay".into(),
             ));
         };
-        background_read(relay, filters, tls.as_ref()).await
+        background_read(relay, filters, tls.as_ref(), None).await
     });
     collect_reads(
         stream::iter(jobs).buffer_unordered(COLD_READERS),
@@ -160,6 +176,7 @@ async fn background_read(
     relay: &RelayUrl,
     filters: &[Filter],
     tls: Option<&ScopedTlsConnector>,
+    verification: Option<RelayVerification<'_>>,
 ) -> Result<Vec<Event>, ReadFailure> {
     let _permit = BACKGROUND_SLOTS
         .get_or_init(|| Semaphore::new(BACKGROUND_READERS))
@@ -172,7 +189,14 @@ async fn background_read(
         .map(|tls| tls.connector(relay, filters))
         .transpose()
         .map_err(ReadFailure::Unavailable)?;
-    read_one_with_connector(relay, filters, Duration::from_secs(3), connector).await
+    read_one_with_connector(
+        relay,
+        filters,
+        Duration::from_secs(3),
+        connector,
+        verification,
+    )
+    .await
 }
 
 fn requests_message_history(filter: &Filter) -> bool {
@@ -256,7 +280,7 @@ async fn read_one(
     filters: &[Filter],
     timeout: Duration,
 ) -> Result<Vec<Event>, ReadFailure> {
-    read_one_with_connector(relay, filters, timeout, None).await
+    read_one_with_connector(relay, filters, timeout, None, None).await
 }
 
 async fn read_one_with_connector(
@@ -264,11 +288,12 @@ async fn read_one_with_connector(
     filters: &[Filter],
     timeout: Duration,
     connector: Option<Connector>,
+    verification: Option<RelayVerification<'_>>,
 ) -> Result<Vec<Event>, ReadFailure> {
     let mut collected = Collection::new(filters.iter().any(requests_message_history));
     match tokio::time::timeout(
         timeout,
-        read_socket(relay, filters, &mut collected, connector),
+        read_socket(relay, filters, &mut collected, connector, verification),
     )
     .await
     {
@@ -307,6 +332,7 @@ async fn read_socket(
     filters: &[Filter],
     collected: &mut Collection,
     connector: Option<Connector>,
+    verification: Option<RelayVerification<'_>>,
 ) -> anyhow::Result<()> {
     read_socket_with_transport(
         relay,
@@ -314,6 +340,7 @@ async fn read_socket(
         collected,
         connector,
         relay_addresses::connect(relay),
+        verification,
     )
     .await
 }
@@ -324,6 +351,7 @@ async fn read_socket_with_transport(
     collected: &mut Collection,
     connector: Option<Connector>,
     transport: impl std::future::Future<Output = std::io::Result<tokio::net::TcpStream>>,
+    mut verification: Option<RelayVerification<'_>>,
 ) -> anyhow::Result<()> {
     anyhow::ensure!(!filters.is_empty(), "no discovery filters");
     let authors = filters
@@ -382,7 +410,9 @@ async fn read_socket_with_transport(
                 .cloned()
                 .and_then(|value| serde_json::from_value::<Event>(value).ok())
                 .filter(|event| {
-                    event.verify().is_ok()
+                    verification
+                        .as_mut()
+                        .map_or_else(|| event.verify().is_ok(), |cache| cache.verify(event))
                         && filters.iter().any(|filter| {
                             filter.match_event(event, nostr::filter::MatchEventOptions::new())
                         })
