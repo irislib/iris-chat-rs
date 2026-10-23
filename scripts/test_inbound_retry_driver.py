@@ -281,9 +281,10 @@ class PerfTests(unittest.TestCase):
 
 class BatchedMetricsTests(unittest.TestCase):
     def fixture(self):
-        result = {"schema": "iris-batched-retry-cpu/v1", "fixture": "restored-mixed-backlog-v1", "synthetic": True,
+        result = {"schema": "iris-batched-retry-cpu/v2", "fixture": "restored-mixed-backlog-with-expiring-controls-v2", "synthetic": True,
             "pending_inbound": 4214, "initially_due_inbound": 102, "fanouts": 24990, "initially_due_fanouts": 10462,
             "ciphertexts": 23437, "remote_sends": 44, "checkpoint_bytes": 350224384, "outer_batch": True,
+            "expiring_controls": 2, "initial_remote_sends": 46, "retired_expiring_controls": 2,
             "ack_and_flush_in_turn": True, "continuation_delay_ms": 25, "liveness_delay_ms": 2000,
             "settle_seconds": 180, "measurement_windows": 2, "window_seconds": 60, "debug_assertions": False,
             "initially_ready": True, "group_deliveries": 1, "acknowledged_deliveries": 2,
@@ -309,6 +310,7 @@ class BatchedMetricsTests(unittest.TestCase):
                 "cpu_percent_one_core": cpu, "work_seconds": work, "phase_work_seconds": phases, "max_turn_seconds": 1.0,
                 "turns": 20, "continuations": 20, "acknowledged_deliveries": 2 * int(index == 0), "puts": 1,
                 "read_bytes": 350224384, "written_bytes": 4096, "remote_deadline_updates": 1,
+                "expired_control_retirements": 0 if index < 3 else 1,
                 "due_at_start": {"inbound": 0, "fanouts": 0, "remote_sends": 1},
                 "progress_before": before, "progress_after": dict(progress)})
         return result
@@ -341,6 +343,22 @@ class BatchedMetricsTests(unittest.TestCase):
         for mutate in mutations:
             result = self.fixture()
             mutate(result["slices"][0]["phase_work_seconds"])
+            with self.assertRaises(AssertionError):
+                DRIVER.batched_retry_metrics(self.render(result))
+
+    def test_v2_requires_two_controls_and_one_real_retirement_per_measured_slice(self):
+        mutations = [lambda r: r.update(schema="iris-batched-retry-cpu/v1"),
+            lambda r: r.update(fixture="restored-mixed-backlog-v1"),
+            lambda r: r.update(expiring_controls=0), lambda r: r.update(initial_remote_sends=44),
+            lambda r: r.update(retired_expiring_controls=1), lambda r: r.update(remote_sends=46),
+            lambda r: r.update(remaining_remote_sends=46),
+            lambda r: r["slices"][0].update(expired_control_retirements=1),
+            lambda r: r["slices"][3].update(expired_control_retirements=0),
+            lambda r: r["slices"][4].update(expired_control_retirements=2),
+            lambda r: r["slices"][4].update(expired_control_retirements=True)]
+        for mutate in mutations:
+            result = self.fixture()
+            mutate(result)
             with self.assertRaises(AssertionError):
                 DRIVER.batched_retry_metrics(self.render(result))
 
