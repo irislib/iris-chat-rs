@@ -42,9 +42,9 @@ class ContractTests(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, "disabled"):
             self.verify(dict(inputs(), enabled=False))
 
-    def test_enabled_selection_is_nineteen_without_observation(self):
+    def test_enabled_selection_is_twenty_one_without_observation(self):
         data = self.verify(inputs())
-        self.assertEqual(sum(t["expected_count"] for t in data["tests"]), 19)
+        self.assertEqual(sum(t["expected_count"] for t in data["tests"]), 21)
         self.assertIsNone(data["before_observation_test"])
 
     def test_source_paths_counts_and_observation_fail_closed(self):
@@ -164,14 +164,14 @@ class StageTests(unittest.TestCase):
                     self.assertTrue(receipt["accepted"])
                     self.assertFalse(receipt["physical_cpu_acceptance"])
                     self.assertIn("no CPU measurement", receipt["cpu_interpretation"])
-                    self.assertEqual(sum(t["counts"]["passed"] for t in receipt["tests"]), 19 if which == "after" else 0)
+                    self.assertEqual(sum(t["counts"]["passed"] for t in receipt["tests"]), 21 if which == "after" else 0)
                 self.assertEqual(len([name for name, _ in commands if name.startswith("test-")]), len(selected))
                 self.assertEqual(len([name for name, _ in commands if name == "build"]), 1)
 
     def test_release_red_runs_only_scan_assertion(self):
         self.run_stage("before")
 
-    def test_release_green_runs_nineteen_checks_once_without_cpu(self):
+    def test_release_green_runs_twenty_one_checks_once_without_cpu(self):
         self.run_stage("after")
 
     def test_wrong_numeric_red_guard_preserves_failed_partial_result(self):

@@ -90,6 +90,22 @@
       "marker": null,
       "ignored": false,
       "timeout_seconds": 300
+    },
+    {
+      "name": "protocol_engine::incoming_retry_tests::pending_receive_save_failure_preserves_entire_queue_and_delivery_journal",
+      "expected_count": 1,
+      "exact": true,
+      "marker": null,
+      "ignored": false,
+      "timeout_seconds": 300
+    },
+    {
+      "name": "protocol_engine::incoming_retry_tests::invalid_pending_ciphertext_does_not_starve_other_senders",
+      "expected_count": 1,
+      "exact": true,
+      "marker": null,
+      "ignored": false,
+      "timeout_seconds": 300
     }
   ]
 }

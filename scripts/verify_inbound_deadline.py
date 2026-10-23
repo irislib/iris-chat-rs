@@ -31,7 +31,9 @@ def contract():
         ("protocol_engine::tests::group_fanout_retry_mixed_updates_restore_order_after_failed_save", 1, True),
         ("protocol_engine::tests::group_fanout_retry_retires_ineligible_deferred_entries_beyond_due_limit", 1, True),
         ("protocol_engine::tests::group_fanout_retry_processes_a_bounded_due_batch", 1, True),
-    ], "Reviewed 19-test selection changed"
+        ("protocol_engine::incoming_retry_tests::pending_receive_save_failure_preserves_entire_queue_and_delivery_journal", 1, True),
+        ("protocol_engine::incoming_retry_tests::invalid_pending_ciphertext_does_not_starve_other_senders", 1, True),
+    ], "Reviewed 21-test selection changed"
     assert all(t["timeout_seconds"] == 300 and t["ignored"] is False for t in tests)
     assert all(t["marker"] is None for t in tests if t is not tests[4])
     assert tests[4]["marker"] == "fanout_queue_retry turns=8 due=64 total=24990 small_allocated_bytes="
