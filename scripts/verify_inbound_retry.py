@@ -50,11 +50,14 @@ def contract(mode="comparison"):
         candidate = data["batched"]
         assert candidate["enabled"] is True, "Batched diagnostic disabled pending review"
         assert all(re.fullmatch(r"[0-9a-f]{40}", candidate[key] or "") for key in ("source", "base"))
-        assert candidate["source"] != candidate["base"] == data["after"]
+        assert candidate["source"] != candidate["base"]
         assert candidate["changed_paths"] and all(p.startswith("chat-protocol/") and ".." not in Path(p).parts for p in candidate["changed_paths"])
         test = candidate["test"]
         assert re.fullmatch(r"[A-Za-z0-9_:]+", test["name"]) and test["exact"] is True and test["ignored"] is True
         assert test["expected_count"] == 1 and test["timeout_seconds"] == 420 and test["marker"] == "batched_retry_cpu "
+        correctness = candidate["correctness_tests"]
+        assert correctness and len({t["name"] for t in [*correctness, test]}) == len(correctness) + 1
+        assert all(re.fullmatch(r"[A-Za-z0-9_:]+", t["name"]) and t["timeout_seconds"] == 300 and t["ignored"] is False and isinstance(t["exact"], bool) and t["expected_count"] > 0 for t in correctness)
         assert candidate["failure_marker"]
     return data
 
@@ -113,7 +116,8 @@ def batched_retry_metrics(text):
                 "checkpoint_bytes": 350224384, "outer_batch": True, "ack_and_flush_in_turn": True,
                 "continuation_delay_ms": 25, "liveness_delay_ms": 2000, "settle_seconds": 180,
                 "measurement_windows": 2, "window_seconds": 60, "debug_assertions": False,
-                "initially_ready": True, "group_deliveries": 1, "acknowledged_deliveries": 1,
+                "initially_ready": True, "group_deliveries": 1, "acknowledged_deliveries": 2,
+                "acknowledged_setup_deliveries": 1, "acknowledged_group_deliveries": 1,
                 "repeated_search_starts": 0, "wire_effect_count": 0, "remaining_inbound": 4214,
                 "remaining_ciphertexts": 23436, "remaining_remote_sends": 44,
                 "preservation_checked": True, "restart_checked": True, "restart_ready": True}
@@ -125,6 +129,7 @@ def batched_retry_metrics(text):
     emitted = [json.loads(row) for row in re.findall(r"batched_retry_slice (\{[^\n]+\})", text)]
     assert len(slices) == 5 and emitted == slices, "Require five complete independently emitted slices"
     progress_counts = ("search_starts", "repeated_search_starts", "input_generation_changes", "ready_candidates", "engine_attempts")
+    phase_keys = {"retirement", "group_inputs", "group_fanouts", "inbound", "remote_sends", "local_siblings", "flush", "decrypt_cursor_nested"}
     previous = None
     elapsed_sum = 0.0
     for index, row in enumerate(slices):
@@ -135,6 +140,13 @@ def batched_retry_metrics(text):
         elapsed_sum += row["elapsed_seconds"]
         assert row["recovery_elapsed_seconds"] + 0.001 >= elapsed_sum
         assert math.isclose(row["cpu_percent_one_core"], 100 * row["cpu_seconds"] / row["elapsed_seconds"], rel_tol=1e-8, abs_tol=1e-8)
+        phases = row["phase_work_seconds"]
+        assert phases.keys() == phase_keys, "Retry phase timer fields changed"
+        assert all(type(value) in (int, float) and math.isfinite(value) and value >= 0 for value in phases.values()), "Invalid retry phase time"
+        # These are wall times, not CPU samples. The decrypt cursor is nested
+        # within group_inputs and must not be added to total work a second time.
+        assert sum(value for key, value in phases.items() if key != "decrypt_cursor_nested") <= row["work_seconds"] + 0.01, "Retry phase times exceed total work"
+        assert phases["decrypt_cursor_nested"] <= phases["group_inputs"] + 0.01, "Nested decrypt time exceeds group-input time"
         for key in ("turns", "continuations", "acknowledged_deliveries", "puts", "read_bytes", "written_bytes", "remote_deadline_updates"):
             assert type(row[key]) is int and row[key] >= 0, f"Invalid slice counter {key}"
         assert all(type(row["due_at_start"][key]) is int and row["due_at_start"][key] >= 0 for key in ("inbound", "fanouts", "remote_sends"))
@@ -148,7 +160,7 @@ def batched_retry_metrics(text):
         previous = after
         if index >= 3:
             assert row["turns"] > 0 and row["remote_deadline_updates"] > 0 and row["puts"] > 0, "Measured slice did not exercise recurring due work and flush"
-    assert sum(row["acknowledged_deliveries"] for row in slices) == 1
+    assert sum(row["acknowledged_deliveries"] for row in slices) == 2
     assert all(result[key] == previous[key] for key in ("search_starts", "repeated_search_starts", "input_generation_changes"))
     assert type(result["restart_ready"]) is bool
     restart = result["restart_progress"]
@@ -302,11 +314,13 @@ def stage(which, root, out, data):
          "cpu_interpretation": interpretation})
     selected = data["tests"] if which == "after" else [t for t in data["tests"] if t["name"] in (data["before_test"], data["before_observation_test"])]
     if optimized:
-        selected = [data["batched"]["test"]] if batched else [t for t in data["tests"] if t["name"] == data["before_observation_test"]]
-        assert len(selected) == 1 and selected[0]["exact"] and selected[0]["expected_count"] == 1
+        selected = [*data["batched"]["correctness_tests"], data["batched"]["test"]] if batched else [t for t in data["tests"] if t["name"] == data["before_observation_test"]]
+        assert selected[-1]["exact"] and selected[-1]["expected_count"] == 1
+        assert batched or len(selected) == 1
     checks = []
     cpu_failure = False
     for index, test in enumerate(selected):
+        is_cpu_test = optimized and (not batched or test["name"] == data["batched"]["test"]["name"])
         command = [str(binary), test["name"], "--nocapture", "--test-threads=1"]
         if test["exact"]:
             command.append("--exact")
@@ -319,15 +333,15 @@ def stage(which, root, out, data):
             expected_failure = None
             if which == "before" and test["name"] == data["before_test"]:
                 expected_failure = data["before_failure_marker"]
-            elif (which == "before" or optimized) and run["exit_code"] != 0:
+            elif (which == "before" or is_cpu_test) and run["exit_code"] != 0:
                 expected_failure = data["batched"]["failure_marker"] if batched else data["before_observation_failure_marker"]
-            if batched:
+            if batched and is_cpu_test:
                 check["batched_retry_cpu"] = batched_retry_metrics(text)
             elif test["name"] == data["before_observation_test"]:
                 check["whole_retry_cpu"] = whole_retry_metrics(text)
             check["counts"] = check_result(text, test, run["exit_code"], expected_failure)
-            cpu_failure = optimized and expected_failure is not None
-            if optimized:
+            cpu_failure = is_cpu_test and expected_failure is not None
+            if is_cpu_test:
                 exceeds_budget = any(s["cpu_percent_one_core"] > 5 for s in check["batched_retry_cpu"]["slices"][-2:]) if batched else check["whole_retry_cpu"]["cpu_percent_one_core"] > 5
                 assert exceeds_budget == cpu_failure, "CPU assertion and metric disagree"
                 check["counts"]["expected_regression_failure"] = False

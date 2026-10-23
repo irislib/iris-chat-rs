@@ -101,9 +101,16 @@ class OptimizedTests(unittest.TestCase):
                 with self.assertRaisesRegex(AssertionError, "Optimized diagnostic disabled"):
                     DRIVER.contract("optimized")
 
-    def run_stage(self, cpu, other_failure=False, batched=False):
+    def run_stage(self, cpu, other_failure=False, batched=False, correctness_failure=False):
         data = DRIVER.contract()
+        if batched:
+            data["batched"]["correctness_tests"] = [
+                {"name": "protocol_engine::tests::group_retry_", "expected_count": 2,
+                 "exact": False, "marker": None, "ignored": False, "timeout_seconds": 300},
+                {"name": "protocol_engine::tests::large_ready_queue", "expected_count": 1,
+                 "exact": True, "marker": "ready_queue count=23437", "ignored": False, "timeout_seconds": 300}]
         test = data["batched"]["test"] if batched else data["tests"][-1]
+        correctness = data["batched"]["correctness_tests"] if batched else []
         which = "batched" if batched else "optimized"
         source = data["batched"]["source"] if batched else data["after"]
         parent = data["batched"]["base"] if batched else data["before"]
@@ -135,6 +142,8 @@ class OptimizedTests(unittest.TestCase):
                     ("rev-parse", "HEAD:chat-protocol"): "protocol-tree",
                     ("diff", "--name-only", "HEAD^", "HEAD"): "\n".join(changed)}[args]
 
+            executed = []
+
             def bounded(command, _root, _out, name, timeout, deadline, _target):
                 self.assertEqual(_target, target)
                 if name == "fetch":
@@ -143,9 +152,25 @@ class OptimizedTests(unittest.TestCase):
                 if name == "build":
                     self.assertTrue(all(flag in command for flag in ("--release", "--locked", "--offline")))
                     return {"exit_code": 0}, json.dumps(artifact)
-                self.assertEqual(name, "test-0")
+                index = len(executed)
+                self.assertEqual(name, f"test-{index}")
+                selected = correctness[index] if index < len(correctness) else test
+                expected_command = [str(binary), selected["name"], "--nocapture", "--test-threads=1"]
+                if selected["exact"]:
+                    expected_command.append("--exact")
+                if selected["ignored"]:
+                    expected_command.append("--ignored")
+                self.assertEqual(command, expected_command)
+                executed.append(selected["name"])
+                if index < len(correctness):
+                    self.assertEqual(timeout, 300)
+                    count = selected["expected_count"]
+                    failed_count = 1 if correctness_failure else 0
+                    status = "FAILED" if correctness_failure else "ok"
+                    log = f"running {count} tests\ntest {selected['name']} ... {selected['marker'] or ''}\n"
+                    log += f"test result: {status}. {count - failed_count} passed; {failed_count} failed; 0 ignored; 100 filtered out;\n"
+                    return {"exit_code": 101 if correctness_failure else 0}, log
                 self.assertEqual(timeout, 420 if batched else 300)
-                self.assertEqual(command, [str(binary), test["name"], "--nocapture", "--test-threads=1", "--exact", "--ignored"])
                 return {"exit_code": 101 if failed else 0}, output
 
             with mock.patch.object(DRIVER, "git", git), mock.patch.object(DRIVER, "bounded", bounded), \
@@ -155,17 +180,28 @@ class OptimizedTests(unittest.TestCase):
                  mock.patch.object(DRIVER, "batched_retry_metrics", return_value={"slices": [{"cpu_percent_one_core": cpu}] * 5}), \
                  mock.patch.dict(sys.modules, {"inbound_retry_perf": PERF}), \
                  mock.patch.object(PERF, "sample_failure", return_value={"status": "skipped", "reason": "no perf"}) as sample:
-                if failed:
+                if correctness_failure:
+                    with self.assertRaisesRegex(AssertionError, "Exact test count/result mismatch"):
+                        DRIVER.stage(which, root, out, data)
+                elif failed:
                     with self.assertRaisesRegex(AssertionError, "not the intended" if other_failure else "unchanged 5% limit"):
                         DRIVER.stage(which, root, out, data)
                 else:
                     DRIVER.stage(which, root, out, data)
-                self.assertEqual(sample.call_count, int(failed and not other_failure and not batched))
-            if not other_failure:
+                self.assertEqual(sample.call_count, int(failed and not other_failure and not batched and not correctness_failure))
+            if correctness_failure:
+                self.assertEqual(executed, [correctness[0]["name"]])
+                self.assertFalse((out / which / "receipt.json").exists())
+                results = json.loads((out / which / "test-results.json").read_text())
+                self.assertEqual(len(results), 1)
+                self.assertFalse(results[0]["accepted"])
+            elif not other_failure:
                 receipt = json.loads((out / which / "receipt.json").read_text())
                 self.assertEqual(receipt["accepted"], not failed)
-                self.assertEqual(len(receipt["tests"]), 1)
-                self.assertEqual(receipt["tests"][0]["counts"]["failed"], int(failed))
+                self.assertEqual(executed, [t["name"] for t in [*correctness, test]])
+                self.assertEqual(len(receipt["tests"]), len(correctness) + 1)
+                self.assertTrue(all(t["accepted"] for t in receipt["tests"][:-1]))
+                self.assertEqual(receipt["tests"][-1]["counts"]["failed"], int(failed))
                 self.assertFalse(receipt["physical_cpu_acceptance"])
 
     def test_release_pass_runs_exactly_one_test_without_sampling(self):
@@ -177,11 +213,17 @@ class OptimizedTests(unittest.TestCase):
     def test_other_failure_cannot_trigger_sampling(self):
         self.run_stage(80.0, other_failure=True)
 
-    def test_batched_pass_runs_one_420_second_test_without_sampling(self):
+    def test_batched_pass_runs_correctness_before_one_420_second_cpu_test(self):
         self.run_stage(4.0, batched=True)
 
     def test_batched_cpu_failure_never_runs_a_profile_or_baseline(self):
         self.run_stage(80.0, batched=True)
+
+    def test_batched_correctness_failure_stops_before_cpu_or_sampling(self):
+        self.run_stage(4.0, batched=True, correctness_failure=True)
+
+    def test_batched_unrelated_failure_is_not_classified_as_cpu_failure(self):
+        self.run_stage(80.0, other_failure=True, batched=True)
 
 
 class PerfTests(unittest.TestCase):
@@ -244,7 +286,8 @@ class BatchedMetricsTests(unittest.TestCase):
             "ciphertexts": 23437, "remote_sends": 44, "checkpoint_bytes": 350224384, "outer_batch": True,
             "ack_and_flush_in_turn": True, "continuation_delay_ms": 25, "liveness_delay_ms": 2000,
             "settle_seconds": 180, "measurement_windows": 2, "window_seconds": 60, "debug_assertions": False,
-            "initially_ready": True, "group_deliveries": 1, "acknowledged_deliveries": 1, "repeated_search_starts": 0,
+            "initially_ready": True, "group_deliveries": 1, "acknowledged_deliveries": 2,
+            "acknowledged_setup_deliveries": 1, "acknowledged_group_deliveries": 1, "repeated_search_starts": 0,
             "wire_effect_count": 0, "remaining_inbound": 4214, "remaining_ciphertexts": 23436,
             "remaining_remote_sends": 44, "remaining_fanouts": 24991, "preservation_checked": True,
             "restart_checked": True, "restart_ready": True, "restore_seconds": 1.0, "readiness_seconds": 1.1,
@@ -258,10 +301,13 @@ class BatchedMetricsTests(unittest.TestCase):
                 progress["search_starts"] += 10
                 progress["engine_attempts"] += 100
             cpu = 30.0 if index < 3 else 4.0
+            work = cpu * 0.6
+            phases = {key: work * 0.01 for key in ("retirement", "group_fanouts", "inbound", "remote_sends", "local_siblings")}
+            phases.update(group_inputs=work * 0.5, flush=work * 0.3, decrypt_cursor_nested=work * 0.25)
             result["slices"].append({"stage": "settle" if index < 3 else "measure", "stage_index": index if index < 3 else index - 3,
                 "elapsed_seconds": 60.0, "recovery_elapsed_seconds": 60.0 * (index + 1), "cpu_seconds": cpu * 0.6,
-                "cpu_percent_one_core": cpu, "work_seconds": cpu * 0.6, "max_turn_seconds": 1.0,
-                "turns": 20, "continuations": 20, "acknowledged_deliveries": int(index == 0), "puts": 1,
+                "cpu_percent_one_core": cpu, "work_seconds": work, "phase_work_seconds": phases, "max_turn_seconds": 1.0,
+                "turns": 20, "continuations": 20, "acknowledged_deliveries": 2 * int(index == 0), "puts": 1,
                 "read_bytes": 350224384, "written_bytes": 4096, "remote_deadline_updates": 1,
                 "due_at_start": {"inbound": 0, "fanouts": 0, "remote_sends": 1},
                 "progress_before": before, "progress_after": dict(progress)})
@@ -287,9 +333,23 @@ class BatchedMetricsTests(unittest.TestCase):
             with self.assertRaises(AssertionError):
                 DRIVER.batched_retry_metrics(text)
 
+    def test_invalid_phase_fields_times_and_nested_accounting_are_rejected(self):
+        mutations = [lambda p: p.update(unexpected=0.0), lambda p: p.pop("retirement"),
+            lambda p: p.update(inbound=-0.1), lambda p: p.update(inbound=float("inf")),
+            lambda p: p.update(inbound=True), lambda p: p.update(flush=100.0),
+            lambda p: p.update(decrypt_cursor_nested=p["group_inputs"] + 0.1)]
+        for mutate in mutations:
+            result = self.fixture()
+            mutate(result["slices"][0]["phase_work_seconds"])
+            with self.assertRaises(AssertionError):
+                DRIVER.batched_retry_metrics(self.render(result))
+
     def test_false_progress_repeated_admission_and_quiet_gap_do_not_pass(self):
         mutations = [lambda r: r.update(first_valid_delivery_seconds=181.0),
             lambda r: r.update(restart_checked=False), lambda r: r.update(acknowledged_deliveries=0),
+            lambda r: r.update(acknowledged_setup_deliveries=0),
+            lambda r: r.update(acknowledged_group_deliveries=0),
+            lambda r: r["slices"][0].update(acknowledged_deliveries=1),
             lambda r: r["slices"][-1].update(puts=0), lambda r: r["slices"][-1].update(remote_deadline_updates=0),
             lambda r: r["slices"][2]["progress_before"].update(search_starts=0),
             lambda r: r["slices"][2]["progress_after"].update(repeated_search_starts=1)]
@@ -309,6 +369,30 @@ class BatchedMetricsTests(unittest.TestCase):
                     DRIVER.contract("batched")
             self.assertTrue(all(test["timeout_seconds"] <= 300 for test in data["tests"]))
             self.assertEqual(data["batched"]["test"]["timeout_seconds"], 420)
+
+    def test_batched_contract_admits_reviewed_parent_and_bounded_correctness(self):
+        data = DRIVER.contract()
+        data["batched"]["enabled"] = True
+        data["batched"]["base"] = "a" * 40
+        data["batched"]["correctness_tests"] = [dict(data["tests"][3])]
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "inputs.json"
+            path.write_text(json.dumps(data))
+            with mock.patch.object(DRIVER, "INPUTS", path):
+                admitted = DRIVER.contract("batched")
+                self.assertNotEqual(admitted["batched"]["base"], admitted["after"])
+                self.assertEqual(DRIVER.contract("optimized")["tests"], data["tests"])
+                mutations = [lambda d: d["batched"].update(correctness_tests=[]),
+                    lambda d: d["batched"]["correctness_tests"][0].update(timeout_seconds=420),
+                    lambda d: d["batched"]["correctness_tests"][0].update(ignored=True),
+                    lambda d: d["batched"]["correctness_tests"][0].update(expected_count=0),
+                    lambda d: d["batched"]["correctness_tests"][0].update(name=d["batched"]["test"]["name"])]
+                for mutate in mutations:
+                    changed = copy.deepcopy(data)
+                    mutate(changed)
+                    path.write_text(json.dumps(changed))
+                    with self.assertRaises(AssertionError):
+                        DRIVER.contract("batched")
 
 
 if __name__ == "__main__":

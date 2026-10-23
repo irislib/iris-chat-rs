@@ -2,14 +2,39 @@
   "enabled": true,
   "optimized_enabled": true,
   "batched": {
-    "enabled": true,
-    "source": "142a90a7f9c8493cdb3ada2458d6d142372994ee",
-    "base": "b8c5de4fb64ea69defbfaf26253ff69f51ae5393",
+    "enabled": false,
+    "correctness_tests": [
+      {
+        "name": "protocol_engine::tests::group_retry_",
+        "expected_count": 24,
+        "exact": false,
+        "marker": null,
+        "ignored": false,
+        "timeout_seconds": 300
+      },
+      {
+        "name": "protocol_engine::tests::group_receive_",
+        "expected_count": 1,
+        "exact": false,
+        "marker": null,
+        "ignored": false,
+        "timeout_seconds": 300
+      },
+      {
+        "name": "protocol_engine::tests::retry_search_audit_keeps_author_generations_across_observations",
+        "expected_count": 1,
+        "exact": true,
+        "marker": null,
+        "ignored": false,
+        "timeout_seconds": 300
+      }
+    ],
+    "source": "526321841d3757fc73713a931cc745bbb67d8f43",
+    "base": "89255675320a09f33c6327689924bcde3961b782",
     "changed_paths": [
-      "chat-protocol/src/protocol_engine.rs",
-      "chat-protocol/src/protocol_engine/inbound_retry_backlog_tests.rs",
       "chat-protocol/src/protocol_engine/group_retry.rs",
-      "chat-protocol/src/protocol_engine/batched_retry_cpu_tests.rs"
+      "chat-protocol/src/protocol_engine/group_decrypt.rs",
+      "chat-protocol/src/protocol_engine/group_decrypt_budget_tests.rs"
     ],
     "failure_marker": "batched steady retry loop still exceeds 5% of one CPU:",
     "test": {
