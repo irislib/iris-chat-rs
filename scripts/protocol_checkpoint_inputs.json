@@ -1,12 +1,12 @@
 {
   "schema": "iris-protocol-checkpoint-input/v1",
   "enabled": true,
-  "source": "8a9db73c4d7f259a4f3e28640ed1c1584ff9bc14",
-  "tree": "200d709495d1f4c926ab13f3179299214512121c",
-  "ordinary_passed": 192,
+  "source": "cd4f9d4cd5317bd122563bb94f403e777d723ba6",
+  "tree": "be1d524b5cf873725d493d8a6f120e8d28499dce",
+  "ordinary_passed": 197,
   "ordinary_ignored": 3,
   "toolchain": "1.99.1",
-  "resource_helper_sha256": "ceebd5230dd365dbf33ca332ca3ffa1adeb60247198248568f42405643074dca",
+  "resource_helper_sha256": "6a1ffea4be2a605d044b1efe5150dff746ed0ea218d97541723f946c40233522",
   "bindings": {
     "chat-protocol/Cargo.toml": "69306c167a4bc97166f505f56bd10f02c4c5c906460ec4dc3cdec3b3579b21c8",
     "chat-protocol/Cargo.lock": "cb349205502ba5afa33b2177ca651fbda78848beabfb58781ca60831894498a1",
@@ -17,9 +17,9 @@
     "chat-protocol/src/protocol_engine/inbound_retry_ciphertext_fixture_tests.rs": "ac60882dc1814ed48559bba3745c93229d56e2153f0cb10058eecc7e95582146"
   },
   "failed_cpu_evidence": {
-    "run": 39988217171,
-    "source": "c9c3aff963cda978625a5874af0f54ed90dd73b8",
-    "full_log_sha256": "337479f373769a1d3d05257e53f924e81ea802907d0b0f64d07ac0b2b0e8ef16",
+    "run": 39991368237,
+    "source": "8a9db73c4d7f259a4f3e28640ed1c1584ff9bc14",
+    "full_log_sha256": "9bd34a7f921b357b7e4c16ba1f668162323b855dc80f150ecf91b3989accb824",
     "reexecute": false
   }
 }

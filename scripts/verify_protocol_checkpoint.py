@@ -32,8 +32,8 @@ def contract():
     assert type(data["ordinary_passed"]) is int and data["ordinary_passed"] >= 188
     assert type(data["ordinary_ignored"]) is int and data["ordinary_ignored"] == 3
     assert data["failed_cpu_evidence"] == {
-        "run": 39988217171, "source": "c9c3aff963cda978625a5874af0f54ed90dd73b8",
-        "full_log_sha256": "337479f373769a1d3d05257e53f924e81ea802907d0b0f64d07ac0b2b0e8ef16",
+        "run": 39991368237, "source": "8a9db73c4d7f259a4f3e28640ed1c1584ff9bc14",
+        "full_log_sha256": "9bd34a7f921b357b7e4c16ba1f668162323b855dc80f150ecf91b3989accb824",
         "reexecute": False}
     ordinary = checkpoint.spec("", data["ordinary_passed"], exact=False)
     ordinary["expected_ignored"] = data["ordinary_ignored"]
