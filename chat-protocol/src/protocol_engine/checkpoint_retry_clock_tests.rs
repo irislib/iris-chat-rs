@@ -303,3 +303,160 @@ fn checkpoint_inbound_clock_flush_commit_failure_keeps_live_and_durable_generati
     assert_eq!(checkpoint_growth_written_bytes(&connection), before);
     checkpoint_growth_assert_reopen(fixture, &directory, connection, storage);
 }
+
+struct CheckpointNodeSqlAudit {
+    connection: Arc<Mutex<rusqlite::Connection>>,
+    counts: Box<[std::sync::atomic::AtomicUsize; 2]>,
+}
+
+impl CheckpointNodeSqlAudit {
+    fn start(connection: Arc<Mutex<rusqlite::Connection>>) -> Self {
+        use std::ffi::{c_char, c_int, c_void, CStr};
+        unsafe fn count(context: *mut c_void, table: *const c_char, index: usize) {
+            if !table.is_null()
+                && unsafe { CStr::from_ptr(table) }.to_bytes() == b"ndr_kv_checkpoint_nodes"
+            {
+                let counts = unsafe { &*(context as *const [std::sync::atomic::AtomicUsize; 2]) };
+                counts[index].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
+        }
+        unsafe extern "C" fn authorize(
+            context: *mut c_void,
+            action: c_int,
+            table: *const c_char,
+            _: *const c_char,
+            _: *const c_char,
+            _: *const c_char,
+        ) -> c_int {
+            if action == rusqlite::ffi::SQLITE_INSERT {
+                unsafe { count(context, table, 0) };
+            }
+            rusqlite::ffi::SQLITE_OK
+        }
+        unsafe extern "C" fn update(
+            context: *mut c_void,
+            action: c_int,
+            _: *const c_char,
+            table: *const c_char,
+            _: i64,
+        ) {
+            if action == rusqlite::ffi::SQLITE_UPDATE {
+                unsafe { count(context, table, 1) };
+            }
+        }
+        let mut audit = Self {
+            connection,
+            counts: Box::new([0.into(), 0.into()]),
+        };
+        let context = audit.counts.as_mut() as *mut _ as *mut c_void;
+        {
+            let conn = audit.connection.lock().unwrap();
+            unsafe {
+                assert_eq!(
+                    rusqlite::ffi::sqlite3_set_authorizer(conn.handle(), Some(authorize), context),
+                    rusqlite::ffi::SQLITE_OK
+                );
+                rusqlite::ffi::sqlite3_update_hook(conn.handle(), Some(update), context);
+            }
+        }
+        audit
+    }
+}
+
+impl Drop for CheckpointNodeSqlAudit {
+    fn drop(&mut self) {
+        let conn = self.connection.lock().unwrap();
+        // Clear both hooks before the boxed callback context is released,
+        // including if an assertion unwinds this test.
+        unsafe {
+            rusqlite::ffi::sqlite3_set_authorizer(conn.handle(), None, std::ptr::null_mut());
+            rusqlite::ffi::sqlite3_update_hook(conn.handle(), None, std::ptr::null_mut());
+        }
+    }
+}
+
+#[test]
+fn checkpoint_retry_clock_flush_prepares_node_update_once() {
+    use std::sync::atomic::Ordering::Relaxed;
+    const FANOUTS: usize = 512;
+    const INBOUND: usize = 64;
+    const NOW: u64 = 1_800_000_000;
+    let mut fixture = checkpoint_backlog_fixture(FANOUTS, 512);
+    fixture.sender.pending_inbound = synthetic_pending_inbound_with_ciphertext(
+        &mut fixture.sender,
+        INBOUND,
+        INBOUND,
+        NOW,
+        SyntheticInboundCiphertext::CorruptMac,
+    );
+    for pending in &mut fixture.sender.pending_group_fanouts {
+        pending.created_at_secs = NOW - 1_000;
+        pending.next_retry_at_secs = NOW;
+    }
+    fixture.sender.pending_remote_sends = missing_roster_remote_retries(1, NOW);
+    fixture.sender.pending_remote_sends[0].expires_at_secs = Some(NOW);
+    let (mut fixture, directory, connection, storage) = checkpoint_growth_install_storage(fixture);
+    let inbound_before = fixture.sender.pending_inbound.clone();
+    let fanouts_before = fixture.sender.pending_group_fanouts.clone();
+    let sessions_before = serde_json::to_value(fixture.sender.session_manager.snapshot()).unwrap();
+    let before = checkpoint_growth_written_bytes(&connection);
+    assert!(fixture
+        .sender
+        .retry_pending_inbound_direct_events(NdrUnixSeconds(NOW))
+        .unwrap()
+        .is_empty());
+    for _ in 0..FANOUTS / PENDING_GROUP_FANOUT_RETRY_BATCH_SIZE {
+        assert!(fixture
+            .sender
+            .retry_pending_group_fanouts(NdrUnixSeconds(NOW))
+            .unwrap()
+            .effects
+            .is_empty());
+    }
+    assert_eq!(checkpoint_growth_written_bytes(&connection), before);
+    let mut expected_inbound = inbound_before;
+    for pending in &mut expected_inbound {
+        pending.next_retry_at_secs = NOW + 60;
+    }
+    let mut expected_fanouts = fanouts_before;
+    for pending in &mut expected_fanouts {
+        pending.next_retry_at_secs = NOW + 60;
+    }
+    assert_eq!(fixture.sender.pending_inbound, expected_inbound);
+    assert!(fixture.sender.pending_group_fanouts == expected_fanouts);
+    assert_eq!(
+        serde_json::to_value(fixture.sender.session_manager.snapshot()).unwrap(),
+        sessions_before
+    );
+
+    // Authorizer calls count SQLite compilation, not execution; the update
+    // hook independently confirms every dirty metadata row was actually saved.
+    let audit = CheckpointNodeSqlAudit::start(connection.clone());
+    assert!(fixture
+        .sender
+        .retry_pending_remote_sends(NdrUnixSeconds(NOW))
+        .unwrap()
+        .is_empty());
+    let preparations = audit.counts[0].load(Relaxed);
+    let updated_nodes = audit.counts[1].load(Relaxed);
+    drop(audit);
+    let written = checkpoint_growth_written_bytes(&connection) - before;
+    assert!(fixture.sender.pending_remote_sends.is_empty());
+    let saved = storage.get(PROTOCOL_ENGINE_STATE_KEY).unwrap().unwrap();
+    let persisted: ProtocolEnginePersistedState = serde_json::from_str(&saved).unwrap();
+    assert_eq!(persisted.pending_inbound, expected_inbound);
+    assert!(persisted.pending_group_fanouts == expected_fanouts);
+    assert!(persisted.pending_remote_sends.is_empty());
+    assert_eq!(
+        serde_json::to_value(persisted.session_manager).unwrap(),
+        sessions_before
+    );
+    checkpoint_growth_assert_reopen(fixture, &directory, connection, storage);
+    eprintln!("checkpoint_node_sql preparations={preparations} updated_nodes={updated_nodes} updated_fanout_nodes={FANOUTS} updated_inbound_nodes={INBOUND} sqlite_written_bytes={written}");
+    assert_eq!(updated_nodes, FANOUTS + INBOUND);
+    assert!(written > 0);
+    assert_eq!(
+        preparations, 1,
+        "one expiry flush must not recompile the same node update per dirty record"
+    );
+}
