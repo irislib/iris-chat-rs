@@ -18,6 +18,7 @@ include!("protocol_engine/engine_handshake_proof.rs");
 include!("protocol_engine/handshake_proof_cache.rs");
 include!("protocol_engine/roster_helpers.rs");
 include!("protocol_engine/own_mutation_admission.rs");
+include!("protocol_engine/inbound_receive_cache.rs");
 include!("protocol_engine/engine_incoming_retry.rs");
 include!("protocol_engine/engine_group_fanout_retry.rs");
 include!("protocol_engine/engine_resolution.rs");

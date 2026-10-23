@@ -586,13 +586,11 @@ impl ProtocolEngine {
         Ok(())
     }
 
-    fn retry_pending_inbound_direct_events(
+    fn retry_pending_inbound_direct_events_inner(
         &mut self,
         now: NdrUnixSeconds,
+        fingerprints: &mut InboundReceiveFingerprints,
     ) -> anyhow::Result<Vec<ProtocolDecryptedMessage>> {
-        if !self.has_due_pending_inbound_retry(now) {
-            return Ok(Vec::new());
-        }
         // A failed save can leave a ratchet advanced with its delivery journal.
         // Keep the hint unknown until the entire pass succeeds, so retry and
         // rollback paths rederive it from the retained queue.
@@ -614,7 +612,7 @@ impl ProtocolEngine {
             .collect::<Vec<_>>();
         let mut messages = Vec::new();
         for (original_index, pending) in pending {
-            match self.decrypt_pending_direct_message_event(&pending) {
+            match self.decrypt_pending_direct_message_with_cache(&pending, fingerprints) {
                 Ok(DirectReceive::Message(message)) => {
                     self.pending_inbound
                         .retain(|item| item.event.id != pending.event.id);
@@ -662,6 +660,7 @@ impl ProtocolEngine {
         Ok(messages)
     }
 
+    #[cfg(test)]
     fn decrypt_pending_direct_message_event(
         &mut self,
         pending: &ProtocolPendingInbound,
@@ -672,6 +671,7 @@ impl ProtocolEngine {
         self.decrypt_direct_message_event(&pending.event)
     }
 
+    #[cfg(test)]
     fn decrypt_direct_message_event(&mut self, event: &Event) -> anyhow::Result<DirectReceive> {
         let envelope = parse_message_event(event)?;
         self.decrypt_direct_message_envelope(event, &envelope, true)
@@ -682,6 +682,16 @@ impl ProtocolEngine {
         event: &Event,
         envelope: &MessageEnvelope,
         record_delivery: bool,
+    ) -> anyhow::Result<DirectReceive> {
+        self.decrypt_direct_message_envelope_with_cache(event, envelope, record_delivery, None)
+    }
+
+    fn decrypt_direct_message_envelope_with_cache(
+        &mut self,
+        event: &Event,
+        envelope: &MessageEnvelope,
+        record_delivery: bool,
+        fingerprints: Option<&mut InboundReceiveFingerprints>,
     ) -> anyhow::Result<DirectReceive> {
         if let Some(delivery) = self
             .pending_decrypted_deliveries
@@ -704,13 +714,8 @@ impl ProtocolEngine {
                 return Ok(DirectReceive::Pending);
             }
         };
-        let mut rng = OsRng;
-        let mut ctx = ProtocolContext::new(NdrUnixSeconds(event.created_at.as_secs()), &mut rng);
-        #[cfg(test)]
-        tests::record_inbound_receive_call();
-        let Some(received) = self
-            .session_manager
-            .receive(&mut ctx, sender_owner, envelope)?
+        let Some(received) =
+            self.receive_direct_message_with_cache(event, envelope, sender_owner, fingerprints)?
         else {
             return Ok(DirectReceive::Pending);
         };

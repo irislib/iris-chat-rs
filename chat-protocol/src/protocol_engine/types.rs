@@ -424,6 +424,7 @@ pub struct ProtocolEngine {
     /// Runtime-only scheduling hint. Unknown after restoration or queue/deadline mutation;
     /// never copied into a durable or rollback checkpoint.
     pending_inbound_retry_deadline: std::cell::Cell<Option<PendingInboundRetryDeadline>>,
+    failed_inbound_receives: BTreeMap<nostr::EventId, FailedInboundReceive>,
     pending_group_fanouts: Vec<ProtocolPendingGroupFanout>,
     ready_group_publications: BTreeMap<String, ProtocolReadyGroupPublish>,
     pending_local_sibling_sends: Vec<ProtocolPendingLocalSiblingSend>,
