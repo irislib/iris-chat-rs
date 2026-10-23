@@ -1,6 +1,6 @@
 {
   "schema": "ndr-source-package-input/v1",
-  "enabled": false,
+  "enabled": true,
   "repository": "irislib/nostr-double-ratchet",
   "source": "9519a1b80976e5636d27dbeba3c61a940df7389e",
   "toolchain": "1.99.1",
@@ -10,7 +10,7 @@
     "full_ci_accepted": true,
     "allocation_run": 39919066502,
     "allocation_accepted": true,
-    "source_and_workflow_reviewed": false,
+    "source_and_workflow_reviewed": true,
     "kdf_reuse_run": 39931111192,
     "kdf_reuse_accepted": true
   },
