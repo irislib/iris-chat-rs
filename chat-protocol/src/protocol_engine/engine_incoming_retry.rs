@@ -423,13 +423,29 @@ impl ProtocolEngine {
         &mut self,
         now: NdrUnixSeconds,
     ) -> anyhow::Result<ProtocolRetryBatch> {
-        self.retire_ineligible_group_publications()?;
-        self.flush_discarded_direct_receives()?;
-        let group_result = self.retry_pending_group_inputs(now)?;
-        let group_fanout_result = self.retry_pending_group_fanouts(now)?;
+        {
+            #[cfg(all(test, target_os = "linux"))]
+            let _phase = tests::RetryPhaseTimer::start("retirement");
+            self.retire_ineligible_group_publications()?;
+            self.flush_discarded_direct_receives()?;
+        }
+        let group_result = {
+            #[cfg(all(test, target_os = "linux"))]
+            let _phase = tests::RetryPhaseTimer::start("group_inputs");
+            self.retry_pending_group_inputs(now)?
+        };
+        let group_fanout_result = {
+            #[cfg(all(test, target_os = "linux"))]
+            let _phase = tests::RetryPhaseTimer::start("group_fanouts");
+            self.retry_pending_group_fanouts(now)?
+        };
         let mut group_result = group_result;
         group_result.effects.extend(group_fanout_result.effects);
-        self.retry_pending_inbound_direct_events(now)?;
+        {
+            #[cfg(all(test, target_os = "linux"))]
+            let _phase = tests::RetryPhaseTimer::start("inbound");
+            self.retry_pending_inbound_direct_events(now)?;
+        }
         let direct_messages = self
             .pending_decrypted_deliveries
             .iter()
@@ -437,8 +453,16 @@ impl ProtocolEngine {
             .cloned()
             .map(ProtocolDecryptedMessage::from)
             .collect::<Vec<_>>();
-        let mut effects = self.retry_pending_remote_sends(now)?;
-        effects.extend(self.retry_pending_local_sibling_sends(now)?);
+        let mut effects = {
+            #[cfg(all(test, target_os = "linux"))]
+            let _phase = tests::RetryPhaseTimer::start("remote_sends");
+            self.retry_pending_remote_sends(now)?
+        };
+        {
+            #[cfg(all(test, target_os = "linux"))]
+            let _phase = tests::RetryPhaseTimer::start("local_siblings");
+            effects.extend(self.retry_pending_local_sibling_sends(now)?);
+        }
         let offered = group_result
             .effects
             .iter()

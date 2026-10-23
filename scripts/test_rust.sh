@@ -130,6 +130,11 @@ for index, row in enumerate(slices):
     elapsed_sum += row["elapsed_seconds"]
     assert row["recovery_elapsed_seconds"] + 0.001 >= elapsed_sum
     assert math.isclose(row["cpu_percent_one_core"], 100 * row["cpu_seconds"] / row["elapsed_seconds"], rel_tol=1e-8, abs_tol=1e-8)
+    phases = row["phase_work_seconds"]
+    assert set(phases) == {"retirement", "group_inputs", "group_fanouts", "inbound", "remote_sends", "local_siblings", "flush", "decrypt_cursor_nested"}
+    assert all(type(value) in (int, float) and math.isfinite(value) and value >= 0 for value in phases.values())
+    assert sum(value for name, value in phases.items() if name != "decrypt_cursor_nested") <= row["work_seconds"] + 0.01
+    assert phases["decrypt_cursor_nested"] <= phases["group_inputs"] + 0.01
     for key in ("turns", "continuations", "acknowledged_deliveries", "puts", "read_bytes", "written_bytes", "remote_deadline_updates"):
         assert type(row[key]) is int and row[key] >= 0, f"Invalid slice counter {key}"
     assert all(type(row["due_at_start"][key]) is int and row["due_at_start"][key] >= 0 for key in ("inbound", "fanouts", "remote_sends"))

@@ -1,92 +1,3 @@
-// Included only by Linux tests. The observer is outside engine snapshots so
-// rollback clones do not copy the audit, and shipping builds have no hooks.
-#[derive(Default)]
-struct RetrySearchAudit {
-    generations: std::collections::HashMap<NdrDevicePubkey, u64>,
-    seen: HashSet<(NdrDevicePubkey, u64, String)>,
-    starts: usize,
-    repeated: usize,
-    changes: usize,
-}
-
-thread_local! {
-    static RETRY_SEARCH_AUDIT: std::cell::RefCell<Option<RetrySearchAudit>> = const {
-        std::cell::RefCell::new(None)
-    };
-}
-
-pub(super) fn audit_group_retry_input_changes(changed: &HashSet<NdrDevicePubkey>) {
-    RETRY_SEARCH_AUDIT.with(|slot| {
-        if let Some(audit) = slot.borrow_mut().as_mut() {
-            for author in changed {
-                *audit.generations.entry(*author).or_default() += 1;
-                audit.changes += 1;
-            }
-        }
-    });
-}
-
-pub(super) fn audit_group_retry_attempt(author: NdrDevicePubkey, fingerprint: &str) {
-    RETRY_SEARCH_AUDIT.with(|slot| {
-        if let Some(audit) = slot.borrow_mut().as_mut() {
-            let generation = *audit.generations.entry(author).or_default();
-            audit.starts += 1;
-            if !audit
-                .seen
-                .insert((author, generation, fingerprint.to_owned()))
-            {
-                audit.repeated += 1;
-            }
-        }
-    });
-}
-
-struct RetrySearchAuditGuard;
-
-impl RetrySearchAuditGuard {
-    fn start() -> Self {
-        RETRY_SEARCH_AUDIT.with(|slot| {
-            assert!(slot.replace(Some(RetrySearchAudit::default())).is_none());
-        });
-        Self
-    }
-
-    fn counts(&self) -> (usize, usize, usize) {
-        RETRY_SEARCH_AUDIT.with(|slot| {
-            let audit = slot.borrow();
-            let audit = audit.as_ref().unwrap();
-            (audit.starts, audit.repeated, audit.changes)
-        })
-    }
-}
-
-impl Drop for RetrySearchAuditGuard {
-    fn drop(&mut self) {
-        RETRY_SEARCH_AUDIT.with(|slot| *slot.borrow_mut() = None);
-    }
-}
-
-#[test]
-fn retry_search_audit_keeps_author_generations_across_observations() {
-    let author = ndr_device(Keys::generate().public_key());
-    let other = ndr_device(Keys::generate().public_key());
-    let audit = RetrySearchAuditGuard::start();
-    audit_group_retry_input_changes(&HashSet::from([author]));
-    audit_group_retry_attempt(author, "synthetic candidate");
-    assert_eq!(audit.counts(), (1, 0, 1));
-    // Observing a slice boundary or changing another author must not forget
-    // that the original candidate already exhausted these exact inputs.
-    audit_group_retry_input_changes(&HashSet::from([other]));
-    audit_group_retry_attempt(author, "synthetic candidate");
-    assert_eq!(audit.counts(), (2, 1, 2));
-    audit_group_retry_input_changes(&HashSet::from([author]));
-    audit_group_retry_attempt(author, "synthetic candidate");
-    assert_eq!(audit.counts(), (3, 1, 3));
-    drop(audit);
-    let restarted = RetrySearchAuditGuard::start();
-    assert_eq!(restarted.counts(), (0, 0, 0));
-}
-
 fn batched_retry_progress(
     engine: &ProtocolEngine,
     audit: &RetrySearchAuditGuard,
@@ -262,7 +173,10 @@ fn restored_backlog_batched_retry_stays_within_cpu_budget() {
                     acknowledged_deliveries += batch.direct_messages.len();
                     engine.ack_pending_decrypted_deliveries().unwrap();
                 }
-                engine.exit_batch().unwrap();
+                {
+                    let _phase = RetryPhaseTimer::start("flush");
+                    engine.exit_batch().unwrap();
+                }
                 assert_eq!(engine.batch_depth.get(), 0);
                 if delivered > 0 && first_valid_delivery_seconds.is_none() {
                     first_valid_delivery_seconds = Some(recovery_started.elapsed().as_secs_f64());
@@ -308,6 +222,7 @@ fn restored_backlog_batched_retry_stays_within_cpu_budget() {
             "written_bytes": io_after.1 - io_before.1, "due_at_start": due_at_start,
             "remote_deadline_updates": remote_deadline_updates,
             "progress_before": progress_before, "progress_after": batched_retry_progress(&engine, &audit),
+            "phase_work_seconds": audit.take_phase_seconds(),
         });
         eprintln!("batched_retry_slice {slice}");
         slices.push(slice);

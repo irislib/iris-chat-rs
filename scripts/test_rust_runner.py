@@ -63,6 +63,9 @@ def batched_output(mode):
             "stage": "settle" if index < 3 else "measure", "stage_index": index if index < 3 else index - 3,
             "elapsed_seconds": 60.0, "recovery_elapsed_seconds": 60.0 * (index + 1),
             "cpu_seconds": cpu * 0.6, "cpu_percent_one_core": cpu, "work_seconds": cpu * 0.6,
+            "phase_work_seconds": {"retirement": 0.0, "group_inputs": 0.5, "group_fanouts": 0.1,
+                                   "inbound": 0.1, "remote_sends": 0.1, "local_siblings": 0.0,
+                                   "flush": 0.1, "decrypt_cursor_nested": 0.4},
             "max_turn_seconds": 1.0, "turns": 20, "continuations": 20,
             "acknowledged_deliveries": 2 * int(index == 0), "puts": 1, "read_bytes": 350224384,
             "written_bytes": 4096, "remote_deadline_updates": 1,
@@ -89,6 +92,9 @@ def batched_output(mode):
         "no-puts": lambda: result["slices"][-1].update(puts=0),
         "no-progress": lambda: result.update(search_starts=0),
         "no-restart-ready": lambda: result.update(restart_ready=False),
+        "bad-phase": lambda: result["slices"][-1]["phase_work_seconds"].update(inbound=-1.0),
+        "missing-phase": lambda: result["slices"][-1]["phase_work_seconds"].pop("flush"),
+        "nested-exceeds-parent": lambda: result["slices"][-1]["phase_work_seconds"].update(decrypt_cursor_nested=2.0),
     }
     if mode in changes:
         changes[mode]()
@@ -355,7 +361,7 @@ class RustRunnerTests(unittest.TestCase):
                  "missing-slice", "mismatched-slice", "wrong-schema", "wrong-counts", "no-batch", "no-flush",
                  "debug-mode", "late-delivery", "no-ack", "restart-unchecked", "repeated-search", "reset-audit",
                  "short-window", "wrong-stage", "excess-first", "excess-second", "nonfinite", "no-due", "no-puts",
-                 "no-progress", "no-restart-ready")
+                 "no-progress", "no-restart-ready", "bad-phase", "missing-phase", "nested-exceeds-parent")
         for nextest in (True, False):
             commands = self.commands(nextest, "Linux")
             index = commands.index(batched_command())
@@ -379,7 +385,7 @@ class RustRunnerTests(unittest.TestCase):
 
     def test_batched_observer_is_ordinary_and_standalone_diagnostic_remains_separate(self):
         protocol = ROOT / "chat-protocol/src/protocol_engine"
-        observer = (protocol / "batched_retry_cpu_tests.rs").read_text()
+        observer = (protocol / "retry_work_audit.rs").read_text()
         self.assertRegex(observer, r"#\[test\]\s+fn retry_search_audit_keeps_author_generations_across_observations\(\)")
         self.assertIn('#[cfg(target_os = "linux")]\n    include!("protocol_engine/batched_retry_cpu_tests.rs");',
                       (protocol.with_suffix(".rs")).read_text())
