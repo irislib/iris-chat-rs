@@ -85,10 +85,16 @@
         "timeout_seconds": 300
       }
     ],
-    "source": "1172ac5a836e13151c0d60dd8f66544392d6bac3",
-    "base": "c0099d92cc6b38989b9f71aac6299ee4c200bf6c",
+    "source": "7cb25044c48e2b5c91b9a89db3626ba39730ab95",
+    "base": "9880db70e66060aba96d64dc10cae7e59c4c8699",
     "changed_paths": [
-      "chat-protocol/src/protocol_engine/batched_retry_cpu_tests.rs"
+      "RELEASE_NOTES.md",
+      "chat-protocol/Cargo.lock",
+      "chat-protocol/Cargo.toml",
+      "core/Cargo.lock",
+      "core/Cargo.toml",
+      "linux/Cargo.lock",
+      "protocol-ffi/Cargo.lock"
     ],
     "failure_marker": "batched steady retry loop still exceeds 5% of one CPU:",
     "test": {

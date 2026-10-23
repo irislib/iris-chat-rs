@@ -402,6 +402,9 @@ class BatchedMetricsTests(unittest.TestCase):
                 self.assertEqual(DRIVER.contract("optimized")["tests"], data["tests"])
                 mutations = [lambda d: d["batched"].update(correctness_tests=[]),
                     lambda d: d["batched"].update(changed_paths=["scripts/unreviewed.py"]),
+                    lambda d: d["batched"].update(changed_paths=["core/src/lib.rs"]),
+                    lambda d: d["batched"].update(changed_paths=["linux/Cargo.toml"]),
+                    lambda d: d["batched"].update(changed_paths=["protocol-ffi/Cargo.toml"]),
                     lambda d: d["batched"].update(changed_paths=["../RELEASE.md"]),
                     lambda d: d["batched"].update(changed_paths=["chat-protocol/../unreviewed.rs"]),
                     lambda d: d["batched"]["correctness_tests"][0].update(timeout_seconds=420),
