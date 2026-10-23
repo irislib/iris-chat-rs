@@ -100,7 +100,9 @@ rows = re.findall(r"batched_retry_cpu (\{[^\n]+\})", text)
 assert len(rows) == 1, "Require exactly one complete batched retry receipt"
 result = json.loads(rows[0])
 expected = {
-    "schema": "iris-batched-retry-cpu/v2", "fixture": "restored-mixed-backlog-with-expiring-controls-v2", "synthetic": True,
+    "schema": "iris-batched-retry-cpu/v3", "fixture": "restored-mixed-backlog-with-corrupt-mac-inbound-v3", "synthetic": True,
+    "inbound_ciphertext_format": "canonical-base64-nip44-v2-corrupt-mac",
+    "inbound_ciphertext_format_checked": 4214,
     "pending_inbound": 4214, "initially_due_inbound": 102, "fanouts": 24990,
     "initially_due_fanouts": 10462, "ciphertexts": 23437, "remote_sends": 44,
     "expiring_controls": 2, "initial_remote_sends": 46, "retired_expiring_controls": 2,
@@ -114,6 +116,8 @@ expected = {
     "preservation_checked": True, "restart_checked": True, "restart_ready": True,
 }
 assert all(type(result[key]) is type(value) and result[key] == value for key, value in expected.items()), "Batched workload or completion assertions changed"
+assert all(type(result[key]) is int for key in ("inbound_decoded_min_bytes", "inbound_decoded_max_bytes"))
+assert 387 <= result["inbound_decoded_min_bytes"] <= result["inbound_decoded_max_bytes"] <= 2115, "Inbound ciphertext sizes differ from the representative workload"
 assert result["remaining_fanouts"] >= 24990 and result["search_starts"] > 0
 assert all(type(result[key]) in (int, float) and math.isfinite(result[key]) and 0 <= result[key] <= 180
            for key in ("restore_seconds", "readiness_seconds", "first_valid_delivery_seconds")), "Recovery deadline not met"

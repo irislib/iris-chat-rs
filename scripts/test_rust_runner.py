@@ -36,7 +36,10 @@ def batched_command():
 
 def batched_output(mode):
     result = {
-        "schema": "iris-batched-retry-cpu/v2", "fixture": "restored-mixed-backlog-with-expiring-controls-v2", "synthetic": True,
+        "schema": "iris-batched-retry-cpu/v3", "fixture": "restored-mixed-backlog-with-corrupt-mac-inbound-v3", "synthetic": True,
+        "inbound_ciphertext_format": "canonical-base64-nip44-v2-corrupt-mac",
+        "inbound_ciphertext_format_checked": 4214,
+        "inbound_decoded_min_bytes": 1347, "inbound_decoded_max_bytes": 1347,
         "pending_inbound": 4214, "initially_due_inbound": 102, "fanouts": 24990,
         "initially_due_fanouts": 10462, "ciphertexts": 23437, "remote_sends": 44,
         "expiring_controls": 2, "initial_remote_sends": 46, "retired_expiring_controls": 2,
@@ -76,6 +79,15 @@ def batched_output(mode):
         })
     changes = {
         "wrong-schema": lambda: result.update(schema="unknown"),
+        "old-schema": lambda: result.update(schema="iris-batched-retry-cpu/v2"),
+        "malformed-inbound": lambda: result.update(inbound_ciphertext_format="invalid-base64"),
+        "missing-inbound-format": lambda: result.pop("inbound_ciphertext_format"),
+        "inbound-format-count": lambda: result.update(inbound_ciphertext_format_checked=4213),
+        "small-inbound": lambda: result.update(inbound_decoded_min_bytes=386),
+        "large-inbound": lambda: result.update(inbound_decoded_max_bytes=2116),
+        "reversed-inbound": lambda: result.update(inbound_decoded_min_bytes=1348),
+        "noninteger-inbound": lambda: result.update(inbound_decoded_min_bytes=387.0),
+        "boolean-inbound": lambda: result.update(inbound_decoded_min_bytes=True),
         "wrong-counts": lambda: result.update(ciphertexts=23436),
         "no-batch": lambda: result.update(outer_batch=False),
         "no-flush": lambda: result.update(ack_and_flush_in_turn=False),
@@ -366,7 +378,9 @@ class RustRunnerTests(unittest.TestCase):
                  "missing-slice", "mismatched-slice", "wrong-schema", "wrong-counts", "no-batch", "no-flush",
                  "debug-mode", "late-delivery", "no-ack", "restart-unchecked", "repeated-search", "reset-audit",
                  "short-window", "wrong-stage", "excess-first", "excess-second", "nonfinite", "no-due", "no-puts", "no-controls", "no-control-retirement", "early-control-retirement",
-                 "no-progress", "no-restart-ready", "bad-phase", "missing-phase", "nested-exceeds-parent")
+                 "no-progress", "no-restart-ready", "bad-phase", "missing-phase", "nested-exceeds-parent",
+                 "old-schema", "malformed-inbound", "missing-inbound-format", "inbound-format-count",
+                 "small-inbound", "large-inbound", "reversed-inbound", "noninteger-inbound", "boolean-inbound")
         for nextest in (True, False):
             commands = self.commands(nextest, "Linux")
             index = commands.index(batched_command())
