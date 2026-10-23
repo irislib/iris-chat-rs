@@ -2,6 +2,7 @@ use super::config::COMPILED_DEVICE_APPROVAL_RELAY_URL;
 use super::persistence::apply_persisted_preferences;
 use super::*;
 mod actions;
+mod suspend;
 
 pub(super) const CATCH_UP_EVENT_PROCESS_CHUNK_SIZE: usize = 64;
 const APP_RUNTIME_THREAD_STACK_BYTES: usize = 8 * 1024 * 1024;
@@ -83,6 +84,8 @@ impl AppCore {
             logged_in: None,
             private_contacts: private_contacts::PrivateContactRuntime::default(),
             protocol_engine: None,
+            startup_restore: Default::default(),
+            deferred_startup_restore: None,
             pending_linked_device: None,
             pending_signer_login: None,
             pending_remote_signer: None,
@@ -194,10 +197,8 @@ impl AppCore {
         })
     }
 
-    /// Clone of the SQLite connection handle used by the core thread.
-    /// Search runs on the FFI thread directly to avoid queueing behind
-    /// `OpenChat`/relay-event batches; the per-connection mutex inside
-    /// `SharedConnection` keeps that safe against concurrent writes.
+    /// Direct FFI reads share the core connection's mutex without queueing
+    /// behind its foreground actions or relay batches.
     pub(crate) fn shared_db(&self) -> super::storage::SharedConnection {
         self.app_store.shared()
     }
@@ -379,7 +380,13 @@ impl AppCore {
                 let _ = reply_tx.send(());
             }
             CoreMsg::PrepareForSuspend(reply_tx) => {
-                self.prepare_for_suspend();
+                if !self.prepare_for_suspend() {
+                    // Do not acknowledge a connection still holding a lock.
+                    // Disconnect the reply and stop the worker; the FFI joins
+                    // teardown before releasing its background allowance.
+                    self.shutdown();
+                    return false;
+                }
                 let _ = reply_tx.send(());
             }
             CoreMsg::HostBleActivity {
@@ -480,70 +487,6 @@ impl AppCore {
         }
     }
 
-    pub(super) fn prepare_for_suspend(&mut self) {
-        if self.calls.active.is_some() {
-            return;
-        }
-        // Set the gate first so any relay/internal events that arrive in
-        // the FFI queue after this point (whether already-queued or sent
-        // by an in-flight tokio task before disconnect lands) are dropped
-        // without touching SQLite. The persist below is the only write we
-        // want before iOS suspends us.
-        self.suspended = true;
-        self.cancel_all_publication_tasks();
-        self.private_contacts.stop_network();
-        self.push_debug_log("app.suspend", "pausing network and flushing storage");
-        self.pause_pending_linked_device();
-        // The iOS bridge retains the OS-managed radio while the core is asleep.
-        // Only an acknowledged, bounded native wake may process its packets.
-        if !self.keep_background_ble() {
-            self.stop_device_sync();
-        }
-        self.device_invite_poll_token = self.device_invite_poll_token.saturating_add(1);
-        self.message_expiry_token = self.message_expiry_token.saturating_add(1);
-        self.chat_mute_expiry_token = self.chat_mute_expiry_token.wrapping_add(1);
-        self.protocol_reconnect_token = self.protocol_reconnect_token.saturating_add(1);
-        self.protocol_liveness_token = self.protocol_liveness_token.saturating_add(1);
-        self.relay_status_watch_generation = self.relay_status_watch_generation.wrapping_add(1);
-        self.relay_status_watch_urls.clear();
-        self.relay_status_by_url.clear();
-        self.protocol_subscription_runtime = ProtocolSubscriptionRuntime::default();
-        self.relay_transport_runtime = RelayTransportRuntime::default();
-        self.cancel_people_fetches_for_suspend();
-        self.reset_direct_chat_capability_runtime();
-        self.profile_metadata_fetch_inflight.clear();
-        self.pending_relay_publish_inflight.clear();
-        self.relay_connected_count = 0;
-        self.all_relays_offline_since_secs = None;
-        self.debug_snapshot_write_generation = self.debug_snapshot_write_generation.wrapping_add(1);
-        self.debug_snapshot_write_inflight = false;
-        self.debug_snapshot_write_dirty = false;
-        self.state.busy.syncing_network = false;
-        self.persist_best_effort();
-
-        if let Some(logged_in) = self.logged_in.as_ref() {
-            let client = logged_in.client.clone();
-            self.runtime.block_on(async move {
-                let _ = tokio::time::timeout(Duration::from_millis(750), async move {
-                    client.unsubscribe_all().await;
-                    client.disconnect().await;
-                })
-                .await;
-            });
-        }
-
-        #[cfg(any(target_os = "ios", test))]
-        if let Some(service) = &self.attachment_service {
-            if let Err(error) = service.store.suspend() {
-                self.push_debug_log("attachment.suspend.error", error.to_string());
-            }
-        }
-        if let Err(error) = self.app_store.prepare_for_suspend() {
-            self.push_debug_log("storage.suspend.error", error.to_string());
-        }
-        self.rebuild_state();
-        self.emit_state();
-    }
     pub(super) fn handle_internal(&mut self, event: InternalEvent) {
         self.observe_fips_nearby_packet_arrival(&event);
         if self.suspended && !self.admit_background_ble_event(&event) {

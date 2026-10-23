@@ -10,7 +10,7 @@ const PAGE: usize = 4096;
 fn invalid() -> StorageError {
     StorageError::new("invalid record checkpoint")
 }
-fn err(error: impl std::fmt::Display) -> StorageError {
+fn err(error: impl std::fmt::Display + std::any::Any) -> StorageError {
     SqliteStorageAdapter::map_err(error)
 }
 fn number(value: i64) -> StorageResult<usize> {

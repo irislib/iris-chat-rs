@@ -222,6 +222,8 @@ pub struct FfiApp {
     /// supervisor swaps this when it recreates `AppCore` after a panic.
     shared_db: Arc<RwLock<Option<FfiDatabase>>>,
     core_worker: Mutex<Option<thread::JoinHandle<()>>>,
+    /// Disconnects only after the supervisor releases its core and runtime.
+    core_stopped: Receiver<()>,
     perf: FfiPerfCounters,
     queue_metrics: Arc<CoreQueueMetrics>,
     recovery: Arc<CoreRecoveryState>,
@@ -304,6 +306,7 @@ impl CoreQueueMetrics {
 
 #[derive(Default, Debug)]
 struct CoreRecoveryState {
+    startup_restore: Arc<crate::core::startup_restore::StartupRestoreControl>,
     restore_action: RwLock<Option<AppAction>>,
     restart_count: AtomicU64,
     last_panic: RwLock<Option<String>>,
@@ -440,6 +443,9 @@ impl FfiApp {
                 return;
             }
             self.recovery.remember_action(&action);
+            if matches!(action, AppAction::AppForegrounded) {
+                self.recovery.startup_restore.foregrounded();
+            }
             match &action {
                 AppAction::OpenChat { .. } => {
                     crate::perflog::event("foreground.enqueue.OpenChat");
@@ -772,6 +778,26 @@ impl FfiApp {
         self.prepare_for_suspend_inner(cfg!(target_os = "ios"));
     }
 
+    /// The host captures this epoch before dispatching its background worker.
+    pub fn prepare_for_suspend_at_epoch(&self, epoch: u64) {
+        self.prepare_for_suspend_with_grace(
+            cfg!(target_os = "ios"),
+            Duration::from_secs(5),
+            Some(epoch),
+        );
+    }
+
+    /// Capture when a native background allowance starts. A later foreground
+    /// invalidates this token, including callbacks from an expired allowance.
+    pub fn startup_restore_epoch(&self) -> u64 {
+        self.recovery.startup_restore.epoch()
+    }
+
+    /// Nonblocking: revoke only cold restoration, without the core/SQLite queue.
+    pub fn cancel_startup_restore(&self, epoch: u64) {
+        self.recovery.startup_restore.cancel(epoch);
+    }
+
     pub fn shutdown(&self) {
         self.shutdown_inner(cfg!(any(target_os = "ios", target_os = "macos")));
     }
@@ -964,12 +990,27 @@ impl FfiApp {
     }
 
     fn prepare_for_suspend_inner(&self, wait_for_completion: bool) {
+        self.prepare_for_suspend_with_grace(wait_for_completion, Duration::from_secs(5), None);
+    }
+
+    fn prepare_for_suspend_with_grace(
+        &self,
+        wait_for_completion: bool,
+        grace: Duration,
+        startup_epoch: Option<u64>,
+    ) {
         self.perf
             .prepare_for_suspend
             .fetch_add(1, Ordering::Relaxed);
         ffi_or("ffiapp.prepare_for_suspend", (), || {
-            // A failed startup has no worker to acknowledge this request.
-            if self.shared_db_read().is_none() {
+            // Failed construction has no worker. Teardown can also clear the
+            // public DB slot before dropping the core, so join that worker if
+            // present before an iOS caller treats this as a completed drain.
+            let has_database = self.shared_db_read().is_some();
+            if !has_database {
+                if wait_for_completion {
+                    self.shutdown_inner(true);
+                }
                 return;
             }
             let (reply_tx, reply_rx) = flume::bounded(1);
@@ -984,7 +1025,29 @@ impl FfiApp {
                 // iOS calls this off the main thread under a background task.
                 // A timeout is not an acknowledgement: releasing that task
                 // while SQLite still holds a lock causes RUNNINGBOARD 0xdead10cc.
-                let _ = reply_rx.recv();
+                let acknowledged = match reply_rx.recv_timeout(grace) {
+                    Ok(()) => true,
+                    Err(flume::RecvTimeoutError::Timeout) => {
+                        if let Some(epoch) = startup_epoch {
+                            self.recovery.startup_restore.cancel(epoch);
+                        }
+                        // FfiApp retains the foreground receiver for diagnostics.
+                        // A reply queued behind shutdown therefore need not
+                        // disconnect when the worker exits. Observe its lifetime
+                        // too, then join below rather than wait forever.
+                        flume::Selector::new()
+                            .recv(&reply_rx, |reply| reply.is_ok())
+                            .recv(&self.core_stopped, |_| false)
+                            .wait()
+                    }
+                    Err(flume::RecvTimeoutError::Disconnected) => false,
+                };
+                if !acknowledged {
+                    // A failed storage drain stops the core instead of sending
+                    // a false acknowledgement. Join its teardown so all shared
+                    // readers, transactions and connection handles are closed.
+                    self.shutdown_inner(true);
+                }
             } else {
                 // Other shells currently call this synchronously on their UI thread.
                 let _ = reply_rx.recv_timeout(Duration::from_secs(2));
@@ -1018,10 +1081,13 @@ struct CoreSupervisor {
 fn spawn_core_supervisor(
     core: AppCore,
     supervisor: CoreSupervisor,
+    completion: Sender<()>,
 ) -> std::io::Result<thread::JoinHandle<()>> {
     thread::Builder::new()
         .name("iris-core".to_string())
         .spawn(move || {
+            // Drop after core_slot, including unwinding and recovery failure.
+            let _completion = completion;
             crate::core::prewarm_default_social_graph();
             let mut core_slot = Some(core);
             // User actions and synchronous shell requests must not sit behind
@@ -1114,6 +1180,7 @@ fn recover_core_after_panic(supervisor: &CoreSupervisor, detail: String) -> Opti
     };
 
     core.set_shared_user_profiles(Arc::clone(&supervisor.shared_user_profiles));
+    core.startup_restore = Arc::clone(&supervisor.recovery.startup_restore);
     set_shared_db(&supervisor.shared_db, Some(core.shared_db()));
     if let Some(action) = supervisor.recovery.restore_action() {
         crate::perflog!(

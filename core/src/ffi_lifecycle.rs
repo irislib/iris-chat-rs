@@ -4,6 +4,7 @@ pub(super) fn new_ffi_app_inner(data_dir: String) -> Arc<FfiApp> {
     let (update_tx, update_rx) = flume::unbounded();
     let (foreground_tx, foreground_rx) = flume::unbounded();
     let (background_tx, background_rx) = flume::unbounded();
+    let (completion, core_stopped) = flume::bounded(1);
     let shared_state = Arc::new(RwLock::new(AppState::empty()));
     let queue_metrics = Arc::new(CoreQueueMetrics::default());
     let recovery = Arc::new(CoreRecoveryState::default());
@@ -20,6 +21,7 @@ pub(super) fn new_ffi_app_inner(data_dir: String) -> Arc<FfiApp> {
         shared_state.clone(),
     ) {
         Ok(mut core) => {
+            core.startup_restore = Arc::clone(&recovery.startup_restore);
             core.set_shared_user_profiles(Arc::clone(&shared_user_profiles));
             set_shared_db(&shared_db, Some(core.shared_db()));
             let spawn_result = spawn_core_supervisor(
@@ -37,6 +39,7 @@ pub(super) fn new_ffi_app_inner(data_dir: String) -> Arc<FfiApp> {
                     queue_metrics: queue_metrics.clone(),
                     recovery: recovery.clone(),
                 },
+                completion,
             );
             match spawn_result {
                 Ok(worker) => core_worker = Some(worker),
@@ -66,6 +69,7 @@ pub(super) fn new_ffi_app_inner(data_dir: String) -> Arc<FfiApp> {
         shared_db,
         shared_user_profiles,
         core_worker: Mutex::new(core_worker),
+        core_stopped,
         perf: FfiPerfCounters::default(),
         queue_metrics,
         recovery,
@@ -73,6 +77,7 @@ pub(super) fn new_ffi_app_inner(data_dir: String) -> Arc<FfiApp> {
 }
 
 pub(super) fn ffi_app_failure(message: String) -> Arc<FfiApp> {
+    let (_completion, core_stopped) = flume::bounded(1);
     let (_update_tx, update_rx) = flume::unbounded();
     let (foreground_tx, foreground_rx) = flume::unbounded();
     let (background_tx, background_rx) = flume::unbounded();
@@ -91,6 +96,7 @@ pub(super) fn ffi_app_failure(message: String) -> Arc<FfiApp> {
         shared_db: Arc::new(RwLock::new(None)),
         shared_user_profiles: Default::default(),
         core_worker: Mutex::new(None),
+        core_stopped,
         perf: FfiPerfCounters::default(),
         queue_metrics: Arc::new(CoreQueueMetrics::default()),
         recovery: Arc::new(CoreRecoveryState::default()),

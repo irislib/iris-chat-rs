@@ -120,6 +120,7 @@ mod lifecycle;
 mod mesh_pubsub;
 mod message_expiry;
 mod message_mutations;
+pub(crate) mod startup_restore;
 use message_mutations::{MessageMutation, MESSAGE_DELETE_KIND, MESSAGE_EDIT_KIND};
 pub(crate) mod desktop_read_notifications;
 mod mobile_push;
@@ -655,6 +656,8 @@ pub struct AppCore {
     logged_in: Option<LoggedInState>,
     private_contacts: private_contacts::PrivateContactRuntime,
     protocol_engine: Option<ProtocolEngine>,
+    pub(crate) startup_restore: Arc<startup_restore::StartupRestoreControl>,
+    deferred_startup_restore: Option<AppAction>,
     pending_linked_device: Option<PendingLinkedDeviceState>,
     pending_signer_login: Option<account_signer::PendingSignerLogin>,
     pending_remote_signer: Option<remote_signer::PendingRemoteSigner>,

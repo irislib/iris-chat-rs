@@ -251,6 +251,10 @@ impl AppStore {
             .conn
             .lock()
             .map_err(|_| anyhow::anyhow!("storage connection mutex poisoned"))?;
+        anyhow::ensure!(
+            _conn.is_autocommit(),
+            "storage transaction did not finish before suspension"
+        );
         #[cfg(not(target_os = "ios"))]
         _conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")?;
         Ok(())

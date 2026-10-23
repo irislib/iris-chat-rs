@@ -303,6 +303,9 @@ protocol RustAppClient: AnyObject {
     func exportSupportBundleJson() -> String
     func peerProfileDebug(ownerInput: String) -> PeerProfileDebugSnapshot?
     func prepareForSuspend()
+    func prepareForSuspendAtEpoch(epoch: UInt64)
+    func startupRestoreEpoch() -> UInt64?
+    func cancelStartupRestore(epoch: UInt64)
     func setFipsBleEnabled(_ enabled: Bool, nearbyLanEnabled: Bool)
     func shutdown() async
     func listenForUpdates(reconciler: AppReconciler)
@@ -409,6 +412,18 @@ final class LiveRustAppClient: RustAppClient {
         ffi.prepareForSuspendSafely()
     }
 
+    func prepareForSuspendAtEpoch(epoch: UInt64) {
+        ffi.prepareForSuspendAtEpochSafely(epoch: epoch)
+    }
+
+    func startupRestoreEpoch() -> UInt64? {
+        ffi.startupRestoreEpochSafely()
+    }
+
+    func cancelStartupRestore(epoch: UInt64) {
+        ffi.cancelStartupRestoreSafely(epoch: epoch)
+    }
+
     func setFipsBleEnabled(_ enabled: Bool, nearbyLanEnabled: Bool) {
 #if os(iOS)
         guard !enabled || !reviewDemoLinkActive else { return }
@@ -440,15 +455,23 @@ final class LiveRustAppClient: RustAppClient {
     }
 }
 
-private final class SuspendPreparationRunner: @unchecked Sendable {
+final class SuspendPreparationRunner: @unchecked Sendable {
     private let rust: RustAppClient
+    private let startupEpoch: UInt64?
 
     init(rust: RustAppClient) {
         self.rust = rust
+        // Capture before queuing the utility worker. A delayed background
+        // request must never acquire the epoch of a later foreground restore.
+        startupEpoch = rust.startupRestoreEpoch()
     }
 
     func prepareForSuspend() {
-        rust.prepareForSuspend()
+        if let startupEpoch {
+            rust.prepareForSuspendAtEpoch(epoch: startupEpoch)
+        } else {
+            rust.prepareForSuspend()
+        }
     }
 }
 
@@ -883,6 +906,11 @@ final class AppManager: ObservableObject {
     private var reconciliationGeneration: UInt64 = 0
     private var pendingNavigationOverride: PendingNavigationOverride?
     private var backgroundSuspendPrepared = false
+#if os(iOS)
+    var beginSuspendBackgroundTask: (IrisStartupRestoreCancellation) -> IrisSuspendBackgroundTask = {
+        IrisSuspendBackgroundTask(startupCancellation: $0)
+    }
+#endif
     private let startupLifecycle: IrisStartupLifecycle
     private var storedAccountBundle: StoredAccountBundle?
     // Startup updates can arrive before the credential lookup task runs.
@@ -983,6 +1011,7 @@ final class AppManager: ObservableObject {
             }
         }
         let resolvedRust = rust ?? resolvedRustFactory()
+        startupActivity.bindStartupRestore(to: resolvedRust)
         var initialState = resolvedRust.state()
 
         self.rust = resolvedRust
@@ -2244,7 +2273,7 @@ final class AppManager: ObservableObject {
         appSceneIsActive = false
         appIsBackgrounded = true
         dispatchToRust(.appBackgrounded)
-        let allowance = IrisSuspendBackgroundTask()
+        let allowance = beginStartupAwareBackgroundTask()
         Task { [weak self] in
             // Secure-input restore runs asynchronously. Give it a bounded launch
             // window, then flush even when iOS never creates a visible scene.
@@ -2266,7 +2295,7 @@ final class AppManager: ObservableObject {
         if let call = calls.call ?? state.call, call.phase != "ended" { return nil }
         guard force || !backgroundSuspendPrepared else { return nil }
         backgroundSuspendPrepared = true
-        let backgroundTask = IrisSuspendBackgroundTask()
+        let backgroundTask = beginStartupAwareBackgroundTask()
 
         // CoreBluetooth owns background scanning and retained connections.
         // Each delivered callback grants a bounded core/storage wake.
@@ -2289,6 +2318,14 @@ final class AppManager: ObservableObject {
             }
             backgroundTask.finish()
         }
+    }
+
+    private func beginStartupAwareBackgroundTask() -> IrisSuspendBackgroundTask {
+        let cancellation = IrisStartupRestoreCancellation()
+        cancellation.bind(to: rust)
+        let allowance = beginSuspendBackgroundTask(cancellation)
+        if appIsBackgrounded && !allowance.isActive { cancellation.expire() }
+        return allowance
     }
 #endif
 
@@ -3113,6 +3150,7 @@ final class AppManager: ObservableObject {
     func completeStartup(_ activity: IrisStartupBackgroundActivity, restoreSession: Bool = true) async {
         defer { activity.finish() }
         guard !localResetInFlight else { return }
+        activity.cancelIfBackgroundAllowanceUnavailable(backgrounded: appIsBackgrounded || activity.isBackgrounded)
         let restoreQueued = restoreSession && restorePersistedSession()
 #if os(iOS)
         if activity.isBackgrounded {

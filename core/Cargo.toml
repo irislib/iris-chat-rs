@@ -67,7 +67,7 @@ hashtree-network = "=0.2.88"
 hashtree-resolver = { version = "=0.2.86", features = ["nostr"] }
 hashtree-updater = { version = "=0.2.89", features = ["peer-storage"] }
 hmac = "0.12"
-iris-chat-protocol = { version = "=0.3.6", path = "../chat-protocol" }
+iris-chat-protocol = { version = "=0.3.7", path = "../chat-protocol" }
 nostr = { version = "0.44.7", default-features = false, features = ["std", "nip44"] }
 nostr-sdk = { version = "0.44.1", default-features = false, features = ["nip44"] }
 nostr-pubsub = "=0.1.18"
@@ -81,7 +81,7 @@ nostr-double-ratchet-pairwise-codec = "0.0.168"
 qrcode = { version = "0.14", default-features = false }
 rand = "0.8"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
-rusqlite = { version = "0.31", features = ["bundled"] }
+rusqlite = { version = "0.31", features = ["bundled", "hooks"] }
 rustls = { version = "0.23", default-features = false }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

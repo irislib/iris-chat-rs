@@ -24,13 +24,21 @@ use std::time::{Duration, Instant};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StorageError {
     message: String,
+    interrupted: bool,
 }
 
 impl StorageError {
     pub fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
+            interrupted: false,
         }
+    }
+
+    /// True only for a SQLite operation interrupted by its caller, never for
+    /// malformed records or an arbitrary error message with the same wording.
+    pub fn is_interrupted(&self) -> bool {
+        self.interrupted
     }
 }
 
@@ -365,8 +373,16 @@ impl SqliteStorageAdapter {
         }
     }
 
-    fn map_err<E: std::fmt::Display>(error: E) -> StorageError {
-        StorageError::new(error.to_string())
+    fn map_err<E: std::fmt::Display + std::any::Any>(error: E) -> StorageError {
+        let interrupted = matches!(
+            (&error as &dyn std::any::Any).downcast_ref::<rusqlite::Error>(),
+            Some(rusqlite::Error::SqliteFailure(inner, _))
+                if inner.code == rusqlite::ErrorCode::OperationInterrupted
+        );
+        StorageError {
+            message: error.to_string(),
+            interrupted,
+        }
     }
 }
 

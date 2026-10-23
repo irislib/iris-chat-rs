@@ -57,6 +57,7 @@ pub(crate) mod tests {
     include!("protocol_engine/checkpoint_pending_tests.rs");
     include!("protocol_engine/checkpoint_fanout_tests.rs");
     include!("protocol_engine/checkpoint_growth_tests.rs");
+    include!("protocol_engine/checkpoint_startup_tests.rs");
     include!("protocol_engine/checkpoint_retry_clock_tests.rs");
     include!("protocol_engine/fanout_retry_tests.rs");
     include!("protocol_engine/fanout_retry_deadline_tests.rs");

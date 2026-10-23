@@ -41,5 +41,85 @@ final class IrisSuspendBackgroundTaskTests: XCTestCase {
         task.finish()
         XCTAssertFalse(ended)
     }
+
+    @MainActor
+    func testExpirationCancelsCapturedStartupEpochBeforeReturning() async {
+        let rust = MockRustApp()
+        let cancellation = IrisStartupRestoreCancellation()
+        cancellation.bind(to: rust)
+        var expire: (@Sendable () -> Void)?
+        var ends = 0
+        let ended = expectation(description: "expired allowance ended")
+        let task = IrisSuspendBackgroundTask(startupCancellation: cancellation, begin: {
+            expire = $0
+            return .init(rawValue: 710)
+        }, end: { _ in ends += 1; ended.fulfill() })
+        expire?()
+        XCTAssertEqual(rust.acceptedStartupRestoreCancellationEpochs, [0],
+                       "cancellation must not wait for the MainActor finish task")
+        await fulfillment(of: [ended], timeout: 2)
+        task.finish()
+        expire?()
+        XCTAssertEqual(rust.startupRestoreCancellationEpochs, [0])
+        XCTAssertEqual(ends, 1)
+    }
+
+    @MainActor
+    func testExpirationBeforeBindingSurvivesAllowanceEnding() async {
+        let rust = MockRustApp()
+        let cancellation = IrisStartupRestoreCancellation()
+        var expire: (@Sendable () -> Void)?
+        let ended = expectation(description: "unbound allowance ended")
+        let task = IrisSuspendBackgroundTask(startupCancellation: cancellation, begin: {
+            expire = $0
+            return .init(rawValue: 711)
+        }, end: { _ in ended.fulfill() })
+        expire?()
+        await fulfillment(of: [ended], timeout: 2)
+        XCTAssertFalse(task.isActive)
+        XCTAssertTrue(rust.startupRestoreCancellationEpochs.isEmpty)
+        cancellation.bind(to: rust)
+        cancellation.bind(to: rust)
+        XCTAssertEqual(rust.acceptedStartupRestoreCancellationEpochs, [0])
+    }
+
+    @MainActor
+    func testCompletedAllowanceDisarmsLateExpiration() {
+        let rust = MockRustApp()
+        let cancellation = IrisStartupRestoreCancellation()
+        cancellation.bind(to: rust)
+        var expire: (@Sendable () -> Void)?
+        var ends = 0
+        let task = IrisSuspendBackgroundTask(startupCancellation: cancellation, begin: {
+            expire = $0
+            return .init(rawValue: 712)
+        }, end: { _ in ends += 1 })
+        task.finish()
+        expire?()
+        XCTAssertTrue(rust.startupRestoreCancellationEpochs.isEmpty)
+        XCTAssertEqual(ends, 1)
+    }
+
+    @MainActor
+    func testForegroundInvalidatesCapturedExpirationToken() throws {
+        let rust = MockRustApp()
+        let cancellation = IrisStartupRestoreCancellation()
+        cancellation.bind(to: rust)
+        try rust.dispatch(action: .appForegrounded)
+        cancellation.expire()
+        XCTAssertEqual(rust.startupRestoreCancellationEpochs, [0],
+                       "expiration must retain the old epoch instead of sampling a new one")
+        XCTAssertTrue(rust.acceptedStartupRestoreCancellationEpochs.isEmpty)
+    }
+
+    @MainActor
+    func testNormalCompletionBeforeBindingDisarmsCancellation() {
+        let rust = MockRustApp()
+        let cancellation = IrisStartupRestoreCancellation()
+        cancellation.finish()
+        cancellation.bind(to: rust)
+        cancellation.expire()
+        XCTAssertTrue(rust.startupRestoreCancellationEpochs.isEmpty)
+    }
 }
 #endif

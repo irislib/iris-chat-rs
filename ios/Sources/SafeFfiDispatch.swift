@@ -180,6 +180,37 @@ extension FfiApp {
         }
     }
 
+    func prepareForSuspendAtEpochSafely(epoch: UInt64) {
+        ffiVoid("ffiapp.prepareForSuspendAtEpoch") { status in
+            uniffi_iris_chat_core_fn_method_ffiapp_prepare_for_suspend_at_epoch(
+                self.uniffiClonePointer(), epoch, status
+            )
+        }
+    }
+
+    func startupRestoreEpochSafely() -> UInt64? {
+        do {
+            uniffiEnsureIrisChatCoreInitialized()
+            var status = makeRustCallStatus()
+            let epoch = uniffi_iris_chat_core_fn_method_ffiapp_startup_restore_epoch(
+                self.uniffiClonePointer(), &status
+            )
+            try checkRustCallStatus(status)
+            return epoch
+        } catch {
+            logSafeFfiFailure("ffiapp.startupRestoreEpoch", error)
+            return nil
+        }
+    }
+
+    func cancelStartupRestoreSafely(epoch: UInt64) {
+        ffiVoid("ffiapp.cancelStartupRestore") { status in
+            uniffi_iris_chat_core_fn_method_ffiapp_cancel_startup_restore(
+                self.uniffiClonePointer(), epoch, status
+            )
+        }
+    }
+
     @discardableResult
     func listenForUpdatesSafely(reconciler: AppReconciler) -> Bool {
         ffiVoid("ffiapp.listenForUpdates") { status in

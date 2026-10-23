@@ -1,13 +1,16 @@
 #if os(iOS)
 import UIKit
 
-/// Keep the suspension allowance until Rust acknowledges that storage is idle.
+/// Normal completion follows the storage acknowledgement. Expiration requests
+/// cold-restore cancellation directly before releasing the finite OS allowance.
 @MainActor
 final class IrisSuspendBackgroundTask {
     private var identifier: UIBackgroundTaskIdentifier = .invalid
     private let endTask: (UIBackgroundTaskIdentifier) -> Void
+    private let startupCancellation: IrisStartupRestoreCancellation
 
     init(
+        startupCancellation: IrisStartupRestoreCancellation = IrisStartupRestoreCancellation(),
         begin: (@escaping @Sendable () -> Void) -> UIBackgroundTaskIdentifier = {
             UIApplication.shared.beginBackgroundTask(withName: "IrisSuspend", expirationHandler: $0)
         },
@@ -16,7 +19,9 @@ final class IrisSuspendBackgroundTask {
         }
     ) {
         endTask = end
+        self.startupCancellation = startupCancellation
         identifier = begin { [weak self] in
+            startupCancellation.expire()
             Task { @MainActor in self?.finish() }
         }
     }
@@ -24,6 +29,7 @@ final class IrisSuspendBackgroundTask {
     var isActive: Bool { identifier != .invalid }
 
     func finish() {
+        startupCancellation.finish()
         guard identifier != .invalid else { return }
         let completed = identifier
         identifier = .invalid

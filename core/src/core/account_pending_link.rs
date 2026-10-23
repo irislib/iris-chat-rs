@@ -56,6 +56,7 @@ impl AppCore {
         device_nsec: &str,
         approval_bootstrap_json: &str,
     ) {
+        self.deferred_startup_restore = None;
         self.state.busy.restoring_session = true;
         self.emit_state();
         let result = (|| -> anyhow::Result<()> {

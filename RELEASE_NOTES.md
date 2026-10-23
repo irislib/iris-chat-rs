@@ -9,15 +9,21 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 - Avoid repeating signature checks for unchanged public discovery records. Keep a bounded cache within each author's message-server configuration, recompute every event ID, and apply current filters on every response.
 - Discard cached verification when discovery settings change. Preserve separate author scopes, fresh anonymous authentication, restart recovery and explicit redelivery.
 - Add tampering, eviction, configuration-change and serialized request tests for retained discovery verification.
-- Update the CLI source package to 0.1.49.
+- Recover the saved checkpoint layout during cold-start restore to avoid rewriting unchanged queued payloads.
+- Make startup database work interruptible during suspension and retry saved-account restoration on foreground return, preserving committed state.
+- Update the protocol source package to 0.3.7 and the CLI source package to 0.1.49.
 
 ### Apple
 
 - Reduce repeated processing while checking for connection updates.
+- Reduce disk writes while restoring saved chats.
+- Safely pause loading saved chats in the background and retry when you return.
 
 ### Zapstore
 
 - Reduce repeated processing while checking for connection updates.
+- Reduce disk writes while restoring saved chats.
+- Safely pause loading saved chats in the background and retry when you return.
 
 ## v2026.10.23.1
 

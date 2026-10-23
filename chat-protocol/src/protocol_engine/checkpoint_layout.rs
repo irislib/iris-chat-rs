@@ -24,6 +24,7 @@ struct CheckpointRecord {
     large: bool,
 }
 
+#[cfg(test)]
 fn checkpoint_records(json: &str) -> Vec<CheckpointRecord> {
     checkpoint_records_with_cached_pending(json, 0, None)
 }
@@ -42,6 +43,15 @@ fn checkpoint_records_with_cached_fields(
     pending: Option<&SerializedPendingGroupMessages>,
     fanouts: &[Arc<serde_json::value::RawValue>],
 ) -> Vec<CheckpointRecord> {
+    scan_checkpoint_records(json, initial_depth, pending, fanouts).0
+}
+
+fn scan_checkpoint_records(
+    json: &str,
+    initial_depth: usize,
+    pending: Option<&SerializedPendingGroupMessages>,
+    fanouts: &[Arc<serde_json::value::RawValue>],
+) -> (Vec<CheckpointRecord>, Option<(usize, usize)>) {
     let mut records = Vec::new();
     let mut stack: Vec<(u8, usize)> = Vec::new();
     let mut quoted = false;
@@ -50,6 +60,18 @@ fn checkpoint_records_with_cached_fields(
     let mut pending_start = None;
     let mut fanout_start = None;
     let mut fanout_index = 0;
+    // Only our current leading-field order identifies a separately laid-out
+    // core. Legacy/reordered JSON keeps the ordinary whole-value fallback.
+    let leading_fields: [&[u8]; 4] = [
+        b"\"version\"",
+        b"\"pending_group_sender_key_messages\"",
+        b"\"pending_group_fanouts\"",
+        b"\"pending_inbound\"",
+    ];
+    let mut leading_field = Some(0);
+    let mut core_queue_start = None;
+    let mut core_start = None;
+    let mut core_end = None;
     let bytes = json.as_bytes();
     let mut index = 0;
     #[cfg(test)]
@@ -93,6 +115,33 @@ fn checkpoint_records_with_cached_fields(
                 escaped = true;
             } else if character == b'"' {
                 quoted = false;
+                if initial_depth == 0 && stack.len() == 1 && stack[0].0 == b'{' {
+                    let mut value = index + 1;
+                    while bytes.get(value).is_some_and(u8::is_ascii_whitespace) {
+                        value += 1;
+                    }
+                    if bytes.get(value) == Some(&b':') {
+                        if let Some(field) = leading_field {
+                            if let Some(expected) = leading_fields.get(field) {
+                                if &bytes[string_start..=index] != *expected {
+                                    leading_field = None;
+                                } else {
+                                    leading_field = Some(field + 1);
+                                    if field == 3 {
+                                        value += 1;
+                                        while bytes.get(value).is_some_and(u8::is_ascii_whitespace)
+                                        {
+                                            value += 1;
+                                        }
+                                        if bytes.get(value) == Some(&b'[') {
+                                            core_queue_start = Some(value);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
                 if initial_depth == 0
                     && stack.len() == 3
                     && stack.last().is_some_and(|(kind, _)| *kind == b'{')
@@ -144,6 +193,12 @@ fn checkpoint_records_with_cached_fields(
             b'{' | b'[' => stack.push((character, index)),
             b'}' | b']' => {
                 if let Some((kind, start)) = stack.pop() {
+                    if kind == b'[' && stack.len() == 1 && core_queue_start == Some(start) {
+                        core_start = Some(index + 1);
+                    }
+                    if kind == b'{' && stack.is_empty() {
+                        core_end = Some(index + 1);
+                    }
                     if kind == b'{'
                         && stack.len() + initial_depth <= 3
                         && stack.last().is_some_and(|(kind, _)| *kind == b'[')
@@ -167,7 +222,10 @@ fn checkpoint_records_with_cached_fields(
     }
     #[cfg(test)]
     CHECKPOINT_LAYOUT_SCANNED_BYTES.with(|count| count.set(count.get() + scanned_bytes));
-    records
+    (
+        records,
+        core_start.zip(core_end).filter(|(start, end)| start <= end),
+    )
 }
 
 impl ProtocolCheckpointLayout {
@@ -175,13 +233,27 @@ impl ProtocolCheckpointLayout {
         if json.len() < CHECKPOINT_RESERVE {
             return Self::default();
         }
+        let (records, core_bounds) = scan_checkpoint_records(json, 0, None, &[]);
+        let core = core_bounds.map(|(start, end)| {
+            let prefix = format!(
+                "{{\"version\":{},\"pending_group_sender_key_messages\":[],\"pending_group_fanouts\":[],\"pending_inbound\":[]",
+                PROTOCOL_ENGINE_STATE_VERSION
+            );
+            Box::new(Self {
+                record_ends: records.iter().filter(|record| record.end > start)
+                    .map(|record| prefix.len() + record.padded_end - start).collect(),
+                // Core and whole-checkpoint trailing spaces are indistinguishable
+                // after materialization. Keep the exact record boundaries, but
+                // leave that final slack in the whole-checkpoint reserve. This
+                // can normalize the last core chunk once, never repack its body.
+                bytes: prefix.len() + end - start,
+                core: None,
+            })
+        });
         Self {
-            record_ends: checkpoint_records(json)
-                .iter()
-                .map(|record| record.padded_end)
-                .collect(),
+            record_ends: records.iter().map(|record| record.padded_end).collect(),
             bytes: json.len(),
-            core: None,
+            core,
         }
     }
 }

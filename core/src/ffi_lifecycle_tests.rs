@@ -138,3 +138,85 @@ fn suspend_returns_when_startup_failed_without_a_core_worker() {
     });
     assert!(finished_rx.recv_timeout(Duration::from_secs(1)).is_ok());
 }
+
+#[test]
+fn suspension_queued_after_shutdown_waits_for_worker_close_not_its_retained_reply() {
+    fn wait_until(condition: impl Fn() -> bool) -> bool {
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while !condition() {
+            if std::time::Instant::now() >= deadline {
+                return false;
+            }
+            thread::sleep(Duration::from_millis(1));
+        }
+        true
+    }
+
+    let directory = tempfile::tempdir().unwrap();
+    let app = new_ffi_app_inner(directory.path().to_string_lossy().into_owned());
+    let database = app.shared_db_read().as_ref().unwrap().writer.clone();
+    let released_database = Arc::downgrade(&database);
+    let database_work = database.lock().unwrap();
+    let (first_drain_tx, _first_drain_rx) = flume::bounded(1);
+    app.foreground_tx
+        .send(CoreMsg::PrepareForSuspend(first_drain_tx))
+        .unwrap();
+    let draining = wait_until(|| {
+        app.queue_metrics.batch_active.load(Ordering::Acquire) && app.foreground_rx.is_empty()
+    });
+
+    let shutdown_app = app.clone();
+    let (shutdown_tx, shutdown_rx) = flume::bounded(1);
+    let shutdown = thread::spawn(move || {
+        shutdown_app.shutdown_and_wait();
+        let database_closed = shutdown_app.shared_db_read().is_none();
+        shutdown_tx.send(database_closed).unwrap();
+    });
+    let shutdown_queued = wait_until(|| app.foreground_rx.len() == 1);
+    // Keep the second suspension beyond the next prefetched batch. Otherwise
+    // its reply would be dropped with that batch and miss the retained-receiver
+    // failure entirely. None of these trailing shutdown messages will run.
+    for _ in 1..CORE_FOREGROUND_BATCH_LIMIT {
+        app.foreground_tx.send(CoreMsg::Shutdown(None)).unwrap();
+    }
+    let suspend_app = app.clone();
+    let (suspend_tx, suspend_rx) = flume::bounded(1);
+    let suspension = thread::spawn(move || {
+        suspend_app.prepare_for_suspend_with_grace(true, Duration::from_millis(20), None);
+        let database_closed = suspend_app.shared_db_read().is_none();
+        suspend_tx.send(database_closed).unwrap();
+    });
+    let suspension_queued =
+        wait_until(|| app.foreground_rx.len() == CORE_FOREGROUND_BATCH_LIMIT + 1);
+    // Keep both requests pending beyond the second request's short grace.
+    // Shutdown is ahead of it, so its reply need never be processed; the app's
+    // retained foreground receiver must not keep the FFI wait alive forever.
+    let early_suspend = suspend_rx.recv_timeout(Duration::from_millis(60)).ok();
+    let early_shutdown = shutdown_rx.try_recv().ok();
+    drop(database_work);
+    drop(database);
+
+    let shutdown_closed =
+        early_shutdown.or_else(|| shutdown_rx.recv_timeout(Duration::from_secs(2)).ok());
+    let suspension_closed =
+        early_suspend.or_else(|| suspend_rx.recv_timeout(Duration::from_secs(2)).ok());
+    assert!(
+        draining && shutdown_queued && suspension_queued,
+        "queue order not established"
+    );
+    assert!(early_suspend.is_none() && early_shutdown.is_none());
+    assert_eq!(shutdown_closed, Some(true));
+    assert_eq!(suspension_closed, Some(true));
+    shutdown.join().unwrap();
+    suspension.join().unwrap();
+    assert!(app.core_worker.lock().unwrap().is_none());
+    assert!(matches!(
+        app.foreground_rx.try_recv(),
+        Ok(CoreMsg::PrepareForSuspend(_))
+    ));
+    assert!(released_database.upgrade().is_none());
+    let reopened = rusqlite::Connection::open(directory.path().join("core.sqlite3")).unwrap();
+    reopened.busy_timeout(Duration::ZERO).unwrap();
+    reopened.execute_batch("BEGIN IMMEDIATE; ROLLBACK").unwrap();
+    assert!(reopened.is_autocommit());
+}

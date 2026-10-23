@@ -17,24 +17,11 @@ struct DiscoveryRouteEdges {
 }
 
 impl DiscoveryRouteEdges {
-    fn observe(&mut self, peers: &[FipsEndpointPeer]) -> Vec<(PublicKey, bool)> {
-        self.update(
-            peers
-                .iter()
-                .filter_map(|peer| {
-                    let author = PublicKey::from_hex(&peer_key_hex(&peer.npub)?).ok()?;
-                    Some((
-                        author,
-                        DiscoveryPeerState {
-                            connected: peer.connected,
-                            retries: peer.direct_probe_retry_count,
-                            failures: peer.nostr_traversal_consecutive_failures,
-                        },
-                    ))
-                })
-                .collect(),
-            std::time::Instant::now(),
-        )
+    fn observe(
+        &mut self,
+        peers: impl Iterator<Item = (PublicKey, DiscoveryPeerState)>,
+    ) -> Vec<(PublicKey, bool)> {
+        self.update(peers.collect(), std::time::Instant::now())
     }
 
     fn update(
@@ -142,7 +129,23 @@ pub(super) async fn run(
                 return;
             }
         };
-        for (author, requires_pending_work) in discovery_edges.observe(&peers) {
+        // Keep the validated curve key only for this snapshot. Nostr's byte
+        // wrapper needs no hex round trip after the FIPS decoder validated it.
+        let peers = validated_peer_snapshot(peers, |npub| {
+            let key = fips_core::decode_npub(npub)?;
+            Ok::<_, fips_core::IdentityError>((key, PublicKey::from_byte_array(key.serialize())))
+        });
+        let states = peers.iter().map(|(peer, (_, author))| {
+            (
+                *author,
+                DiscoveryPeerState {
+                    connected: peer.connected,
+                    retries: peer.direct_probe_retry_count,
+                    failures: peer.nostr_traversal_consecutive_failures,
+                },
+            )
+        });
+        for (author, requires_pending_work) in discovery_edges.observe(states) {
             let _ = core_sender.send(CoreMsg::Internal(Box::new(
                 InternalEvent::FipsPeerDiscoveryNeeded {
                     generation,
@@ -153,13 +156,11 @@ pub(super) async fn run(
         }
         let mut current_links = peers
             .iter()
-            .filter(|peer| peer.connected)
-            .filter_map(|peer| {
-                Some(FipsNearbyLinkSnapshot {
-                    device_pubkey_hex: peer_key_hex(&peer.npub)?,
-                    transport_type: peer.transport_type.clone().unwrap_or_default(),
-                    transport_addr: peer.transport_addr.clone(),
-                })
+            .filter(|(peer, _)| peer.connected)
+            .map(|(peer, (_, author))| FipsNearbyLinkSnapshot {
+                device_pubkey_hex: author.to_hex(),
+                transport_type: peer.transport_type.clone().unwrap_or_default(),
+                transport_addr: peer.transport_addr.clone(),
             })
             .collect::<Vec<_>>();
         current_links.sort_by(|left, right| {
@@ -168,10 +169,8 @@ pub(super) async fn run(
                 .then_with(|| left.transport_type.cmp(&right.transport_type))
         });
         report_links(&core_sender, generation, &mut reported_links, current_links);
-        for peer in peers.into_iter().filter(|peer| peer.connected) {
-            let Ok(identity) = FipsPeerIdentity::from_npub(&peer.npub) else {
-                continue;
-            };
+        for (peer, (key, _)) in peers.into_iter().filter(|(peer, _)| peer.connected) {
+            let mut identity = None;
             let initialization = (peer.link_id, bootstrap_revision);
             let initialized = if initialized_links.get(&peer.npub) == Some(&initialization) {
                 true
@@ -194,6 +193,11 @@ pub(super) async fn run(
                             )
                         })
                         .collect();
+                    let identity = *identity.get_or_insert_with(|| {
+                        #[cfg(test)]
+                        record_identity_construction();
+                        FipsPeerIdentity::from_pubkey(key)
+                    });
                     endpoint
                         .send_datagram_batch_to_peer(identity, datagrams)
                         .await
@@ -227,6 +231,11 @@ pub(super) async fn run(
                     FipsEndpointOutboundDatagram::new(FIPS_NEARBY_PORT, FIPS_NEARBY_PORT, data)
                 })
                 .collect();
+            let identity = *identity.get_or_insert_with(|| {
+                #[cfg(test)]
+                record_identity_construction();
+                FipsPeerIdentity::from_pubkey(key)
+            });
             if endpoint
                 .send_datagram_batch_to_peer(identity, datagrams)
                 .await
@@ -241,9 +250,24 @@ pub(super) async fn run(
     }
 }
 
-fn peer_key_hex(npub: &str) -> Option<String> {
-    // Reporting needs only the validated public key, not routing or ECDH state.
-    Some(fips_core::decode_npub(npub).ok()?.to_string())
+fn validated_peer_snapshot<K, E>(
+    peers: Vec<FipsEndpointPeer>,
+    mut decode: impl FnMut(&str) -> Result<K, E>,
+) -> Vec<(FipsEndpointPeer, K)> {
+    peers
+        .into_iter()
+        .filter_map(|peer| decode(&peer.npub).ok().map(|key| (peer, key)))
+        .collect()
+}
+
+#[cfg(test)]
+thread_local! {
+    static IDENTITY_CONSTRUCTIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+fn record_identity_construction() {
+    IDENTITY_CONSTRUCTIONS.with(|count| count.set(count.get() + 1));
 }
 
 fn report_links(
@@ -271,6 +295,36 @@ mod tests {
             connected,
             retries,
             failures,
+        }
+    }
+
+    fn snapshot_peer(npub: String, link_id: u64) -> FipsEndpointPeer {
+        FipsEndpointPeer {
+            npub,
+            node_addr: fips_core::NodeAddr::from_bytes([7; 16]),
+            connected: true,
+            transport_addr: Some(format!("127.0.0.1:{}", 1000 + link_id)),
+            transport_type: Some("udp".into()),
+            link_id,
+            srtt_ms: None,
+            srtt_age_ms: None,
+            packets_sent: 0,
+            packets_recv: 0,
+            bytes_sent: 0,
+            bytes_recv: 0,
+            rekey_in_progress: false,
+            rekey_draining: false,
+            current_k_bit: None,
+            last_outbound_route: None,
+            direct_probe_pending: false,
+            direct_probe_after_ms: None,
+            direct_probe_retry_count: 0,
+            direct_probe_auto_reconnect: false,
+            direct_probe_expires_at_ms: None,
+            nostr_traversal_consecutive_failures: 0,
+            nostr_traversal_in_cooldown: false,
+            nostr_traversal_cooldown_until_ms: None,
+            nostr_traversal_last_observed_skew_ms: None,
         }
     }
 
@@ -404,17 +458,83 @@ mod tests {
             .unwrap()
             .pubkey()
             .to_string();
-        assert_eq!(peer_key_hex(&npub), Some(expected.clone()));
-        assert_eq!(peer_key_hex(&npub.to_uppercase()), Some(expected));
         let invalid_curve_key = PublicKey::from_byte_array([0xff; 32]).to_bech32().unwrap();
-        for invalid in [
+        let mut peers = vec![
+            snapshot_peer(npub.clone(), 1),
+            snapshot_peer(npub.to_uppercase(), 2),
+        ];
+        peers[1].connected = false;
+        peers[1].direct_probe_retry_count = 3;
+        for (index, invalid) in [
             "",
             "npub1invalid",
             "nsec1invalid",
             invalid_curve_key.as_str(),
-        ] {
-            assert!(peer_key_hex(invalid).is_none(), "invalid peer key accepted");
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            peers.push(snapshot_peer(invalid.into(), 3 + index as u64));
         }
+        let mut decodes = 0;
+        for _ in 0..2 {
+            let validated = validated_peer_snapshot(peers.clone(), |npub| {
+                decodes += 1;
+                fips_core::decode_npub(npub)
+            });
+            assert_eq!(
+                validated.len(),
+                2,
+                "malformed and invalid-curve peers must be excluded"
+            );
+            assert_eq!(
+                validated
+                    .iter()
+                    .map(|(peer, _)| peer.link_id)
+                    .collect::<Vec<_>>(),
+                [1, 2]
+            );
+            let mut edges = DiscoveryRouteEdges::default();
+            let mut reports = Vec::new();
+            let mut states = Vec::new();
+            for (peer, key) in validated {
+                assert_eq!(
+                    peer.npub,
+                    if peer.link_id == 1 {
+                        npub.clone()
+                    } else {
+                        npub.to_uppercase()
+                    }
+                );
+                let author = PublicKey::from_byte_array(key.serialize());
+                assert_eq!(author, keys.public_key());
+                assert_eq!(
+                    author.to_hex(),
+                    expected,
+                    "report contents must match the prior validated formatter"
+                );
+                if peer.connected {
+                    reports.push(author.to_hex());
+                }
+                states.push((
+                    author,
+                    discovery_state(peer.connected, peer.direct_probe_retry_count, 0),
+                ));
+            }
+            assert_eq!(reports, vec![expected.clone()]);
+            assert!(edges.observe(states.into_iter()).is_empty());
+            let last = edges.previous.get(&keys.public_key()).unwrap();
+            assert!(
+                !last.connected,
+                "duplicate authors retain the last snapshot entry"
+            );
+            assert_eq!(last.retries, 3);
+        }
+        assert_eq!(
+            decodes,
+            peers.len() * 2,
+            "exactly one real FIPS decode per entry per snapshot"
+        );
     }
 
     async fn local_endpoint(rendezvous: SocketAddrV4) -> Arc<FipsEndpoint> {
@@ -456,6 +576,74 @@ mod tests {
                 _ => panic!("expected FIPS connection snapshot"),
             }
         }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn routing_identity_is_idle_until_send_and_shared_by_bootstrap_and_outbox() {
+        IDENTITY_CONSTRUCTIONS.with(|count| count.set(0));
+        let SocketAddr::V4(rendezvous) = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0))
+            .unwrap()
+            .local_addr()
+            .unwrap()
+        else {
+            panic!("expected IPv4 rendezvous");
+        };
+        let endpoint = local_endpoint(rendezvous).await;
+        let sibling = local_endpoint(rendezvous).await;
+        let receiver = sibling
+            .register_service_receiver(FIPS_NEARBY_PORT)
+            .await
+            .unwrap();
+        let bootstrap = Arc::new(RwLock::new(Vec::new()));
+        let outbox = Arc::new(RwLock::new(FipsNearbyOutbox::default()));
+        let (sender, updates) = flume::unbounded();
+        let monitor = tokio::spawn(run(
+            endpoint.clone(),
+            bootstrap.clone(),
+            outbox.clone(),
+            sender,
+            1,
+            true,
+        ));
+        let (_, links) = next_snapshot(&updates).await;
+        assert_eq!(links.len(), 1);
+        assert_eq!(
+            IDENTITY_CONSTRUCTIONS.with(|count| count.get()),
+            0,
+            "an idle authenticated link needs no routing identity"
+        );
+
+        let bootstrap_bytes = b"new bootstrap revision".to_vec();
+        let outbox_bytes = b"queued nearby delivery".to_vec();
+        *bootstrap.write().unwrap() = vec![bootstrap_bytes.clone()];
+        outbox
+            .write()
+            .unwrap()
+            .insert("pending".into(), outbox_bytes.clone());
+        let mut received = HashSet::new();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while received.len() < 2 {
+                let mut datagrams = Vec::new();
+                receiver.recv_batch_into(&mut datagrams, 8).await.unwrap();
+                received.extend(
+                    datagrams
+                        .into_iter()
+                        .map(|datagram| datagram.data.into_vec()),
+                );
+            }
+        })
+        .await
+        .expect("bootstrap and queued data were not sent");
+        assert_eq!(received, HashSet::from([bootstrap_bytes, outbox_bytes]));
+        monitor.abort();
+        let _ = monitor.await;
+        assert_eq!(
+            IDENTITY_CONSTRUCTIONS.with(|count| count.get()),
+            1,
+            "both nonempty batches share one routing identity within the peer snapshot"
+        );
+        endpoint.shutdown().await.unwrap();
+        sibling.shutdown().await.unwrap();
     }
 
     #[tokio::test]

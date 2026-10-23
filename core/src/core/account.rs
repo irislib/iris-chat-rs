@@ -10,6 +10,7 @@ use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 
 impl AppCore {
     pub(super) fn create_account(&mut self, name: &str) {
+        self.deferred_startup_restore = None;
         self.state.busy.creating_account = true;
         self.emit_state();
 
@@ -41,6 +42,13 @@ impl AppCore {
         // Lift the suspend gate even when not logged in so a re-foregrounded
         // unauthenticated app can process events again.
         self.suspended = false;
+        // The FFI grants a new epoch when foreground is enqueued. Do not clear
+        // cancellation here: a newer allowance may already have expired while
+        // this action waited behind the previous restore.
+        if let Some(action) = self.deferred_startup_restore.take() {
+            self.handle_action(action);
+            return;
+        }
         #[cfg(any(target_os = "ios", test))]
         if let Some(service) = &self.attachment_service {
             if let Err(error) = service.store.resume() {
@@ -113,6 +121,7 @@ impl AppCore {
     }
 
     pub(super) fn restore_primary_session(&mut self, owner_nsec: &str) {
+        self.deferred_startup_restore = None;
         self.state.busy.restoring_session = true;
         self.emit_state();
 
@@ -122,6 +131,15 @@ impl AppCore {
                 if let Err(error) =
                     self.start_primary_session(owner_keys, Keys::generate(), true, false)
                 {
+                    if error.is::<startup_restore::StartupRestoreDeferred>() {
+                        self.deferred_startup_restore = Some(AppAction::RestoreSession {
+                            owner_nsec: owner_nsec.to_owned(),
+                        });
+                        self.state.toast = None;
+                        self.rebuild_state();
+                        self.emit_state();
+                        return;
+                    }
                     self.state.toast = Some(error.to_string());
                 } else {
                     self.fetch_missing_profile_metadata(&owner_pubkey_hex, "session_restore");
@@ -143,6 +161,12 @@ impl AppCore {
         owner_pubkey_hex: &str,
         device_nsec: &str,
     ) {
+        self.deferred_startup_restore = None;
+        let restore_action = AppAction::RestoreAccountBundle {
+            owner_nsec: owner_nsec.clone(),
+            owner_pubkey_hex: owner_pubkey_hex.to_owned(),
+            device_nsec: device_nsec.to_owned(),
+        };
         self.push_debug_log(
             "session.restore_bundle",
             format!(
@@ -191,6 +215,14 @@ impl AppCore {
         })();
 
         if let Err(error) = result {
+            if error.is::<startup_restore::StartupRestoreDeferred>() {
+                self.deferred_startup_restore = Some(restore_action);
+                self.state.toast = None;
+                self.state.busy.restoring_session = true;
+                self.rebuild_state();
+                self.emit_state();
+                return;
+            }
             self.state.toast = Some(error.to_string());
         }
 
@@ -709,20 +741,35 @@ impl AppCore {
             owner_pubkey.to_hex(),
             device_pubkey.to_hex(),
         )) as Arc<dyn StorageAdapter>;
-        self.private_chat_invites = load_private_chat_invites(storage.as_ref())?;
-        self.issued_invites = super::issued_invites::load_issued_invites(storage.as_ref())?;
-        self.pending_invite_upload = None;
-        self.pending_private_invite_responses =
-            load_pending_private_invite_responses(storage.as_ref())?;
+        let restore_guard = if allow_restore {
+            Some(self.startup_restore.begin(self.app_store.shared())?)
+        } else {
+            None
+        };
+        let restored = (|| -> anyhow::Result<ProtocolEngine> {
+            self.private_chat_invites = load_private_chat_invites(storage.as_ref())?;
+            self.issued_invites = super::issued_invites::load_issued_invites(storage.as_ref())?;
+            self.pending_invite_upload = None;
+            self.pending_private_invite_responses =
+                load_pending_private_invite_responses(storage.as_ref())?;
 
-        let mut protocol_engine =
-            ProtocolEngine::load_or_create_for_local_device(storage, owner_pubkey, &device_keys)?;
-        // No restored intent may reach discovery or encryption before the durable
-        // privacy migration completes. On failure the engine remains unavailable.
-        self.retire_legacy_private_contact_intents(&mut protocol_engine, owner_pubkey)?;
-        if let Some(owner_keys) = owner_keys.as_ref() {
-            protocol_engine.authenticate_local_owner_for_sending(owner_keys)?;
-        }
+            let mut engine = ProtocolEngine::load_or_create_for_local_device(
+                storage,
+                owner_pubkey,
+                &device_keys,
+            )?;
+            // No restored intent may reach discovery or encryption before the
+            // durable privacy migration completes, including interrupted startup.
+            self.retire_legacy_private_contact_intents(&mut engine, owner_pubkey)?;
+            if let Some(owner_keys) = owner_keys.as_ref() {
+                engine.authenticate_local_owner_for_sending(owner_keys)?;
+            }
+            Ok(engine)
+        })();
+        let protocol_engine = match restore_guard {
+            Some(guard) => guard.finish(restored)?,
+            None => restored?,
+        };
         self.protocol_engine = Some(protocol_engine);
 
         let authorization_state = self.restored_local_authorization_state(

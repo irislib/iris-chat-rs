@@ -378,8 +378,10 @@ fn synthetic_history_app(
         queue_metrics: slot.queue_metrics.clone(),
         recovery: slot.recovery.clone(),
     };
+    let (completion, core_stopped) = flume::bounded(1);
+    slot.core_stopped = core_stopped;
     *slot.core_worker.lock().unwrap() =
-        Some(crate::spawn_core_supervisor(core, supervisor).unwrap());
+        Some(crate::spawn_core_supervisor(core, supervisor, completion).unwrap());
     app
 }
 

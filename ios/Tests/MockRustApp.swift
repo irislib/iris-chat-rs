@@ -31,8 +31,14 @@ final class MockRustApp: RustAppClient {
     private var chatSnapshotCallCountStorage = 0
     private let chatSnapshotCallCountLock = NSLock()
     private var prepareForSuspendCalls = 0
+    private var prepareForSuspendEpochs: [UInt64?] = []
     private var prepareForSuspendCallback: (() -> Void)?
     private let prepareForSuspendLock = NSLock()
+    private let startupRestoreLock = NSLock()
+    private var startupEpoch: UInt64 = 0
+    private var startupEpochAvailable = true
+    private var startupCancellationRequests: [UInt64] = []
+    private var acceptedStartupCancellationRequests: [UInt64] = []
     private var shutdownCalls = 0
     private let shutdownLock = NSLock()
     private var reconciler: AppReconciler?
@@ -55,10 +61,37 @@ final class MockRustApp: RustAppClient {
         return prepareForSuspendCalls
     }
 
+    var requestedSuspendEpochs: [UInt64?] {
+        prepareForSuspendLock.withLock { prepareForSuspendEpochs }
+    }
+
     func onNextPrepareForSuspend(_ callback: @escaping () -> Void) {
         prepareForSuspendLock.lock()
         prepareForSuspendCallback = callback
         prepareForSuspendLock.unlock()
+    }
+
+    var startupRestoreCancellationEpochs: [UInt64] {
+        startupRestoreLock.withLock { startupCancellationRequests }
+    }
+
+    var acceptedStartupRestoreCancellationEpochs: [UInt64] {
+        startupRestoreLock.withLock { acceptedStartupCancellationRequests }
+    }
+
+    func startupRestoreEpoch() -> UInt64? {
+        startupRestoreLock.withLock { startupEpochAvailable ? startupEpoch : nil }
+    }
+
+    func setStartupRestoreEpochAvailable(_ available: Bool) {
+        startupRestoreLock.withLock { startupEpochAvailable = available }
+    }
+
+    func cancelStartupRestore(epoch: UInt64) {
+        startupRestoreLock.withLock {
+            startupCancellationRequests.append(epoch)
+            if epoch == startupEpoch { acceptedStartupCancellationRequests.append(epoch) }
+        }
     }
 
     var shutdownCallCount: Int {
@@ -154,6 +187,9 @@ final class MockRustApp: RustAppClient {
         if let dispatchError {
             throw dispatchError
         }
+        if case .appForegrounded = action {
+            startupRestoreLock.withLock { startupEpoch &+= 1 }
+        }
         dispatchedActionsLock.lock()
         dispatchedActionsStorage.append(action)
         dispatchedActionsLock.unlock()
@@ -243,8 +279,17 @@ final class MockRustApp: RustAppClient {
     }
 
     func prepareForSuspend() {
+        recordSuspendPreparation(epoch: nil)
+    }
+
+    func prepareForSuspendAtEpoch(epoch: UInt64) {
+        recordSuspendPreparation(epoch: epoch)
+    }
+
+    private func recordSuspendPreparation(epoch: UInt64?) {
         prepareForSuspendLock.lock()
         prepareForSuspendCalls += 1
+        prepareForSuspendEpochs.append(epoch)
         let callback = prepareForSuspendCallback
         prepareForSuspendCallback = nil
         prepareForSuspendLock.unlock()

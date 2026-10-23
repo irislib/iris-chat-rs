@@ -2,6 +2,7 @@ use super::*;
 
 impl AppCore {
     pub(super) fn logout(&mut self) {
+        self.deferred_startup_restore = None;
         self.private_contacts.reset();
         self.stop_remote_signer();
         self.stop_device_link_signer();
