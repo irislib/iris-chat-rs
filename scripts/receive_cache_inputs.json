@@ -1,6 +1,6 @@
 {
   "schema": "iris-receive-cache-input/v1",
-  "enabled": false,
+  "enabled": true,
   "base": "ebfa822e08d95efad66b68288b3e66d1499b0f85",
   "before": "5c70faf9e84f9bfa2ae3439315620f3ea25eceac",
   "after": "c49702b174253c6c722e56f2793fcf598f32760f",
