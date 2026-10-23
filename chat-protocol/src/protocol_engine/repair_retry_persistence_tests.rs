@@ -275,3 +275,121 @@ fn repair_retry_successful_wire_and_throttle_survive_restart() {
     assert_eq!(storage.puts.load(Relaxed), puts);
     assert_eq!(restarted.pending_group_sender_key_repairs, repairs);
 }
+
+#[test]
+fn repair_retry_gap_only_sibling_session_progress_is_durable() {
+    use std::sync::atomic::Ordering::Relaxed;
+    let mut f = established_readiness_fixture();
+    let sibling = Keys::generate();
+    let sibling_device = ndr_device(sibling.public_key());
+    f.sender
+        .ingest_app_keys_event(&signed_app_keys(
+            &f.owner,
+            &[f.device.public_key(), sibling.public_key()],
+            2,
+        ))
+        .unwrap();
+    let (queued, request) = repair_retry_fixture();
+    let mut groups = queued.group_manager.snapshot();
+    for owner in &mut groups.groups[0].members {
+        if *owner == groups.local_owner_pubkey {
+            *owner = f.sender.local_owner;
+        }
+    }
+    groups.local_owner_pubkey = f.sender.local_owner;
+    f.sender.group_manager = GroupEventManager::from_snapshot(groups).unwrap();
+    assert!(f
+        .sender
+        .sender_key_repair_request_effects(request.clone(), NdrUnixSeconds(100))
+        .unwrap()
+        .is_empty());
+    let mut sessions = f.sender.session_manager.snapshot();
+    let mut receive_only = sessions
+        .users
+        .iter()
+        .find(|user| user.owner_pubkey == ndr_owner(f.peer_owner.public_key()))
+        .unwrap()
+        .devices
+        .iter()
+        .find(|device| device.device_pubkey == ndr_device(f.ready_device.public_key()))
+        .unwrap()
+        .active_session
+        .clone()
+        .unwrap();
+    receive_only.our_current_nostr_key = None;
+    assert!(!nostr_double_ratchet::Session::from_state(receive_only.clone()).can_send());
+    let record = sessions
+        .users
+        .iter_mut()
+        .find(|user| user.owner_pubkey == f.sender.local_owner)
+        .unwrap()
+        .devices
+        .iter_mut()
+        .find(|device| device.device_pubkey == sibling_device)
+        .unwrap();
+    assert!(record.authorized && !record.is_stale && record.public_invite.is_none());
+    record.active_session = None;
+    record.inactive_sessions = vec![receive_only.clone()];
+    record.last_activity = Some(NdrUnixSeconds(100));
+    f.sender.session_manager =
+        SessionManager::from_snapshot(sessions, f.device.secret_key().to_secret_bytes()).unwrap();
+    f.sender.persist().unwrap();
+    let before = serde_json::to_value(f.sender.session_manager.snapshot()).unwrap();
+    let repairs = f.sender.pending_group_sender_key_repairs.clone();
+    let fanouts = f.sender.pending_group_fanouts.clone();
+    let storage = repair_retry_count_saves(&mut f.sender);
+    storage.fail_next.store(true, Relaxed);
+    let error = f
+        .sender
+        .with_state_checkpoint(|engine| {
+            engine.sender_key_repair_request_effects(request.clone(), NdrUnixSeconds(1_000))
+        })
+        .unwrap_err();
+    assert!(error.downcast_ref::<StorageError>().is_some());
+    assert_eq!(
+        serde_json::to_value(f.sender.session_manager.snapshot()).unwrap(),
+        before
+    );
+    assert_eq!(f.sender.pending_group_sender_key_repairs, repairs);
+    assert_eq!(f.sender.pending_group_fanouts, fanouts);
+    assert!(f
+        .sender
+        .sender_key_repair_request_effects(request, NdrUnixSeconds(1_000))
+        .unwrap()
+        .is_empty());
+    assert_eq!(storage.puts.load(Relaxed), 2);
+    let after = f.sender.session_manager.snapshot();
+    let record = after
+        .users
+        .iter()
+        .find(|user| user.owner_pubkey == f.sender.local_owner)
+        .unwrap()
+        .devices
+        .iter()
+        .find(|device| device.device_pubkey == sibling_device)
+        .unwrap();
+    assert_eq!(record.active_session.as_ref(), Some(&receive_only));
+    assert!(record.inactive_sessions.is_empty());
+    assert_eq!(record.last_activity, Some(NdrUnixSeconds(1_000)));
+    assert_eq!(
+        f.sender.pending_group_sender_key_repairs[0].request_count,
+        repairs[0].request_count + 1
+    );
+    assert_eq!(
+        f.sender.pending_group_sender_key_repairs[0].last_requested_at_secs,
+        1_000
+    );
+    let restarted = repair_retry_reload(&f.sender);
+    assert_eq!(
+        serde_json::to_value(restarted.session_manager.snapshot()).unwrap(),
+        serde_json::to_value(after).unwrap()
+    );
+    assert_eq!(
+        restarted.pending_group_sender_key_repairs,
+        f.sender.pending_group_sender_key_repairs
+    );
+    assert_eq!(
+        restarted.pending_group_fanouts,
+        f.sender.pending_group_fanouts
+    );
+}
