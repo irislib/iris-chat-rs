@@ -38,7 +38,7 @@ def contract(path=INPUTS):
     assert data["repository"] == "irislib/nostr-double-ratchet"
     assert re.fullmatch(r"[0-9a-f]{40}", data["source"])
     assert data["toolchain"] == TOOLCHAIN == "1.99.1"
-    assert data["packages"] == {NDR: "0.0.172", PAIRWISE: "0.0.170"}
+    assert data["packages"] == {NDR: "0.0.173", PAIRWISE: "0.0.171"}
     assert data["codec"]["package"] == CODEC and data["codec"]["version"] == "0.0.168"
     assert re.fullmatch(r"[0-9a-f]{64}", data["codec"]["sha256"])
     assert re.fullmatch(r"[0-9a-f]{40}", data["codec"]["vcs_source"])

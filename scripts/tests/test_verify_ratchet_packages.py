@@ -63,7 +63,7 @@ class ContractTests(unittest.TestCase):
     def test_reviewed_contract_binds_exact_resource_helper(self):
         data = json.loads(gate.INPUTS.read_text())
         data["enabled"] = True
-        data["qualification"]["source_and_workflow_reviewed"] = True
+        data["qualification"].update(full_ci_accepted=True, allocation_accepted=True, source_and_workflow_reviewed=True)
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "input.json"
             path.write_text(json.dumps(data))
@@ -76,12 +76,24 @@ class ContractTests(unittest.TestCase):
     def test_source_and_workflow_review_required(self):
         data = json.loads(gate.INPUTS.read_text())
         data["enabled"] = True
-        data["qualification"]["source_and_workflow_reviewed"] = False
+        data["qualification"].update(full_ci_accepted=True, allocation_accepted=True, source_and_workflow_reviewed=False)
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "input.json"
             path.write_text(json.dumps(data))
             with self.assertRaises(AssertionError):
                 gate.contract(path)
+
+    def test_pending_ci_or_allocation_acceptance_is_rejected(self):
+        for field in ("full_ci_accepted", "allocation_accepted"):
+            data = json.loads(gate.INPUTS.read_text())
+            data["enabled"] = True
+            data["qualification"].update(full_ci_accepted=True, allocation_accepted=True, source_and_workflow_reviewed=True)
+            data["qualification"][field] = False
+            with self.subTest(field=field), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "input.json"
+                path.write_text(json.dumps(data))
+                with self.assertRaises(AssertionError):
+                    gate.contract(path)
 
     def test_real_package_verification_command(self):
         for name in (gate.NDR, gate.PAIRWISE):
