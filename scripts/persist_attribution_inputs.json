@@ -1,0 +1,38 @@
+{
+  "schema": "iris-persist-attribution-input/v1",
+  "enabled": false,
+  "diagnostic_only": true,
+  "release_cpu_acceptance": false,
+  "base": "c49702b174253c6c722e56f2793fcf598f32760f",
+  "before": "c49702b174253c6c722e56f2793fcf598f32760f",
+  "after": "f78dab07f23c89aa9128dc9d2baa68ee5bbace77",
+  "protocol_lock_sha256": "81357f39ed1994242ff8a46cf52cd4f2fd22d58667f74f4445a0ff4f873ee04c",
+  "before_test": null,
+  "before_observation_test": null,
+  "tests": [],
+  "trace": {
+    "schema": "iris-retry-persistence-trace/v1",
+    "limit": 64,
+    "overflow_allowed": false
+  },
+  "batched": {
+    "source": "f78dab07f23c89aa9128dc9d2baa68ee5bbace77",
+    "base": "c49702b174253c6c722e56f2793fcf598f32760f",
+    "changed_paths": [
+      "chat-protocol/src/protocol_engine/batched_retry_cpu_tests.rs",
+      "chat-protocol/src/protocol_engine/engine_persistence.rs",
+      "chat-protocol/src/protocol_engine/retry_work_audit.rs"
+    ],
+    "correctness_tests": [],
+    "test": {
+      "name": "protocol_engine::tests::restored_backlog_batched_retry_stays_within_cpu_budget",
+      "expected_count": 1,
+      "exact": true,
+      "marker": "batched_retry_cpu ",
+      "ignored": true,
+      "timeout_seconds": 420
+    },
+    "failure_marker": "batched steady retry loop still exceeds 5% of one CPU:",
+    "schema_version": 3
+  }
+}
