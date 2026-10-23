@@ -706,6 +706,8 @@ impl ProtocolEngine {
         };
         let mut rng = OsRng;
         let mut ctx = ProtocolContext::new(NdrUnixSeconds(event.created_at.as_secs()), &mut rng);
+        #[cfg(test)]
+        tests::record_inbound_receive_call();
         let Some(received) = self
             .session_manager
             .receive(&mut ctx, sender_owner, envelope)?
