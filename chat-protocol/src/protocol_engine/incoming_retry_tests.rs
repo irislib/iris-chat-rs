@@ -193,12 +193,18 @@ mod incoming_retry_tests {
             1,
             "already advanced ratchet retains plaintext"
         );
-        super::tests::take_inbound_retry_deadline_scans();
-        assert!(receiver.has_due_pending_retry_work(NdrUnixSeconds(200)));
         assert!(
-            super::tests::take_inbound_retry_deadline_scans() > 0,
+            receiver.pending_inbound_retry_deadline.get().is_none(),
             "failed receive must leave its deadline cutoff unknown"
         );
+        super::tests::take_inbound_retry_deadline_scans();
+        assert!(receiver.has_due_pending_retry_work(NdrUnixSeconds(200)));
+        assert_eq!(
+            super::tests::take_inbound_retry_deadline_scans(),
+            0,
+            "the delivery journal establishes ready work without a deadline scan"
+        );
+        assert!(receiver.pending_inbound_retry_deadline.get().is_none());
         storage
             .fail
             .store(false, std::sync::atomic::Ordering::SeqCst);
