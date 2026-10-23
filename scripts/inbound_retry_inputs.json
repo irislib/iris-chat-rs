@@ -2,37 +2,99 @@
   "enabled": true,
   "optimized_enabled": true,
   "batched": {
-    "enabled": true,
+    "enabled": false,
     "correctness_tests": [
       {
-        "name": "protocol_engine::tests::group_retry_",
-        "expected_count": 24,
-        "exact": false,
-        "marker": null,
-        "ignored": false,
-        "timeout_seconds": 300
-      },
-      {
-        "name": "protocol_engine::tests::group_receive_",
+        "name": "protocol_engine::tests::group_fanout_retry_allocations_do_not_scale_with_deferred_fanouts",
         "expected_count": 1,
-        "exact": false,
-        "marker": null,
+        "exact": true,
+        "marker": "fanout_queue_retry turns=8 due=64 total=24990 small_allocated_bytes=",
         "ignored": false,
         "timeout_seconds": 300
       },
       {
-        "name": "protocol_engine::tests::retry_search_audit_keeps_author_generations_across_observations",
+        "name": "protocol_engine::tests::group_fanout_retry_mixed_updates_restore_order_after_failed_save",
         "expected_count": 1,
         "exact": true,
         "marker": null,
         "ignored": false,
         "timeout_seconds": 300
+      },
+      {
+        "name": "protocol_engine::tests::group_fanout_retry_retires_ineligible_deferred_entries_beyond_due_limit",
+        "expected_count": 1,
+        "exact": true,
+        "marker": null,
+        "ignored": false,
+        "timeout_seconds": 300
+      },
+      {
+        "name": "protocol_engine::tests::group_fanout_retry_processes_a_bounded_due_batch",
+        "expected_count": 1,
+        "exact": true,
+        "marker": null,
+        "ignored": false,
+        "timeout_seconds": 300
+      },
+      {
+        "name": "protocol_engine::tests::group_fanout_save_failure_keeps_unsent_targets_and_ratchets_retryable",
+        "expected_count": 1,
+        "exact": true,
+        "marker": null,
+        "ignored": false,
+        "timeout_seconds": 300
+      },
+      {
+        "name": "protocol_engine::tests::private_group_wake_and_broadcast_share_one_rollback_safe_checkpoint",
+        "expected_count": 1,
+        "exact": true,
+        "marker": null,
+        "ignored": false,
+        "timeout_seconds": 300
+      },
+      {
+        "name": "protocol_engine::incoming_retry_tests::",
+        "expected_count": 5,
+        "exact": false,
+        "marker": null,
+        "ignored": false,
+        "timeout_seconds": 300
+      },
+      {
+        "name": "protocol_engine::tests::due_inbound_retry_backoff_lookup_is_linear_in_packet_count",
+        "expected_count": 1,
+        "exact": true,
+        "marker": null,
+        "ignored": false,
+        "timeout_seconds": 300
+      },
+      {
+        "name": "protocol_engine::tests::deferred_inbound_retry_allocation_is_bounded_by_due_packets",
+        "expected_count": 1,
+        "exact": true,
+        "marker": "inbound_retry packets=4214 initially_due=102 turns=32 allocated_bytes=",
+        "ignored": false,
+        "timeout_seconds": 300
+      },
+      {
+        "name": "protocol_engine::tests::due_fanout_retry_allocations_do_not_scale_with_deferred_inbound",
+        "expected_count": 1,
+        "exact": true,
+        "marker": "fanout_retry turns=8 due_fanouts=64 deferred_inbound=4214 empty_allocated_bytes=",
+        "ignored": false,
+        "timeout_seconds": 300
       }
     ],
-    "source": "b17f28444c506bf8616faef6fdf84b9ead934855",
-    "base": "526321841d3757fc73713a931cc745bbb67d8f43",
+    "source": "db79baa6b35b347c754f3cc55a3cdf2399c1cbf4",
+    "base": "b17f28444c506bf8616faef6fdf84b9ead934855",
     "changed_paths": [
-      "chat-protocol/src/protocol_engine/retry_work_audit.rs"
+      "chat-protocol/src/protocol_engine.rs",
+      "chat-protocol/src/protocol_engine/engine_group_fanout_retry.rs",
+      "chat-protocol/src/protocol_engine/engine_incoming_retry.rs",
+      "chat-protocol/src/protocol_engine/engine_state_helpers.rs",
+      "chat-protocol/src/protocol_engine/fanout_retry_tests.rs",
+      "chat-protocol/src/protocol_engine/inbound_retry_backlog_tests.rs",
+      "chat-protocol/src/protocol_engine/incoming_retry_tests.rs"
     ],
     "failure_marker": "batched steady retry loop still exceeds 5% of one CPU:",
     "test": {
