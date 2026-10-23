@@ -29,7 +29,11 @@ impl ProtocolEngine {
             || self
                 .pending_inbound
                 .iter()
-                .any(|pending| pending.next_retry_at_secs <= now_secs)
+                .any(|pending| {
+                    #[cfg(test)]
+                    tests::record_inbound_retry_deadline_scan();
+                    pending.next_retry_at_secs <= now_secs
+                })
             || self
                 .pending_group_fanouts
                 .iter()
@@ -568,7 +572,11 @@ impl ProtocolEngine {
             .pending_inbound
             .iter()
             .enumerate()
-            .filter(|(_, pending)| pending.next_retry_at_secs <= now.get())
+            .filter(|(_, pending)| {
+                #[cfg(test)]
+                tests::record_inbound_retry_deadline_scan();
+                pending.next_retry_at_secs <= now.get()
+            })
             .map(|(index, pending)| (index, pending.clone()))
             .collect::<Vec<_>>();
         let mut messages = Vec::new();
