@@ -1,6 +1,6 @@
 {
   "schema": "iris-repair-retry-input/v1",
-  "enabled": false,
+  "enabled": true,
   "base": "f78dab07f23c89aa9128dc9d2baa68ee5bbace77",
   "before": "07afdd59f18b7a400f266a5aad2c2b02d28faf72",
   "after": "f88fdbf62249823e965976fc754fd71ebe626798",
