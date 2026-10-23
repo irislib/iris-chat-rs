@@ -1,0 +1,25 @@
+{
+  "schema": "iris-protocol-checkpoint-input/v1",
+  "enabled": true,
+  "source": "c9c3aff963cda978625a5874af0f54ed90dd73b8",
+  "tree": "b3c8ba793936a90e99d2391cce14d723241cf3c8",
+  "ordinary_passed": 191,
+  "ordinary_ignored": 3,
+  "toolchain": "1.99.1",
+  "resource_helper_sha256": "ceebd5230dd365dbf33ca332ca3ffa1adeb60247198248568f42405643074dca",
+  "bindings": {
+    "chat-protocol/Cargo.toml": "69306c167a4bc97166f505f56bd10f02c4c5c906460ec4dc3cdec3b3579b21c8",
+    "chat-protocol/Cargo.lock": "cb349205502ba5afa33b2177ca651fbda78848beabfb58781ca60831894498a1",
+    "scripts/test_rust.sh": "2186d3d013004ca1cb028aad5b8463ae5cc551c968fefdb2462b8a5b6c82b99a",
+    "chat-protocol/src/protocol_engine/batched_retry_cpu_tests.rs": "6ce41373bb8a82414ce0d0be2b0f569816788df4d502d22cf453dc78efd5d20b",
+    "chat-protocol/src/protocol_engine/batched_retry_durable_work.rs": "25d879908886ae0c53294e6d3aabca0d65a011ef537ef79828fd5eaef1c75dd9",
+    "chat-protocol/src/protocol_engine/inbound_retry_backlog_tests.rs": "6d6796dfe3e49130667e4518e45010a4cee62e163761ea3f8f4a05c101d56f36",
+    "chat-protocol/src/protocol_engine/inbound_retry_ciphertext_fixture_tests.rs": "ac60882dc1814ed48559bba3745c93229d56e2153f0cb10058eecc7e95582146"
+  },
+  "failed_cpu_evidence": {
+    "run": 39980328538,
+    "source": "3a299acbd8de63f5c476cb56d5f9ab6d6b72e994",
+    "full_log_sha256": "894b73f0b094cd853606483a62bf8041c8a520a28c017ee51d16a6c7386a2041",
+    "reexecute": false
+  }
+}

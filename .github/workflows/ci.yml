@@ -20,7 +20,7 @@ on:
         description: Checks to run; retain exact source-bound coverage for unchanged components
         type: choice
         default: all
-        options: [all, cli, core, inbound-retry, inbound-retry-release, inbound-retry-batched, inbound-deadline, checkpoint-update, receive-cache, repair-retry, persist-attribution, ndr-blind-allocation, ndr-session-allocation, ndr-kdf-reuse, ndr-source-package, ndr-pairwise-source-package, android, windows, windows-keyboard, windows-restore, apple, ios, ios-unit, macos, linux, apple-products, ios-products, macos-products, ios-ui-runner, macos-ui-runner]
+        options: [all, cli, core, inbound-retry, inbound-retry-release, inbound-retry-batched, protocol-checkpoint, inbound-deadline, checkpoint-update, receive-cache, repair-retry, persist-attribution, ndr-blind-allocation, ndr-session-allocation, ndr-kdf-reuse, ndr-source-package, ndr-pairwise-source-package, android, windows, windows-keyboard, windows-restore, apple, ios, ios-unit, macos, linux, apple-products, ios-products, macos-products, ios-ui-runner, macos-ui-runner]
       ios_core_seed_run:
         description: Optional exact successful core build/cache producer for Swift-only unit validation
         type: string
@@ -245,12 +245,12 @@ jobs:
           retention-days: 14
 
   inbound-retry:
-    if: ${{ inputs.scope == 'inbound-retry' || inputs.scope == 'inbound-retry-release' || inputs.scope == 'inbound-retry-batched' || inputs.scope == 'persist-attribution' }}
-    name: ${{ inputs.scope == 'persist-attribution' && 'Trace checkpoint callers in unchanged retry workload' || inputs.scope == 'inbound-retry-batched' && 'Measure settled batched retry' || inputs.scope == 'inbound-retry-release' && 'Measure optimized whole retry on unchanged source' || 'Compare exact inbound retry regression sources' }}
+    if: ${{ inputs.scope == 'inbound-retry' || inputs.scope == 'inbound-retry-release' || inputs.scope == 'inbound-retry-batched' || inputs.scope == 'persist-attribution' || inputs.scope == 'protocol-checkpoint' }}
+    name: ${{ inputs.scope == 'protocol-checkpoint' && 'Qualify exact protocol checkpoint source' || inputs.scope == 'persist-attribution' && 'Trace checkpoint callers in unchanged retry workload' || inputs.scope == 'inbound-retry-batched' && 'Measure settled batched retry' || inputs.scope == 'inbound-retry-release' && 'Measure optimized whole retry on unchanged source' || 'Compare exact inbound retry regression sources' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
-      RETRY_DRIVER: ${{ inputs.scope == 'persist-attribution' && 'verify_persist_attribution.py' || 'verify_inbound_retry.py' }}
+      RETRY_DRIVER: ${{ inputs.scope == 'protocol-checkpoint' && 'verify_protocol_checkpoint.py' || inputs.scope == 'persist-attribution' && 'verify_persist_attribution.py' || 'verify_inbound_retry.py' }}
       CARGO_TARGET_DIR: ${{ github.workspace }}/cargo-target
       CARGO_BUILD_JOBS: '2'
       CARGO_TERM_COLOR: never
@@ -269,11 +269,11 @@ jobs:
           persist-credentials: false
       - name: Require admitted immutable regression inputs
         id: inputs
-        run: python3 "retry-driver/scripts/$RETRY_DRIVER" preflight --mode "${{ (inputs.scope == 'inbound-retry-batched' || inputs.scope == 'persist-attribution') && 'batched' || inputs.scope == 'inbound-retry-release' && 'optimized' || 'comparison' }}" --output work/inbound-retry
+        run: python3 "retry-driver/scripts/$RETRY_DRIVER" preflight --mode "${{ (inputs.scope == 'inbound-retry-batched' || inputs.scope == 'persist-attribution' || inputs.scope == 'protocol-checkpoint') && 'batched' || inputs.scope == 'inbound-retry-release' && 'optimized' || 'comparison' }}" --output work/inbound-retry
       - name: Checkout first immutable diagnostic source
         uses: actions/checkout@v4
         with:
-          ref: ${{ (inputs.scope == 'inbound-retry-batched' || inputs.scope == 'persist-attribution') && steps.inputs.outputs.batched || inputs.scope == 'inbound-retry-release' && steps.inputs.outputs.after || steps.inputs.outputs.before }}
+          ref: ${{ (inputs.scope == 'inbound-retry-batched' || inputs.scope == 'persist-attribution' || inputs.scope == 'protocol-checkpoint') && steps.inputs.outputs.batched || inputs.scope == 'inbound-retry-release' && steps.inputs.outputs.after || steps.inputs.outputs.before }}
           fetch-depth: 2
           path: iris-chat-rs
           persist-credentials: false
@@ -316,7 +316,7 @@ jobs:
           IRIS_CACHE_HIT: ${{ steps.cargo-cache.outputs.cache-hit }}
         run: python3 retry-driver/scripts/verify_inbound_retry.py optimized --source iris-chat-rs --output work/inbound-retry
       - name: Measure settled batched retry with complete progress and restart assertions
-        if: ${{ inputs.scope == 'inbound-retry-batched' || inputs.scope == 'persist-attribution' }}
+        if: ${{ inputs.scope == 'inbound-retry-batched' || inputs.scope == 'persist-attribution' || inputs.scope == 'protocol-checkpoint' }}
         env:
           IRIS_CACHE_REQUESTED: ${{ steps.cargo-cache.outputs.cache-primary-key }}
           IRIS_CACHE_MATCHED: ${{ steps.cargo-cache.outputs.cache-matched-key }}
@@ -326,7 +326,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ inputs.scope == 'persist-attribution' && 'persist-attribution' || 'inbound-retry' }}-${{ github.run_id }}
+          name: ${{ inputs.scope == 'protocol-checkpoint' && 'protocol-checkpoint' || inputs.scope == 'persist-attribution' && 'persist-attribution' || 'inbound-retry' }}-${{ github.run_id }}
           path: work/inbound-retry/
           if-no-files-found: warn
           retention-days: 14
