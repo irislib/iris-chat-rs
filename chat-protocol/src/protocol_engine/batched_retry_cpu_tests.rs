@@ -14,14 +14,14 @@ fn batched_retry_progress(
     })
 }
 
+// Compile in debug builds, but reject running this ignored CPU test without optimization.
+#[allow(clippy::assertions_on_constants)]
 #[test]
 #[ignore = "300-second hosted batched CPU qualification with a synthetic 350 MB checkpoint; run optimized and alone"]
 fn restored_backlog_batched_retry_stays_within_cpu_budget() {
     use std::sync::atomic::Ordering::Relaxed;
     use std::time::{Duration, Instant};
 
-    // Compile in debug builds, but reject running this ignored CPU test without optimization.
-    #[allow(clippy::assertions_on_constants)]
     assert!(
         !cfg!(debug_assertions),
         "CPU qualification requires the optimized profile"
