@@ -14,9 +14,8 @@ fn group_chat_id(group_id: &str) -> String {
 #[derive(Debug, Serialize, Deserialize)]
 struct ProtocolEnginePersistedState {
     version: u32,
-    // Keep large, mostly unchanged queues before frequently changing session
-    // and direct-send records. Inserting a small later record must not shift
-    // every backlog page in the incremental SQLite checkpoint.
+    // record_protocol_checkpoint checks this prefix so it can assemble cached
+    // queue records separately from the smaller session and retry state.
     #[serde(default)]
     pending_group_sender_key_messages: PendingGroupMessages,
     #[serde(default)]

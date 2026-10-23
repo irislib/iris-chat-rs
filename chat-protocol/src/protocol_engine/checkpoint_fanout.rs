@@ -12,6 +12,7 @@ struct CheckpointGroupFanout {
     value: Arc<GroupPendingFanout>,
     serialized: Arc<Mutex<Option<Arc<serde_json::value::RawValue>>>>,
     repair_identity: Arc<std::sync::OnceLock<Option<serde_json::Value>>>,
+    checkpoint_body: Arc<std::sync::OnceLock<Arc<crate::StorageCheckpointBody>>>,
 }
 
 impl From<GroupPendingFanout> for CheckpointGroupFanout {
@@ -20,6 +21,7 @@ impl From<GroupPendingFanout> for CheckpointGroupFanout {
             value: Arc::new(value),
             serialized: Arc::default(),
             repair_identity: Arc::default(),
+            checkpoint_body: Arc::default(),
         }
     }
 }
@@ -44,6 +46,19 @@ impl std::fmt::Debug for CheckpointGroupFanout {
 }
 
 impl CheckpointGroupFanout {
+    fn checkpoint_body(&self) -> Result<Arc<crate::StorageCheckpointBody>, serde_json::Error> {
+        if let Some(body) = self.checkpoint_body.get() {
+            return Ok(body.clone());
+        }
+        let body = Arc::new(crate::StorageCheckpointBody::new(self.serialized()?));
+        // Sharing is immutable; a racing equivalent initialization is harmless.
+        let _ = self.checkpoint_body.set(body);
+        Ok(self
+            .checkpoint_body
+            .get()
+            .expect("initialized checkpoint body")
+            .clone())
+    }
     fn repair_identity(&self) -> Option<&serde_json::Value> {
         self.repair_identity
             .get_or_init(|| {

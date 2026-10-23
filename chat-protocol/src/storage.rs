@@ -1,8 +1,16 @@
-mod incremental;
+mod checkpoint;
+mod checkpoint_sqlite;
+#[cfg(test)]
+mod checkpoint_tests;
+mod segmented;
+#[cfg(test)]
+mod segmented_tests;
+
+pub use checkpoint::{StorageCheckpoint, StorageCheckpointBody};
 
 #[cfg(test)]
 pub(crate) fn checkpoint_io_bytes() -> (usize, usize) {
-    incremental::io_bytes()
+    segmented::io_bytes()
 }
 
 use super::SharedConnection;
@@ -39,6 +47,9 @@ pub type StorageResult<T> = Result<T, StorageError>;
 pub trait StorageAdapter: Send + Sync {
     fn get(&self, key: &str) -> StorageResult<Option<String>>;
     fn put(&self, key: &str, value: String) -> StorageResult<()>;
+    fn put_checkpoint(&self, key: &str, value: &StorageCheckpoint) -> StorageResult<()> {
+        self.put(key, value.materialize()?)
+    }
     fn del(&self, key: &str) -> StorageResult<()>;
     fn list(&self, prefix: &str) -> StorageResult<Vec<String>>;
 }
@@ -361,20 +372,14 @@ impl SqliteStorageAdapter {
 
 impl StorageAdapter for SqliteStorageAdapter {
     fn get(&self, key: &str) -> StorageResult<Option<String>> {
-        let conn = self
+        let mut conn = self
             .conn
             .lock()
             .map_err(|_| StorageError::new("ndr_kv connection mutex poisoned"))?;
-        conn.query_row(
-            "SELECT value FROM ndr_kv WHERE owner_pubkey_hex = ?1 AND device_pubkey_hex = ?2 AND key = ?3",
+        segmented::get(
+            &mut conn,
             (&self.owner_pubkey_hex, &self.device_pubkey_hex, key),
-            |row| row.get::<_, String>(0),
         )
-        .map(Some)
-        .or_else(|err| match err {
-            rusqlite::Error::QueryReturnedNoRows => Ok(None),
-            other => Err(Self::map_err(other)),
-        })
     }
 
     fn put(&self, key: &str, value: String) -> StorageResult<()> {
@@ -382,36 +387,39 @@ impl StorageAdapter for SqliteStorageAdapter {
             .conn
             .lock()
             .map_err(|_| StorageError::new("ndr_kv connection mutex poisoned"))?;
-        if incremental::try_put(
+        segmented::put(
             &mut conn,
-            &self.owner_pubkey_hex,
-            &self.device_pubkey_hex,
-            key,
+            (&self.owner_pubkey_hex, &self.device_pubkey_hex, key),
             &value,
-        )? {
-            return Ok(());
-        }
-        conn.execute(
-            "INSERT INTO ndr_kv (owner_pubkey_hex, device_pubkey_hex, key, value)
-             VALUES (?1, ?2, ?3, ?4)
-             ON CONFLICT(owner_pubkey_hex, device_pubkey_hex, key) DO UPDATE SET value = excluded.value",
-            (&self.owner_pubkey_hex, &self.device_pubkey_hex, key, &value),
         )
-        .map_err(Self::map_err)?;
-        Ok(())
     }
 
-    fn del(&self, key: &str) -> StorageResult<()> {
-        let conn = self
+    fn put_checkpoint(&self, key: &str, value: &StorageCheckpoint) -> StorageResult<()> {
+        // Keep small values on the existing simple path. Large checkpoints
+        // use independently addressed records, with no full-value mirror.
+        if value.len() < 64 * 1024 {
+            return self.put(key, value.materialize()?);
+        }
+        let mut conn = self
             .conn
             .lock()
             .map_err(|_| StorageError::new("ndr_kv connection mutex poisoned"))?;
-        conn.execute(
-            "DELETE FROM ndr_kv WHERE owner_pubkey_hex = ?1 AND device_pubkey_hex = ?2 AND key = ?3",
+        checkpoint_sqlite::put(
+            &mut conn,
+            (&self.owner_pubkey_hex, &self.device_pubkey_hex, key),
+            value,
+        )
+    }
+
+    fn del(&self, key: &str) -> StorageResult<()> {
+        let mut conn = self
+            .conn
+            .lock()
+            .map_err(|_| StorageError::new("ndr_kv connection mutex poisoned"))?;
+        segmented::delete(
+            &mut conn,
             (&self.owner_pubkey_hex, &self.device_pubkey_hex, key),
         )
-        .map_err(Self::map_err)?;
-        Ok(())
     }
 
     fn list(&self, prefix: &str) -> StorageResult<Vec<String>> {

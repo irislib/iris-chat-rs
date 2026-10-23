@@ -222,9 +222,9 @@ fn checkpoint_backlog_send_roundtrip(fanouts: usize, ciphertexts: usize) {
             "exercise the retained production-sized allocation"
         );
     }
-    assert_eq!(
-        read_bytes, bytes,
-        "incremental storage currently performs exactly one full comparison pass"
+    assert!(
+        read_bytes <= (fanouts + ciphertexts) * 512 + 2 * 1024 * 1024 && read_bytes < bytes / 2,
+        "checkpoint reads must remain limited to metadata and changed core records: {read_bytes}"
     );
     assert!(
         written_bytes < (4 * 1024 * 1024).min(bytes / 2),
@@ -276,7 +276,11 @@ fn checkpoint_backlog_send_roundtrip(fanouts: usize, ciphertexts: usize) {
         CHECKPOINT_LAYOUT_SCANNED_BYTES.with(std::cell::Cell::get) - outgoing_scan;
     assert_eq!(storage.puts.load(Relaxed), before_puts + 2);
     assert_eq!(f.sender.checkpoint_layout.borrow().bytes, bytes);
-    assert_eq!(outgoing_read_bytes, bytes);
+    assert!(
+        outgoing_read_bytes <= (fanouts + ciphertexts) * 512 + 2 * 1024 * 1024
+            && outgoing_read_bytes < bytes / 2,
+        "direct-send checkpoint reads must not scan immutable payloads: {outgoing_read_bytes}"
+    );
     assert!(
         outgoing_written_bytes < (4 * 1024 * 1024).min(bytes / 2),
         "new pending direct sends must not shift the large backlogs: {outgoing_written_bytes}"

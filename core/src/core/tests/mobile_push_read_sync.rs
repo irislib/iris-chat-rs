@@ -356,13 +356,22 @@ fn mobile_push_large_group_notification_cleanup_has_one_protocol_load_and_bounde
     payloads.reverse();
     payloads.push(payloads[0].clone());
     let expected: Vec<u64> = (0..payloads.len() as u64).collect();
-    let conn = rusqlite::Connection::open(pair._b_dir.path().join("core.sqlite3")).unwrap();
+    let conn = rusqlite::Connection::open_with_flags(
+        pair._b_dir.path().join("core.sqlite3"),
+        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    )
+    .unwrap();
+    let checkpoint_storage = super::storage::SqliteStorageAdapter::new(
+        Arc::new(std::sync::Mutex::new(conn)),
+        pair.owner.public_key().to_hex(),
+        pair.b_device.public_key().to_hex(),
+    );
     let read_state = || {
-        conn.query_row(
-            "SELECT value FROM ndr_kv WHERE key = 'appcore/protocol-engine-state-v1'",
-            [],
-            |row| row.get::<_, String>(0),
+        iris_chat_protocol::StorageAdapter::get(
+            &checkpoint_storage,
+            "appcore/protocol-engine-state-v1",
         )
+        .unwrap()
         .unwrap()
     };
     let before = read_state();

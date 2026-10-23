@@ -41,12 +41,12 @@ impl ProtocolEngine {
                 .processed_private_invite_response_ids
                 .clone(),
             pending_inbound: self.pending_inbound.clone(),
-            pending_group_fanouts: self.pending_group_fanouts.clone(),
+            pending_group_fanouts: Vec::new(),
             ready_group_publications: self.ready_group_publications.clone(),
             pending_local_sibling_sends: self.pending_local_sibling_sends.clone(),
             pending_remote_sends: self.pending_remote_sends.clone(),
             pending_group_pairwise_payloads: self.pending_group_pairwise_payloads.clone(),
-            pending_group_sender_key_messages: self.pending_group_sender_key_messages.clone(),
+            pending_group_sender_key_messages: PendingGroupMessages::default(),
             pending_group_sender_key_repairs: self.pending_group_sender_key_repairs.clone(),
             processed_group_sender_key_messages: self.processed_group_sender_key_messages.clone(),
             answered_group_sender_key_repairs: self.answered_group_sender_key_repairs.clone(),
@@ -59,19 +59,14 @@ impl ProtocolEngine {
             group_roster_fact_histories: self.group_roster_fact_histories.clone(),
             subscription_generation: self.subscription_generation,
         };
-        let pending = self.pending_group_sender_key_messages.serialized()?;
-        let fanouts = self
-            .pending_group_fanouts
-            .iter()
-            .map(|pending| pending.fanout.serialized())
-            .collect::<Result<Vec<_>, _>>()?;
-        let (json, layout) = layout_protocol_checkpoint_with_cached_fields(
-            serde_json::to_string(&state)?,
+        let (checkpoint, layout) = record_protocol_checkpoint(
+            state,
             &self.checkpoint_layout.borrow(),
-            Some(&pending),
-            &fanouts,
-        );
-        self.storage.put(PROTOCOL_ENGINE_STATE_KEY, json)?;
+            &self.pending_group_sender_key_messages,
+            &self.pending_group_fanouts,
+        )?;
+        self.storage
+            .put_checkpoint(PROTOCOL_ENGINE_STATE_KEY, &checkpoint)?;
         #[cfg(all(test, target_os = "linux"))]
         tests::audit_retry_persisted(std::panic::Location::caller(), self.batch_depth.get());
         self.batch_persist_dirty.set(false);
@@ -100,4 +95,101 @@ impl ProtocolEngine {
         }
         Ok(())
     }
+}
+
+fn record_protocol_checkpoint(
+    core: ProtocolEnginePersistedState,
+    previous: &ProtocolCheckpointLayout,
+    pending: &PendingGroupMessages,
+    fanouts: &[ProtocolPendingGroupFanout],
+) -> anyhow::Result<(crate::StorageCheckpoint, ProtocolCheckpointLayout)> {
+    let core_json = serde_json::to_string(&core)?;
+    let empty_prefix = format!(
+        "{{\"version\":{},\"pending_group_sender_key_messages\":[],\"pending_group_fanouts\":[]",
+        PROTOCOL_ENGINE_STATE_VERSION
+    );
+    // These are the first three fields of our own serializer, not untrusted
+    // substring matches. A schema/order change must update this contract.
+    anyhow::ensure!(
+        core_json.starts_with(&empty_prefix),
+        "unexpected checkpoint core prefix"
+    );
+    let core_previous = previous.core.as_deref();
+    let empty_layout = ProtocolCheckpointLayout::default();
+    let (core_json, core_layout) = layout_protocol_checkpoint_with_cached_fields(
+        core_json,
+        core_previous.unwrap_or(&empty_layout),
+        None,
+        &[],
+    );
+    let tail = core_json
+        .strip_prefix(&empty_prefix)
+        .ok_or_else(|| anyhow::anyhow!("unexpected checkpoint layout prefix"))?;
+    let mut value = crate::StorageCheckpoint::new();
+    value.push_inline(
+        "prefix",
+        format!(
+            "{{\"version\":{},\"pending_group_sender_key_messages\":[",
+            PROTOCOL_ENGINE_STATE_VERSION
+        ),
+        0,
+    );
+    for (index, body) in pending.record_bodies()?.into_iter().enumerate() {
+        value.push_record(
+            0,
+            body,
+            if index == 0 { "" } else { "," }.into(),
+            String::new(),
+            0,
+        );
+    }
+    value.push_inline("between", "],\"pending_group_fanouts\":[".into(), 0);
+    #[derive(Serialize)]
+    struct FanoutTail<'a> {
+        remaining_devices: &'a Option<BTreeSet<NdrDevicePubkey>>,
+        inner_event_id: &'a Option<String>,
+        created_at_secs: u64,
+        next_retry_at_secs: u64,
+    }
+    for (index, pending) in fanouts.iter().enumerate() {
+        let suffix = serde_json::to_string(&FanoutTail {
+            remaining_devices: &pending.remaining_devices,
+            inner_event_id: &pending.inner_event_id,
+            created_at_secs: pending.created_at_secs,
+            next_retry_at_secs: pending.next_retry_at_secs,
+        })?;
+        let prefix = format!(
+            "{}{{\"group_id\":{},\"fanout\":",
+            if index == 0 { "" } else { "," },
+            serde_json::to_string(&pending.group_id)?
+        );
+        value.push_record(
+            1,
+            pending.fanout.checkpoint_body()?,
+            prefix,
+            format!(",{}", &suffix[1..]),
+            0,
+        );
+    }
+    value.push_inline("core", format!("]{tail}"), 0);
+    let compact_bytes = value.len();
+    if compact_bytes < CHECKPOINT_RESERVE {
+        return Ok((value, ProtocolCheckpointLayout::default()));
+    }
+    // Padding belongs to the record, not its old ordinal. Append/removal
+    // cannot dirty the descriptors of every surviving backlog record.
+    value.pad_records(CHECKPOINT_PAGE, CHECKPOINT_PAGE / 2);
+    let reuse = previous.bytes <= compact_bytes.saturating_mul(3) + CHECKPOINT_RESERVE;
+    let target = if reuse && value.len() <= previous.bytes {
+        previous.bytes
+    } else {
+        value.len().div_ceil(CHECKPOINT_RESERVE) * CHECKPOINT_RESERVE
+    };
+    value.push_inline("reserve", String::new(), target - value.len());
+    let layout = ProtocolCheckpointLayout {
+        bytes: value.len(),
+        record_ends: Vec::new(),
+        core: Some(Box::new(core_layout)),
+    };
+    Ok((value, layout))
 }

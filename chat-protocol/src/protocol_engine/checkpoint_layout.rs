@@ -6,6 +6,7 @@
 struct ProtocolCheckpointLayout {
     record_ends: Vec<usize>,
     bytes: usize,
+    core: Option<Box<ProtocolCheckpointLayout>>,
 }
 
 const CHECKPOINT_PAGE: usize = 4096;
@@ -82,7 +83,9 @@ fn checkpoint_records_with_cached_fields(
         }
         let character = bytes[index];
         #[cfg(test)]
-        { scanned_bytes += 1; }
+        {
+            scanned_bytes += 1;
+        }
         if quoted {
             if escaped {
                 escaped = false;
@@ -178,6 +181,7 @@ impl ProtocolCheckpointLayout {
                 .map(|record| record.padded_end)
                 .collect(),
             bytes: json.len(),
+            core: None,
         }
     }
 }

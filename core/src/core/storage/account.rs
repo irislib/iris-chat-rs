@@ -135,6 +135,67 @@ mod tests {
     }
 
     #[test]
+    fn account_storage_logout_removes_segmented_protocol_secrets() {
+        use iris_chat_protocol::{
+            SqliteStorageAdapter, StorageAdapter, StorageCheckpoint, StorageCheckpointBody,
+        };
+        use std::sync::Arc;
+
+        let dir = tempfile::tempdir().unwrap();
+        let owner = Keys::generate().public_key();
+        let device = Keys::generate().public_key();
+        let mut store = AppStore::new(open_database(dir.path()).unwrap());
+        store.bind_account(owner).unwrap();
+        let protocol = SqliteStorageAdapter::new(store.shared(), owner.to_hex(), device.to_hex());
+        let state = "synthetic secret state".repeat(8192);
+        protocol.put("checkpoint", state.clone()).unwrap();
+        assert_eq!(protocol.get("checkpoint").unwrap(), Some(state));
+        let body = Arc::new(StorageCheckpointBody::new(
+            serde_json::value::to_raw_value(&"synthetic queued secret".repeat(8192))
+                .unwrap()
+                .into(),
+        ));
+        let mut checkpoint = StorageCheckpoint::new();
+        checkpoint.push_inline("prefix", "{\"queue\":[".into(), 0);
+        checkpoint.push_record(1, body, String::new(), String::new(), 0);
+        checkpoint.push_inline("suffix", "]}".into(), 0);
+        protocol
+            .put_checkpoint("record-checkpoint", &checkpoint)
+            .unwrap();
+        assert_eq!(
+            protocol.get("record-checkpoint").unwrap(),
+            Some(checkpoint.materialize().unwrap())
+        );
+
+        store.clear().unwrap();
+        assert!(protocol.get("checkpoint").unwrap().is_none());
+        assert!(protocol.list("").unwrap().is_empty());
+        for table in [
+            "ndr_kv_segmented",
+            "ndr_kv_chunks",
+            "ndr_kv_checkpoint",
+            "ndr_kv_checkpoint_nodes",
+            "ndr_kv_checkpoint_chunks",
+        ] {
+            let count: i64 = store
+                .conn
+                .lock()
+                .unwrap()
+                .query_row(&format!("SELECT count(*) FROM {table}"), [], |row| {
+                    row.get(0)
+                })
+                .unwrap();
+            assert_eq!(count, 0, "logout must remove all protocol secret backing");
+        }
+        drop(protocol);
+        drop(store);
+        let mut reopened = AppStore::new(open_database(dir.path()).unwrap());
+        reopened
+            .bind_account(Keys::generate().public_key())
+            .unwrap();
+    }
+
+    #[test]
     fn account_storage_adopts_one_legacy_owner_with_multiple_devices() {
         let dir = tempfile::tempdir().unwrap();
         let owner = Keys::generate().public_key();

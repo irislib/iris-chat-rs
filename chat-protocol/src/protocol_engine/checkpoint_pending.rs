@@ -4,6 +4,7 @@ thread_local! {
 }
 
 type PendingGroupMessage = nostr_double_ratchet::wire::ParsedGroupSenderKeyMessageEvent;
+type CachedPendingRecord = Arc<Mutex<Option<Arc<crate::StorageCheckpointBody>>>>;
 
 struct SerializedPendingGroupMessages {
     json: Box<serde_json::value::RawValue>,
@@ -23,6 +24,7 @@ impl SerializedPendingGroupMessages {
 struct PendingGroupMessages {
     values: Arc<Vec<PendingGroupMessage>>,
     serialized: Arc<std::sync::Mutex<Option<Arc<SerializedPendingGroupMessages>>>>,
+    records: Arc<Vec<CachedPendingRecord>>,
 }
 
 impl std::fmt::Debug for PendingGroupMessages {
@@ -58,9 +60,11 @@ impl<'a> IntoIterator for &'a PendingGroupMessages {
 
 impl From<Vec<PendingGroupMessage>> for PendingGroupMessages {
     fn from(values: Vec<PendingGroupMessage>) -> Self {
+        let records = Arc::new((0..values.len()).map(|_| Arc::default()).collect());
         Self {
             values: Arc::new(values),
             serialized: Arc::default(),
+            records,
         }
     }
 }
@@ -72,17 +76,21 @@ impl PendingGroupMessages {
     }
 
     fn push(&mut self, value: PendingGroupMessage) {
+        Arc::make_mut(&mut self.records).push(Arc::default());
         self.changed().push(value);
     }
     fn insert(&mut self, index: usize, value: PendingGroupMessage) {
+        Arc::make_mut(&mut self.records).insert(index, Arc::default());
         self.changed().insert(index, value);
     }
     fn remove(&mut self, index: usize) -> PendingGroupMessage {
+        Arc::make_mut(&mut self.records).remove(index);
         self.changed().remove(index)
     }
 
     #[cfg(test)]
     fn pop(&mut self) -> Option<PendingGroupMessage> {
+        Arc::make_mut(&mut self.records).pop();
         self.changed().pop()
     }
 
@@ -92,11 +100,39 @@ impl PendingGroupMessages {
             return;
         };
         let mut index = 0;
+        let mut retained = Vec::with_capacity(self.values.len());
         self.changed().retain(|value| {
             let current = index;
             index += 1;
-            current < first_removed || (current > first_removed && keep(value))
+            let keep = current < first_removed || (current > first_removed && keep(value));
+            retained.push(keep);
+            keep
         });
+        let mut index = 0;
+        Arc::make_mut(&mut self.records).retain(|_| {
+            let keep = retained[index];
+            index += 1;
+            keep
+        });
+    }
+
+    fn record_bodies(&self) -> Result<Vec<Arc<crate::StorageCheckpointBody>>, serde_json::Error> {
+        self.values
+            .iter()
+            .zip(self.records.iter())
+            .map(|(value, cache)| {
+                let mut cache = cache.lock().unwrap_or_else(|poison| poison.into_inner());
+                if let Some(body) = cache.as_ref() {
+                    return Ok(body.clone());
+                }
+                let json = serde_json::value::to_raw_value(value)?.into();
+                let body = Arc::new(crate::StorageCheckpointBody::new(json));
+                #[cfg(test)]
+                CHECKPOINT_PENDING_SERIALIZED_ITEMS.with(|count| count.set(count.get() + 1));
+                *cache = Some(body.clone());
+                Ok(body)
+            })
+            .collect()
     }
 
     fn serialized(&self) -> Result<Arc<SerializedPendingGroupMessages>, serde_json::Error> {
@@ -107,10 +143,9 @@ impl PendingGroupMessages {
         if let Some(value) = cached.as_ref() {
             return Ok(value.clone());
         }
-        let json = serde_json::value::to_raw_value(self.values.as_ref())?;
-        #[cfg(test)]
-        CHECKPOINT_PENDING_SERIALIZED_ITEMS
-            .with(|count| count.set(count.get() + self.values.len()));
+        let records = self.record_bodies()?;
+        let borrowed = records.iter().map(AsRef::as_ref).collect::<Vec<_>>();
+        let json = serde_json::value::to_raw_value(&borrowed)?;
         let value = Arc::new(SerializedPendingGroupMessages::new(json));
         *cached = Some(value.clone());
         Ok(value)
@@ -120,6 +155,7 @@ impl PendingGroupMessages {
 #[cfg(test)]
 impl std::ops::IndexMut<usize> for PendingGroupMessages {
     fn index_mut(&mut self, index: usize) -> &mut Self::Output {
+        Arc::make_mut(&mut self.records)[index] = Arc::default();
         &mut self.changed()[index]
     }
 }
@@ -145,7 +181,7 @@ impl<'de> Deserialize<'de> for PendingGroupMessages {
         let result = Self::from(values);
         // Compact once during restore: retaining old padding here would move
         // its absolute checkpoint boundaries when an earlier field grows.
-        result.serialized().map_err(serde::de::Error::custom)?;
+        result.record_bodies().map_err(serde::de::Error::custom)?;
         Ok(result)
     }
 }

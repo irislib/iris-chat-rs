@@ -43,6 +43,7 @@ fn checkpoint_pending_mutations_detach_clones_and_noop_retain_reuses_cache() {
     let mut pending = engine.pending_group_sender_key_messages;
     let original = pending.clone();
     let cached = pending.serialized().unwrap();
+    let encoded = CHECKPOINT_PENDING_SERIALIZED_ITEMS.with(std::cell::Cell::get);
     assert!(Arc::ptr_eq(&pending.values, &original.values));
     let mut visited = 0;
     pending.retain(|_| {
@@ -57,18 +58,38 @@ fn checkpoint_pending_mutations_detach_clones_and_noop_retain_reuses_cache() {
     assert_ne!(pending.serialized().unwrap().json.get(), cached.json.get());
     assert!(!Arc::ptr_eq(&pending.values, &original.values));
     assert_eq!(original.serialized().unwrap().json.get(), cached.json.get());
+    assert_eq!(
+        CHECKPOINT_PENDING_SERIALIZED_ITEMS.with(std::cell::Cell::get),
+        encoded,
+        "retirement must reuse every surviving ciphertext record"
+    );
     pending.insert(1, removed);
     assert_eq!(pending.serialized().unwrap().json.get(), cached.json.get());
+    assert_eq!(
+        CHECKPOINT_PENDING_SERIALIZED_ITEMS.with(std::cell::Cell::get),
+        encoded + 1,
+        "reinsertion may encode only the reintroduced record"
+    );
     pending.push(original[0].clone());
     assert_eq!(
         pending.serialized().unwrap().json.get(),
         serde_json::to_string(&*pending).unwrap()
+    );
+    assert_eq!(
+        CHECKPOINT_PENDING_SERIALIZED_ITEMS.with(std::cell::Cell::get),
+        encoded + 2,
+        "append must not re-encode the existing queue"
     );
     pending.pop();
     pending[0].encrypted_header = Some("a different cached generation".into());
     assert_eq!(
         pending.serialized().unwrap().json.get(),
         serde_json::to_string(&*pending).unwrap()
+    );
+    assert_eq!(
+        CHECKPOINT_PENDING_SERIALIZED_ITEMS.with(std::cell::Cell::get),
+        encoded + 3,
+        "in-place mutation must detach only its record cache"
     );
     visited = 0;
     pending.retain(|_| {
@@ -85,6 +106,11 @@ fn checkpoint_pending_mutations_detach_clones_and_noop_retain_reuses_cache() {
         serde_json::to_string(&*pending).unwrap()
     );
     assert_eq!(original.serialized().unwrap().json.get(), cached.json.get());
+    assert_eq!(
+        CHECKPOINT_PENDING_SERIALIZED_ITEMS.with(std::cell::Cell::get),
+        encoded + 3,
+        "retain must not encode unchanged survivors"
+    );
 }
 
 #[test]

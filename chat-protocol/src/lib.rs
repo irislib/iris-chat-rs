@@ -46,7 +46,7 @@ pub use nostr_double_ratchet::{
 pub use protocol_engine::*;
 pub use storage::{
     DebouncedFileStorage, FileStorageAdapter, InMemoryStorage, SqliteStorageAdapter,
-    StorageAdapter, StorageError, StorageResult,
+    StorageAdapter, StorageCheckpoint, StorageCheckpointBody, StorageError, StorageResult,
 };
 
 const GROUP_ROSTER_FACT_EVENT_HISTORY_LIMIT: usize = 256;

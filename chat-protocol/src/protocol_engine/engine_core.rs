@@ -82,12 +82,14 @@ impl ProtocolEngine {
         let Some(raw) = storage.get(PROTOCOL_ENGINE_STATE_KEY)? else {
             return Ok(None);
         };
-        let Ok(mut state) = serde_json::from_str::<ProtocolEnginePersistedState>(&raw) else {
-            return Ok(None);
-        };
-        if state.version != PROTOCOL_ENGINE_STATE_VERSION {
-            return Ok(None);
-        }
+        let mut state =
+            serde_json::from_str::<ProtocolEnginePersistedState>(&raw).map_err(|_| {
+                anyhow::anyhow!("Saved chat state could not be read. Existing data has been kept.")
+            })?;
+        anyhow::ensure!(
+            state.version == PROTOCOL_ENGINE_STATE_VERSION,
+            "Saved chat state uses an unsupported version. Existing data has been kept."
+        );
         sanitize_invite_owner_persisted_state(&mut state);
         restore_signed_peer_evidence_for_session_manager(&mut state);
         quarantine_unverified_owner_rosters(

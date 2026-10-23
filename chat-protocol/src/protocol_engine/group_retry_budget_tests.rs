@@ -130,6 +130,16 @@ impl StorageAdapter for GroupRetryCountingStorage {
         }
         self.inner.put(key, value)
     }
+    fn put_checkpoint(&self, key: &str, value: &crate::StorageCheckpoint) -> StorageResult<()> {
+        self.puts.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        if self
+            .fail_next
+            .swap(false, std::sync::atomic::Ordering::Relaxed)
+        {
+            return Err(StorageError::new("injected group retry save failure"));
+        }
+        self.inner.put_checkpoint(key, value)
+    }
     fn del(&self, key: &str) -> StorageResult<()> {
         self.inner.del(key)
     }
