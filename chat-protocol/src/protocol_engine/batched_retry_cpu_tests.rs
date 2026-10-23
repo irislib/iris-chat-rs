@@ -28,8 +28,15 @@ fn restored_backlog_batched_retry_stays_within_cpu_budget() {
     const FANOUTS: usize = 24_990;
     const CIPHERTEXTS: usize = 23_437;
     const CHECKPOINT_BYTES: usize = 350_224_384;
-    let (f, _directory, storage, now_secs, clock_started) =
-        prepared_retry_backlog_fixture(INBOUND, FANOUTS, CIPHERTEXTS, CHECKPOINT_BYTES);
+    let (f, _directory, storage, now_secs, clock_started) = prepared_retry_backlog_fixture(
+        INBOUND,
+        FANOUTS,
+        CIPHERTEXTS,
+        CHECKPOINT_BYTES,
+        SyntheticInboundCiphertext::CorruptMac,
+    );
+    let (inbound_decoded_min_bytes, inbound_decoded_max_bytes) =
+        assert_corrupt_mac_inbound_format(&f.sender.pending_inbound);
     assert_eq!(f.sender.pending_decrypted_deliveries.len(), 1);
     let setup_delivery: UnsignedEvent =
         serde_json::from_str(&f.sender.pending_decrypted_deliveries[0].content).unwrap();
@@ -362,7 +369,7 @@ fn restored_backlog_batched_retry_stays_within_cpu_budget() {
     );
     // Keep each macro expansion bounded as the receipt gains independent checks.
     let mut receipt = serde_json::json!({
-        "schema": "iris-batched-retry-cpu/v2", "fixture": "restored-mixed-backlog-with-expiring-controls-v2", "synthetic": true,
+        "schema": "iris-batched-retry-cpu/v3", "fixture": "restored-mixed-backlog-with-corrupt-mac-inbound-v3", "synthetic": true,
         "pending_inbound": INBOUND, "initially_due_inbound": 102, "fanouts": FANOUTS,
         "initially_due_fanouts": 10462, "ciphertexts": CIPHERTEXTS, "remote_sends": 44,
         "expiring_controls": 2, "initial_remote_sends": 46, "retired_expiring_controls": expiring_controls.retired,
@@ -386,6 +393,15 @@ fn restored_backlog_batched_retry_stays_within_cpu_budget() {
         unreachable!("receipt measurements are a JSON object");
     };
     receipt.as_object_mut().unwrap().extend(measurements);
+    let serde_json::Value::Object(inbound_format) = serde_json::json!({
+        "inbound_ciphertext_format": "canonical-base64-nip44-v2-corrupt-mac",
+        "inbound_ciphertext_format_checked": inbound_before.len(),
+        "inbound_decoded_min_bytes": inbound_decoded_min_bytes,
+        "inbound_decoded_max_bytes": inbound_decoded_max_bytes,
+    }) else {
+        unreachable!("inbound fixture format is a JSON object");
+    };
+    receipt.as_object_mut().unwrap().extend(inbound_format);
     eprintln!("batched_retry_cpu {receipt}");
     assert!(
         restore_seconds <= 180.0 && initially_ready && readiness_seconds <= 180.0,

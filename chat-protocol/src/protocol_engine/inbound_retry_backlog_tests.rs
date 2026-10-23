@@ -36,63 +36,6 @@ fn due_inbound_retry_backoff_lookup_is_linear_in_packet_count() {
     );
 }
 
-// Synthetic packets only. The counts and deadline mix come from aggregate
-// checkpoint diagnostics; no account payloads or identities enter this fixture.
-pub(super) fn synthetic_pending_inbound(
-    receiver: &mut ProtocolEngine,
-    count: usize,
-    due: usize,
-    now: u64,
-) -> Vec<ProtocolPendingInbound> {
-    let sender = Keys::generate();
-    receiver
-        .ingest_app_keys_event(&signed_app_keys(&sender, &[sender.public_key()], 1))
-        .unwrap();
-    let (mut session, response) = receiver
-        .local_invite()
-        .unwrap()
-        .accept_with_owner(
-            sender.public_key(),
-            sender.secret_key().to_secret_bytes(),
-            Some(sender.public_key().to_hex()),
-            Some(sender.public_key()),
-        )
-        .unwrap();
-    receiver
-        .observe_invite_response_event(&invite_response_event(&response).unwrap())
-        .unwrap();
-    (0..count)
-        .map(|index| {
-            let plan = session
-                .plan_send(
-                    format!("deferred-{index}:{}", "x".repeat(1024)).as_bytes(),
-                    NdrUnixSeconds(1),
-                )
-                .unwrap();
-            let mut envelope = session.apply_send(plan).envelope;
-            // The sender is known across restarts, but these damaged packets
-            // cannot advance its ratchet. Each signed event remains distinct.
-            envelope.ciphertext = format!("invalid ciphertext {index}:{}", "x".repeat(1024));
-            let event = nostr_double_ratchet::message_event(&envelope).unwrap();
-            let metadata =
-                receiver.pending_inbound_metadata_for_event(&event, Some(&envelope), None);
-            let mut pending = ProtocolPendingInbound {
-                event,
-                created_at_secs: 1,
-                next_retry_at_secs: if index < due { now } else { now + 52 },
-                event_id: String::new(),
-                envelope: None,
-                sender_message_pubkey_hex: None,
-                resolved_owner_pubkey_hex: None,
-                claimed_owner_pubkey_hex: None,
-                metadata_verified: false,
-            };
-            apply_pending_inbound_metadata(&mut pending, metadata);
-            pending
-        })
-        .collect()
-}
-
 #[test]
 fn deferred_inbound_retry_allocation_is_bounded_by_due_packets() {
     let owner = Keys::generate();
@@ -232,6 +175,7 @@ fn prepared_retry_backlog_fixture(
     fanouts: usize,
     ciphertext_count: usize,
     checkpoint_bytes: usize,
+    inbound_ciphertext: SyntheticInboundCiphertext,
 ) -> (
     RemoteSendFixture,
     tempfile::TempDir,
@@ -267,7 +211,13 @@ fn prepared_retry_backlog_fixture(
         parsed.ciphertext = ciphertext;
         ciphertexts.push(parsed);
     }
-    f.sender.pending_inbound = synthetic_pending_inbound(&mut f.sender, inbound, 102, now_secs);
+    f.sender.pending_inbound = synthetic_pending_inbound_with_ciphertext(
+        &mut f.sender,
+        inbound,
+        102,
+        now_secs,
+        inbound_ciphertext,
+    );
     f.sender.pending_group_sender_key_messages = ciphertexts.into();
     for (index, pending) in f.sender.pending_group_fanouts.iter_mut().enumerate() {
         pending.created_at_secs = now_secs - 4_933 - (index as u64 % 34_274);
@@ -333,8 +283,13 @@ fn restored_backlog_whole_retry_at_continuation_cadence() {
     const FANOUTS: usize = 24_990;
     const CIPHERTEXTS: usize = 23_437;
     const CHECKPOINT_BYTES: usize = 350_224_384;
-    let (f, _directory, storage, now_secs, clock_started) =
-        prepared_retry_backlog_fixture(INBOUND, FANOUTS, CIPHERTEXTS, CHECKPOINT_BYTES);
+    let (f, _directory, storage, now_secs, clock_started) = prepared_retry_backlog_fixture(
+        INBOUND,
+        FANOUTS,
+        CIPHERTEXTS,
+        CHECKPOINT_BYTES,
+        SyntheticInboundCiphertext::Malformed,
+    );
     // Exercise the real restore path before timing, with no test-only outer batch.
     drop(f.sender);
     let mut engine = ProtocolEngine::load_or_create_for_local_device(
