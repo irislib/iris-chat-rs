@@ -249,6 +249,8 @@ fn repair_coalescing_preserves_every_recovery_selector_and_existing_entry() {
     assert!(weak.upgrade().is_none());
 }
 
+include!("repair_retry_persistence_tests.rs");
+
 #[test]
 fn repair_coalescing_keeps_ready_ratchet_delivery_across_reload() {
     let mut f = remote_send_fixture();
