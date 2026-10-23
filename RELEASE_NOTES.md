@@ -9,6 +9,7 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 - Avoid rewriting large saved checkpoints when they grow or queued messages are added or delivered. Store immutable queued payloads separately from retry metadata, committing every change with the ratchet state in one transaction.
 - Reuse cached payloads while saving and retain existing accounts, pending messages and encryption state during the storage migration. Migrated checkpoints require this version or newer.
 - Save incoming-message retry timers without copying or rewriting their encrypted payloads. Preserve pending work and encryption state after a failed save or restart.
+- Reuse database update statements while saving queued-message metadata to avoid repeated SQL compilation.
 - Preserve unreadable or unsupported saved state and return an error instead of replacing it with a fresh session.
 - Add physical SQLite write checks for growth, queue admission, successful retry retirement, unchanged saves and failed-commit recovery.
 - Bind Apple upgrade acceptance to the exact official build and authorized installation route, with preserved-state, lifecycle, CPU, disk-write, startup and send checks.

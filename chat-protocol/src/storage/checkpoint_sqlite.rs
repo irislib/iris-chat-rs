@@ -362,6 +362,7 @@ pub(super) fn put(
         .transpose()?
         .unwrap_or_default();
     let old_payloads = payloads(&tx, ns, &old)?;
+    let mut update_node = tx.prepare("INSERT INTO ndr_kv_checkpoint_nodes(owner_pubkey_hex,device_pubkey_hex,key,node_key,next_key,payload_key,byte_length,prefix,suffix,padding) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10) ON CONFLICT(owner_pubkey_hex,device_pubkey_hex,key,node_key) DO UPDATE SET next_key=excluded.next_key,payload_key=excluded.payload_key,byte_length=excluded.byte_length,prefix=excluded.prefix,suffix=excluded.suffix,padding=excluded.padding").map_err(err)?;
     let mut current = BTreeSet::new();
     let mut current_payloads = BTreeSet::new();
     for (index, part) in value.parts.iter().enumerate() {
@@ -385,7 +386,20 @@ pub(super) fn put(
             }
         }
         if old.get(&part.key) != Some(&node) {
-            tx.execute("INSERT INTO ndr_kv_checkpoint_nodes(owner_pubkey_hex,device_pubkey_hex,key,node_key,next_key,payload_key,byte_length,prefix,suffix,padding) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10) ON CONFLICT(owner_pubkey_hex,device_pubkey_hex,key,node_key) DO UPDATE SET next_key=excluded.next_key,payload_key=excluded.payload_key,byte_length=excluded.byte_length,prefix=excluded.prefix,suffix=excluded.suffix,padding=excluded.padding",rusqlite::params![ns.0,ns.1,ns.2,part.key,node.next,node.payload,node.bytes as i64,node.prefix,node.suffix,node.padding as i64]).map_err(err)?;
+            update_node
+                .execute(rusqlite::params![
+                    ns.0,
+                    ns.1,
+                    ns.2,
+                    part.key,
+                    node.next,
+                    node.payload,
+                    node.bytes as i64,
+                    node.prefix,
+                    node.suffix,
+                    node.padding as i64
+                ])
+                .map_err(err)?;
             segmented::account_io(0, part.key.len() + node.stored_bytes());
         }
     }
@@ -413,5 +427,6 @@ pub(super) fn put(
         tx.execute("INSERT INTO ndr_kv_checkpoint(owner_pubkey_hex,device_pubkey_hex,key,format_version,byte_length,node_count,head) VALUES(?1,?2,?3,1,?4,?5,?6) ON CONFLICT(owner_pubkey_hex,device_pubkey_hex,key) DO UPDATE SET byte_length=excluded.byte_length,node_count=excluded.node_count,head=excluded.head",(ns.0,ns.1,ns.2,meta.bytes as i64,meta.count as i64,&meta.head)).map_err(err)?;
         segmented::account_io(0, 24 + meta.head.as_ref().map_or(0, Vec::len));
     }
+    drop(update_node);
     tx.commit().map_err(err)
 }
