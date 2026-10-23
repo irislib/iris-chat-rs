@@ -360,3 +360,105 @@ fn checkpoint_records_corruption_and_conflicting_formats_are_rejected() {
         assert!(storage.put_checkpoint("state",&value).is_err(),"corrupt state must not be overwritten: {corruption}");
     }
 }
+
+fn shared_chunked_checkpoint() -> StorageCheckpoint {
+    let raw = serde_json::value::to_raw_value(&"é🦀\0".repeat(12_000)).unwrap();
+    let shared = Arc::new(StorageCheckpointBody::new(raw.into()));
+    assert!(shared.json().len() > 2 * 65536 && shared.json().len() < 3 * 65536);
+    checkpoint(&[shared.clone(), shared], &[11, 22], "shared")
+}
+
+fn checkpoint_rows(conn: &SharedConnection) -> Vec<Vec<Vec<rusqlite::types::Value>>> {
+    let conn = conn.lock().unwrap();
+    [
+        "ndr_kv",
+        "ndr_kv_checkpoint",
+        "ndr_kv_checkpoint_nodes",
+        "ndr_kv_checkpoint_chunks",
+    ]
+    .into_iter()
+    .map(|table| {
+        let mut stmt = conn
+            .prepare(&format!("SELECT * FROM {table} ORDER BY rowid"))
+            .unwrap();
+        let columns = stmt.column_count();
+        let rows = stmt
+            .query_map([], |row| {
+                (0..columns).map(|column| row.get(column)).collect()
+            })
+            .unwrap();
+        rows.collect::<rusqlite::Result<Vec<_>>>().unwrap()
+    })
+    .collect()
+}
+
+#[test]
+fn checkpoint_records_shared_empty_payloads_and_chunk_order_are_valid() {
+    let (dir, conn, storage) = database();
+    let value = shared_chunked_checkpoint();
+    storage.put_checkpoint("state", &value).unwrap();
+    conn.lock().unwrap().execute_batch(
+        "CREATE TEMP TABLE reordered AS SELECT * FROM ndr_kv_checkpoint_chunks;
+         DELETE FROM ndr_kv_checkpoint_chunks;
+         INSERT INTO ndr_kv_checkpoint_chunks SELECT * FROM reordered ORDER BY payload_key DESC,chunk_index DESC;
+         DROP TABLE reordered;"
+    ).unwrap();
+    {
+        let conn = conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT chunk_index FROM ndr_kv_checkpoint_chunks WHERE substr(payload_key,1,1)=x'01' ORDER BY rowid").unwrap();
+        let indices = stmt
+            .query_map([], |r| r.get::<_, i64>(0))
+            .unwrap()
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .unwrap();
+        assert_eq!(
+            indices,
+            [2, 1, 0],
+            "shared body has one physically reversed chunk set"
+        );
+        let empty_chunks: i64 = conn.query_row("SELECT count(*) FROM ndr_kv_checkpoint_chunks WHERE payload_key IN (SELECT payload_key FROM ndr_kv_checkpoint_nodes WHERE byte_length=0)", [], |r| r.get(0)).unwrap();
+        assert_eq!(empty_chunks, 0);
+    }
+    let expected = value.materialize().unwrap();
+    assert_eq!(storage.get("state").unwrap(), Some(expected.clone()));
+    assert_eq!(reopen(&dir).get("state").unwrap(), Some(expected));
+    let before = pages(&conn);
+    storage.put_checkpoint("state", &value).unwrap();
+    assert_eq!(
+        pages(&conn),
+        before,
+        "valid shared/empty bodies remain a no-op"
+    );
+}
+
+#[test]
+fn checkpoint_records_payload_shape_corruption_preserves_existing_rows() {
+    for (case, corruption) in [
+        // Preserve each node's logical size so the shared-length conflict reaches payload validation.
+        ("inconsistent shared lengths", "UPDATE ndr_kv_checkpoint_nodes SET byte_length=byte_length+1,padding=padding-1 WHERE rowid=(SELECT min(rowid) FROM ndr_kv_checkpoint_nodes WHERE substr(payload_key,1,1)=x'01')"),
+        ("empty payload with a chunk", "INSERT INTO ndr_kv_checkpoint_chunks SELECT owner_pubkey_hex,device_pubkey_hex,key,payload_key,0,x'' FROM ndr_kv_checkpoint_nodes WHERE byte_length=0"),
+        ("missing middle chunk", "DELETE FROM ndr_kv_checkpoint_chunks WHERE substr(payload_key,1,1)=x'01' AND chunk_index=1"),
+        ("missing final chunk", "DELETE FROM ndr_kv_checkpoint_chunks WHERE substr(payload_key,1,1)=x'01' AND chunk_index=2"),
+        ("negative index", "UPDATE ndr_kv_checkpoint_chunks SET chunk_index=-1 WHERE substr(payload_key,1,1)=x'01' AND chunk_index=0"),
+        ("noninteger index", "UPDATE ndr_kv_checkpoint_chunks SET chunk_index=0.5 WHERE substr(payload_key,1,1)=x'01' AND chunk_index=0"),
+        ("extra final chunk", "INSERT INTO ndr_kv_checkpoint_chunks SELECT owner_pubkey_hex,device_pubkey_hex,key,payload_key,3,x'' FROM ndr_kv_checkpoint_chunks WHERE substr(payload_key,1,1)=x'01' AND chunk_index=2"),
+        ("short full chunk", "UPDATE ndr_kv_checkpoint_chunks SET data=substr(data,1,length(data)-1) WHERE substr(payload_key,1,1)=x'01' AND chunk_index=0"),
+        ("long full chunk", "UPDATE ndr_kv_checkpoint_chunks SET data=CAST(data||x'00' AS BLOB) WHERE substr(payload_key,1,1)=x'01' AND chunk_index=0"),
+        ("short final chunk", "UPDATE ndr_kv_checkpoint_chunks SET data=substr(data,1,length(data)-1) WHERE substr(payload_key,1,1)=x'01' AND chunk_index=2"),
+        ("text data", "UPDATE ndr_kv_checkpoint_chunks SET data=hex(zeroblob(length(data)/2)) WHERE substr(payload_key,1,1)=x'01' AND chunk_index=0"),
+        ("text payload key", "UPDATE ndr_kv_checkpoint_chunks SET payload_key='text-key' WHERE substr(payload_key,1,1)=x'01'"),
+        ("orphan payload", "INSERT INTO ndr_kv_checkpoint_chunks VALUES('owner','device','state',x'006f727068616e',0,x'00')"),
+    ] {
+        let (dir, conn, storage) = database();
+        let value = shared_chunked_checkpoint();
+        storage.put_checkpoint("state", &value).unwrap();
+        conn.lock().unwrap().execute_batch(corruption).unwrap();
+        let before = checkpoint_rows(&conn);
+        let written = pages(&conn);
+        assert!(storage.get("state").is_err(), "corrupt read: {case}");
+        assert!(storage.put_checkpoint("state", &value).is_err(), "corrupt replacement: {case}");
+        assert!(checkpoint_rows(&conn) == before, "failed replacement changed rows: {case}");
+        assert_eq!(pages(&conn), written, "failed replacement dirtied pages: {case}");
+        assert!(reopen(&dir).get("state").is_err(), "corruption must survive rejection: {case}");
+    }
+}

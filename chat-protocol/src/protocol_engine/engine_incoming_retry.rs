@@ -50,6 +50,17 @@ impl ProtocolEngine {
     }
 
     pub fn has_due_pending_retry_work(&self, now: NdrUnixSeconds) -> bool {
+        if !self.pending_decrypted_deliveries.is_empty() {
+            return true;
+        }
+        if !self.pending_group_sender_key_messages.is_empty() {
+            let retry = self.group_sender_key_retry.borrow();
+            // Refresh leaves a frozen search's inputs untouched. Its established
+            // continuation already makes this turn runnable, without due scans.
+            if !retry.ready.is_empty() && (retry.active.is_some() || retry.prepared.is_some()) {
+                return true;
+            }
+        }
         let now_secs = now.get();
         self.pending_remote_sends
             .iter()

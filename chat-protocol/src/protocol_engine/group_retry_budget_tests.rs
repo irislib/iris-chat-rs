@@ -148,6 +148,211 @@ impl StorageAdapter for GroupRetryCountingStorage {
     }
 }
 
+fn deferred_group_retry_query_fixture() -> (ProtocolEngine, Keys, Arc<GroupRetryCountingStorage>) {
+    let (mut engine, sender, device) = queued_group_history(1);
+    let candidates = std::mem::take(&mut engine.pending_group_sender_key_messages);
+    engine.pending_inbound = synthetic_pending_inbound(&mut engine, 128, 0, 30);
+    engine.pending_group_sender_key_messages = candidates;
+    engine.pending_group_fanouts = (0..256)
+        .map(|index| ProtocolPendingGroupFanout {
+            group_id: "queued-group".into(),
+            fanout: GroupPendingFanout::Remote {
+                recipient_owner: ndr_owner(sender.public_key()),
+                payload: format!("deferred-{index}").into_bytes(),
+            }
+            .into(),
+            remaining_devices: Some(BTreeSet::from([ndr_device(device.public_key())])),
+            inner_event_id: Some(format!("deferred-{index}")),
+            created_at_secs: 20,
+            next_retry_at_secs: 90,
+        })
+        .collect();
+    let storage = Arc::new(GroupRetryCountingStorage {
+        inner: engine.storage.clone(),
+        puts: 0.into(),
+        fail_next: false.into(),
+    });
+    engine.storage = storage.clone();
+    (engine, device, storage)
+}
+
+fn assert_ready_retry_queries_skip_deferred_work(
+    engine: &ProtocolEngine,
+    storage: &GroupRetryCountingStorage,
+) {
+    let queues = || {
+        serde_json::to_value((
+            &engine.pending_remote_sends,
+            &engine.pending_local_sibling_sends,
+            &engine.pending_inbound,
+            &engine.pending_group_fanouts,
+            &engine.pending_group_pairwise_payloads,
+            &engine.pending_group_sender_key_repairs,
+            &engine.pending_group_sender_key_messages,
+            &engine.pending_decrypted_deliveries,
+        ))
+        .unwrap()
+    };
+    let queues_before = queues();
+    let journal = engine.pending_decrypted_deliveries.clone();
+    let group = engine.group_manager.snapshot();
+    let sessions = serde_json::to_value(engine.session_manager.snapshot()).unwrap();
+    let before = engine.group_sender_key_retry.borrow().clone();
+    let writes = storage.puts.load(std::sync::atomic::Ordering::Relaxed);
+    engine.invalidate_pending_inbound_retry_deadline();
+    take_inbound_retry_deadline_scans();
+    for _ in 0..32 {
+        assert!(engine.has_due_pending_retry_work(NdrUnixSeconds(30)));
+    }
+    // The unknown inbound deadline precedes fanouts in the fallback, so zero
+    // visits also proves that these queries never reached the deferred fanouts.
+    assert_eq!(take_inbound_retry_deadline_scans(), 0);
+    assert!(
+        queues() == queues_before,
+        "queries must preserve every retry queue"
+    );
+    assert_eq!(engine.pending_decrypted_deliveries, journal);
+    assert_eq!(engine.group_manager.snapshot(), group);
+    assert_eq!(
+        serde_json::to_value(engine.session_manager.snapshot()).unwrap(),
+        sessions
+    );
+    assert_eq!(
+        storage.puts.load(std::sync::atomic::Ordering::Relaxed),
+        writes
+    );
+    let retry = engine.group_sender_key_retry.borrow();
+    assert!(retry.inputs == before.inputs);
+    assert_eq!(retry.ready, before.ready);
+    assert_eq!(retry.queued, before.queued);
+    assert_eq!(retry.started, before.started);
+    assert_eq!(retry.attempts, before.attempts);
+    assert_eq!(retry.key_trials_remaining, before.key_trials_remaining);
+    assert_eq!(retry.yielded, before.yielded);
+    assert_eq!(retry.total_attempts, before.total_attempts);
+    assert_eq!(retry.receive_checkpoints, before.receive_checkpoints);
+    assert_eq!(
+        retry.continuation_ready_comparisons,
+        before.continuation_ready_comparisons
+    );
+    assert_eq!(
+        retry
+            .active
+            .as_ref()
+            .map(|active| (&active.fingerprint, active.pending_index)),
+        before
+            .active
+            .as_ref()
+            .map(|active| (&active.fingerprint, active.pending_index))
+    );
+    assert_eq!(
+        retry.prepared.as_ref().map(|(fingerprint, _)| fingerprint),
+        before.prepared.as_ref().map(|(fingerprint, _)| fingerprint)
+    );
+}
+
+#[test]
+fn retry_query_established_continuations_skip_deferred_queues_without_mutation() {
+    for prepared in [false, true] {
+        let (mut engine, device, storage) = deferred_group_retry_query_fixture();
+        long_group_candidate(&mut engine, &device, 700);
+        assert!(engine
+            .retry_pending_protocol(NdrUnixSeconds(30))
+            .unwrap()
+            .is_empty());
+        assert!(engine.group_sender_key_retry.borrow().active.is_some());
+        if prepared {
+            for _ in 0..32 {
+                if engine.group_sender_key_retry.borrow().prepared.is_some() {
+                    break;
+                }
+                engine.group_sender_key_retry.borrow_mut().reset_budget();
+                engine.advance_group_sender_key_continuation().unwrap();
+            }
+            assert!(engine.group_sender_key_retry.borrow().prepared.is_some());
+        }
+        assert!(engine.pending_decrypted_deliveries.is_empty());
+        assert_ready_retry_queries_skip_deferred_work(&engine, &storage);
+
+        if prepared {
+            assert_eq!(drain_group_retry(&mut engine, NdrUnixSeconds(30)).len(), 1);
+            engine.ack_pending_decrypted_deliveries().unwrap();
+        } else {
+            // An orphan continuation with no ready entry must use the fallback.
+            let ready = std::mem::take(&mut engine.group_sender_key_retry.borrow_mut().ready);
+            assert!(!engine.has_due_pending_retry_work(NdrUnixSeconds(30)));
+            assert_eq!(
+                take_inbound_retry_deadline_scans(),
+                engine.pending_inbound.len()
+            );
+            engine.group_sender_key_retry.borrow_mut().ready = ready;
+            // Empty durable work must clear stale continuation state normally.
+            engine.pending_group_sender_key_messages.retain(|_| false);
+        }
+        engine.invalidate_pending_inbound_retry_deadline();
+        take_inbound_retry_deadline_scans();
+        assert!(!engine.has_due_pending_retry_work(NdrUnixSeconds(30)));
+        assert_eq!(
+            take_inbound_retry_deadline_scans(),
+            engine.pending_inbound.len()
+        );
+        let retry = engine.group_sender_key_retry.borrow();
+        assert!(retry.active.is_none() && retry.prepared.is_none());
+        assert!(retry.inputs.is_empty() && retry.ready.is_empty() && retry.queued.is_empty());
+        drop(retry);
+        assert!(!engine.has_due_pending_retry_work(NdrUnixSeconds(81)));
+        assert!(engine.has_due_pending_retry_work(NdrUnixSeconds(82)));
+        assert_eq!(take_inbound_retry_deadline_scans(), 0);
+    }
+}
+
+#[test]
+fn retry_query_delivery_journal_skips_deferred_queues_until_acknowledged() {
+    let (mut engine, _, storage) = deferred_group_retry_query_fixture();
+    assert_eq!(drain_group_retry(&mut engine, NdrUnixSeconds(30)).len(), 1);
+    assert!(engine.pending_group_sender_key_messages.is_empty());
+    assert_eq!(engine.pending_decrypted_deliveries.len(), 1);
+    assert_ready_retry_queries_skip_deferred_work(&engine, &storage);
+    engine.ack_pending_decrypted_deliveries().unwrap();
+    assert!(!engine.has_due_pending_retry_work(NdrUnixSeconds(30)));
+    assert_eq!(
+        take_inbound_retry_deadline_scans(),
+        engine.pending_inbound.len()
+    );
+    assert!(engine.has_due_pending_retry_work(NdrUnixSeconds(82)));
+}
+
+#[test]
+fn retry_query_without_continuation_preserves_refreshing_fallback() {
+    let (mut engine, _, storage) = deferred_group_retry_query_fixture();
+    engine.refresh_group_sender_key_retry_inputs();
+    assert_eq!(engine.group_sender_key_retry.borrow().ready.len(), 1);
+    let mut group = engine.group_manager.snapshot();
+    group.groups[0].revision += 1;
+    engine.group_manager = GroupEventManager::from_snapshot(group.clone()).unwrap();
+    let writes = storage.puts.load(std::sync::atomic::Ordering::Relaxed);
+    engine.invalidate_pending_inbound_retry_deadline();
+    take_inbound_retry_deadline_scans();
+    assert!(engine.has_due_pending_retry_work(NdrUnixSeconds(30)));
+    assert_eq!(
+        take_inbound_retry_deadline_scans(),
+        engine.pending_inbound.len()
+    );
+    assert_eq!(engine.group_manager.snapshot(), group);
+    assert_eq!(
+        storage.puts.load(std::sync::atomic::Ordering::Relaxed),
+        writes
+    );
+    let retry = engine.group_sender_key_retry.borrow();
+    assert!(retry.active.is_none() && retry.prepared.is_none());
+    assert_eq!(retry.ready.len(), 1);
+    assert_eq!(retry.total_attempts, 0);
+    assert_eq!(
+        retry.inputs[&engine.pending_group_sender_key_messages[0].sender_event_pubkey].revision,
+        group.groups[0].revision
+    );
+}
+
 #[test]
 fn group_retry_unchanged_metadata_does_not_repeat_blind_search_or_checkpoint() {
     let (mut engine, sender, sender_device) = queued_group_history(1);

@@ -66,13 +66,37 @@ struct Node {
     suffix: String,
     padding: usize,
 }
-impl Node {
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct NodeView<'a> {
+    next: Option<&'a [u8]>,
+    payload: &'a [u8],
+    bytes: usize,
+    prefix: &'a str,
+    suffix: &'a str,
+    padding: usize,
+}
+impl NodeView<'_> {
     fn stored_bytes(&self) -> usize {
-        self.next.as_ref().map_or(0, Vec::len)
+        self.next.map_or(0, <[u8]>::len)
             + self.payload.len()
             + self.prefix.len()
             + self.suffix.len()
             + 16
+    }
+}
+impl Node {
+    fn view(&self) -> NodeView<'_> {
+        NodeView {
+            next: self.next.as_deref(),
+            payload: &self.payload,
+            bytes: self.bytes,
+            prefix: &self.prefix,
+            suffix: &self.suffix,
+            padding: self.padding,
+        }
+    }
+    fn stored_bytes(&self) -> usize {
+        self.view().stored_bytes()
     }
     fn logical_bytes(&self) -> StorageResult<usize> {
         self.bytes
@@ -169,43 +193,52 @@ fn nodes(
 // Validate references and chunk shape without reading immutable payload bytes.
 // A full read verifies their hashes. Ordinary saves trust the once-computed
 // SHA-256 identities, not a mutable caller-supplied content/version token.
-fn payloads(
+struct PayloadCheck {
+    bytes: usize,
+    next_chunk: usize,
+}
+fn payloads<'a>(
     conn: &Connection,
     ns: Namespace<'_>,
-    nodes: &BTreeMap<Vec<u8>, Node>,
-) -> StorageResult<BTreeMap<Vec<u8>, usize>> {
+    nodes: &'a BTreeMap<Vec<u8>, Node>,
+) -> StorageResult<BTreeMap<&'a [u8], PayloadCheck>> {
     let mut expected = BTreeMap::new();
     for node in nodes.values() {
-        if expected
-            .insert(node.payload.clone(), node.bytes)
-            .is_some_and(|old| old != node.bytes)
-        {
+        let payload = expected
+            .entry(node.payload.as_slice())
+            .or_insert(PayloadCheck {
+                bytes: node.bytes,
+                next_chunk: 0,
+            });
+        if payload.bytes != node.bytes {
             return Err(invalid());
         }
     }
-    let mut indices = BTreeMap::<Vec<u8>, usize>::new();
     let mut stmt = conn.prepare("SELECT payload_key,chunk_index,length(data),typeof(data) FROM ndr_kv_checkpoint_chunks WHERE owner_pubkey_hex=?1 AND device_pubkey_hex=?2 AND key=?3 ORDER BY payload_key,chunk_index").map_err(err)?;
     let mut rows = stmt.query(ns).map_err(err)?;
     while let Some(row) = rows.next().map_err(err)? {
-        let key: Vec<u8> = row.get(0).map_err(err)?;
+        let ValueRef::Blob(key) = row.get_ref(0).map_err(err)? else {
+            return Err(invalid());
+        };
         let index = number(row.get(1).map_err(err)?)?;
         let bytes = number(row.get(2).map_err(err)?)?;
-        let kind: String = row.get(3).map_err(err)?;
-        let total = *expected.get(&key).ok_or_else(invalid)?;
-        let next = indices.entry(key.clone()).or_default();
-        if index != *next
-            || index >= total.div_ceil(CHUNK)
-            || bytes != (total - index * CHUNK).min(CHUNK)
-            || kind != "blob"
+        let ValueRef::Text(kind) = row.get_ref(3).map_err(err)? else {
+            return Err(invalid());
+        };
+        let payload = expected.get_mut(key).ok_or_else(invalid)?;
+        if index != payload.next_chunk
+            || index >= payload.bytes.div_ceil(CHUNK)
+            || bytes != (payload.bytes - index * CHUNK).min(CHUNK)
+            || kind != b"blob"
         {
             return Err(invalid());
         }
-        *next += 1;
+        payload.next_chunk += 1;
         segmented::account_io(key.len() + 20, 0);
     }
     if expected
-        .iter()
-        .any(|(key, bytes)| indices.get(key).copied().unwrap_or(0) != bytes.div_ceil(CHUNK))
+        .values()
+        .any(|payload| payload.next_chunk != payload.bytes.div_ceil(CHUNK))
     {
         return Err(invalid());
     }
@@ -366,26 +399,28 @@ pub(super) fn put(
     let mut current = BTreeSet::new();
     let mut current_payloads = BTreeSet::new();
     for (index, part) in value.parts.iter().enumerate() {
-        if !current.insert(part.key.clone()) {
+        if !current.insert(part.key.as_slice()) {
             return Err(invalid());
         }
-        let node = Node {
-            next: value.parts.get(index + 1).map(|p| p.key.clone()),
-            payload: part.payload_key.clone(),
+        let node = NodeView {
+            next: value.parts.get(index + 1).map(|p| p.key.as_slice()),
+            payload: &part.payload_key,
             bytes: part.bytes.bytes().len(),
-            prefix: part.prefix.clone(),
-            suffix: part.suffix.clone(),
+            prefix: &part.prefix,
+            suffix: &part.suffix,
             padding: part.padding,
         };
-        if current_payloads.insert(part.payload_key.clone()) {
-            let old_bytes = old_payloads.get(&part.payload_key).copied();
+        if current_payloads.insert(part.payload_key.as_slice()) {
+            let old_bytes = old_payloads
+                .get(part.payload_key.as_slice())
+                .map(|payload| payload.bytes);
             if matches!(&part.bytes, PartBytes::Inline(_)) || old_bytes.is_none() {
                 put_payload(&tx, ns, &part.payload_key, part.bytes.bytes(), old_bytes)?;
             } else if old_bytes != Some(node.bytes) {
                 return Err(invalid());
             }
         }
-        if old.get(&part.key) != Some(&node) {
+        if old.get(&part.key).map(Node::view) != Some(node) {
             update_node
                 .execute(rusqlite::params![
                     ns.0,
@@ -403,11 +438,12 @@ pub(super) fn put(
             segmented::account_io(0, part.key.len() + node.stored_bytes());
         }
     }
-    for key in old.keys().filter(|key| !current.contains(*key)) {
+    for key in old.keys().filter(|key| !current.contains(key.as_slice())) {
         tx.execute("DELETE FROM ndr_kv_checkpoint_nodes WHERE owner_pubkey_hex=?1 AND device_pubkey_hex=?2 AND key=?3 AND node_key=?4",(ns.0,ns.1,ns.2,key)).map_err(err)?;
     }
     for key in old_payloads
         .keys()
+        .copied()
         .filter(|key| !current_payloads.contains(*key))
     {
         tx.execute("DELETE FROM ndr_kv_checkpoint_chunks WHERE owner_pubkey_hex=?1 AND device_pubkey_hex=?2 AND key=?3 AND payload_key=?4",(ns.0,ns.1,ns.2,key)).map_err(err)?;
