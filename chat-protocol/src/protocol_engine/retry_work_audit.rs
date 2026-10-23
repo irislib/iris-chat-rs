@@ -97,10 +97,27 @@ impl RetrySearchAuditGuard {
 
     fn take_phase_seconds(&self) -> BTreeMap<&'static str, f64> {
         RETRY_SEARCH_AUDIT.with(|slot| {
-            std::mem::take(&mut slot.borrow_mut().as_mut().unwrap().phase_work)
-                .into_iter()
-                .map(|(phase, elapsed)| (phase, elapsed.as_secs_f64()))
-                .collect()
+            let mut measured = std::mem::take(&mut slot.borrow_mut().as_mut().unwrap().phase_work);
+            // A fully exhausted search has no cursor work. Keep the same
+            // diagnostic schema for that legitimate quiet phase.
+            [
+                "retirement",
+                "group_inputs",
+                "group_fanouts",
+                "inbound",
+                "remote_sends",
+                "local_siblings",
+                "flush",
+                "decrypt_cursor_nested",
+            ]
+            .into_iter()
+            .map(|phase| {
+                (
+                    phase,
+                    measured.remove(phase).unwrap_or_default().as_secs_f64(),
+                )
+            })
+            .collect()
         })
     }
 }
@@ -130,11 +147,17 @@ fn retry_search_audit_keeps_author_generations_across_observations() {
     record_retry_phase("group_inputs", std::time::Duration::from_millis(3));
     audit_group_retry_decrypt_elapsed(std::time::Duration::from_millis(1));
     audit_group_retry_decrypt_elapsed(std::time::Duration::from_millis(1));
-    assert_eq!(
-        audit.take_phase_seconds(),
-        BTreeMap::from([("group_inputs", 0.003), ("decrypt_cursor_nested", 0.002)])
-    );
-    assert!(audit.take_phase_seconds().is_empty());
+    let phases = audit.take_phase_seconds();
+    assert_eq!(phases.len(), 8);
+    assert_eq!(phases["group_inputs"], 0.003);
+    assert_eq!(phases["decrypt_cursor_nested"], 0.002);
+    assert_eq!(phases["flush"], 0.0);
+    record_retry_phase("remote_sends", std::time::Duration::from_millis(1));
+    let no_decrypt = audit.take_phase_seconds();
+    assert_eq!(no_decrypt.len(), 8);
+    assert_eq!(no_decrypt["remote_sends"], 0.001);
+    assert_eq!(no_decrypt["group_inputs"], 0.0);
+    assert_eq!(no_decrypt["decrypt_cursor_nested"], 0.0);
     assert_eq!(audit.counts(), (3, 1, 3));
     drop(audit);
     let restarted = RetrySearchAuditGuard::start();
