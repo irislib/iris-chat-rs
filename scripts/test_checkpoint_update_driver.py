@@ -59,7 +59,7 @@ class ContractTests(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, "disabled"):
             self.verify(dict(inputs(), enabled=False))
 
-    def test_exact_five_commit_chain_thirty_two_checks_and_one_cpu(self):
+    def test_exact_six_commit_chain_thirty_two_checks_and_one_cpu(self):
         data = self.verify(inputs())
         self.assertEqual(sum(t["expected_count"] for t in data["tests"]), 32)
         self.assertEqual(data["cpu"]["test"]["timeout_seconds"], 420)
@@ -162,8 +162,8 @@ class SourceTests(unittest.TestCase):
 
     def test_full_chain_and_regression_bytes_are_preserved_in_proof(self):
         result = self.proof()
-        self.assertEqual(len(result["reviewed_chain"]), 5)
-        self.assertEqual(result["changed_paths"], DRIVER.GATE_PATHS)
+        self.assertEqual(len(result["reviewed_chain"]), 6)
+        self.assertEqual(result["changed_paths"], ["RELEASE.md"])
 
     def test_wrong_parent_path_or_intermediate_fixture_fails(self):
         for options in [dict(wrong_parent=True), dict(changed_path=True), dict(changed_fixture=True)]:

@@ -3,7 +3,7 @@
   "enabled": false,
   "base": "7cb25044c48e2b5c91b9a89db3626ba39730ab95",
   "before": "d7540b3481b152c0b7c30d8d5068f63fac6d4fe7",
-  "after": "7e1b106c4ed21a9b10d5b16f5895c0a022618c2d",
+  "after": "66524f2f8f0967a6166818c0f046a73f2273b429",
   "source_chain": [
     {
       "commit": "d7540b3481b152c0b7c30d8d5068f63fac6d4fe7",
@@ -42,6 +42,13 @@
       "changed_paths": [
         "scripts/test_rust.sh",
         "scripts/test_rust_runner.py"
+      ]
+    },
+    {
+      "commit": "66524f2f8f0967a6166818c0f046a73f2273b429",
+      "parent": "7e1b106c4ed21a9b10d5b16f5895c0a022618c2d",
+      "changed_paths": [
+        "RELEASE.md"
       ]
     }
   ],

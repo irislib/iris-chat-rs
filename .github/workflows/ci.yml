@@ -109,7 +109,7 @@ jobs:
     env:
       COMPARISON_DRIVER: ${{ inputs.scope == 'checkpoint-update' && 'verify_checkpoint_update.py' || 'verify_inbound_deadline.py' }}
       COMPARISON_OUTPUT: work/${{ inputs.scope }}
-      COMPARISON_FETCH_DEPTH: ${{ inputs.scope == 'checkpoint-update' && '6' || '2' }}
+      COMPARISON_FETCH_DEPTH: ${{ inputs.scope == 'checkpoint-update' && '7' || '2' }}
       CARGO_TARGET_DIR: ${{ github.workspace }}/cargo-target
       CARGO_BUILD_JOBS: '2'
       CARGO_TERM_COLOR: never

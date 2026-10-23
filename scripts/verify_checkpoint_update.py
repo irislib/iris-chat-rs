@@ -54,10 +54,10 @@ def contract():
     assert data["schema"] == "iris-checkpoint-update-input/v1"
     chain = data["source_chain"]
     refs = [data["base"], *[item["commit"] for item in chain]]
-    assert len(chain) == 5 and len(set(refs)) == 6
+    assert len(chain) == 6 and len(set(refs)) == 7
     assert all(re.fullmatch(r"[0-9a-f]{40}", ref or "") for ref in refs)
     assert (data["before"], data["after"]) == (chain[0]["commit"], chain[-1]["commit"])
-    assert [item["changed_paths"] for item in chain] == [[STORAGE], [STORAGE], FIXTURE_PATHS, ["RELEASE_NOTES.md"], GATE_PATHS]
+    assert [item["changed_paths"] for item in chain] == [[STORAGE], [STORAGE], FIXTURE_PATHS, ["RELEASE_NOTES.md"], GATE_PATHS, ["RELEASE.md"]]
     assert [item["parent"] for item in chain] == refs[:-1]
     assert data["storage_test_module_sha256"] == STORAGE_TESTS_SHA256
     assert data["before_test"] == RED_TEST and data["before_failure_marker"] == FAILURE
