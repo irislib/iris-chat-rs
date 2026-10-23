@@ -401,6 +401,9 @@ class BatchedMetricsTests(unittest.TestCase):
                 self.assertNotEqual(admitted["batched"]["base"], admitted["after"])
                 self.assertEqual(DRIVER.contract("optimized")["tests"], data["tests"])
                 mutations = [lambda d: d["batched"].update(correctness_tests=[]),
+                    lambda d: d["batched"].update(changed_paths=["scripts/unreviewed.py"]),
+                    lambda d: d["batched"].update(changed_paths=["../RELEASE.md"]),
+                    lambda d: d["batched"].update(changed_paths=["chat-protocol/../unreviewed.rs"]),
                     lambda d: d["batched"]["correctness_tests"][0].update(timeout_seconds=420),
                     lambda d: d["batched"]["correctness_tests"][0].update(ignored=True),
                     lambda d: d["batched"]["correctness_tests"][0].update(expected_count=0),

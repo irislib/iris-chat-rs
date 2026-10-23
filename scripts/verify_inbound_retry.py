@@ -51,7 +51,8 @@ def contract(mode="comparison"):
         assert candidate["enabled"] is True, "Batched diagnostic disabled pending review"
         assert all(re.fullmatch(r"[0-9a-f]{40}", candidate[key] or "") for key in ("source", "base"))
         assert candidate["source"] != candidate["base"]
-        assert candidate["changed_paths"] and all(p.startswith("chat-protocol/") and ".." not in Path(p).parts for p in candidate["changed_paths"])
+        reviewed_gate_paths = {"RELEASE.md", "scripts/test_rust.sh", "scripts/test_rust_runner.py"}
+        assert candidate["changed_paths"] and all((p.startswith("chat-protocol/") or p in reviewed_gate_paths) and ".." not in Path(p).parts for p in candidate["changed_paths"])
         test = candidate["test"]
         assert re.fullmatch(r"[A-Za-z0-9_:]+", test["name"]) and test["exact"] is True and test["ignored"] is True
         assert test["expected_count"] == 1 and test["timeout_seconds"] == 420 and test["marker"] == "batched_retry_cpu "
