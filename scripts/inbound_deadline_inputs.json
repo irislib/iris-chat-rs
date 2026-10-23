@@ -1,5 +1,5 @@
 {
-  "enabled": false,
+  "enabled": true,
   "base": "1172ac5a836e13151c0d60dd8f66544392d6bac3",
   "before": "db3cbbdc33671a88f3587e164abbe81440596edc",
   "after": "6c62c5967e3858eeff9f11f3177e1c0c058ea734",
