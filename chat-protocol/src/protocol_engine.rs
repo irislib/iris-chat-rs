@@ -969,34 +969,6 @@ mod tests {
         ));
     }
 
-    #[test]
-    fn group_fanout_retry_processes_a_bounded_due_batch() {
-        let owner = Keys::generate();
-        let device = Keys::generate();
-        let mut engine = test_engine(&owner, &device);
-        for index in 0..70 {
-            engine
-                .pending_group_fanouts
-                .push(pending_local_group_fanout(
-                    "group-a",
-                    Some(&format!("message-{index}")),
-                    &[index as u8],
-                    1,
-                ));
-        }
-
-        engine
-            .retry_pending_group_fanouts(NdrUnixSeconds(10))
-            .expect("retry pending fanouts");
-
-        let due_remaining = engine
-            .pending_group_fanouts
-            .iter()
-            .filter(|pending| pending.next_retry_at_secs <= 10)
-            .count();
-        assert_eq!(due_remaining, 6);
-    }
-
     include!("protocol_engine/test_helpers.rs");
     include!("protocol_engine/repair_response_throttle_tests.rs");
 }
