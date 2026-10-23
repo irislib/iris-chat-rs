@@ -33,6 +33,8 @@ struct ProtocolGroupSenderKeyRetry {
     total_attempts: usize,
     #[cfg(test)]
     receive_checkpoints: usize,
+    #[cfg(test)]
+    continuation_ready_comparisons: usize,
 }
 
 impl Default for ProtocolGroupSenderKeyRetry {
@@ -51,6 +53,8 @@ impl Default for ProtocolGroupSenderKeyRetry {
             total_attempts: 0,
             #[cfg(test)]
             receive_checkpoints: 0,
+            #[cfg(test)]
+            continuation_ready_comparisons: 0,
         }
     }
 }
@@ -61,6 +65,28 @@ impl ProtocolGroupSenderKeyRetry {
         self.attempts = 0;
         self.key_trials_remaining = GROUP_SENDER_KEY_TRIALS_PER_TURN;
         self.yielded = false;
+    }
+
+    fn remove_ready_for_continuation(&mut self, fingerprint: &str) {
+        // Admission through `queued` makes each fingerprint unique. An active
+        // continuation is normally first; stop there instead of visiting the
+        // entire backlog. A displaced entry still retains every other position.
+        #[cfg(test)]
+        let mut comparisons = 0;
+        let index = self.ready.iter().position(|(_, queued)| {
+            #[cfg(test)]
+            {
+                comparisons += 1;
+            }
+            queued == fingerprint
+        });
+        #[cfg(test)]
+        {
+            self.continuation_ready_comparisons += comparisons;
+        }
+        if let Some(index) = index {
+            self.ready.remove(index);
+        }
     }
 
     fn next(&mut self) -> Option<(NdrDevicePubkey, String)> {

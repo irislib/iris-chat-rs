@@ -64,11 +64,15 @@ impl ProtocolEngine {
             || (None, message.clone(), usize::MAX),
             |active| (Some(active.cursor), active.message, active.pending_index),
         );
+        #[cfg(all(test, target_os = "linux"))]
+        let decrypt_started = std::time::Instant::now();
         let result = self.group_manager.plan_sender_key_message_with_budget(
             message.clone(),
             &mut cursor,
             &mut remaining,
         );
+        #[cfg(all(test, target_os = "linux"))]
+        tests::audit_group_retry_decrypt_elapsed(decrypt_started.elapsed());
         let mut retry = self.group_sender_key_retry.borrow_mut();
         retry.key_trials_remaining = remaining;
         retry.yielded = matches!(result, Ok(None));
@@ -113,7 +117,7 @@ impl ProtocolEngine {
         self.group_sender_key_retry.borrow_mut().active = Some(active);
         let result = self.prepare_group_sender_key_message(&message, &fingerprint)?;
         let mut retry = self.group_sender_key_retry.borrow_mut();
-        retry.ready.retain(|(_, queued)| queued != &fingerprint);
+        retry.remove_ready_for_continuation(&fingerprint);
         retry.queued.insert(fingerprint.clone());
         let pending = result.is_none();
         if let Some(plan) = result {

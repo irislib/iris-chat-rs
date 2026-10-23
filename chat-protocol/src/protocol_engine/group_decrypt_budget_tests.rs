@@ -425,6 +425,155 @@ fn group_retry_cached_continuation_touches_only_its_candidate_in_a_large_backlog
     assert_eq!(drain_group_retry(&mut engine, NdrUnixSeconds(30)).len(), 1);
 }
 
+fn group_retry_with_full_ready_queue() -> (ProtocolEngine, Arc<GroupRetryCountingStorage>) {
+    const READY_CANDIDATES: usize = 23_437;
+    let (mut engine, _, device) = queued_group_history(1);
+    long_group_candidate(&mut engine, &device, 2_000);
+    let candidate = engine.pending_group_sender_key_messages[0].clone();
+    // Every synthetic candidate maps to the same known sender stream, unlike
+    // the unmapped durable-only entries in the cached-ciphertext regression.
+    for index in 1..READY_CANDIDATES {
+        let mut pending = candidate.clone();
+        pending.created_at = NdrUnixSeconds(20 + index as u64);
+        engine.pending_group_sender_key_messages.push(pending);
+    }
+    engine.refresh_group_sender_key_retry_inputs();
+    let storage = Arc::new(GroupRetryCountingStorage {
+        inner: engine.storage.clone(),
+        puts: 0.into(),
+        fail_next: false.into(),
+    });
+    engine.storage = storage.clone();
+    engine.enter_batch();
+    assert!(engine
+        .retry_pending_protocol(NdrUnixSeconds(30))
+        .unwrap()
+        .group_result
+        .events
+        .is_empty());
+    engine.exit_batch().unwrap();
+    let retry = engine.group_sender_key_retry.borrow();
+    assert_eq!(
+        engine.pending_group_sender_key_messages.len(),
+        READY_CANDIDATES
+    );
+    assert_eq!(retry.ready.len(), READY_CANDIDATES);
+    assert_eq!(retry.queued.len(), READY_CANDIDATES);
+    assert_eq!(
+        retry.ready.front().unwrap().1,
+        retry.active.as_ref().unwrap().fingerprint
+    );
+    assert!(retry.prepared.is_none());
+    drop(retry);
+    (engine, storage)
+}
+
+fn assert_group_retry_queue_continuation(
+    engine: &mut ProtocolEngine,
+    storage: &GroupRetryCountingStorage,
+    expected_ready: &std::collections::VecDeque<(NdrDevicePubkey, String)>,
+    expected_comparisons: usize,
+    outer_batch: bool,
+) {
+    let durable = engine.pending_group_sender_key_messages.clone();
+    let group = engine.group_manager.snapshot();
+    let sessions = serde_json::to_value(engine.session_manager.snapshot()).unwrap();
+    let writes = storage.puts.load(std::sync::atomic::Ordering::Relaxed);
+    let comparisons = engine
+        .group_sender_key_retry
+        .borrow()
+        .continuation_ready_comparisons;
+    let checkpoints = engine.group_sender_key_retry.borrow().receive_checkpoints;
+    if outer_batch {
+        engine.enter_batch();
+    }
+    let result = engine.retry_pending_protocol(NdrUnixSeconds(30)).unwrap();
+    if outer_batch {
+        engine.exit_batch().unwrap();
+    }
+    assert!(result.is_empty());
+    assert_eq!(engine.pending_group_sender_key_messages, durable);
+    assert_eq!(engine.group_manager.snapshot(), group);
+    assert_eq!(
+        serde_json::to_value(engine.session_manager.snapshot()).unwrap(),
+        sessions
+    );
+    assert!(engine.pending_decrypted_deliveries.is_empty());
+    assert_eq!(
+        storage.puts.load(std::sync::atomic::Ordering::Relaxed),
+        writes
+    );
+    let retry = engine.group_sender_key_retry.borrow();
+    assert_eq!(&retry.ready, expected_ready);
+    assert_eq!(
+        retry.queued,
+        expected_ready
+            .iter()
+            .map(|(_, fingerprint)| fingerprint.clone())
+            .collect::<HashSet<_>>()
+    );
+    assert_eq!(
+        retry.continuation_ready_comparisons - comparisons,
+        expected_comparisons
+    );
+    assert_eq!(retry.receive_checkpoints, checkpoints);
+    assert_eq!(
+        retry.ready.front().unwrap().1,
+        retry.active.as_ref().unwrap().fingerprint
+    );
+    assert!(retry.prepared.is_none());
+    assert_eq!(retry.key_trials_remaining, 0);
+}
+
+#[test]
+fn group_retry_front_continuation_does_not_scan_the_ready_backlog() {
+    let (mut engine, storage) = group_retry_with_full_ready_queue();
+    let expected_ready = engine.group_sender_key_retry.borrow().ready.clone();
+    for outer_batch in [false, true, false] {
+        assert_group_retry_queue_continuation(
+            &mut engine,
+            &storage,
+            &expected_ready,
+            1,
+            outer_batch,
+        );
+    }
+}
+
+#[test]
+fn group_retry_displaced_continuation_preserves_the_ready_queue() {
+    let (mut engine, storage) = group_retry_with_full_ready_queue();
+    let expected_ready = engine.group_sender_key_retry.borrow().ready.clone();
+    let displaced_index = expected_ready.len() / 2;
+    {
+        let mut retry = engine.group_sender_key_retry.borrow_mut();
+        let active = retry.ready.pop_front().unwrap();
+        retry.ready.insert(displaced_index, active);
+    }
+    assert_group_retry_queue_continuation(
+        &mut engine,
+        &storage,
+        &expected_ready,
+        displaced_index + 1,
+        true,
+    );
+    assert_group_retry_queue_continuation(&mut engine, &storage, &expected_ready, 1, true);
+    // If another queue mutation removed its scheduling entry, the still-live
+    // cursor must restore both membership and position without duplicating it.
+    {
+        let mut retry = engine.group_sender_key_retry.borrow_mut();
+        let active = retry.ready.pop_front().unwrap();
+        assert!(retry.queued.remove(&active.1));
+    }
+    assert_group_retry_queue_continuation(
+        &mut engine,
+        &storage,
+        &expected_ready,
+        expected_ready.len() - 1,
+        true,
+    );
+}
+
 #[test]
 fn group_retry_completion_does_not_reset_the_shared_trial_budget() {
     let (mut engine, _, device) = queued_group_history(1);
