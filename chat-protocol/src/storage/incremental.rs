@@ -2,6 +2,7 @@ use super::{SqliteStorageAdapter, StorageResult};
 use rusqlite::{blob::Blob, Connection, DatabaseName, OptionalExtension};
 
 const PAGE_BYTES: usize = 4096;
+const COMPARISON_BYTES: usize = 64 * 1024;
 const MIN_INCREMENTAL_BYTES: usize = 64 * 1024;
 
 #[cfg(test)]
@@ -83,13 +84,21 @@ fn try_put_with(
             .map_err(SqliteStorageAdapter::map_err)?;
         return Ok(false);
     }
-    let mut previous = [0; PAGE_BYTES];
-    for (index, new) in value.as_bytes().chunks(PAGE_BYTES).enumerate() {
-        let offset = index * PAGE_BYTES;
+    // Larger reads reduce BLOB calls while writes retain their page granularity.
+    let mut previous = [0; COMPARISON_BYTES];
+    for (index, new) in value.as_bytes().chunks(COMPARISON_BYTES).enumerate() {
+        let offset = index * COMPARISON_BYTES;
         let old = &mut previous[..new.len()];
         read(&blob, old, offset).map_err(SqliteStorageAdapter::map_err)?;
-        if old != new {
-            write(&mut blob, new, offset).map_err(SqliteStorageAdapter::map_err)?;
+        for (page, (old, new)) in old
+            .chunks(PAGE_BYTES)
+            .zip(new.chunks(PAGE_BYTES))
+            .enumerate()
+        {
+            if old != new {
+                write(&mut blob, new, offset + page * PAGE_BYTES)
+                    .map_err(SqliteStorageAdapter::map_err)?;
+            }
         }
     }
     // Propagate close failures before committing; Drop cannot report them.
