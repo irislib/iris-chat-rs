@@ -56,6 +56,7 @@ mod tests {
     include!("protocol_engine/checkpoint_pending_tests.rs");
     include!("protocol_engine/checkpoint_fanout_tests.rs");
     include!("protocol_engine/checkpoint_growth_tests.rs");
+    include!("protocol_engine/checkpoint_retry_clock_tests.rs");
     include!("protocol_engine/fanout_retry_tests.rs");
     include!("protocol_engine/inbound_retry_ciphertext_fixture_tests.rs");
     include!("protocol_engine/inbound_retry_backlog_tests.rs");
