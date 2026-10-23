@@ -14,9 +14,9 @@ import time
 import tomllib
 import urllib.request
 
-SOURCE = "6ade56364d551c2627b510ed10e13bb56b66bf5c"
+SOURCE = "cca9525d209ec51038c588ef7e55460ffa1614aa"
 RUST_TOOLCHAIN = "1.99.1"
-CORE_RUN = 39939271491
+CORE_RUN = 39939972967
 PROTOCOL = "0.3.5"
 CLI = "0.1.47"
 REGISTRY = "registry+https://github.com/rust-lang/crates.io-index"
