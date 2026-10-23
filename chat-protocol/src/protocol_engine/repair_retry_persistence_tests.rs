@@ -25,7 +25,7 @@ fn repair_retry_count_saves(engine: &mut ProtocolEngine) -> Arc<GroupRetryCounti
 }
 
 fn repair_retry_reload(engine: &ProtocolEngine) -> ProtocolEngine {
-    let keys = Keys::new(SecretKey::from_slice(&engine.local_device_secret).unwrap());
+    let keys = Keys::new(nostr::SecretKey::from_slice(&engine.local_device_secret).unwrap());
     ProtocolEngine::load_or_create_for_local_device(
         engine.storage.clone(),
         engine.owner_pubkey,
