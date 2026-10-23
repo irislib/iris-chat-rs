@@ -176,6 +176,7 @@ mod incoming_retry_tests {
         });
         receiver.storage = storage.clone();
         receiver.persist().unwrap();
+        assert!(receiver.has_due_pending_retry_work(NdrUnixSeconds(200)));
         storage
             .fail
             .store(true, std::sync::atomic::Ordering::SeqCst);
@@ -191,6 +192,12 @@ mod incoming_retry_tests {
             receiver.pending_decrypted_deliveries.len(),
             1,
             "already advanced ratchet retains plaintext"
+        );
+        super::tests::take_inbound_retry_deadline_scans();
+        assert!(receiver.has_due_pending_retry_work(NdrUnixSeconds(200)));
+        assert!(
+            super::tests::take_inbound_retry_deadline_scans() > 0,
+            "failed receive must leave its deadline cutoff unknown"
         );
         storage
             .fail

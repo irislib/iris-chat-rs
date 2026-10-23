@@ -56,6 +56,7 @@ mod tests {
     include!("protocol_engine/checkpoint_fanout_tests.rs");
     include!("protocol_engine/fanout_retry_tests.rs");
     include!("protocol_engine/inbound_retry_backlog_tests.rs");
+    include!("protocol_engine/inbound_retry_deadline_tests.rs");
 
     #[test]
     fn sender_owner_resolution_keeps_claimed_device_pending_until_owner_verified() {
