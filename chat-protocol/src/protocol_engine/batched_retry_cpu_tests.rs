@@ -360,7 +360,8 @@ fn restored_backlog_batched_retry_stays_within_cpu_budget() {
         0,
         "readiness alone must not run a key search"
     );
-    let receipt = serde_json::json!({
+    // Keep each macro expansion bounded as the receipt gains independent checks.
+    let mut receipt = serde_json::json!({
         "schema": "iris-batched-retry-cpu/v2", "fixture": "restored-mixed-backlog-with-expiring-controls-v2", "synthetic": true,
         "pending_inbound": INBOUND, "initially_due_inbound": 102, "fanouts": FANOUTS,
         "initially_due_fanouts": 10462, "ciphertexts": CIPHERTEXTS, "remote_sends": 44,
@@ -368,6 +369,8 @@ fn restored_backlog_batched_retry_stays_within_cpu_budget() {
         "checkpoint_bytes": CHECKPOINT_BYTES, "outer_batch": true, "ack_and_flush_in_turn": true,
         "continuation_delay_ms": 25, "liveness_delay_ms": 2000, "settle_seconds": 180,
         "measurement_windows": 2, "window_seconds": 60, "debug_assertions": cfg!(debug_assertions),
+    });
+    let serde_json::Value::Object(measurements) = serde_json::json!({
         "restore_seconds": restore_seconds, "initially_ready": initially_ready,
         "readiness_seconds": readiness_seconds, "first_valid_delivery_seconds": first_valid_delivery_seconds,
         "group_deliveries": group_deliveries, "acknowledged_deliveries": acknowledged_deliveries,
@@ -379,7 +382,10 @@ fn restored_backlog_batched_retry_stays_within_cpu_budget() {
         "remaining_ciphertexts": engine.pending_group_sender_key_messages.len(), "remaining_remote_sends": 44,
         "preservation_checked": true, "restart_checked": true, "restart_ready": restart_ready,
         "restart_progress": restart_progress, "slices": slices,
-    });
+    }) else {
+        unreachable!("receipt measurements are a JSON object");
+    };
+    receipt.as_object_mut().unwrap().extend(measurements);
     eprintln!("batched_retry_cpu {receipt}");
     assert!(
         restore_seconds <= 180.0 && initially_ready && readiness_seconds <= 180.0,
