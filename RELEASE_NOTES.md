@@ -7,9 +7,10 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 ### GitHub
 
 - Bound retry bookkeeping to the pending deliveries being processed. Avoid copying deferred incoming messages, scanning the full active decryption queue and rebuilding the complete group delivery queue on every continuation.
-- Cache the next incoming retry deadline and reduce temporary allocations during direct-ratchet key derivation and group-key searches. Preserve key-search limits, delivery order and failed-save recovery.
+- Cache the next incoming retry deadline, reduce temporary allocations during key derivation, and reuse fixed setup within each group-key search. Preserve derived keys, key-search limits, delivery order and failed-save recovery.
 - Remember failed incoming decryption only while the exact message, receiving sessions and device authorization remain unchanged. Keep this cache in memory and retry after relevant state changes, preserving restart and delivery-journal recovery.
 - Avoid saving the account checkpoint when a recipient has no known device list and only its retry timer changes. Preserve durable delivery progress, expiration, revocation and failed-save recovery.
+- Avoid saving unchanged group-key repair work when only its retry timers advance. Keep new queued work, delivery progress and linked-device session changes durable.
 - Compare saved checkpoints in larger blocks while preserving page-sized writes and transactional recovery.
 - Require a restored-backlog CPU regression with validly encoded messages that fail authentication, real expiring controls, per-turn durable saves, preserved pending messages and restart checks.
 - Update FIPS dependencies for automatic connections between devices on the same network while retaining anonymous message-provider publication and discovery.
