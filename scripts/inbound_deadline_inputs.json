@@ -1,0 +1,95 @@
+{
+  "enabled": false,
+  "base": "1172ac5a836e13151c0d60dd8f66544392d6bac3",
+  "before": "db3cbbdc33671a88f3587e164abbe81440596edc",
+  "after": "6c62c5967e3858eeff9f11f3177e1c0c058ea734",
+  "fixture_paths": [
+    "chat-protocol/src/protocol_engine.rs",
+    "chat-protocol/src/protocol_engine/inbound_retry_deadline_tests.rs",
+    "chat-protocol/src/protocol_engine/incoming_retry_tests.rs"
+  ],
+  "before_changed_paths": [
+    "chat-protocol/src/protocol_engine.rs",
+    "chat-protocol/src/protocol_engine/engine_incoming_retry.rs",
+    "chat-protocol/src/protocol_engine/inbound_retry_deadline_tests.rs",
+    "chat-protocol/src/protocol_engine/incoming_retry_tests.rs"
+  ],
+  "after_changed_paths": [
+    "chat-protocol/src/protocol_engine/engine_core.rs",
+    "chat-protocol/src/protocol_engine/engine_incoming_retry.rs",
+    "chat-protocol/src/protocol_engine/engine_resolution.rs",
+    "chat-protocol/src/protocol_engine/engine_sends.rs",
+    "chat-protocol/src/protocol_engine/engine_state_helpers.rs",
+    "chat-protocol/src/protocol_engine/types.rs"
+  ],
+  "before_test": "protocol_engine::tests::deferred_inbound_deadline_scans_are_bounded_across_32_continuations",
+  "before_failure_marker": "32 continuations inspected ",
+  "before_observation_test": null,
+  "before_observation_failure_marker": null,
+  "tests": [
+    {
+      "name": "protocol_engine::tests::deferred_inbound_deadline_scans_are_bounded_across_32_continuations",
+      "expected_count": 1,
+      "exact": true,
+      "marker": null,
+      "ignored": false,
+      "timeout_seconds": 300
+    },
+    {
+      "name": "protocol_engine::tests::inbound_deadline_",
+      "expected_count": 4,
+      "exact": false,
+      "marker": null,
+      "ignored": false,
+      "timeout_seconds": 300
+    },
+    {
+      "name": "protocol_engine::tests::remote_retry_",
+      "expected_count": 4,
+      "exact": false,
+      "marker": null,
+      "ignored": false,
+      "timeout_seconds": 300
+    },
+    {
+      "name": "protocol_engine::tests::remote_direct_",
+      "expected_count": 6,
+      "exact": false,
+      "marker": null,
+      "ignored": false,
+      "timeout_seconds": 300
+    },
+    {
+      "name": "protocol_engine::tests::group_fanout_retry_allocations_do_not_scale_with_deferred_fanouts",
+      "expected_count": 1,
+      "exact": true,
+      "marker": "fanout_queue_retry turns=8 due=64 total=24990 small_allocated_bytes=",
+      "ignored": false,
+      "timeout_seconds": 300
+    },
+    {
+      "name": "protocol_engine::tests::group_fanout_retry_mixed_updates_restore_order_after_failed_save",
+      "expected_count": 1,
+      "exact": true,
+      "marker": null,
+      "ignored": false,
+      "timeout_seconds": 300
+    },
+    {
+      "name": "protocol_engine::tests::group_fanout_retry_retires_ineligible_deferred_entries_beyond_due_limit",
+      "expected_count": 1,
+      "exact": true,
+      "marker": null,
+      "ignored": false,
+      "timeout_seconds": 300
+    },
+    {
+      "name": "protocol_engine::tests::group_fanout_retry_processes_a_bounded_due_batch",
+      "expected_count": 1,
+      "exact": true,
+      "marker": null,
+      "ignored": false,
+      "timeout_seconds": 300
+    }
+  ]
+}

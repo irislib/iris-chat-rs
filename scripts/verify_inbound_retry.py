@@ -238,7 +238,8 @@ def bounded(command, root, out, name, timeout, deadline, target):
     return result, log.read_text(errors="replace")
 
 
-def stage(which, root, out, data):
+def stage(which, root, out, data, *, release_build=False, result_checker=None):
+    result_checker = result_checker or check_result
     batched = which == "batched"
     optimized = which in ("optimized", "batched")
     source_key = "after" if optimized else which
@@ -286,7 +287,7 @@ def stage(which, root, out, data):
         fetch, _ = bounded(fetch_command, root, output, "fetch", 300, pre["deadline_unix"], target)
         assert fetch["exit_code"] == 0, "Dependency fetch failed; no regression result"
     command = ["cargo", f"+{TOOLCHAIN}", "test", "--manifest-path", "chat-protocol/Cargo.toml", "--locked", "--offline", "--lib", "--no-run", "--message-format=json", "--jobs", "2"]
-    if optimized:
+    if optimized or release_build:
         command.append("--release")
     build, text = bounded(command, root, output, "build", 600, pre["deadline_unix"], target)
     assert build["exit_code"] == 0, "Compilation failed; this is not the expected regression"
@@ -301,15 +302,19 @@ def stage(which, root, out, data):
     assert len(artifacts) == 1, "Expected exactly one protocol test executable"
     profile = artifacts[0]["profile"]
     assert profile["test"] is True
-    if optimized:
+    if optimized or release_build:
         assert profile["opt_level"] == "3" and profile["debug_assertions"] is False and profile["debuginfo"] == 1
         interpretation = "Release optimization with debug symbols, not official release binary equivalence. "
-        interpretation += "Batched retry/ACK/flush with three settling and two measured slices." if batched else "Standalone public API without the Mac lifecycle outer batch."
+        if release_build and not optimized:
+            interpretation += "Focused correctness comparison only; no CPU measurement."
+        else:
+            interpretation += "Batched retry/ACK/flush with three settling and two measured slices." if batched else "Standalone public API without the Mac lifecycle outer batch."
     else:
         assert profile["opt_level"] == "0" and profile["debug_assertions"] is True
         interpretation = "Default test opt0/debug diagnostic, not release-build equivalence."
-    interpretation += " Deadline mix describes the seeded snapshot; actual eligibility advances during setup and "
-    interpretation += "the timed slices." if batched else "the measured minute."
+    if not release_build or optimized:
+        interpretation += " Deadline mix describes the seeded snapshot; actual eligibility advances during setup and "
+        interpretation += "the timed slices." if batched else "the measured minute."
     binary = Path(artifacts[0]["executable"]).resolve()
     assert binary.is_file(), "Test executable is missing"
     assert binary.is_relative_to(target), "Test binary is outside the shared target"
@@ -343,7 +348,7 @@ def stage(which, root, out, data):
                 check["batched_retry_cpu"] = batched_retry_metrics(text)
             elif test["name"] == data["before_observation_test"]:
                 check["whole_retry_cpu"] = whole_retry_metrics(text)
-            check["counts"] = check_result(text, test, run["exit_code"], expected_failure)
+            check["counts"] = result_checker(text, test, run["exit_code"], expected_failure)
             cpu_failure = is_cpu_test and expected_failure is not None
             if is_cpu_test:
                 exceeds_budget = any(s["cpu_percent_one_core"] > 5 for s in check["batched_retry_cpu"]["slices"][-2:]) if batched else check["whole_retry_cpu"]["cpu_percent_one_core"] > 5

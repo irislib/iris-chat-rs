@@ -20,7 +20,7 @@ on:
         description: Checks to run; retain exact source-bound coverage for unchanged components
         type: choice
         default: all
-        options: [all, cli, core, inbound-retry, inbound-retry-release, inbound-retry-batched, ndr-blind-allocation, android, windows, windows-keyboard, windows-restore, apple, ios, ios-unit, macos, linux, apple-products, ios-products, macos-products, ios-ui-runner, macos-ui-runner]
+        options: [all, cli, core, inbound-retry, inbound-retry-release, inbound-retry-batched, inbound-deadline, ndr-blind-allocation, android, windows, windows-keyboard, windows-restore, apple, ios, ios-unit, macos, linux, apple-products, ios-products, macos-products, ios-ui-runner, macos-ui-runner]
       ios_core_seed_run:
         description: Optional exact successful core build/cache producer for Swift-only unit validation
         type: string
@@ -38,6 +38,74 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  inbound-deadline:
+    if: ${{ inputs.scope == 'inbound-deadline' }}
+    name: Compare exact inbound deadline scans
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/cargo-target
+      CARGO_BUILD_JOBS: '2'
+      CARGO_TERM_COLOR: never
+      CARGO_PROFILE_RELEASE_OPT_LEVEL: '3'
+      CARGO_PROFILE_RELEASE_DEBUG: '1'
+      CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS: 'false'
+      PYTHONDONTWRITEBYTECODE: '1'
+      DEBUGINFOD_URLS: ''
+    steps:
+      - name: Checkout reviewed diagnostic driver
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: retry-driver
+          persist-credentials: false
+      - name: Require reviewed immutable deadline comparison inputs
+        id: inputs
+        run: python3 retry-driver/scripts/verify_inbound_deadline.py preflight --output work/inbound-deadline
+      - name: Checkout test-only RED source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.inputs.outputs.before }}
+          fetch-depth: 2
+          path: iris-chat-rs
+          persist-credentials: false
+      - name: Install accepted Rust toolchain
+        run: rustup toolchain install 1.99.1 --profile minimal
+      - name: Restore existing core cache
+        id: cargo-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ${{ github.workspace }}/cargo-target
+          key: rust-${{ runner.os }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock') }}
+          restore-keys: |
+            rust-${{ runner.os }}-
+      - name: Require the deadline scan regression to exceed its numeric guard
+        env:
+          IRIS_CACHE_REQUESTED: ${{ steps.cargo-cache.outputs.cache-primary-key }}
+          IRIS_CACHE_MATCHED: ${{ steps.cargo-cache.outputs.cache-matched-key }}
+          IRIS_CACHE_HIT: ${{ steps.cargo-cache.outputs.cache-hit }}
+        run: python3 retry-driver/scripts/verify_inbound_deadline.py before --source iris-chat-rs --output work/inbound-deadline
+      - name: Checkout GREEN into the same source path
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.inputs.outputs.after }}
+          fetch-depth: 2
+          path: iris-chat-rs
+          persist-credentials: false
+      - name: Require deadline and affected correctness checks to pass
+        run: python3 retry-driver/scripts/verify_inbound_deadline.py after --source iris-chat-rs --output work/inbound-deadline
+      - name: Retain complete RED and GREEN evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: inbound-deadline-${{ github.run_id }}
+          path: work/inbound-deadline/
+          if-no-files-found: warn
+          retention-days: 14
+
   ndr-blind-allocation:
     if: ${{ inputs.scope == 'ndr-blind-allocation' }}
     name: Compare exact NDR blind-search allocation sources
