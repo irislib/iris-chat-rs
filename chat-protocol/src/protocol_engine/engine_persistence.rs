@@ -16,7 +16,10 @@ impl ProtocolEngine {
             })
     }
 
+    #[cfg_attr(all(test, target_os = "linux"), track_caller)]
     fn persist(&mut self) -> anyhow::Result<()> {
+        #[cfg(all(test, target_os = "linux"))]
+        tests::audit_retry_persist_requested(std::panic::Location::caller());
         if self.batch_depth.get() > 0 {
             self.batch_persist_dirty.set(true);
             return Ok(());
@@ -24,6 +27,7 @@ impl ProtocolEngine {
         self.persist_now()
     }
 
+    #[cfg_attr(all(test, target_os = "linux"), track_caller)]
     fn persist_now(&mut self) -> anyhow::Result<()> {
         let state = ProtocolEnginePersistedState {
             version: PROTOCOL_ENGINE_STATE_VERSION,
@@ -68,6 +72,8 @@ impl ProtocolEngine {
             &fanouts,
         );
         self.storage.put(PROTOCOL_ENGINE_STATE_KEY, json)?;
+        #[cfg(all(test, target_os = "linux"))]
+        tests::audit_retry_persisted(std::panic::Location::caller(), self.batch_depth.get());
         self.batch_persist_dirty.set(false);
         self.pending_decrypted_deliveries
             .retain(|delivery| !delivery.discarded);

@@ -248,6 +248,7 @@ fn restored_backlog_batched_retry_stays_within_cpu_budget() {
             "expired_control_retirements": expiring_controls.retired - retired_controls_before,
             "progress_before": progress_before, "progress_after": batched_retry_progress(&engine, &audit),
             "phase_work_seconds": audit.take_phase_seconds(),
+            "persistence_trace": audit.take_persistence_trace(puts_after - puts_before),
         });
         eprintln!("batched_retry_slice {slice}");
         slices.push(slice);
