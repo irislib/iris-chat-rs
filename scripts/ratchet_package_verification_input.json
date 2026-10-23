@@ -1,0 +1,33 @@
+{
+  "schema": "ndr-source-package-input/v1",
+  "enabled": false,
+  "repository": "irislib/nostr-double-ratchet",
+  "source": "cb10d45a97120d66b8b40f33c24da6dd1d7424b2",
+  "toolchain": "1.99.1",
+  "resource_helper_sha256": "9657a1598169e5bd762e17fbb4d65aae75fb4d53396e439137a6ef3a3485411e",
+  "qualification": {
+    "full_ci_run": 39906785775,
+    "full_ci_accepted": true,
+    "allocation_run": 39907264318,
+    "allocation_accepted": true,
+    "source_and_workflow_reviewed": false
+  },
+  "packages": {
+    "nostr-double-ratchet": "0.0.172",
+    "nostr-double-ratchet-pairwise": "0.0.170"
+  },
+  "codec": {
+    "package": "nostr-double-ratchet-pairwise-codec",
+    "version": "0.0.168",
+    "sha256": "fc6dc58e28d3046422909bdfdc596cef9d6fc243a94657dc49767b07f0d7060b",
+    "vcs_source": "2022b2cd2a1d2c581c434eed462cb76cab52ba9a"
+  },
+  "limits": {
+    "jobs": 2,
+    "maximum_memory_bytes": 5368709120,
+    "total_seconds": 1500,
+    "workflow_seconds": 1800,
+    "registry_response_bytes": 16777216,
+    "archive_uncompressed_bytes": 67108864
+  }
+}

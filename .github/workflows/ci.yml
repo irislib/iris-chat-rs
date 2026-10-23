@@ -20,9 +20,13 @@ on:
         description: Checks to run; retain exact source-bound coverage for unchanged components
         type: choice
         default: all
-        options: [all, cli, core, inbound-retry, inbound-retry-release, inbound-retry-batched, inbound-deadline, ndr-blind-allocation, android, windows, windows-keyboard, windows-restore, apple, ios, ios-unit, macos, linux, apple-products, ios-products, macos-products, ios-ui-runner, macos-ui-runner]
+        options: [all, cli, core, inbound-retry, inbound-retry-release, inbound-retry-batched, inbound-deadline, ndr-blind-allocation, ndr-source-package, ndr-pairwise-source-package, android, windows, windows-keyboard, windows-restore, apple, ios, ios-unit, macos, linux, apple-products, ios-products, macos-products, ios-ui-runner, macos-ui-runner]
       ios_core_seed_run:
         description: Optional exact successful core build/cache producer for Swift-only unit validation
+        type: string
+        default: ''
+      ndr_package_sha256:
+        description: Accepted published NDR archive checksum required only for pairwise source verification
         type: string
         default: ''
 
@@ -38,6 +42,65 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  ndr-source-package:
+    if: ${{ inputs.scope == 'ndr-source-package' || inputs.scope == 'ndr-pairwise-source-package' }}
+    name: Verify exact ratchet source archive
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/cargo-target
+      CARGO_BUILD_JOBS: '2'
+      CARGO_TERM_COLOR: never
+      PYTHONDONTWRITEBYTECODE: '1'
+      DEBUGINFOD_URLS: ''
+      NDR_PACKAGE: ${{ inputs.scope == 'ndr-pairwise-source-package' && 'nostr-double-ratchet-pairwise' || 'nostr-double-ratchet' }}
+      NDR_PACKAGE_SHA256: ${{ inputs.ndr_package_sha256 }}
+    steps:
+      - name: Checkout reviewed diagnostic driver
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: retry-driver
+          persist-credentials: false
+      - name: Require reviewed source and prerequisite archive evidence
+        id: inputs
+        run: python3 retry-driver/scripts/verify_ratchet_packages.py preflight --package "$NDR_PACKAGE" --ndr-sha256 "$NDR_PACKAGE_SHA256" --output work/ndr-source-package
+      - name: Checkout exact qualified ratchet source
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.inputs.outputs.repository }}
+          ref: ${{ steps.inputs.outputs.source }}
+          fetch-depth: 1
+          path: nostr-double-ratchet
+          persist-credentials: false
+      - name: Install accepted Rust toolchain
+        run: rustup toolchain install 1.99.1 --profile minimal
+      - name: Restore existing Rust cache
+        id: cargo-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ${{ github.workspace }}/cargo-target
+          key: rust-${{ runner.os }}-${{ hashFiles('nostr-double-ratchet/rust/Cargo.lock') }}
+          restore-keys: |
+            rust-${{ runner.os }}-
+      - name: Build and inspect the actual source archive
+        env:
+          NDR_CACHE_REQUESTED: ${{ steps.cargo-cache.outputs.cache-primary-key }}
+          NDR_CACHE_MATCHED: ${{ steps.cargo-cache.outputs.cache-matched-key }}
+          NDR_CACHE_HIT: ${{ steps.cargo-cache.outputs.cache-hit }}
+        run: python3 retry-driver/scripts/verify_ratchet_packages.py verify --source nostr-double-ratchet --output work/ndr-source-package
+      - name: Retain verified archive and full source evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.NDR_PACKAGE }}-source-package-${{ github.run_id }}
+          path: work/ndr-source-package/
+          if-no-files-found: warn
+          retention-days: 14
+
   inbound-deadline:
     if: ${{ inputs.scope == 'inbound-deadline' }}
     name: Compare exact inbound deadline scans
