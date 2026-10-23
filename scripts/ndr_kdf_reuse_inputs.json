@@ -1,5 +1,5 @@
 {
-  "enabled": false,
+  "enabled": true,
   "repository": "irislib/nostr-double-ratchet",
   "base": "4c52dd532b59f01cf79ac20432b0f5c687d237cb",
   "before": "b23e4e74c56d9fe0153d112e22540723965aac62",
