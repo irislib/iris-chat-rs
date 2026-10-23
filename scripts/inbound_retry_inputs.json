@@ -2,7 +2,7 @@
   "enabled": true,
   "optimized_enabled": true,
   "batched": {
-    "enabled": false,
+    "enabled": true,
     "correctness_tests": [
       {
         "name": "protocol_engine::tests::group_fanout_retry_allocations_do_not_scale_with_deferred_fanouts",
