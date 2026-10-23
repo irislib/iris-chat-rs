@@ -16,7 +16,8 @@ import verify_receive_cache as receive
 INPUTS = Path(__file__).with_name("repair_retry_inputs.json")
 BASE = "f78dab07f23c89aa9128dc9d2baa68ee5bbace77"
 COMMITS = ["8008aee1a29f6b22c0752aa28440ac51f2395f18", "ba57b5fec3b063158f34fa282a5ec2cf8554336c",
-    "e4b45261c6d0fbc4971d791d1c61ce0a72b724d6", "ed15fa9c81ff8d34c749b9ed165ecdf05f1c4c16"]
+    "e4b45261c6d0fbc4971d791d1c61ce0a72b724d6", "ed15fa9c81ff8d34c749b9ed165ecdf05f1c4c16",
+    "5fa9485d431632acb44b4fc3dcf3c499a4279041", "7c113f915b26f8f9190eb2325065671148c10fbc"]
 PREFIX = "protocol_engine::tests::repair_retry_"
 RED_TEST = PREFIX + "backoff_only_keeps_exact_intent_without_checkpoint"
 FAILURE = "repair_retry_persistence_tests.rs:122:5"
@@ -24,6 +25,8 @@ DIRECTORY = "chat-protocol/src/protocol_engine/"
 TEST_PATH = DIRECTORY + "repair_retry_persistence_tests.rs"
 INCLUDE_PATH = DIRECTORY + "repair_response_throttle_tests.rs"
 GREEN_PATHS = [DIRECTORY + name for name in ("engine_resolution.rs", "engine_sender_key_repair.rs", "group_retry.rs")]
+PIN_PATHS = ["chat-protocol/Cargo.lock", "chat-protocol/Cargo.toml", "core/Cargo.lock", "core/Cargo.toml",
+    "linux/Cargo.lock", "protocol-ffi/Cargo.lock"]
 FIXTURES = {
     TEST_PATH: "1a8a3f6d9ba26c39d7b65f21f035a800857c16b4495675e1087b85fb7a1f53a1",
     INCLUDE_PATH: "88c34a6d80d2bbc58d7d986e90e8884107817897701d76fd0ddebb4bf1a2ac8f",
@@ -33,11 +36,15 @@ FIXTURES = {
     DIRECTORY + "inbound_retry_ciphertext_fixture_tests.rs": "4e865795edddef4371b8eed0f089b40a4ef87217ed120dc2c70bdcbdb2c88f6a",
     DIRECTORY + "retry_work_audit.rs": "9d8d2e4cd38e3009fed1366a618afe78b9ad1cf540a0f183fa2969095519d5da",
 }
-DEPENDENCIES = {which: {
+DEPENDENCIES = {"before": {
     "manifest_sha256": "37b410f2c4b9afa9ef07cac2682ac7261f8c44d8a047351649ed4052a9fb857a",
     "lock_sha256": "81357f39ed1994242ff8a46cf52cd4f2fd22d58667f74f4445a0ff4f873ee04c",
     "ndr_version": "0.0.173", "ndr_checksum": "d838e57c5db5431ccc1e412ea795fed4013e288b7d139c39f29c1c9a2806a3e7",
-} for which in ("before", "after")}
+}, "after": {
+    "manifest_sha256": "2e806528c9ddf80061a1cb3457630ad1a3d2ca7d8251daed1f2e50c81e0702ec",
+    "lock_sha256": "a882328b1ba96968d30e92c1110e81af969d7402942eae9269e0e4d7fe854cfe",
+    "ndr_version": "0.0.174", "ndr_checksum": "347d740e7667f4127004534eb1c18d1ca51a85d96f13b7358ae2983b2093fc39",
+}}
 
 
 def focused_tests():
@@ -63,7 +70,7 @@ def contract():
     assert [item["commit"] for item in chain] == COMMITS
     assert [item["parent"] for item in chain] == [BASE, *COMMITS[:-1]]
     assert [item["changed_paths"] for item in chain] == [
-        [INCLUDE_PATH, TEST_PATH], [TEST_PATH], [TEST_PATH], GREEN_PATHS]
+        [INCLUDE_PATH, TEST_PATH], [TEST_PATH], [TEST_PATH], GREEN_PATHS, ["RELEASE_NOTES.md"], PIN_PATHS]
     assert data["fixtures"] == FIXTURES and data["dependencies"] == DEPENDENCIES
     assert data["before_test"] == RED_TEST and data["before_failure_marker"] == FAILURE
     assert data["before_observation_test"] is None and data["before_observation_failure_marker"] is None

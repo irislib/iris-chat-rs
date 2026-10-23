@@ -3,7 +3,7 @@
   "enabled": false,
   "base": "f78dab07f23c89aa9128dc9d2baa68ee5bbace77",
   "before": "e4b45261c6d0fbc4971d791d1c61ce0a72b724d6",
-  "after": "ed15fa9c81ff8d34c749b9ed165ecdf05f1c4c16",
+  "after": "7c113f915b26f8f9190eb2325065671148c10fbc",
   "source_chain": [
     {
       "commit": "8008aee1a29f6b22c0752aa28440ac51f2395f18",
@@ -35,6 +35,25 @@
         "chat-protocol/src/protocol_engine/engine_sender_key_repair.rs",
         "chat-protocol/src/protocol_engine/group_retry.rs"
       ]
+    },
+    {
+      "commit": "5fa9485d431632acb44b4fc3dcf3c499a4279041",
+      "parent": "ed15fa9c81ff8d34c749b9ed165ecdf05f1c4c16",
+      "changed_paths": [
+        "RELEASE_NOTES.md"
+      ]
+    },
+    {
+      "commit": "7c113f915b26f8f9190eb2325065671148c10fbc",
+      "parent": "5fa9485d431632acb44b4fc3dcf3c499a4279041",
+      "changed_paths": [
+        "chat-protocol/Cargo.lock",
+        "chat-protocol/Cargo.toml",
+        "core/Cargo.lock",
+        "core/Cargo.toml",
+        "linux/Cargo.lock",
+        "protocol-ffi/Cargo.lock"
+      ]
     }
   ],
   "fixtures": {
@@ -54,10 +73,10 @@
       "ndr_checksum": "d838e57c5db5431ccc1e412ea795fed4013e288b7d139c39f29c1c9a2806a3e7"
     },
     "after": {
-      "manifest_sha256": "37b410f2c4b9afa9ef07cac2682ac7261f8c44d8a047351649ed4052a9fb857a",
-      "lock_sha256": "81357f39ed1994242ff8a46cf52cd4f2fd22d58667f74f4445a0ff4f873ee04c",
-      "ndr_version": "0.0.173",
-      "ndr_checksum": "d838e57c5db5431ccc1e412ea795fed4013e288b7d139c39f29c1c9a2806a3e7"
+      "manifest_sha256": "2e806528c9ddf80061a1cb3457630ad1a3d2ca7d8251daed1f2e50c81e0702ec",
+      "lock_sha256": "a882328b1ba96968d30e92c1110e81af969d7402942eae9269e0e4d7fe854cfe",
+      "ndr_version": "0.0.174",
+      "ndr_checksum": "347d740e7667f4127004534eb1c18d1ca51a85d96f13b7358ae2983b2093fc39"
     }
   },
   "before_test": "protocol_engine::tests::repair_retry_backoff_only_keeps_exact_intent_without_checkpoint",

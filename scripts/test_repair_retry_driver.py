@@ -60,6 +60,7 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(data["tests"][:14], D.receive.focused_tests())
         self.assertEqual(data["cpu"], D.checkpoint.cpu_plan())
         self.assertEqual(data["before"], D.COMMITS[2])
+        self.assertNotEqual(data["dependencies"]["before"]["lock_sha256"], data["dependencies"]["after"]["lock_sha256"])
 
     def test_source_fixture_test_dependency_or_threshold_changes_fail_closed(self):
         changes = [lambda d: d.update(after="main"), lambda d: d.update(before=D.COMMITS[0]),
@@ -82,6 +83,8 @@ class ContractTests(unittest.TestCase):
             "CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS: 'false'", "before --source iris-chat-rs", "after --source iris-chat-rs"]:
             self.assertIn(literal, job)
         self.assertEqual(job.count("uses: actions/cache/restore@v6"), 1)
+        self.assertIn("inputs.scope == 'repair-retry' && '7'", job)
+        self.assertEqual(len(D.COMMITS) + 1, 7, "Fetch depth must retain the entire reviewed chain and base")
 
 
 class ResultTests(unittest.TestCase):
@@ -208,8 +211,9 @@ class StageTests(unittest.TestCase):
         for mode in ("pass", "wrong"): self.exercise("before", red_mode=mode)
 
     def test_fetch_and_compile_failures_stop_before_tests(self):
-        self.exercise("before", fetch_failure=True)
-        for which in ("before", "after"): self.exercise(which, compile_failure=True)
+        for which in ("before", "after"):
+            self.exercise(which, fetch_failure=True)
+            self.exercise(which, compile_failure=True)
 
     def test_bad_dependency_blocks_green_build(self): self.exercise(bad_dependency=True)
 
