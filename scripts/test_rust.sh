@@ -100,10 +100,11 @@ rows = re.findall(r"batched_retry_cpu (\{[^\n]+\})", text)
 assert len(rows) == 1, "Require exactly one complete batched retry receipt"
 result = json.loads(rows[0])
 expected = {
-    "schema": "iris-batched-retry-cpu/v1", "fixture": "restored-mixed-backlog-v1", "synthetic": True,
+    "schema": "iris-batched-retry-cpu/v2", "fixture": "restored-mixed-backlog-with-expiring-controls-v2", "synthetic": True,
     "pending_inbound": 4214, "initially_due_inbound": 102, "fanouts": 24990,
     "initially_due_fanouts": 10462, "ciphertexts": 23437, "remote_sends": 44,
-    "checkpoint_bytes": 350224384, "outer_batch": True, "ack_and_flush_in_turn": True,
+    "expiring_controls": 2, "initial_remote_sends": 46, "retired_expiring_controls": 2,
+        "checkpoint_bytes": 350224384, "outer_batch": True, "ack_and_flush_in_turn": True,
     "continuation_delay_ms": 25, "liveness_delay_ms": 2000, "settle_seconds": 180,
     "measurement_windows": 2, "window_seconds": 60, "debug_assertions": False,
     "initially_ready": True, "group_deliveries": 1, "acknowledged_deliveries": 2,
@@ -135,7 +136,7 @@ for index, row in enumerate(slices):
     assert all(type(value) in (int, float) and math.isfinite(value) and value >= 0 for value in phases.values())
     assert sum(value for name, value in phases.items() if name != "decrypt_cursor_nested") <= row["work_seconds"] + 0.01
     assert phases["decrypt_cursor_nested"] <= phases["group_inputs"] + 0.01
-    for key in ("turns", "continuations", "acknowledged_deliveries", "puts", "read_bytes", "written_bytes", "remote_deadline_updates"):
+    for key in ("turns", "continuations", "acknowledged_deliveries", "puts", "read_bytes", "written_bytes", "remote_deadline_updates", "expired_control_retirements"):
         assert type(row[key]) is int and row[key] >= 0, f"Invalid slice counter {key}"
     assert all(type(row["due_at_start"][key]) is int and row["due_at_start"][key] >= 0 for key in ("inbound", "fanouts", "remote_sends"))
     before, after = row["progress_before"], row["progress_after"]
@@ -146,6 +147,7 @@ for index, row in enumerate(slices):
     assert all(after[key] >= before[key] for key in ("search_starts", "input_generation_changes"))
     assert previous is None or before == previous, "Audit reset between slices"
     previous = after
+    assert row["expired_control_retirements"] == int(index >= 3), "Require real timed durable retirement in each measured minute"
     if index >= 3:
         assert row["turns"] > 0 and row["remote_deadline_updates"] > 0 and row["puts"] > 0, "Measured slice must include recurring due work and flush"
         assert row["cpu_percent_one_core"] <= 5, "Batched retry exceeded 5% of one CPU"

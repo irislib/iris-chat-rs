@@ -1,3 +1,5 @@
+include!("batched_retry_durable_work.rs");
+
 fn batched_retry_progress(
     engine: &ProtocolEngine,
     audit: &RetrySearchAuditGuard,
@@ -88,6 +90,12 @@ fn restored_backlog_batched_retry_stays_within_cpu_budget() {
     assert_eq!(engine.pending_inbound.len(), INBOUND);
     assert_eq!(engine.pending_group_fanouts.len(), FANOUTS);
     assert_eq!(engine.pending_group_sender_key_messages.len(), CIPHERTEXTS);
+    let control_now = now_secs + clock_started.elapsed().as_secs();
+    let recovery_epoch = control_now - recovery_started.elapsed().as_secs();
+    let mut expiring_controls =
+        BatchedExpiringControls::seed(&mut engine, recovery_epoch, control_now);
+    assert_eq!(engine.pending_remote_sends.len(), 46);
+    assert_eq!(engine.checkpoint_layout.borrow().bytes, CHECKPOINT_BYTES);
     let initially_ready = engine.has_ready_group_sender_key_retry_work();
     let readiness_seconds = recovery_started.elapsed().as_secs_f64();
     let mut first_valid_delivery_seconds = None;
@@ -99,6 +107,7 @@ fn restored_backlog_batched_retry_stays_within_cpu_budget() {
     let mut remote_deadlines = engine
         .pending_remote_sends
         .iter()
+        .take(remote_before.len())
         .map(|pending| pending.next_retry_at_secs)
         .collect::<Vec<_>>();
     let mut slices = Vec::new();
@@ -120,6 +129,7 @@ fn restored_backlog_batched_retry_stays_within_cpu_budget() {
         };
         let mut max_turn = Duration::ZERO;
         let ack_before = acknowledged_deliveries;
+        let retired_controls_before = expiring_controls.retired;
         while phase_started.elapsed() < Duration::from_secs(60) {
             assert!(
                 clock_started.elapsed() < Duration::from_secs(420),
@@ -130,6 +140,7 @@ fn restored_backlog_batched_retry_stays_within_cpu_budget() {
             if engine.has_due_pending_retry_work(now) {
                 // Mirrors one lifecycle.handle_messages scope. ACK and the
                 // outermost SQLite flush both belong to this measured turn.
+                let turn_puts_before = storage.puts.load(Relaxed);
                 engine.enter_batch();
                 let batch = engine.retry_pending_protocol(now).unwrap();
                 assert!(
@@ -178,6 +189,12 @@ fn restored_backlog_batched_retry_stays_within_cpu_budget() {
                     engine.exit_batch().unwrap();
                 }
                 assert_eq!(engine.batch_depth.get(), 0);
+                expiring_controls.observe_turn(
+                    &engine,
+                    now.get(),
+                    turn_puts_before,
+                    storage.puts.load(Relaxed),
+                );
                 if delivered > 0 && first_valid_delivery_seconds.is_none() {
                     first_valid_delivery_seconds = Some(recovery_started.elapsed().as_secs_f64());
                 }
@@ -221,6 +238,7 @@ fn restored_backlog_batched_retry_stays_within_cpu_budget() {
             "puts": puts_after - puts_before, "read_bytes": io_after.0 - io_before.0,
             "written_bytes": io_after.1 - io_before.1, "due_at_start": due_at_start,
             "remote_deadline_updates": remote_deadline_updates,
+            "expired_control_retirements": expiring_controls.retired - retired_controls_before,
             "progress_before": progress_before, "progress_after": batched_retry_progress(&engine, &audit),
             "phase_work_seconds": audit.take_phase_seconds(),
         });
@@ -246,6 +264,7 @@ fn restored_backlog_batched_retry_stays_within_cpu_budget() {
     assert_eq!(acknowledged_group_deliveries, 1);
     assert_eq!(engine.pending_inbound.len(), INBOUND);
     assert_eq!(engine.pending_remote_sends.len(), 44);
+    assert_eq!(expiring_controls.retired, 2);
     assert_eq!(
         engine.pending_group_sender_key_messages.len(),
         CIPHERTEXTS - 1
@@ -342,9 +361,10 @@ fn restored_backlog_batched_retry_stays_within_cpu_budget() {
         "readiness alone must not run a key search"
     );
     let receipt = serde_json::json!({
-        "schema": "iris-batched-retry-cpu/v1", "fixture": "restored-mixed-backlog-v1", "synthetic": true,
+        "schema": "iris-batched-retry-cpu/v2", "fixture": "restored-mixed-backlog-with-expiring-controls-v2", "synthetic": true,
         "pending_inbound": INBOUND, "initially_due_inbound": 102, "fanouts": FANOUTS,
         "initially_due_fanouts": 10462, "ciphertexts": CIPHERTEXTS, "remote_sends": 44,
+        "expiring_controls": 2, "initial_remote_sends": 46, "retired_expiring_controls": expiring_controls.retired,
         "checkpoint_bytes": CHECKPOINT_BYTES, "outer_batch": true, "ack_and_flush_in_turn": true,
         "continuation_delay_ms": 25, "liveness_delay_ms": 2000, "settle_seconds": 180,
         "measurement_windows": 2, "window_seconds": 60, "debug_assertions": cfg!(debug_assertions),
@@ -373,10 +393,18 @@ fn restored_backlog_batched_retry_stays_within_cpu_budget() {
         search_starts > 0 && repeated_search_starts == 0,
         "unchanged input generation re-admitted an exhausted candidate"
     );
+    for (index, slice) in slices.iter().enumerate() {
+        assert_eq!(
+            slice["expired_control_retirements"].as_u64().unwrap(),
+            u64::from(index >= 3),
+            "each measured minute must retire one real control, after settling"
+        );
+    }
     for slice in &slices[3..] {
         assert!(
             slice["turns"].as_u64().unwrap() > 0
-                && slice["remote_deadline_updates"].as_u64().unwrap() > 0,
+                && slice["remote_deadline_updates"].as_u64().unwrap() > 0
+                && slice["puts"].as_u64().unwrap() > 0,
             "measurement must exercise recurring due work, not only a quiet gap"
         );
         assert!(

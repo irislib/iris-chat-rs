@@ -24,6 +24,7 @@ fn group_fanout_retry_allocations_do_not_scale_with_deferred_fanouts() {
             fail_next: false.into(),
         });
         f.sender.storage = storage.clone();
+        GROUP_FANOUT_RETRY_VISITED.with(|visited| visited.set(0));
         let ((), allocated) = remote_roster_tests::allocated_bytes(|| {
             for turn in 0..8 {
                 let result = f
@@ -33,6 +34,11 @@ fn group_fanout_retry_allocations_do_not_scale_with_deferred_fanouts() {
                 assert!(result.events.is_empty() && result.effects.is_empty());
             }
         });
+        assert_eq!(
+            GROUP_FANOUT_RETRY_VISITED.with(|visited| visited.get()),
+            8 * 64,
+            "without privacy retirements, each turn must stop at the due cap"
+        );
         assert!(
             f.sender.pending_group_fanouts == expected,
             "backoff retries must preserve every target and the full queue order"
@@ -131,69 +137,89 @@ fn group_fanout_retry_mixed_updates_restore_order_after_failed_save() {
 
 #[test]
 fn group_fanout_retry_retires_ineligible_deferred_entries_beyond_due_limit() {
-    let mut f = checkpoint_backlog_fixture(68, 0);
-    f.sender.ack_pending_decrypted_deliveries().unwrap();
-    let now = 1_000;
-    for (index, pending) in f.sender.pending_group_fanouts.iter_mut().enumerate() {
-        pending.inner_event_id = Some(format!("retirement-{index}"));
-        if index < 64 {
-            pending.next_retry_at_secs = now;
+    for (held, inactive) in [(true, false), (false, true), (true, true)] {
+        let mut f = checkpoint_backlog_fixture(68, 0);
+        f.sender.ack_pending_decrypted_deliveries().unwrap();
+        let now = 1_000;
+        for (index, pending) in f.sender.pending_group_fanouts.iter_mut().enumerate() {
+            pending.inner_event_id = Some(format!("retirement-{index}"));
+            if index < 64 {
+                pending.next_retry_at_secs = now;
+            }
         }
-    }
-    f.sender
-        .hold_pending_direct_sends(f.peer_owner.public_key(), true);
-    let wake = UnsignedEvent::new(
-        f.owner.public_key(),
-        Timestamp::from_secs(now),
-        Kind::Custom(21_113),
-        [],
-        "private wake",
-    );
-    f.sender.pending_group_fanouts[64].fanout = GroupPendingFanout::Remote {
-        recipient_owner: ndr_owner(f.peer_owner.public_key()),
-        payload: serde_json::to_vec(&wake).unwrap(),
-    }
-    .into();
-    let inactive = group_snapshot_for_test(
-        "removed-group",
-        "Removed",
-        2,
-        &f.peer_owner,
-        &[f.peer_owner.public_key()],
-    );
-    f.sender.group_manager = GroupEventManager::from_snapshot(GroupManagerSnapshot {
-        local_owner_pubkey: f.sender.local_owner,
-        groups: vec![inactive.clone()],
-        sender_keys: vec![],
-    })
-    .unwrap();
-    f.sender.pending_group_fanouts[65].group_id = inactive.group_id.clone();
-    f.sender.pending_group_fanouts[66].group_id = inactive.group_id.clone();
-    f.sender.pending_group_fanouts[66].fanout = GroupPendingFanout::Remote {
-        recipient_owner: ndr_owner(f.peer_owner.public_key()),
-        payload: JsonGroupPayloadCodecV1
-            .encode_pairwise_command(
-                nostr_double_ratchet::GroupPayloadEncodeContext {
-                    local_device_pubkey: ndr_device(f.device.public_key()),
-                    created_at: NdrUnixSeconds(now),
-                },
-                &GroupPairwiseCommand::MetadataSnapshot { snapshot: inactive },
-            )
-            .unwrap(),
-    }
-    .into();
-    let mut expected = f.sender.pending_group_fanouts.clone();
-    expected.remove(65);
-    expected.remove(64);
-    for pending in &mut expected[..64] {
-        pending.next_retry_at_secs = now + 60;
-    }
-    let result = f
-        .sender
-        .retry_pending_group_fanouts(NdrUnixSeconds(now))
+        f.sender
+            .hold_pending_direct_sends(f.peer_owner.public_key(), held);
+        let wake = UnsignedEvent::new(
+            f.owner.public_key(),
+            Timestamp::from_secs(now),
+            Kind::Custom(21_113),
+            [],
+            "private wake",
+        );
+        f.sender.pending_group_fanouts[64].fanout = GroupPendingFanout::Remote {
+            recipient_owner: ndr_owner(f.peer_owner.public_key()),
+            payload: serde_json::to_vec(&wake).unwrap(),
+        }
+        .into();
+        let mut removed_group = group_snapshot_for_test(
+            "removed-group",
+            "Removed",
+            2,
+            &f.peer_owner,
+            &[f.peer_owner.public_key()],
+        );
+        if !inactive {
+            removed_group.members.push(f.sender.local_owner);
+        }
+        f.sender.group_manager = GroupEventManager::from_snapshot(GroupManagerSnapshot {
+            local_owner_pubkey: f.sender.local_owner,
+            groups: vec![removed_group.clone()],
+            sender_keys: vec![],
+        })
         .unwrap();
-    assert!(result.events.is_empty() && result.effects.is_empty());
-    assert!(f.sender.pending_group_fanouts == expected,
+        f.sender.pending_group_fanouts[65].group_id = removed_group.group_id.clone();
+        f.sender.pending_group_fanouts[66].group_id = removed_group.group_id.clone();
+        f.sender.pending_group_fanouts[66].fanout = GroupPendingFanout::Remote {
+            recipient_owner: ndr_owner(f.peer_owner.public_key()),
+            payload: JsonGroupPayloadCodecV1
+                .encode_pairwise_command(
+                    nostr_double_ratchet::GroupPayloadEncodeContext {
+                        local_device_pubkey: ndr_device(f.device.public_key()),
+                        created_at: NdrUnixSeconds(now),
+                    },
+                    &GroupPairwiseCommand::MetadataSnapshot {
+                        snapshot: removed_group,
+                    },
+                )
+                .unwrap(),
+        }
+        .into();
+        let mut expected = f.sender.pending_group_fanouts.clone();
+        if inactive {
+            expected.remove(65);
+        }
+        if held {
+            expected.remove(64);
+        }
+        for pending in &mut expected[..64] {
+            pending.next_retry_at_secs = now + 60;
+        }
+        GROUP_FANOUT_RETRY_VISITED.with(|visited| visited.set(0));
+        let result = f
+            .sender
+            .retry_pending_group_fanouts(NdrUnixSeconds(now))
+            .unwrap();
+        assert!(result.events.is_empty() && result.effects.is_empty());
+        assert!(f.sender.pending_group_fanouts == expected,
         "held wakes and revoked controls must retire even beyond the due cap; membership metadata and other deferred entries must retain order");
-    assert_eq!(f.sender.pending_group_fanouts.len(), 66);
+        assert_eq!(
+            f.sender.pending_group_fanouts.len(),
+            68 - usize::from(held) - usize::from(inactive)
+        );
+        assert_eq!(
+            GROUP_FANOUT_RETRY_VISITED.with(|visited| visited.get()),
+            68,
+            "held-only and inactive-only cases must each scan the full tail"
+        );
+    }
 }
