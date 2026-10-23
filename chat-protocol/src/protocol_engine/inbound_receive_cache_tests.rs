@@ -163,49 +163,84 @@ fn failed_receive_import_fixture() -> (ProtocolEngine, Keys, Keys, Keys, Keys, S
     engine
         .queue_pending_inbound_direct_event(event, 100, Some(&envelope), None)
         .unwrap();
+    let pending = engine.pending_inbound[0].clone();
+    let error = engine
+        .decrypt_pending_direct_message_event(&pending)
+        .err()
+        .unwrap();
+    assert!(
+        matches!(
+            error.downcast_ref::<NdrError>(),
+            Some(NdrError::Nip44(nostr::nips::nip44::Error::V2(
+                nostr::nips::nip44::v2::ErrorV2::InvalidHmac
+            )))
+        ),
+        "wrong-chain fixture must reach payload authentication"
+    );
     (engine, owner, device, peer, peer_device, good)
 }
 
 #[test]
 fn failed_receive_cache_import_unlocks_inactive_session_after_authorization_change() {
-    let (mut engine, _, _, peer, peer_device, good) = failed_receive_import_fixture();
-    let event_id = engine.pending_inbound[0].event.id;
-    take_inbound_receive_calls();
-    make_inbound_due(&mut engine);
-    engine
-        .retry_pending_inbound_direct_events(NdrUnixSeconds(200))
-        .unwrap();
-    assert_eq!(take_inbound_receive_calls(), 1);
-    make_inbound_due(&mut engine);
-    engine
-        .retry_pending_inbound_direct_events(NdrUnixSeconds(201))
-        .unwrap();
-    let repeated = take_inbound_receive_calls();
-    // A revoked owner/device must not be authenticated through a stale cache.
-    let revoked = engine
-        .ingest_app_keys_event(&signed_app_keys(&peer, &[], 20))
-        .unwrap();
-    assert!(revoked.direct_messages.is_empty());
-    assert!(engine.pending_decrypted_deliveries.is_empty());
-    // The newly imported good state has equal priority and remains inactive
-    // behind the old wrong-key active state. Receive must still try it.
-    engine.session_manager.import_session_state(
-        ndr_owner(peer.public_key()),
-        ndr_device(peer_device.public_key()),
-        good,
-        NdrUnixSeconds(202),
-    );
-    let batch = engine
-        .ingest_app_keys_event(&signed_app_keys(&peer, &[peer_device.public_key()], 30))
-        .unwrap();
-    assert_eq!(batch.direct_messages.len(), 1);
-    assert_eq!(batch.direct_messages[0].content, "old packet unlocked");
-    assert_eq!(
-        batch.direct_messages[0].event_id.as_deref(),
-        Some(event_id.to_hex().as_str())
-    );
-    assert!(engine.pending_inbound.is_empty());
-    assert_eq!(repeated, 0);
+    for revoke in [false, true] {
+        let (mut engine, _, _, peer, peer_device, good) = failed_receive_import_fixture();
+        let event_id = engine.pending_inbound[0].event.id;
+        take_inbound_receive_calls();
+        make_inbound_due(&mut engine);
+        engine
+            .retry_pending_inbound_direct_events(NdrUnixSeconds(200))
+            .unwrap();
+        assert_eq!(take_inbound_receive_calls(), 1);
+        make_inbound_due(&mut engine);
+        engine
+            .retry_pending_inbound_direct_events(NdrUnixSeconds(201))
+            .unwrap();
+        let repeated = take_inbound_receive_calls();
+        let mut wrong = good.clone();
+        wrong.root_key[0] ^= 1;
+        engine.session_manager.import_session_state(
+            ndr_owner(peer.public_key()),
+            ndr_device(peer_device.public_key()),
+            good.clone(),
+            NdrUnixSeconds(202),
+        );
+        let snapshot = engine.session_manager.snapshot();
+        let record = snapshot
+            .users
+            .iter()
+            .find(|u| u.owner_pubkey == ndr_owner(peer.public_key()))
+            .unwrap()
+            .devices
+            .iter()
+            .find(|d| d.device_pubkey == ndr_device(peer_device.public_key()))
+            .unwrap();
+        assert!(record.active_session.as_ref() == Some(&wrong));
+        assert!(record.inactive_sessions == vec![good]);
+        let delivered = if revoke {
+            let revoked = engine
+                .ingest_app_keys_event(&signed_app_keys(&peer, &[], 20))
+                .unwrap();
+            assert!(revoked.direct_messages.is_empty());
+            assert!(engine.pending_decrypted_deliveries.is_empty());
+            engine
+                .ingest_app_keys_event(&signed_app_keys(&peer, &[peer_device.public_key()], 30))
+                .unwrap()
+                .direct_messages
+        } else {
+            make_inbound_due(&mut engine);
+            engine
+                .retry_pending_inbound_direct_events(NdrUnixSeconds(202))
+                .unwrap()
+        };
+        assert_eq!(delivered.len(), 1);
+        assert_eq!(delivered[0].content, "old packet unlocked");
+        assert_eq!(
+            delivered[0].event_id.as_deref(),
+            Some(event_id.to_hex().as_str())
+        );
+        assert!(engine.pending_inbound.is_empty());
+        assert_eq!(repeated, 0);
+    }
 }
 
 #[test]
