@@ -14,12 +14,13 @@ import time
 import tomllib
 import urllib.request
 
-SOURCE = "6bddf1ae1db8602f7730eb42950ef25f3d7d7e8d"
+SOURCE = "46d8b2213d81a2a6e1df457ed6483d090298d03d"
 EXECUTION_ENABLED = True  # Root accepted core run and exact protocol registry readback.
 RUST_TOOLCHAIN = "1.99.1"
-CORE_RUN = 40014835498
-PROTOCOL = "0.3.6"
-CLI = "0.1.48"
+CORE_RUN = 40039642600
+PROTOCOL = "0.3.7"
+PROTOCOL_SOURCE = "46d8b2213d81a2a6e1df457ed6483d090298d03d"
+CLI = "0.1.49"
 REGISTRY = "registry+https://github.com/rust-lang/crates.io-index"
 GIB = 1024**3
 
@@ -59,8 +60,9 @@ def download(url, destination, limit=8 * 1024**2):
     return data
 
 
-def inspect_archive(archive, package, version, subdir, source_reader, protocol_checksum=None):
-    """Bind every ordinary archive file to Git; allow only Cargo's generated files."""
+def inspect_archive(archive, package, version, subdir, source_reader, protocol_checksum=None, *, expected_source):
+    """Bind archive provenance explicitly and ordinary files to the supplied Git source."""
+    assert re.fullmatch(r"[0-9a-f]{40}", expected_source), "An exact archive source commit is required"
     prefix = f"{package}-{version}"
     contents = {}
     with tarfile.open(archive, "r:gz") as tar:
@@ -75,7 +77,7 @@ def inspect_archive(archive, package, version, subdir, source_reader, protocol_c
             assert relative not in contents, "Duplicate archive member"
             contents[relative] = tar.extractfile(member).read()
     vcs = json.loads(contents[".cargo_vcs_info.json"])
-    assert vcs["git"]["sha1"] == SOURCE and not vcs["git"].get("dirty", False)
+    assert vcs["git"]["sha1"] == expected_source and not vcs["git"].get("dirty", False), "Archive source commit or clean state differs"
     assert vcs["path_in_vcs"] == subdir
     manifest = tomllib.loads(contents["Cargo.toml"].decode())
     assert manifest["package"]["name"] == package and manifest["package"]["version"] == version
@@ -129,7 +131,8 @@ def preflight(args):
     archive = out / f"iris-chat-protocol-{PROTOCOL}.crate"
     download(f"https://static.crates.io/crates/iris-chat-protocol/iris-chat-protocol-{PROTOCOL}.crate", archive)
     assert file_info(archive)["sha256"] == args.protocol_sha256
-    protocol = inspect_archive(archive, "iris-chat-protocol", PROTOCOL, "chat-protocol", lambda p: read_source(root, p))
+    protocol = inspect_archive(archive, "iris-chat-protocol", PROTOCOL, "chat-protocol",
+                               lambda p: read_source(root, p), expected_source=PROTOCOL_SOURCE)
     manifest = tomllib.loads(read_source(root, "core/Cargo.toml").decode())
     assert manifest["package"]["version"] == CLI and manifest["dependencies"]["iris-chat-protocol"]["version"] == f"={PROTOCOL}"
     evidence = {"schema": "iris-source-package-preflight/v1", "source": SOURCE,
@@ -242,7 +245,8 @@ def verify(args):
     archive = target / "package" / f"iris-chat-{CLI}.crate"
     local = out / archive.name
     shutil.copyfile(archive, local)
-    inspection = inspect_archive(local, "iris-chat", CLI, "core", lambda p: read_source(root, p), pre["protocol_checksum"])
+    inspection = inspect_archive(local, "iris-chat", CLI, "core", lambda p: read_source(root, p),
+                                 pre["protocol_checksum"], expected_source=SOURCE)
     clean_source(root)
     receipt = {"schema": "iris-cli-source-package-verification/v1", "source": SOURCE,
                "preflight": file_info(out / "preflight.json"), "package_run": result,
