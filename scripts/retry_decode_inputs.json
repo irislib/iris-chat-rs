@@ -1,0 +1,22 @@
+{
+  "schema": "iris-retry-decode-input/v1",
+  "enabled": true,
+  "source": "8a9db73c4d7f259a4f3e28640ed1c1584ff9bc14",
+  "tree": "200d709495d1f4c926ab13f3179299214512121c",
+  "profile_input_sha256": "c43d88e4e989846fb180ac06e4dcd56c9f0474113cd78dd3b2c029d42de4f600",
+  "profile_helper_sha256": "beb2c61efa6065c7827830b43c8791c7bb66bd2e7ef1cfc51cacf278b4723874",
+  "binary_sha256": "248489ce5e151afcd5d4f99ba4f41a68409c5e168ad88b9bc9a6f8d825c4c6d7",
+  "diagnostic_only": true,
+  "cpu_acceptance": false,
+  "upstream": {
+    "run": 39994819299,
+    "driver": "0c094caadac1e506e4ade47b3bd383074f0b861a",
+    "artifact": 12519178606,
+    "zip_bytes": 3395848,
+    "zip_sha256": "09583728575a5962e9418ee4cdd01582ff8f828673b52310cbfc3035959daf1e",
+    "raw_bytes": 32521500,
+    "raw_sha256": "2d605075dccc1682608b369d50ae0e6410003c168cd8b7828f0eec7854835dae",
+    "profile_result_sha256": "6b8a4ea2af97de323469056b71492fd2d0f5389416649be2b8d16e6710e53258",
+    "statistics_sha256": "050aa7b9f9ce1b64dfdc036c524c59379a4430fd48cf2cf9cd7ab8539ad42c57"
+  }
+}
