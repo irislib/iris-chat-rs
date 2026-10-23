@@ -20,7 +20,7 @@ on:
         description: Checks to run; retain exact source-bound coverage for unchanged components
         type: choice
         default: all
-        options: [all, cli, core, inbound-retry, inbound-retry-release, inbound-retry-batched, inbound-deadline, checkpoint-update, ndr-blind-allocation, ndr-session-allocation, ndr-source-package, ndr-pairwise-source-package, android, windows, windows-keyboard, windows-restore, apple, ios, ios-unit, macos, linux, apple-products, ios-products, macos-products, ios-ui-runner, macos-ui-runner]
+        options: [all, cli, core, inbound-retry, inbound-retry-release, inbound-retry-batched, inbound-deadline, checkpoint-update, receive-cache, ndr-blind-allocation, ndr-session-allocation, ndr-source-package, ndr-pairwise-source-package, android, windows, windows-keyboard, windows-restore, apple, ios, ios-unit, macos, linux, apple-products, ios-products, macos-products, ios-ui-runner, macos-ui-runner]
       ios_core_seed_run:
         description: Optional exact successful core build/cache producer for Swift-only unit validation
         type: string
@@ -102,14 +102,14 @@ jobs:
           retention-days: 14
 
   inbound-deadline:
-    if: ${{ inputs.scope == 'inbound-deadline' || inputs.scope == 'checkpoint-update' }}
+    if: ${{ inputs.scope == 'inbound-deadline' || inputs.scope == 'checkpoint-update' || inputs.scope == 'receive-cache' }}
     name: Compare exact retry correctness and admitted qualification
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
-      COMPARISON_DRIVER: ${{ inputs.scope == 'checkpoint-update' && 'verify_checkpoint_update.py' || 'verify_inbound_deadline.py' }}
+      COMPARISON_DRIVER: ${{ inputs.scope == 'receive-cache' && 'verify_receive_cache.py' || inputs.scope == 'checkpoint-update' && 'verify_checkpoint_update.py' || 'verify_inbound_deadline.py' }}
       COMPARISON_OUTPUT: work/${{ inputs.scope }}
-      COMPARISON_FETCH_DEPTH: ${{ inputs.scope == 'checkpoint-update' && '7' || '2' }}
+      COMPARISON_FETCH_DEPTH: ${{ inputs.scope == 'receive-cache' && '5' || inputs.scope == 'checkpoint-update' && '7' || '2' }}
       CARGO_TARGET_DIR: ${{ github.workspace }}/cargo-target
       CARGO_BUILD_JOBS: '2'
       CARGO_TERM_COLOR: never

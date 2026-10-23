@@ -1,0 +1,192 @@
+{
+  "schema": "iris-receive-cache-input/v1",
+  "enabled": false,
+  "base": "ebfa822e08d95efad66b68288b3e66d1499b0f85",
+  "before": "5c70faf9e84f9bfa2ae3439315620f3ea25eceac",
+  "after": "c49702b174253c6c722e56f2793fcf598f32760f",
+  "source_chain": [
+    {
+      "commit": "5c70faf9e84f9bfa2ae3439315620f3ea25eceac",
+      "parent": "ebfa822e08d95efad66b68288b3e66d1499b0f85",
+      "changed_paths": [
+        "chat-protocol/src/protocol_engine/inbound_receive_cache_tests.rs"
+      ]
+    },
+    {
+      "commit": "376374936bb365f0f691c8b3a74a8bd338a23568",
+      "parent": "5c70faf9e84f9bfa2ae3439315620f3ea25eceac",
+      "changed_paths": [
+        "chat-protocol/src/protocol_engine.rs",
+        "chat-protocol/src/protocol_engine/engine_core.rs",
+        "chat-protocol/src/protocol_engine/engine_incoming_retry.rs",
+        "chat-protocol/src/protocol_engine/inbound_receive_cache.rs",
+        "chat-protocol/src/protocol_engine/types.rs"
+      ]
+    },
+    {
+      "commit": "820f93d4edaefa01d45e2b032acd2edec0230056",
+      "parent": "376374936bb365f0f691c8b3a74a8bd338a23568",
+      "changed_paths": [
+        "RELEASE_NOTES.md"
+      ]
+    },
+    {
+      "commit": "c49702b174253c6c722e56f2793fcf598f32760f",
+      "parent": "820f93d4edaefa01d45e2b032acd2edec0230056",
+      "changed_paths": [
+        "chat-protocol/Cargo.lock",
+        "chat-protocol/Cargo.toml",
+        "core/Cargo.lock",
+        "core/Cargo.toml",
+        "linux/Cargo.lock",
+        "protocol-ffi/Cargo.lock"
+      ]
+    }
+  ],
+  "fixtures": {
+    "chat-protocol/src/protocol_engine/inbound_receive_cache_tests.rs": "3455ed4a62712756a2b31b1e9756a37582a2311ea3bd866f5e196719af8dd765",
+    "chat-protocol/src/protocol_engine/batched_retry_cpu_tests.rs": "27e49662a218d2adba639b85b7274c0e679a6234a7ff2a37345da3dae7c3383a",
+    "chat-protocol/src/protocol_engine/inbound_retry_backlog_tests.rs": "6d6796dfe3e49130667e4518e45010a4cee62e163761ea3f8f4a05c101d56f36",
+    "chat-protocol/src/protocol_engine/inbound_retry_ciphertext_fixture_tests.rs": "4e865795edddef4371b8eed0f089b40a4ef87217ed120dc2c70bdcbdb2c88f6a"
+  },
+  "dependencies": {
+    "before": {
+      "manifest_sha256": "e614b8959b803e7895d88a0fb8a435423b824bfb5db76b915d99f1a72c4dc9e1",
+      "lock_sha256": "4912c6e11b71518f8cb7c8da169bfa3265794c8e24c42367849723410aa8de54"
+    },
+    "after": {
+      "manifest_sha256": "37b410f2c4b9afa9ef07cac2682ac7261f8c44d8a047351649ed4052a9fb857a",
+      "lock_sha256": "81357f39ed1994242ff8a46cf52cd4f2fd22d58667f74f4445a0ff4f873ee04c"
+    }
+  },
+  "before_test": "protocol_engine::tests::failed_receive_cache_unchanged_failures_bind_envelope_and_event_context",
+  "before_failure_marker": "inbound_receive_cache_tests.rs:69:5",
+  "before_observation_test": null,
+  "before_observation_failure_marker": null,
+  "tests": [
+    {
+      "name": "storage::incremental::tests::",
+      "expected_count": 9,
+      "exact": false,
+      "marker": null,
+      "ignored": false,
+      "timeout_seconds": 300
+    },
+    {
+      "name": "protocol_engine::tests::corrupt_mac_inbound_",
+      "expected_count": 2,
+      "exact": false,
+      "marker": null,
+      "ignored": false,
+      "timeout_seconds": 300
+    },
+    {
+      "name": "protocol_engine::tests::deferred_inbound_deadline_scans_are_bounded_across_32_continuations",
+      "expected_count": 1,
+      "exact": true,
+      "marker": null,
+      "ignored": false,
+      "timeout_seconds": 300
+    },
+    {
+      "name": "protocol_engine::tests::inbound_deadline_",
+      "expected_count": 4,
+      "exact": false,
+      "marker": null,
+      "ignored": false,
+      "timeout_seconds": 300
+    },
+    {
+      "name": "protocol_engine::tests::remote_retry_",
+      "expected_count": 4,
+      "exact": false,
+      "marker": null,
+      "ignored": false,
+      "timeout_seconds": 300
+    },
+    {
+      "name": "protocol_engine::tests::remote_direct_",
+      "expected_count": 6,
+      "exact": false,
+      "marker": null,
+      "ignored": false,
+      "timeout_seconds": 300
+    },
+    {
+      "name": "protocol_engine::tests::group_fanout_retry_allocations_do_not_scale_with_deferred_fanouts",
+      "expected_count": 1,
+      "exact": true,
+      "marker": "fanout_queue_retry turns=8 due=64 total=24990 small_allocated_bytes=",
+      "ignored": false,
+      "timeout_seconds": 300
+    },
+    {
+      "name": "protocol_engine::tests::group_fanout_retry_mixed_updates_restore_order_after_failed_save",
+      "expected_count": 1,
+      "exact": true,
+      "marker": null,
+      "ignored": false,
+      "timeout_seconds": 300
+    },
+    {
+      "name": "protocol_engine::tests::group_fanout_retry_retires_ineligible_deferred_entries_beyond_due_limit",
+      "expected_count": 1,
+      "exact": true,
+      "marker": null,
+      "ignored": false,
+      "timeout_seconds": 300
+    },
+    {
+      "name": "protocol_engine::tests::group_fanout_retry_processes_a_bounded_due_batch",
+      "expected_count": 1,
+      "exact": true,
+      "marker": null,
+      "ignored": false,
+      "timeout_seconds": 300
+    },
+    {
+      "name": "protocol_engine::incoming_retry_tests::pending_receive_save_failure_preserves_entire_queue_and_delivery_journal",
+      "expected_count": 1,
+      "exact": true,
+      "marker": null,
+      "ignored": false,
+      "timeout_seconds": 300
+    },
+    {
+      "name": "protocol_engine::incoming_retry_tests::invalid_pending_ciphertext_does_not_starve_other_senders",
+      "expected_count": 1,
+      "exact": true,
+      "marker": null,
+      "ignored": false,
+      "timeout_seconds": 300
+    },
+    {
+      "name": "protocol_engine::tests::failed_receive_cache_",
+      "expected_count": 4,
+      "exact": false,
+      "marker": null,
+      "ignored": false,
+      "timeout_seconds": 300
+    },
+    {
+      "name": "protocol_engine::tests::handshake_proof_delivers_out_of_order_messages_and_survives_restart",
+      "expected_count": 1,
+      "exact": true,
+      "marker": null,
+      "ignored": false,
+      "timeout_seconds": 300
+    }
+  ],
+  "cpu": {
+    "test": {
+      "name": "protocol_engine::tests::restored_backlog_batched_retry_stays_within_cpu_budget",
+      "expected_count": 1,
+      "exact": true,
+      "marker": "batched_retry_cpu ",
+      "ignored": true,
+      "timeout_seconds": 420
+    },
+    "failure_marker": "batched steady retry loop still exceeds 5% of one CPU:",
+    "schema_version": 3
+  }
+}

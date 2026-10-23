@@ -247,11 +247,12 @@ def bounded(command, root, out, name, timeout, deadline, target):
     return result, log.read_text(errors="replace")
 
 
-def stage(which, root, out, data, *, release_build=False, result_checker=None, source_prover=None, test_plan=None):
+def stage(which, root, out, data, *, release_build=False, result_checker=None, source_prover=None, test_plan=None, dependency_checker=None):
     result_checker = result_checker or check_result
     batched = which == "batched"
     optimized = which in ("optimized", "batched")
     assert test_plan is None or (which in ("before", "after") and release_build), "Custom test plan requires a release comparison"
+    assert dependency_checker is None or (which in ("before", "after") and release_build and source_prover is not None), "Dependency transition requires a proved release comparison"
     trailing_cpu = test_plan.get("batched_cpu") if test_plan else None
     assert trailing_cpu is None or which == "after", "CPU qualification is GREEN-only"
     batched_measurement = batched or trailing_cpu is not None
@@ -290,17 +291,23 @@ def stage(which, root, out, data, *, release_build=False, result_checker=None, s
         assert re.search(rf"^{tool} {re.escape(TOOLCHAIN)}(?:\s|$)", text)
         versions[tool] = text
     save(output / "toolchain.json", versions)
+    dependency_changed = False
     if which == "after":
         before = json.loads((out / "before/source.json").read_text())
         assert source["fixtures"] == before["fixtures"], "Regression fixture bytes changed between before and after"
-        assert source["protocol_lock_sha256"] == before["protocol_lock_sha256"], "Dependency inputs changed"
+        if dependency_checker is None:
+            assert source["protocol_lock_sha256"] == before["protocol_lock_sha256"], "Dependency inputs changed"
+        else:
+            save(output / "dependency-transition.json", dependency_checker(before, source, data))
+            dependency_changed = source["protocol_lock_sha256"] != before["protocol_lock_sha256"]
         assert versions == json.loads((out / "before/toolchain.json").read_text())
     target = Path(os.environ["CARGO_TARGET_DIR"]).resolve()
     target.mkdir(parents=True, exist_ok=True)
     if which == "before" or optimized:
         save(out / "cache.json", {key: os.environ.get(key, "") for key in ("IRIS_CACHE_REQUESTED", "IRIS_CACHE_MATCHED", "IRIS_CACHE_HIT")})
+    if which == "before" or optimized or dependency_changed:
         # Other branch/tag caches may be inaccessible. Seed the exact locked
-        # dependencies once; both source compilations below remain offline.
+        # dependencies once per distinct reviewed lock; builds remain offline.
         fetch_command = ["cargo", f"+{TOOLCHAIN}", "fetch", "--manifest-path", "chat-protocol/Cargo.toml", "--locked"]
         fetch, _ = bounded(fetch_command, root, output, "fetch", 300, pre["deadline_unix"], target)
         assert fetch["exit_code"] == 0, "Dependency fetch failed; no regression result"
