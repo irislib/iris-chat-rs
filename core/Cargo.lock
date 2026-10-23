@@ -3297,9 +3297,9 @@ dependencies = [
 
 [[package]]
 name = "nostr-double-ratchet"
-version = "0.0.172"
+version = "0.0.173"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8e67461f21af04a9675cd04419c1fe1eec5bd6035c203592bb2724d7d6f627cf"
+checksum = "d838e57c5db5431ccc1e412ea795fed4013e288b7d139c39f29c1c9a2806a3e7"
 dependencies = [
  "base64 0.22.1",
  "hex",
