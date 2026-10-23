@@ -2,6 +2,27 @@
 
 Each release has channel-specific notes. The release tag must match the `##` heading exactly.
 
+## v2026.10.23
+
+### GitHub
+
+- Bound retry bookkeeping to the pending deliveries being processed. Avoid copying deferred incoming messages, scanning the full active decryption queue and rebuilding the complete group delivery queue on every continuation.
+- Avoid saving the account checkpoint when a recipient has no known device list and only its retry timer changes. Preserve durable delivery progress, expiration, revocation and failed-save recovery.
+- Require a restored-backlog CPU regression with real expiring controls, per-turn durable saves, preserved pending messages and restart checks.
+- Update FIPS dependencies for automatic connections between devices on the same network while retaining anonymous message-provider publication and discovery.
+- Add Apple startup lifecycle observations without account, contact or message data.
+- Update the protocol source package to 0.3.5 and the CLI source package to 0.1.47.
+
+### Apple
+
+- Reduce processing when many messages are waiting to be delivered.
+- Improve connections between devices on the same network.
+
+### Zapstore
+
+- Reduce processing when many messages are waiting to be delivered.
+- Improve connections between devices on the same network.
+
 ## v2026.10.22.5
 
 ### GitHub
