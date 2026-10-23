@@ -20,7 +20,7 @@ on:
         description: Checks to run; retain exact source-bound coverage for unchanged components
         type: choice
         default: all
-        options: [all, cli, core, inbound-retry, inbound-retry-release, inbound-retry-batched, android, windows, windows-keyboard, windows-restore, apple, ios, ios-unit, macos, linux, apple-products, ios-products, macos-products, ios-ui-runner, macos-ui-runner]
+        options: [all, cli, core, inbound-retry, inbound-retry-release, inbound-retry-batched, ndr-blind-allocation, android, windows, windows-keyboard, windows-restore, apple, ios, ios-unit, macos, linux, apple-products, ios-products, macos-products, ios-ui-runner, macos-ui-runner]
       ios_core_seed_run:
         description: Optional exact successful core build/cache producer for Swift-only unit validation
         type: string
@@ -38,6 +38,76 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  ndr-blind-allocation:
+    if: ${{ inputs.scope == 'ndr-blind-allocation' }}
+    name: Compare exact NDR blind-search allocation sources
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/cargo-target
+      CARGO_BUILD_JOBS: '2'
+      CARGO_TERM_COLOR: never
+      CARGO_PROFILE_RELEASE_OPT_LEVEL: '3'
+      CARGO_PROFILE_RELEASE_DEBUG: '1'
+      CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS: 'false'
+      PYTHONDONTWRITEBYTECODE: '1'
+      DEBUGINFOD_URLS: ''
+    steps:
+      - name: Checkout reviewed diagnostic driver
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: retry-driver
+          persist-credentials: false
+      - name: Require reviewed immutable RED and GREEN sources
+        id: inputs
+        run: python3 retry-driver/scripts/verify_ndr_blind_allocation.py preflight --output work/ndr-blind-allocation
+      - name: Checkout test-only RED source
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.inputs.outputs.repository }}
+          ref: ${{ steps.inputs.outputs.before }}
+          fetch-depth: 2
+          path: nostr-double-ratchet
+          persist-credentials: false
+      - name: Install accepted Rust toolchain
+        run: rustup toolchain install 1.99.1 --profile minimal
+      - name: Restore existing Rust cache
+        id: cargo-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ${{ github.workspace }}/cargo-target
+          key: rust-${{ runner.os }}-${{ hashFiles('nostr-double-ratchet/rust/Cargo.lock') }}
+          restore-keys: |
+            rust-${{ runner.os }}-
+      - name: Require the allocation test to fail only at its reviewed guard
+        env:
+          NDR_CACHE_REQUESTED: ${{ steps.cargo-cache.outputs.cache-primary-key }}
+          NDR_CACHE_MATCHED: ${{ steps.cargo-cache.outputs.cache-matched-key }}
+          NDR_CACHE_HIT: ${{ steps.cargo-cache.outputs.cache-hit }}
+        run: python3 retry-driver/scripts/verify_ndr_blind_allocation.py before --source nostr-double-ratchet --output work/ndr-blind-allocation
+      - name: Checkout GREEN into the same source path
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.inputs.outputs.repository }}
+          ref: ${{ steps.inputs.outputs.after }}
+          fetch-depth: 2
+          path: nostr-double-ratchet
+          persist-credentials: false
+      - name: Require unchanged allocation fixture and focused correctness to pass
+        run: python3 retry-driver/scripts/verify_ndr_blind_allocation.py after --source nostr-double-ratchet --output work/ndr-blind-allocation
+      - name: Retain complete RED and GREEN evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ndr-blind-allocation-${{ github.run_id }}
+          path: work/ndr-blind-allocation/
+          if-no-files-found: warn
+          retention-days: 14
+
   inbound-retry:
     if: ${{ inputs.scope == 'inbound-retry' || inputs.scope == 'inbound-retry-release' || inputs.scope == 'inbound-retry-batched' }}
     name: ${{ inputs.scope == 'inbound-retry-batched' && 'Measure settled batched retry' || inputs.scope == 'inbound-retry-release' && 'Measure optimized whole retry on unchanged source' || 'Compare exact inbound retry regression sources' }}
