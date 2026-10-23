@@ -1,6 +1,6 @@
 {
   "schema": "iris-checkpoint-update-input/v1",
-  "enabled": false,
+  "enabled": true,
   "base": "7cb25044c48e2b5c91b9a89db3626ba39730ab95",
   "before": "d7540b3481b152c0b7c30d8d5068f63fac6d4fe7",
   "after": "66524f2f8f0967a6166818c0f046a73f2273b429",
