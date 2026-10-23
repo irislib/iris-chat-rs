@@ -185,6 +185,68 @@ mod tests {
     }
 
     #[test]
+    fn comparison_reads_use_64k_blocks_without_changing_page_writes() {
+        let (_dir, shared, adapter) = database();
+        let block_bytes = 64 * 1024;
+        let original = "a".repeat(2 * block_bytes + PAGE_BYTES + 17);
+        adapter.put("state", original.clone()).unwrap();
+        let mut changed = original;
+        for offset in [
+            0,
+            block_bytes - 1,
+            block_bytes,
+            2 * block_bytes + PAGE_BYTES,
+        ] {
+            changed.replace_range(offset..offset + 1, "b");
+        }
+        for first_update in [true, false] {
+            let mut reads = Vec::new();
+            let mut writes = Vec::new();
+            assert!(try_put_with(
+                &mut shared.lock().unwrap(),
+                ("owner", "device", "state"),
+                &changed,
+                |blob, bytes, offset| {
+                    reads.push((offset, bytes.len()));
+                    blob.read_at_exact(bytes, offset)
+                },
+                |blob, bytes, offset| {
+                    writes.push((offset, bytes.len()));
+                    blob.write_at(bytes, offset)
+                },
+                |blob| blob.close(),
+            )
+            .unwrap());
+            assert_eq!(adapter.get("state").unwrap(), Some(changed.clone()));
+            assert_eq!(
+                reads.iter().map(|(_, len)| len).sum::<usize>(),
+                changed.len()
+            );
+            let expected_writes = if first_update {
+                vec![
+                    (0, PAGE_BYTES),
+                    (block_bytes - PAGE_BYTES, PAGE_BYTES),
+                    (block_bytes, PAGE_BYTES),
+                    (2 * block_bytes + PAGE_BYTES, 17),
+                ]
+            } else {
+                Vec::new()
+            };
+            assert_eq!(writes, expected_writes);
+            assert!(!reads.is_empty(), "comparison reads must actually execute");
+            assert_eq!(
+                reads,
+                [
+                    (0, block_bytes),
+                    (block_bytes, block_bytes),
+                    (2 * block_bytes, PAGE_BYTES + 17),
+                ],
+                "checkpoint comparison must read 64 KiB blocks"
+            );
+        }
+    }
+
+    #[test]
     fn unicode_and_embedded_nul_updates_compare_bytes_through_the_partial_last_page() {
         let (_dir, shared, adapter) = database();
         let original = format!("{}🦀", "ä\0".repeat(24 * 1024));
@@ -251,28 +313,31 @@ mod tests {
         let (_dir, shared, adapter) = database();
         let original = "a".repeat(128 * 1024);
         adapter.put("state", original.clone()).unwrap();
-        let mut changed = original.clone();
-        changed.replace_range(0..1, "b");
-        changed.replace_range(65536..65537, "c");
-        let mut writes = 0;
-        let result = try_put_with(
-            &mut shared.lock().unwrap(),
-            ("owner", "device", "state"),
-            &changed,
-            |blob, bytes, offset| blob.read_at_exact(bytes, offset),
-            |blob, bytes, offset| {
-                writes += 1;
-                if writes == 2 {
-                    return Err(rusqlite::Error::InvalidQuery);
-                }
-                blob.write_at(bytes, offset)
-            },
-            |blob| blob.close(),
-        );
-        assert!(result.is_err());
-        assert_eq!(writes, 2);
-        assert_eq!(adapter.get("state").unwrap(), Some(original));
-        assert!(shared.lock().unwrap().is_autocommit());
+        // Fail both within one comparison block and after crossing its boundary.
+        for second_offset in [PAGE_BYTES, 64 * 1024] {
+            let mut changed = original.clone();
+            changed.replace_range(0..1, "b");
+            changed.replace_range(second_offset..second_offset + 1, "c");
+            let mut writes = 0;
+            let result = try_put_with(
+                &mut shared.lock().unwrap(),
+                ("owner", "device", "state"),
+                &changed,
+                |blob, bytes, offset| blob.read_at_exact(bytes, offset),
+                |blob, bytes, offset| {
+                    writes += 1;
+                    if writes == 2 {
+                        return Err(rusqlite::Error::InvalidQuery);
+                    }
+                    blob.write_at(bytes, offset)
+                },
+                |blob| blob.close(),
+            );
+            assert!(result.is_err());
+            assert_eq!(writes, 2);
+            assert_eq!(adapter.get("state").unwrap(), Some(original.clone()));
+            assert!(shared.lock().unwrap().is_autocommit());
+        }
     }
 
     #[test]
