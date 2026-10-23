@@ -2,7 +2,7 @@
   "enabled": true,
   "optimized_enabled": true,
   "batched": {
-    "enabled": false,
+    "enabled": true,
     "correctness_tests": [
       {
         "name": "protocol_engine::tests::remote_retry_",
