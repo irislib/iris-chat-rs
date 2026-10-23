@@ -2,7 +2,7 @@
   "enabled": true,
   "optimized_enabled": true,
   "batched": {
-    "enabled": false,
+    "enabled": true,
     "correctness_tests": [
       {
         "name": "protocol_engine::tests::group_retry_",
@@ -29,12 +29,10 @@
         "timeout_seconds": 300
       }
     ],
-    "source": "526321841d3757fc73713a931cc745bbb67d8f43",
-    "base": "89255675320a09f33c6327689924bcde3961b782",
+    "source": "b17f28444c506bf8616faef6fdf84b9ead934855",
+    "base": "526321841d3757fc73713a931cc745bbb67d8f43",
     "changed_paths": [
-      "chat-protocol/src/protocol_engine/group_retry.rs",
-      "chat-protocol/src/protocol_engine/group_decrypt.rs",
-      "chat-protocol/src/protocol_engine/group_decrypt_budget_tests.rs"
+      "chat-protocol/src/protocol_engine/retry_work_audit.rs"
     ],
     "failure_marker": "batched steady retry loop still exceeds 5% of one CPU:",
     "test": {
