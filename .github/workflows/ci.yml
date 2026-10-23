@@ -20,7 +20,7 @@ on:
         description: Checks to run; retain exact source-bound coverage for unchanged components
         type: choice
         default: all
-        options: [all, cli, core, inbound-retry, inbound-retry-release, inbound-retry-batched, inbound-deadline, ndr-blind-allocation, ndr-source-package, ndr-pairwise-source-package, android, windows, windows-keyboard, windows-restore, apple, ios, ios-unit, macos, linux, apple-products, ios-products, macos-products, ios-ui-runner, macos-ui-runner]
+        options: [all, cli, core, inbound-retry, inbound-retry-release, inbound-retry-batched, inbound-deadline, checkpoint-update, ndr-blind-allocation, ndr-source-package, ndr-pairwise-source-package, android, windows, windows-keyboard, windows-restore, apple, ios, ios-unit, macos, linux, apple-products, ios-products, macos-products, ios-ui-runner, macos-ui-runner]
       ios_core_seed_run:
         description: Optional exact successful core build/cache producer for Swift-only unit validation
         type: string
@@ -102,11 +102,14 @@ jobs:
           retention-days: 14
 
   inbound-deadline:
-    if: ${{ inputs.scope == 'inbound-deadline' }}
-    name: Compare exact inbound deadline scans
+    if: ${{ inputs.scope == 'inbound-deadline' || inputs.scope == 'checkpoint-update' }}
+    name: Compare exact retry correctness and admitted qualification
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
+      COMPARISON_DRIVER: ${{ inputs.scope == 'checkpoint-update' && 'verify_checkpoint_update.py' || 'verify_inbound_deadline.py' }}
+      COMPARISON_OUTPUT: work/${{ inputs.scope }}
+      COMPARISON_FETCH_DEPTH: ${{ inputs.scope == 'checkpoint-update' && '6' || '2' }}
       CARGO_TARGET_DIR: ${{ github.workspace }}/cargo-target
       CARGO_BUILD_JOBS: '2'
       CARGO_TERM_COLOR: never
@@ -122,14 +125,14 @@ jobs:
           ref: ${{ github.sha }}
           path: retry-driver
           persist-credentials: false
-      - name: Require reviewed immutable deadline comparison inputs
+      - name: Require reviewed immutable comparison inputs
         id: inputs
-        run: python3 retry-driver/scripts/verify_inbound_deadline.py preflight --output work/inbound-deadline
+        run: python3 "retry-driver/scripts/$COMPARISON_DRIVER" preflight --output "$COMPARISON_OUTPUT"
       - name: Checkout test-only RED source
         uses: actions/checkout@v4
         with:
           ref: ${{ steps.inputs.outputs.before }}
-          fetch-depth: 2
+          fetch-depth: ${{ env.COMPARISON_FETCH_DEPTH }}
           path: iris-chat-rs
           persist-credentials: false
       - name: Install accepted Rust toolchain
@@ -145,27 +148,27 @@ jobs:
           key: rust-${{ runner.os }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock') }}
           restore-keys: |
             rust-${{ runner.os }}-
-      - name: Require the deadline scan regression to exceed its numeric guard
+      - name: Require the exact intended RED regression failure
         env:
           IRIS_CACHE_REQUESTED: ${{ steps.cargo-cache.outputs.cache-primary-key }}
           IRIS_CACHE_MATCHED: ${{ steps.cargo-cache.outputs.cache-matched-key }}
           IRIS_CACHE_HIT: ${{ steps.cargo-cache.outputs.cache-hit }}
-        run: python3 retry-driver/scripts/verify_inbound_deadline.py before --source iris-chat-rs --output work/inbound-deadline
+        run: python3 "retry-driver/scripts/$COMPARISON_DRIVER" before --source iris-chat-rs --output "$COMPARISON_OUTPUT"
       - name: Checkout GREEN into the same source path
         uses: actions/checkout@v4
         with:
           ref: ${{ steps.inputs.outputs.after }}
-          fetch-depth: 2
+          fetch-depth: ${{ env.COMPARISON_FETCH_DEPTH }}
           path: iris-chat-rs
           persist-credentials: false
-      - name: Require deadline and affected correctness checks to pass
-        run: python3 retry-driver/scripts/verify_inbound_deadline.py after --source iris-chat-rs --output work/inbound-deadline
+      - name: Require GREEN correctness before any admitted CPU qualification
+        run: python3 "retry-driver/scripts/$COMPARISON_DRIVER" after --source iris-chat-rs --output "$COMPARISON_OUTPUT"
       - name: Retain complete RED and GREEN evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: inbound-deadline-${{ github.run_id }}
-          path: work/inbound-deadline/
+          name: ${{ inputs.scope }}-${{ github.run_id }}
+          path: ${{ env.COMPARISON_OUTPUT }}/
           if-no-files-found: warn
           retention-days: 14
 

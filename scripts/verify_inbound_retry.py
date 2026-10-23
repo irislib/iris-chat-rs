@@ -109,11 +109,13 @@ def whole_retry_metrics(text):
     return result
 
 
-def batched_retry_metrics(text):
+def batched_retry_metrics(text, *, schema_version=2):
     rows = re.findall(r"batched_retry_cpu (\{[^\n]+\})", text)
     assert len(rows) == 1, "Expected exactly one complete batched retry receipt"
     result = json.loads(rows[0])
-    expected = {"schema": "iris-batched-retry-cpu/v2", "fixture": "restored-mixed-backlog-with-expiring-controls-v2", "synthetic": True,
+    assert type(schema_version) is int and schema_version in (2, 3), "Unsupported batched receipt version"
+    fixture = "restored-mixed-backlog-with-expiring-controls-v2" if schema_version == 2 else "restored-mixed-backlog-with-corrupt-mac-inbound-v3"
+    expected = {"schema": f"iris-batched-retry-cpu/v{schema_version}", "fixture": fixture, "synthetic": True,
                 "pending_inbound": 4214, "initially_due_inbound": 102, "fanouts": 24990,
                 "initially_due_fanouts": 10462, "ciphertexts": 23437, "remote_sends": 44,
                 "expiring_controls": 2, "initial_remote_sends": 46, "retired_expiring_controls": 2,
@@ -125,6 +127,11 @@ def batched_retry_metrics(text):
                 "repeated_search_starts": 0, "wire_effect_count": 0, "remaining_inbound": 4214,
                 "remaining_ciphertexts": 23436, "remaining_remote_sends": 44,
                 "preservation_checked": True, "restart_checked": True, "restart_ready": True}
+    if schema_version == 3:
+        expected.update(inbound_ciphertext_format="canonical-base64-nip44-v2-corrupt-mac", inbound_ciphertext_format_checked=4214)
+        assert type(result["inbound_ciphertext_format_checked"]) is int
+        assert all(type(result[key]) is int for key in ("inbound_decoded_min_bytes", "inbound_decoded_max_bytes"))
+        assert 387 <= result["inbound_decoded_min_bytes"] <= result["inbound_decoded_max_bytes"] <= 2115, "Inbound ciphertext format bounds changed"
     assert all(result[key] == value for key, value in expected.items()), "Batched workload or completion assertions changed"
     assert result["remaining_fanouts"] >= 24990 and result["search_starts"] > 0
     assert all(isinstance(result[key], (int, float)) and math.isfinite(result[key]) and 0 <= result[key] <= 180
@@ -240,10 +247,15 @@ def bounded(command, root, out, name, timeout, deadline, target):
     return result, log.read_text(errors="replace")
 
 
-def stage(which, root, out, data, *, release_build=False, result_checker=None):
+def stage(which, root, out, data, *, release_build=False, result_checker=None, source_prover=None, test_plan=None):
     result_checker = result_checker or check_result
     batched = which == "batched"
     optimized = which in ("optimized", "batched")
+    assert test_plan is None or (which in ("before", "after") and release_build), "Custom test plan requires a release comparison"
+    trailing_cpu = test_plan.get("batched_cpu") if test_plan else None
+    assert trailing_cpu is None or which == "after", "CPU qualification is GREEN-only"
+    batched_measurement = batched or trailing_cpu is not None
+    cpu_config = data["batched"] if batched else trailing_cpu
     source_key = "after" if optimized else which
     source_commit = data["batched"]["source"] if batched else data[source_key]
     pre = json.loads((out / "preflight.json").read_text())
@@ -252,19 +264,23 @@ def stage(which, root, out, data, *, release_build=False, result_checker=None):
     assert git(root, "rev-parse", "HEAD") == source_commit and not git(root, "status", "--porcelain")
     if which == "after":
         assert json.loads((out / "before/receipt.json").read_text())["accepted"] is True
-    parent = data["base"] if which == "before" else data["before"]
-    if batched:
-        parent = data["batched"]["base"]
-    assert git(root, "rev-parse", "HEAD^") == parent, "Unexpected source ancestry"
-    changed = git(root, "diff", "--name-only", "HEAD^", "HEAD").splitlines()
-    expected_changed = data["before_changed_paths"] if which == "before" else data["after_changed_paths"]
-    if batched:
-        expected_changed = data["batched"]["changed_paths"]
-    assert sorted(changed) == sorted(expected_changed), "Source exceeds reviewed diagnostic scope"
-    source = {"commit": source_commit, "parent": parent, "changed_paths": changed, "tree": git(root, "rev-parse", "HEAD^{tree}"),
-              "protocol_tree": git(root, "rev-parse", "HEAD:chat-protocol"),
-              "fixtures": {path: sha(root / path) for path in (expected_changed if batched else data["fixture_paths"])},
-              "protocol_lock_sha256": sha(root / "chat-protocol/Cargo.lock")}
+    if source_prover is not None:
+        source = source_prover(which, root, data)
+        assert source["commit"] == source_commit
+    else:
+        parent = data["base"] if which == "before" else data["before"]
+        if batched:
+            parent = data["batched"]["base"]
+        assert git(root, "rev-parse", "HEAD^") == parent, "Unexpected source ancestry"
+        changed = git(root, "diff", "--name-only", "HEAD^", "HEAD").splitlines()
+        expected_changed = data["before_changed_paths"] if which == "before" else data["after_changed_paths"]
+        if batched:
+            expected_changed = data["batched"]["changed_paths"]
+        assert sorted(changed) == sorted(expected_changed), "Source exceeds reviewed diagnostic scope"
+        source = {"commit": source_commit, "parent": parent, "changed_paths": changed, "tree": git(root, "rev-parse", "HEAD^{tree}"),
+                  "protocol_tree": git(root, "rev-parse", "HEAD:chat-protocol"),
+                  "fixtures": {path: sha(root / path) for path in (expected_changed if batched else data["fixture_paths"])},
+                  "protocol_lock_sha256": sha(root / "chat-protocol/Cargo.lock")}
     output = out / which
     output.mkdir()
     save(output / "source.json", source)
@@ -307,16 +323,16 @@ def stage(which, root, out, data, *, release_build=False, result_checker=None):
     if optimized or release_build:
         assert profile["opt_level"] == "3" and profile["debug_assertions"] is False and profile["debuginfo"] == 1
         interpretation = "Release optimization with debug symbols, not official release binary equivalence. "
-        if release_build and not optimized:
+        if release_build and not optimized and not trailing_cpu:
             interpretation += "Focused correctness comparison only; no CPU measurement."
         else:
-            interpretation += "Batched retry/ACK/flush with three settling and two measured slices." if batched else "Standalone public API without the Mac lifecycle outer batch."
+            interpretation += "Batched retry/ACK/flush with three settling and two measured slices." if batched_measurement else "Standalone public API without the Mac lifecycle outer batch."
     else:
         assert profile["opt_level"] == "0" and profile["debug_assertions"] is True
         interpretation = "Default test opt0/debug diagnostic, not release-build equivalence."
-    if not release_build or optimized:
+    if not release_build or optimized or trailing_cpu:
         interpretation += " Deadline mix describes the seeded snapshot; actual eligibility advances during setup and "
-        interpretation += "the timed slices." if batched else "the measured minute."
+        interpretation += "the timed slices." if batched_measurement else "the measured minute."
     binary = Path(artifacts[0]["executable"]).resolve()
     assert binary.is_file(), "Test executable is missing"
     assert binary.is_relative_to(target), "Test binary is outside the shared target"
@@ -328,10 +344,14 @@ def stage(which, root, out, data, *, release_build=False, result_checker=None):
         selected = [*data["batched"]["correctness_tests"], data["batched"]["test"]] if batched else [t for t in data["tests"] if t["name"] == data["before_observation_test"]]
         assert selected[-1]["exact"] and selected[-1]["expected_count"] == 1
         assert batched or len(selected) == 1
+    if test_plan is not None:
+        selected = list(test_plan["tests"])
+        if trailing_cpu is not None:
+            selected.append(trailing_cpu["test"])
     checks = []
     cpu_failure = False
     for index, test in enumerate(selected):
-        is_cpu_test = optimized and (not batched or test["name"] == data["batched"]["test"]["name"])
+        is_cpu_test = (optimized and (not batched or test["name"] == data["batched"]["test"]["name"])) or (trailing_cpu is not None and test == trailing_cpu["test"])
         command = [str(binary), test["name"], "--nocapture", "--test-threads=1"]
         if test["exact"]:
             command.append("--exact")
@@ -345,15 +365,15 @@ def stage(which, root, out, data, *, release_build=False, result_checker=None):
             if which == "before" and test["name"] == data["before_test"]:
                 expected_failure = data["before_failure_marker"]
             elif (which == "before" or is_cpu_test) and run["exit_code"] != 0:
-                expected_failure = data["batched"]["failure_marker"] if batched else data["before_observation_failure_marker"]
-            if batched and is_cpu_test:
-                check["batched_retry_cpu"] = batched_retry_metrics(text)
+                expected_failure = cpu_config["failure_marker"] if batched_measurement else data["before_observation_failure_marker"]
+            if batched_measurement and is_cpu_test:
+                check["batched_retry_cpu"] = batched_retry_metrics(text, schema_version=cpu_config.get("schema_version", 2))
             elif test["name"] == data["before_observation_test"]:
                 check["whole_retry_cpu"] = whole_retry_metrics(text)
             check["counts"] = result_checker(text, test, run["exit_code"], expected_failure)
             cpu_failure = is_cpu_test and expected_failure is not None
             if is_cpu_test:
-                exceeds_budget = any(s["cpu_percent_one_core"] > 5 for s in check["batched_retry_cpu"]["slices"][-2:]) if batched else check["whole_retry_cpu"]["cpu_percent_one_core"] > 5
+                exceeds_budget = any(s["cpu_percent_one_core"] > 5 for s in check["batched_retry_cpu"]["slices"][-2:]) if batched_measurement else check["whole_retry_cpu"]["cpu_percent_one_core"] > 5
                 assert exceeds_budget == cpu_failure, "CPU assertion and metric disagree"
                 check["counts"]["expected_regression_failure"] = False
             check["accepted"] = not cpu_failure
@@ -370,7 +390,7 @@ def stage(which, root, out, data, *, release_build=False, result_checker=None):
                "cpu_interpretation": interpretation, "unprofiled_cpu_failure": cpu_failure}
     save(output / "receipt.json", receipt)
     print(json.dumps({"accepted": not cpu_failure, "stage": which, "source": source_commit, "test_counts": [t["counts"] for t in checks]}), flush=True)
-    if batched and cpu_failure:
+    if batched_measurement and cpu_failure:
         raise AssertionError("Batched settled retry CPU exceeds the unchanged 5% limit; no repeat or sampling run")
     if cpu_failure:
         from inbound_retry_perf import sample_failure

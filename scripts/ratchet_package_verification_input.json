@@ -4,7 +4,7 @@
   "repository": "irislib/nostr-double-ratchet",
   "source": "cb10d45a97120d66b8b40f33c24da6dd1d7424b2",
   "toolchain": "1.99.1",
-  "resource_helper_sha256": "b2bf5196f03ba6d7eafa5af8413e5f0075fc84767744bb362f0bbb30fddbf19e",
+  "resource_helper_sha256": "472f8e391785f78672cda62015feb1c3bdb5f0c64fc8e77336b6ef79875471ea",
   "qualification": {
     "full_ci_run": 39906785775,
     "full_ci_accepted": true,
