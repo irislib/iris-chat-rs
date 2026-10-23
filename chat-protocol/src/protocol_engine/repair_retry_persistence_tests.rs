@@ -46,7 +46,13 @@ fn repair_retry_backoff_only_keeps_exact_intent_without_checkpoint() {
             .is_empty());
         assert_eq!(engine.pending_group_sender_key_repairs.len(), 1);
         assert_eq!(engine.pending_group_fanouts.len(), 1);
-        assert!(!engine.session_manager.has_authorized_local_siblings());
+        assert!(engine
+            .session_manager
+            .roster(engine.local_owner)
+            .unwrap()
+            .devices()
+            .iter()
+            .all(|device| device.device_pubkey == engine.local_device));
         engine.persist().unwrap();
         let before = engine.storage.get(PROTOCOL_ENGINE_STATE_KEY).unwrap();
         let repair_before = engine.pending_group_sender_key_repairs[0].clone();
