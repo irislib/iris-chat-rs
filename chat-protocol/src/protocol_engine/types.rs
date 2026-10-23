@@ -20,6 +20,8 @@ struct ProtocolEnginePersistedState {
     pending_group_sender_key_messages: PendingGroupMessages,
     #[serde(default)]
     pending_group_fanouts: Vec<ProtocolPendingGroupFanout>,
+    #[serde(default)]
+    pending_inbound: Vec<ProtocolPendingInbound>,
     session_manager: SessionManagerSnapshot,
     group_manager: GroupManagerSnapshot,
     /// Owners whose current roster was installed through trusted AppKeys ingestion.
@@ -42,8 +44,6 @@ struct ProtocolEnginePersistedState {
     processed_private_invite_response_ids: Vec<String>,
     #[serde(default)]
     group_invite_uses: BTreeMap<String, BTreeSet<NdrOwnerPubkey>>,
-    #[serde(default)]
-    pending_inbound: Vec<ProtocolPendingInbound>,
     #[serde(default)]
     ready_group_publications: BTreeMap<String, ProtocolReadyGroupPublish>,
     #[serde(default)]
@@ -95,9 +95,15 @@ pub enum ProtocolEffect {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 struct ProtocolPendingInbound {
-    event: Event,
+    #[serde(flatten)]
+    body: CheckpointInbound,
     created_at_secs: u64,
     next_retry_at_secs: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+struct ProtocolPendingInboundBody {
+    event: Event,
     #[serde(default)]
     event_id: String,
     #[serde(default)]

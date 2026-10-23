@@ -544,15 +544,18 @@ impl ProtocolEngine {
             }
         } else {
             let mut pending = ProtocolPendingInbound {
-                event,
+                body: ProtocolPendingInboundBody {
+                    event,
+                    event_id: String::new(),
+                    envelope: None,
+                    sender_message_pubkey_hex: None,
+                    resolved_owner_pubkey_hex: None,
+                    claimed_owner_pubkey_hex: None,
+                    metadata_verified: false,
+                }
+                .into(),
                 created_at_secs: now_secs,
                 next_retry_at_secs: now_secs.saturating_add(PENDING_RETRY_DELAY_SECS),
-                event_id: String::new(),
-                envelope: None,
-                sender_message_pubkey_hex: None,
-                resolved_owner_pubkey_hex: None,
-                claimed_owner_pubkey_hex: None,
-                metadata_verified: false,
             };
             apply_pending_inbound_metadata(&mut pending, metadata);
             if pending.event_id.is_empty() {

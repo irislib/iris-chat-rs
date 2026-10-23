@@ -26,6 +26,7 @@ include!("protocol_engine/engine_sender_key_repair.rs");
 include!("protocol_engine/checkpoint_layout.rs");
 include!("protocol_engine/checkpoint_pending.rs");
 include!("protocol_engine/checkpoint_fanout.rs");
+include!("protocol_engine/checkpoint_inbound.rs");
 include!("protocol_engine/engine_persistence.rs");
 include!("protocol_engine/free_functions.rs");
 

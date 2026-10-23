@@ -93,15 +93,18 @@ fn synthetic_pending_inbound_modified(
             let metadata =
                 receiver.pending_inbound_metadata_for_event(&event, Some(&envelope), None);
             let mut pending = ProtocolPendingInbound {
-                event,
+                body: ProtocolPendingInboundBody {
+                    event,
+                    event_id: String::new(),
+                    envelope: None,
+                    sender_message_pubkey_hex: None,
+                    resolved_owner_pubkey_hex: None,
+                    claimed_owner_pubkey_hex: None,
+                    metadata_verified: false,
+                }
+                .into(),
                 created_at_secs: 1,
                 next_retry_at_secs: if index < due { now } else { now + 52 },
-                event_id: String::new(),
-                envelope: None,
-                sender_message_pubkey_hex: None,
-                resolved_owner_pubkey_hex: None,
-                claimed_owner_pubkey_hex: None,
-                metadata_verified: false,
             };
             apply_pending_inbound_metadata(&mut pending, metadata);
             pending

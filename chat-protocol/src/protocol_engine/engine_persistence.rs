@@ -40,7 +40,7 @@ impl ProtocolEngine {
             processed_private_invite_response_ids: self
                 .processed_private_invite_response_ids
                 .clone(),
-            pending_inbound: self.pending_inbound.clone(),
+            pending_inbound: Vec::new(),
             pending_group_fanouts: Vec::new(),
             ready_group_publications: self.ready_group_publications.clone(),
             pending_local_sibling_sends: self.pending_local_sibling_sends.clone(),
@@ -64,6 +64,7 @@ impl ProtocolEngine {
             &self.checkpoint_layout.borrow(),
             &self.pending_group_sender_key_messages,
             &self.pending_group_fanouts,
+            &self.pending_inbound,
         )?;
         self.storage
             .put_checkpoint(PROTOCOL_ENGINE_STATE_KEY, &checkpoint)?;
@@ -102,13 +103,14 @@ fn record_protocol_checkpoint(
     previous: &ProtocolCheckpointLayout,
     pending: &PendingGroupMessages,
     fanouts: &[ProtocolPendingGroupFanout],
+    inbound: &[ProtocolPendingInbound],
 ) -> anyhow::Result<(crate::StorageCheckpoint, ProtocolCheckpointLayout)> {
     let core_json = serde_json::to_string(&core)?;
     let empty_prefix = format!(
-        "{{\"version\":{},\"pending_group_sender_key_messages\":[],\"pending_group_fanouts\":[]",
+        "{{\"version\":{},\"pending_group_sender_key_messages\":[],\"pending_group_fanouts\":[],\"pending_inbound\":[]",
         PROTOCOL_ENGINE_STATE_VERSION
     );
-    // These are the first three fields of our own serializer, not untrusted
+    // These are the first four fields of our own serializer, not untrusted
     // substring matches. A schema/order change must update this contract.
     anyhow::ensure!(
         core_json.starts_with(&empty_prefix),
@@ -171,6 +173,8 @@ fn record_protocol_checkpoint(
             0,
         );
     }
+    value.push_inline("before_inbound", "],\"pending_inbound\":[".into(), 0);
+    append_checkpoint_inbound(&mut value, inbound)?;
     value.push_inline("core", format!("]{tail}"), 0);
     let compact_bytes = value.len();
     if compact_bytes < CHECKPOINT_RESERVE {
