@@ -22,7 +22,7 @@ on:
         default: all
         options: [all, cli, core, source-package, android, windows, windows-keyboard, windows-restore, apple, ios, ios-unit, macos, linux, apple-products, ios-products, macos-products, ios-ui-runner, macos-ui-runner]
       source_package_protocol_sha256:
-        description: Accepted published iris-chat-protocol 0.3.5 archive SHA256 (source-package only)
+        description: Accepted published iris-chat-protocol 0.3.6 archive SHA256 (source-package only)
         type: string
         default: ''
       ios_core_seed_run:
@@ -51,7 +51,7 @@ jobs:
       CARGO_TARGET_DIR: ${{ github.workspace }}/cargo-target
       CARGO_BUILD_JOBS: '2'
       CARGO_TERM_COLOR: never
-      IRIS_PACKAGE_TOOLCHAIN: '1.99.1' # Candidate core qualification run 39939972967; dispatch requires acceptance.
+      IRIS_PACKAGE_TOOLCHAIN: '1.99.1' # Accepted full-core run 40014835498.
       IRIS_PROTOCOL_SHA256: ${{ inputs.source_package_protocol_sha256 }}
     steps:
       - name: Checkout reviewed workflow driver
@@ -63,7 +63,7 @@ jobs:
       - name: Checkout qualified production source
         uses: actions/checkout@v4
         with:
-          ref: cca9525d209ec51038c588ef7e55460ffa1614aa
+          ref: 6bddf1ae1db8602f7730eb42950ef25f3d7d7e8d
           path: iris-chat-rs
           persist-credentials: false
       - name: Install accepted Rust toolchain
@@ -101,7 +101,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: source-package-cca9525d209ec51038c588ef7e55460ffa1614aa
+          name: source-package-6bddf1ae1db8602f7730eb42950ef25f3d7d7e8d
           path: work/source-package/
           if-no-files-found: warn
           retention-days: 14

@@ -14,11 +14,12 @@ import time
 import tomllib
 import urllib.request
 
-SOURCE = "cca9525d209ec51038c588ef7e55460ffa1614aa"
+SOURCE = "6bddf1ae1db8602f7730eb42950ef25f3d7d7e8d"
+EXECUTION_ENABLED = True  # Root accepted core run and exact protocol registry readback.
 RUST_TOOLCHAIN = "1.99.1"
-CORE_RUN = 39939972967
-PROTOCOL = "0.3.5"
-CLI = "0.1.47"
+CORE_RUN = 40014835498
+PROTOCOL = "0.3.6"
+CLI = "0.1.48"
 REGISTRY = "registry+https://github.com/rust-lang/crates.io-index"
 GIB = 1024**3
 
@@ -107,6 +108,7 @@ def inspect_archive(archive, package, version, subdir, source_reader, protocol_c
 
 
 def preflight(args):
+    assert EXECUTION_ENABLED, "Source-package preparation is disabled"
     root, out = args.source.resolve(), args.output.resolve()
     out.mkdir(parents=True, exist_ok=True)
     clean_source(root)
@@ -229,6 +231,7 @@ def bounded_package(root, out, target, toolchain, *, timeout_seconds=2100, poll_
 
 
 def verify(args):
+    assert EXECUTION_ENABLED, "Source-package preparation is disabled"
     root, out = args.source.resolve(), args.output.resolve()
     pre = json.loads((out / "preflight.json").read_text())
     assert pre["source"] == SOURCE
