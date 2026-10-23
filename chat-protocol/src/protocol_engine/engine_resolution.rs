@@ -280,12 +280,21 @@ impl ProtocolEngine {
         prepared: &GroupPreparedSend,
         inner_event_id: Option<String>,
     ) -> anyhow::Result<ProtocolGroupSendResult> {
-        self.queue_group_pending_fanouts(
+        self.protocol_group_send_from_prepared_with_progress(prepared, inner_event_id)
+            .map(|(output, _)| output)
+    }
+
+    fn protocol_group_send_from_prepared_with_progress(
+        &mut self,
+        prepared: &GroupPreparedSend,
+        inner_event_id: Option<String>,
+    ) -> anyhow::Result<(ProtocolGroupSendResult, bool)> {
+        let mut fanouts_changed = self.queue_group_pending_fanouts(
             &prepared.group_id,
             &prepared.remote,
             inner_event_id.clone(),
         );
-        self.queue_group_pending_fanouts(
+        fanouts_changed |= self.queue_group_pending_fanouts(
             &prepared.group_id,
             &prepared.local_sibling,
             inner_event_id.clone(),
@@ -314,12 +323,15 @@ impl ProtocolEngine {
             chat_id,
             &mut event_ids,
         )?);
-        Ok(ProtocolGroupSendResult {
-            has_pending_deliveries: false,
-            event_ids,
-            effects,
-            ..Default::default()
-        })
+        Ok((
+            ProtocolGroupSendResult {
+                has_pending_deliveries: false,
+                event_ids,
+                effects,
+                ..Default::default()
+            },
+            fanouts_changed,
+        ))
     }
 
     fn sync_group_to_local_siblings(
@@ -392,10 +404,11 @@ impl ProtocolEngine {
         group_id: &str,
         prepared: &GroupPreparedPublish,
         inner_event_id: Option<String>,
-    ) {
+    ) -> bool {
         if prepared.pending_fanouts.is_empty() {
-            return;
+            return false;
         }
+        let mut changed = false;
         for fanout in &prepared.pending_fanouts {
             let pending = ProtocolPendingGroupFanout {
                 group_id: group_id.to_string(),
@@ -414,11 +427,13 @@ impl ProtocolEngine {
                 .any(|queued| queued == &pending || queued.same_pending_repair(&pending))
             {
                 self.pending_group_fanouts.push(pending);
+                changed = true;
             }
         }
         if inner_event_id.is_none() {
-            self.prune_superseded_local_group_sync_fanouts();
+            changed |= self.prune_superseded_local_group_sync_fanouts();
         }
+        changed
     }
 
     fn group_fanout_missing_devices(

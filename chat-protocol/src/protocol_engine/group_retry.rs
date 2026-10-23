@@ -276,7 +276,7 @@ impl ProtocolEngine {
         if self.batch_depth.get() == 0 {
             self.group_sender_key_retry.borrow_mut().reset_budget();
         }
-        let repairs_before = self.pending_group_sender_key_repairs.clone();
+        let mut repairs_before = self.pending_group_sender_key_repairs.clone();
         let mut result = ProtocolGroupIncomingResult::default();
         loop {
             let next = self.group_sender_key_retry.borrow_mut().next();
@@ -382,6 +382,17 @@ impl ProtocolEngine {
             }
             result.events.extend(outcome.events);
             result.effects.extend(outcome.effects);
+        }
+        // The request helper saves real send/fanout progress with its clocks.
+        // An unchanged, still-undeliverable intent only advances volatile backoff.
+        // Keep every other field, queue position and addition/removal significant.
+        for (before, after) in repairs_before
+            .iter_mut()
+            .zip(&self.pending_group_sender_key_repairs)
+        {
+            before.last_requested_at_secs = after.last_requested_at_secs;
+            before.request_count = after.request_count;
+            before.next_retry_at_secs = after.next_retry_at_secs;
         }
         if self.pending_group_sender_key_repairs != repairs_before {
             self.persist()?;

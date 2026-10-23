@@ -490,12 +490,29 @@ impl ProtocolEngine {
             &mut ctx,
             &request,
         )?;
-        let output = self.protocol_group_send_from_prepared(&prepared, None)?;
+        let session_progress = [&prepared.remote, &prepared.local_sibling]
+            .into_iter()
+            .any(|part| {
+                !part.deliveries.is_empty()
+                    || !part.invite_responses.is_empty()
+                    || !part.sender_key_messages.is_empty()
+            });
+        // An attempted sibling produces a delivery or a gap. Keep gap-only
+        // sibling work durable too: it may reorganize retained inactive sessions.
+        let local_sibling_state_may_change = !prepared.local_sibling.relay_gaps.is_empty()
+            || !prepared.local_sibling.pending_fanouts.is_empty();
+        let (output, fanouts_changed) =
+            self.protocol_group_send_from_prepared_with_progress(&prepared, None)?;
         if let Some(pending) = self.pending_group_sender_key_repairs.get_mut(index) {
             pending.last_requested_at_secs = now.get();
             pending.request_count = pending.request_count.saturating_add(1);
             pending.next_retry_at_secs =
                 protocol_sender_key_repair_next_retry_at(now, pending.request_count).get();
+        }
+        if session_progress || fanouts_changed || local_sibling_state_may_change {
+            // Persist after updating the clocks so a delivered request remains
+            // throttled across restart, together with its ratchet and targets.
+            self.persist()?;
         }
         self.invalidate_known_message_author_cache();
         Ok(output.effects)
