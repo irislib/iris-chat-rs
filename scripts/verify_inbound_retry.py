@@ -247,10 +247,11 @@ def bounded(command, root, out, name, timeout, deadline, target):
     return result, log.read_text(errors="replace")
 
 
-def stage(which, root, out, data, *, release_build=False, result_checker=None, source_prover=None, test_plan=None, dependency_checker=None):
+def stage(which, root, out, data, *, release_build=False, result_checker=None, source_prover=None, test_plan=None, dependency_checker=None, diagnostic_runner=None):
     result_checker = result_checker or check_result
     batched = which == "batched"
     optimized = which in ("optimized", "batched")
+    assert diagnostic_runner is None or (batched and not data["batched"]["correctness_tests"]), "Profile-only path cannot execute qualification suites"
     assert test_plan is None or (which in ("before", "after") and release_build), "Custom test plan requires a release comparison"
     assert dependency_checker is None or (which in ("before", "after") and release_build and source_prover is not None), "Dependency transition requires a proved release comparison"
     trailing_cpu = test_plan.get("batched_cpu") if test_plan else None
@@ -346,6 +347,8 @@ def stage(which, root, out, data, *, release_build=False, result_checker=None, s
     binary_sha256 = sha(binary)
     save(output / "test-binary.json", {"path": str(binary), "sha256": binary_sha256, "cargo_test_profile": profile,
          "cpu_interpretation": interpretation})
+    if diagnostic_runner is not None:
+        return diagnostic_runner(binary, source, build, versions, profile, pre, output, target)
     selected = data["tests"] if which == "after" else [t for t in data["tests"] if t["name"] in (data["before_test"], data["before_observation_test"])]
     if optimized:
         selected = [*data["batched"]["correctness_tests"], data["batched"]["test"]] if batched else [t for t in data["tests"] if t["name"] == data["before_observation_test"]]
