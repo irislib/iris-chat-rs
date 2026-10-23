@@ -17,18 +17,21 @@ INPUTS = Path(__file__).with_name("repair_retry_inputs.json")
 BASE = "f78dab07f23c89aa9128dc9d2baa68ee5bbace77"
 COMMITS = ["8008aee1a29f6b22c0752aa28440ac51f2395f18", "ba57b5fec3b063158f34fa282a5ec2cf8554336c",
     "e4b45261c6d0fbc4971d791d1c61ce0a72b724d6", "ed15fa9c81ff8d34c749b9ed165ecdf05f1c4c16",
-    "5fa9485d431632acb44b4fc3dcf3c499a4279041", "7c113f915b26f8f9190eb2325065671148c10fbc"]
+    "5fa9485d431632acb44b4fc3dcf3c499a4279041", "7c113f915b26f8f9190eb2325065671148c10fbc",
+    "f88fdbf62249823e965976fc754fd71ebe626798"]
 PREFIX = "protocol_engine::tests::repair_retry_"
 RED_TEST = PREFIX + "backoff_only_keeps_exact_intent_without_checkpoint"
 FAILURE = "repair_retry_persistence_tests.rs:122:5"
 DIRECTORY = "chat-protocol/src/protocol_engine/"
 TEST_PATH = DIRECTORY + "repair_retry_persistence_tests.rs"
 INCLUDE_PATH = DIRECTORY + "repair_response_throttle_tests.rs"
+RED_CORRECTION = {"commit": "07afdd59f18b7a400f266a5aad2c2b02d28faf72", "parent": COMMITS[2], "changed_paths": [TEST_PATH]}
+ORIGINAL_TEST_SHA256 = "1a8a3f6d9ba26c39d7b65f21f035a800857c16b4495675e1087b85fb7a1f53a1"
 GREEN_PATHS = [DIRECTORY + name for name in ("engine_resolution.rs", "engine_sender_key_repair.rs", "group_retry.rs")]
 PIN_PATHS = ["chat-protocol/Cargo.lock", "chat-protocol/Cargo.toml", "core/Cargo.lock", "core/Cargo.toml",
     "linux/Cargo.lock", "protocol-ffi/Cargo.lock"]
 FIXTURES = {
-    TEST_PATH: "1a8a3f6d9ba26c39d7b65f21f035a800857c16b4495675e1087b85fb7a1f53a1",
+    TEST_PATH: "b3e8426a93d2e9e6b9e91f17a6d0d533413933515c8cad43e7d67004592d5530",
     INCLUDE_PATH: "88c34a6d80d2bbc58d7d986e90e8884107817897701d76fd0ddebb4bf1a2ac8f",
     DIRECTORY + "batched_retry_cpu_tests.rs": "962081f9f89635a26e4d45e8d92c16973506093bbe0196a5d017db762823dda7",
     DIRECTORY + "batched_retry_durable_work.rs": "25d879908886ae0c53294e6d3aabca0d65a011ef537ef79828fd5eaef1c75dd9",
@@ -65,12 +68,13 @@ def contract():
     data = json.loads(INPUTS.read_text())
     assert data["enabled"] is True, "Repair retry qualification disabled pending final source review"
     assert data["schema"] == "iris-repair-retry-input/v1"
-    assert (data["base"], data["before"], data["after"]) == (BASE, COMMITS[2], COMMITS[-1])
+    assert (data["base"], data["before"], data["after"]) == (BASE, RED_CORRECTION["commit"], COMMITS[-1])
+    assert data["red_correction"] == RED_CORRECTION
     chain = data["source_chain"]
     assert [item["commit"] for item in chain] == COMMITS
     assert [item["parent"] for item in chain] == [BASE, *COMMITS[:-1]]
     assert [item["changed_paths"] for item in chain] == [
-        [INCLUDE_PATH, TEST_PATH], [TEST_PATH], [TEST_PATH], GREEN_PATHS, ["RELEASE_NOTES.md"], PIN_PATHS]
+        [INCLUDE_PATH, TEST_PATH], [TEST_PATH], [TEST_PATH], GREEN_PATHS, ["RELEASE_NOTES.md"], PIN_PATHS, [TEST_PATH]]
     assert data["fixtures"] == FIXTURES and data["dependencies"] == DEPENDENCIES
     assert data["before_test"] == RED_TEST and data["before_failure_marker"] == FAILURE
     assert data["before_observation_test"] is None and data["before_observation_failure_marker"] is None
@@ -100,7 +104,7 @@ def dependencies(root, which, data):
 
 
 def source_proof(which, root, data):
-    chain = data["source_chain"][:3] if which == "before" else data["source_chain"]
+    chain = data["source_chain"][:3] + [data["red_correction"]] if which == "before" else data["source_chain"]
     proof = []
     for index, item in enumerate(chain):
         commit, parent = item["commit"], item["parent"]
@@ -111,6 +115,8 @@ def source_proof(which, root, data):
             # Initial RED corrections are retained; only final RED runs.
             if index < 2 and path == TEST_PATH:
                 continue
+            if path == TEST_PATH and commit not in (data["before"], data["after"]):
+                digest = ORIGINAL_TEST_SHA256
             assert hashlib.sha256(checkpoint.source_bytes(root, commit, path)).hexdigest() == digest
         proof.append({**item, "tree": retry.git(root, "rev-parse", commit + "^{tree}"),
             "changed_file_sha256": {path: hashlib.sha256(checkpoint.source_bytes(root, commit, path)).hexdigest() for path in changed}})

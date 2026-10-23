@@ -109,7 +109,7 @@ jobs:
     env:
       COMPARISON_DRIVER: ${{ inputs.scope == 'repair-retry' && 'verify_repair_retry.py' || inputs.scope == 'receive-cache' && 'verify_receive_cache.py' || inputs.scope == 'checkpoint-update' && 'verify_checkpoint_update.py' || 'verify_inbound_deadline.py' }}
       COMPARISON_OUTPUT: work/${{ inputs.scope }}
-      COMPARISON_FETCH_DEPTH: ${{ inputs.scope == 'repair-retry' && '7' || inputs.scope == 'receive-cache' && '5' || inputs.scope == 'checkpoint-update' && '7' || '2' }}
+      COMPARISON_FETCH_DEPTH: ${{ inputs.scope == 'repair-retry' && '8' || inputs.scope == 'receive-cache' && '5' || inputs.scope == 'checkpoint-update' && '7' || '2' }}
       CARGO_TARGET_DIR: ${{ github.workspace }}/cargo-target
       CARGO_BUILD_JOBS: '2'
       CARGO_TERM_COLOR: never

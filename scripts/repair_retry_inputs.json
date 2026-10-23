@@ -1,9 +1,9 @@
 {
   "schema": "iris-repair-retry-input/v1",
-  "enabled": true,
+  "enabled": false,
   "base": "f78dab07f23c89aa9128dc9d2baa68ee5bbace77",
-  "before": "e4b45261c6d0fbc4971d791d1c61ce0a72b724d6",
-  "after": "7c113f915b26f8f9190eb2325065671148c10fbc",
+  "before": "07afdd59f18b7a400f266a5aad2c2b02d28faf72",
+  "after": "f88fdbf62249823e965976fc754fd71ebe626798",
   "source_chain": [
     {
       "commit": "8008aee1a29f6b22c0752aa28440ac51f2395f18",
@@ -54,10 +54,17 @@
         "linux/Cargo.lock",
         "protocol-ffi/Cargo.lock"
       ]
+    },
+    {
+      "commit": "f88fdbf62249823e965976fc754fd71ebe626798",
+      "parent": "7c113f915b26f8f9190eb2325065671148c10fbc",
+      "changed_paths": [
+        "chat-protocol/src/protocol_engine/repair_retry_persistence_tests.rs"
+      ]
     }
   ],
   "fixtures": {
-    "chat-protocol/src/protocol_engine/repair_retry_persistence_tests.rs": "1a8a3f6d9ba26c39d7b65f21f035a800857c16b4495675e1087b85fb7a1f53a1",
+    "chat-protocol/src/protocol_engine/repair_retry_persistence_tests.rs": "b3e8426a93d2e9e6b9e91f17a6d0d533413933515c8cad43e7d67004592d5530",
     "chat-protocol/src/protocol_engine/repair_response_throttle_tests.rs": "88c34a6d80d2bbc58d7d986e90e8884107817897701d76fd0ddebb4bf1a2ac8f",
     "chat-protocol/src/protocol_engine/batched_retry_cpu_tests.rs": "962081f9f89635a26e4d45e8d92c16973506093bbe0196a5d017db762823dda7",
     "chat-protocol/src/protocol_engine/batched_retry_durable_work.rs": "25d879908886ae0c53294e6d3aabca0d65a011ef537ef79828fd5eaef1c75dd9",
@@ -285,5 +292,12 @@
     "schema": "iris-retry-persistence-trace/v1",
     "limit": 64,
     "overflow_allowed": false
+  },
+  "red_correction": {
+    "commit": "07afdd59f18b7a400f266a5aad2c2b02d28faf72",
+    "parent": "e4b45261c6d0fbc4971d791d1c61ce0a72b724d6",
+    "changed_paths": [
+      "chat-protocol/src/protocol_engine/repair_retry_persistence_tests.rs"
+    ]
   }
 }

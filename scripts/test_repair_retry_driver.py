@@ -59,11 +59,13 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(sum(t["expected_count"] for t in data["tests"]), 52)
         self.assertEqual(data["tests"][:14], D.receive.focused_tests())
         self.assertEqual(data["cpu"], D.checkpoint.cpu_plan())
-        self.assertEqual(data["before"], D.COMMITS[2])
+        self.assertEqual(data["before"], D.RED_CORRECTION["commit"])
+        self.assertEqual(data["red_correction"]["parent"], D.COMMITS[2])
         self.assertNotEqual(data["dependencies"]["before"]["lock_sha256"], data["dependencies"]["after"]["lock_sha256"])
 
     def test_source_fixture_test_dependency_or_threshold_changes_fail_closed(self):
         changes = [lambda d: d.update(after="main"), lambda d: d.update(before=D.COMMITS[0]),
+            lambda d: d["red_correction"].update(parent=d["base"]),
             lambda d: d["source_chain"][1].update(parent=d["base"]),
             lambda d: d["source_chain"][-1]["changed_paths"].append("core/src/lib.rs"),
             lambda d: d["source_chain"].pop(), lambda d: d["fixtures"].update({D.TEST_PATH: "0" * 64}),
@@ -83,8 +85,8 @@ class ContractTests(unittest.TestCase):
             "CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS: 'false'", "before --source iris-chat-rs", "after --source iris-chat-rs"]:
             self.assertIn(literal, job)
         self.assertEqual(job.count("uses: actions/cache/restore@v6"), 1)
-        self.assertIn("inputs.scope == 'repair-retry' && '7'", job)
-        self.assertEqual(len(D.COMMITS) + 1, 7, "Fetch depth must retain the entire reviewed chain and base")
+        self.assertIn("inputs.scope == 'repair-retry' && '8'", job)
+        self.assertEqual(len(D.COMMITS) + 1, 8, "Fetch depth must retain the entire reviewed chain and base")
 
 
 class ResultTests(unittest.TestCase):
