@@ -95,6 +95,19 @@ class ContractTests(unittest.TestCase):
                 with self.assertRaises(AssertionError):
                     gate.contract(path)
 
+    def test_kdf_reuse_acceptance_and_run_binding_are_required(self):
+        for field, value in (("kdf_reuse_accepted", False), ("kdf_reuse_accepted", 1),
+            ("kdf_reuse_run", 0), ("kdf_reuse_run", True), ("kdf_reuse_run", "39931111192")):
+            data = json.loads(gate.INPUTS.read_text())
+            data["enabled"] = True
+            data["qualification"]["source_and_workflow_reviewed"] = True
+            data["qualification"][field] = value
+            with self.subTest(field=field, value=value), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "input.json"
+                path.write_text(json.dumps(data))
+                with self.assertRaises(AssertionError):
+                    gate.contract(path)
+
     def test_real_package_verification_command(self):
         for name in (gate.NDR, gate.PAIRWISE):
             command = gate.package_command(name)

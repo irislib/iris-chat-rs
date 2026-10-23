@@ -38,7 +38,7 @@ def contract(path=INPUTS):
     assert data["repository"] == "irislib/nostr-double-ratchet"
     assert re.fullmatch(r"[0-9a-f]{40}", data["source"])
     assert data["toolchain"] == TOOLCHAIN == "1.99.1"
-    assert data["packages"] == {NDR: "0.0.173", PAIRWISE: "0.0.171"}
+    assert data["packages"] == {NDR: "0.0.174", PAIRWISE: "0.0.172"}
     assert data["codec"]["package"] == CODEC and data["codec"]["version"] == "0.0.168"
     assert re.fullmatch(r"[0-9a-f]{64}", data["codec"]["sha256"])
     assert re.fullmatch(r"[0-9a-f]{40}", data["codec"]["vcs_source"])
@@ -46,8 +46,8 @@ def contract(path=INPUTS):
         "total_seconds": 1500, "workflow_seconds": 1800,
         "registry_response_bytes": 16 * 1024**2, "archive_uncompressed_bytes": 64 * 1024**2}
     q = data["qualification"]
-    assert all(q[key] is True for key in ("full_ci_accepted", "allocation_accepted", "source_and_workflow_reviewed"))
-    assert all(type(q[key]) is int and q[key] > 0 for key in ("full_ci_run", "allocation_run"))
+    assert all(q[key] is True for key in ("full_ci_accepted", "allocation_accepted", "kdf_reuse_accepted", "source_and_workflow_reviewed"))
+    assert all(type(q[key]) is int and q[key] > 0 for key in ("full_ci_run", "allocation_run", "kdf_reuse_run"))
     assert sha(Path(__file__).with_name("verify_inbound_retry.py")) == data["resource_helper_sha256"]
     return data
 
