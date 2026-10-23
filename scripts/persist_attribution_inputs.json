@@ -1,6 +1,6 @@
 {
   "schema": "iris-persist-attribution-input/v1",
-  "enabled": false,
+  "enabled": true,
   "diagnostic_only": true,
   "release_cpu_acceptance": false,
   "base": "c49702b174253c6c722e56f2793fcf598f32760f",
