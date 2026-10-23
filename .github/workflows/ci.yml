@@ -20,7 +20,7 @@ on:
         description: Checks to run; retain exact source-bound coverage for unchanged components
         type: choice
         default: all
-        options: [all, cli, core, inbound-retry, inbound-retry-release, inbound-retry-batched, inbound-deadline, checkpoint-update, ndr-blind-allocation, ndr-source-package, ndr-pairwise-source-package, android, windows, windows-keyboard, windows-restore, apple, ios, ios-unit, macos, linux, apple-products, ios-products, macos-products, ios-ui-runner, macos-ui-runner]
+        options: [all, cli, core, inbound-retry, inbound-retry-release, inbound-retry-batched, inbound-deadline, checkpoint-update, ndr-blind-allocation, ndr-session-allocation, ndr-source-package, ndr-pairwise-source-package, android, windows, windows-keyboard, windows-restore, apple, ios, ios-unit, macos, linux, apple-products, ios-products, macos-products, ios-ui-runner, macos-ui-runner]
       ios_core_seed_run:
         description: Optional exact successful core build/cache producer for Swift-only unit validation
         type: string
@@ -173,11 +173,13 @@ jobs:
           retention-days: 14
 
   ndr-blind-allocation:
-    if: ${{ inputs.scope == 'ndr-blind-allocation' }}
-    name: Compare exact NDR blind-search allocation sources
+    if: ${{ inputs.scope == 'ndr-blind-allocation' || inputs.scope == 'ndr-session-allocation' }}
+    name: Compare exact NDR allocation sources
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     env:
+      NDR_ALLOCATION_DRIVER: ${{ inputs.scope == 'ndr-session-allocation' && 'verify_ndr_session_allocation.py' || 'verify_ndr_blind_allocation.py' }}
+      NDR_ALLOCATION_OUTPUT: work/${{ inputs.scope }}
       CARGO_TARGET_DIR: ${{ github.workspace }}/cargo-target
       CARGO_BUILD_JOBS: '2'
       CARGO_TERM_COLOR: never
@@ -195,7 +197,7 @@ jobs:
           persist-credentials: false
       - name: Require reviewed immutable RED and GREEN sources
         id: inputs
-        run: python3 retry-driver/scripts/verify_ndr_blind_allocation.py preflight --output work/ndr-blind-allocation
+        run: python3 "retry-driver/scripts/$NDR_ALLOCATION_DRIVER" preflight --output "$NDR_ALLOCATION_OUTPUT"
       - name: Checkout test-only RED source
         uses: actions/checkout@v4
         with:
@@ -222,7 +224,7 @@ jobs:
           NDR_CACHE_REQUESTED: ${{ steps.cargo-cache.outputs.cache-primary-key }}
           NDR_CACHE_MATCHED: ${{ steps.cargo-cache.outputs.cache-matched-key }}
           NDR_CACHE_HIT: ${{ steps.cargo-cache.outputs.cache-hit }}
-        run: python3 retry-driver/scripts/verify_ndr_blind_allocation.py before --source nostr-double-ratchet --output work/ndr-blind-allocation
+        run: python3 "retry-driver/scripts/$NDR_ALLOCATION_DRIVER" before --source nostr-double-ratchet --output "$NDR_ALLOCATION_OUTPUT"
       - name: Checkout GREEN into the same source path
         uses: actions/checkout@v4
         with:
@@ -232,13 +234,13 @@ jobs:
           path: nostr-double-ratchet
           persist-credentials: false
       - name: Require unchanged allocation fixture and focused correctness to pass
-        run: python3 retry-driver/scripts/verify_ndr_blind_allocation.py after --source nostr-double-ratchet --output work/ndr-blind-allocation
+        run: python3 "retry-driver/scripts/$NDR_ALLOCATION_DRIVER" after --source nostr-double-ratchet --output "$NDR_ALLOCATION_OUTPUT"
       - name: Retain complete RED and GREEN evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ndr-blind-allocation-${{ github.run_id }}
-          path: work/ndr-blind-allocation/
+          name: ${{ inputs.scope }}-${{ github.run_id }}
+          path: ${{ env.NDR_ALLOCATION_OUTPUT }}/
           if-no-files-found: warn
           retention-days: 14
 

@@ -1,0 +1,98 @@
+{
+  "enabled": false,
+  "repository": "irislib/nostr-double-ratchet",
+  "base": "cb10d45a97120d66b8b40f33c24da6dd1d7424b2",
+  "before": "1deec7765638879b61ef52a042c8958afdbd25ca",
+  "after": "c02836466acdbe6fc74e8d45fec6fc4996fb2d49",
+  "before_changed_paths": [
+    "rust/crates/nostr-double-ratchet/tests/session_receive_allocations.rs"
+  ],
+  "after_changed_paths": [
+    "rust/crates/nostr-double-ratchet/src/lib.rs",
+    "rust/crates/nostr-double-ratchet/src/sender_key.rs",
+    "rust/crates/nostr-double-ratchet/src/session.rs",
+    "rust/crates/nostr-double-ratchet/src/utils.rs"
+  ],
+  "tests": [
+    {
+      "kind": "test",
+      "target": "session_receive_allocations",
+      "name": "far_ahead_receive_avoids_per_key_allocations_and_preserves_retry_state",
+      "expected_count": 1,
+      "exact": true,
+      "marker": "direct_receive_allocations ",
+      "ignored": false,
+      "timeout_seconds": 300
+    },
+    {
+      "kind": "lib",
+      "target": "nostr_double_ratchet",
+      "name": "utils::tests::fixed_pair_derivation_matches_generic_hkdf",
+      "expected_count": 1,
+      "exact": true,
+      "marker": null,
+      "ignored": false,
+      "timeout_seconds": 300
+    },
+    {
+      "kind": "lib",
+      "target": "nostr_double_ratchet",
+      "name": "session::tests::",
+      "expected_count": 6,
+      "exact": false,
+      "marker": null,
+      "ignored": false,
+      "timeout_seconds": 300
+    },
+    {
+      "kind": "test",
+      "target": "session_test",
+      "name": "",
+      "expected_count": 7,
+      "exact": false,
+      "marker": null,
+      "ignored": false,
+      "timeout_seconds": 300
+    },
+    {
+      "kind": "test",
+      "target": "session_invite_basic",
+      "name": "",
+      "expected_count": 9,
+      "exact": false,
+      "marker": null,
+      "ignored": false,
+      "timeout_seconds": 300
+    },
+    {
+      "kind": "test",
+      "target": "session_invite_adversarial",
+      "name": "",
+      "expected_count": 14,
+      "exact": false,
+      "marker": null,
+      "ignored": false,
+      "timeout_seconds": 300
+    },
+    {
+      "kind": "test",
+      "target": "session_manager_receive_fallback",
+      "name": "",
+      "expected_count": 2,
+      "exact": false,
+      "marker": null,
+      "ignored": false,
+      "timeout_seconds": 300
+    },
+    {
+      "kind": "test",
+      "target": "metadata_privacy",
+      "name": "",
+      "expected_count": 2,
+      "exact": false,
+      "marker": null,
+      "ignored": false,
+      "timeout_seconds": 300
+    }
+  ]
+}

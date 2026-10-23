@@ -41,11 +41,19 @@ def contract():
     return data
 
 
-def preflight(out, data):
+def blind_case():
+    return {"schema": "ndr-blind-allocation/v1", "inputs_path": INPUTS,
+        "allocation_target": ALLOCATION_TARGET, "allocation_path": ALLOCATION_PATH,
+        "allocation_result": allocation_result,
+        "interpretation": "Synthetic malformed-payload allocation and focused correctness proof only; no CPU measurement or release binary equivalence."}
+
+
+def preflight(out, data, *, case=None):
+    case = case or blind_case()
     root = Path(__file__).resolve().parent.parent
     assert not git(root, "status", "--porcelain"), "Driver must be a clean committed checkout"
-    save(out / "preflight.json", {"schema": "ndr-blind-allocation/v1", "inputs": data,
-        "inputs_sha256": sha(INPUTS), "driver_source": git(root, "rev-parse", "HEAD"),
+    save(out / "preflight.json", {"schema": case["schema"], "inputs": data,
+        "inputs_sha256": sha(case["inputs_path"]), "driver_source": git(root, "rev-parse", "HEAD"),
         "toolchain": TOOLCHAIN, "deadline_unix": time.time() + 1500,
         "workflow_timeout_seconds": 1800})
     with open(os.environ["GITHUB_OUTPUT"], "a") as stream:
@@ -69,8 +77,8 @@ def build_command(tests):
     command = ["cargo", f"+{TOOLCHAIN}", "test", "--manifest-path", MANIFEST,
         "-p", PACKAGE, "--locked", "--offline", "--release", "--no-run",
         "--message-format=json", "--jobs", "2"]
-    for test in tests:
-        command += ["--lib"] if test["kind"] == "lib" else ["--test", test["target"]]
+    for kind, target in dict.fromkeys((test["kind"], test["target"]) for test in tests):
+        command += ["--lib"] if kind == "lib" else ["--test", target]
     return command
 
 
@@ -99,7 +107,8 @@ def test_binaries(text, tests, target):
     return binaries
 
 
-def source_proof(which, root, data):
+def source_proof(which, root, data, *, case=None):
+    case = case or blind_case()
     source, parent = data[which], data["base"] if which == "before" else data["before"]
     assert git(root, "rev-parse", "HEAD") == source and not git(root, "status", "--porcelain")
     assert git(root, "rev-parse", "HEAD^") == parent, "Unexpected source ancestry"
@@ -109,7 +118,7 @@ def source_proof(which, root, data):
     assert "rust/Cargo.lock" in dependencies and MANIFEST in dependencies
     return {"commit": source, "parent": parent, "tree": git(root, "rev-parse", "HEAD^{tree}"),
         "changed_paths": changed, "changed_file_sha256": {p: sha(root / p) for p in changed},
-        "allocation_fixture_sha256": sha(root / ALLOCATION_PATH),
+        "allocation_fixture_sha256": sha(root / case["allocation_path"]),
         "dependency_inputs": {p: sha(root / p) for p in dependencies}}
 
 
@@ -122,14 +131,15 @@ def require_reuse(before, source, root, target, versions):
     assert before["toolchain"] == versions, "Toolchain changed between RED and GREEN"
 
 
-def stage(which, root, out, data):
+def stage(which, root, out, data, *, case=None):
+    case = case or blind_case()
     pre = json.loads((out / "preflight.json").read_text())
-    assert pre["inputs"] == data and pre["inputs_sha256"] == sha(INPUTS)
-    assert pre["schema"] == "ndr-blind-allocation/v1" and pre["toolchain"] == TOOLCHAIN
+    assert pre["inputs"] == data and pre["inputs_sha256"] == sha(case["inputs_path"])
+    assert pre["schema"] == case["schema"] and pre["toolchain"] == TOOLCHAIN
     assert time.time() < pre["deadline_unix"], "Diagnostic deadline reached"
     output = out / which
     output.mkdir()
-    source = source_proof(which, root, data)
+    source = source_proof(which, root, data, case=case)
     save(output / "source.json", source)
     versions = {}
     for tool in ("rustc", "cargo"):
@@ -163,8 +173,8 @@ def stage(which, root, out, data):
         check = {"test": test, "run": run, "test_binary_sha256": binary["sha256"], "accepted": False}
         checks.append(check)
         try:
-            if test["target"] == ALLOCATION_TARGET:
-                check["allocation"], check["counts"] = allocation_result(text, test, run["exit_code"], which == "before")
+            if test["target"] == case["allocation_target"]:
+                check["allocation"], check["counts"] = case["allocation_result"](text, test, run["exit_code"], which == "before")
             else:
                 check["counts"] = check_result(text, test, run["exit_code"])
             check["accepted"] = True
@@ -175,11 +185,11 @@ def stage(which, root, out, data):
             save(output / "test-results.json", checks)
     assert not git(root, "status", "--porcelain"), "Tests changed the source checkout"
     assert all(sha(Path(b["path"])) == b["sha256"] for b in binaries.values()), "Test executable changed during verification"
-    save(output / "receipt.json", {"schema": "ndr-blind-allocation/v1", "accepted": True,
+    save(output / "receipt.json", {"schema": case["schema"], "accepted": True,
         "stage": which, "source": source, "source_path": str(root), "target_path": str(target),
         "build": build, "tests": checks, "test_binaries": list(binaries.values()), "toolchain": versions,
         "physical_cpu_acceptance": False,
-        "interpretation": "Synthetic malformed-payload allocation and focused correctness proof only; no CPU measurement or release binary equivalence."})
+        "interpretation": case["interpretation"]})
     print(json.dumps({"accepted": True, "stage": which, "source": source["commit"],
         "test_counts": [t["counts"] for t in checks]}), flush=True)
 
