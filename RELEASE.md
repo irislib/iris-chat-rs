@@ -214,11 +214,14 @@ remain queued. Backoff-only retries must not substitute for real durable work.
 Unresolved work must survive, unchanged inputs must not restart exhausted
 searches, and a reload must preserve queues and ratchets. Missing-key searches
 may still make finite progress during measurement.
+Incoming packets must retain valid NIP44 encodings and fail authentication,
+with positive controls proving the unmodified packets decrypt. Check their
+format and decoded sizes against the recorded aggregate workload.
 
 The gate uses release optimization level 3, debug info level 1 and disabled
 debug assertions, with two build jobs and the existing Cargo target/cache.
 Retain its complete stdout, including all five `batched_retry_slice` records and
-the `iris-batched-retry-cpu/v2` summary. The runner rejects missing execution,
+the `iris-batched-retry-cpu/v3` summary. The runner rejects missing execution,
 incomplete measurements or a CPU failure. Keep standalone retry diagnostic
 results and the physical-device CPU gates as separate evidence.
 
