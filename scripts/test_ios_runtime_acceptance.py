@@ -18,7 +18,7 @@ CANDIDATE = {
 }
 
 
-def receipt():
+def receipt(channel="testflight"):
     phase = {"status": "passed", "observed_seconds": 60, "process_samples": 2,
              "unexpected_exits": 0, "process_replacements": 0,
              "process_state": "foreground", "evidence_sha256": "d" * 64}
@@ -33,8 +33,8 @@ def receipt():
         observed_seconds=135, process_state="background-suspended", restore_in_flight=True)
     for name in ("resume", "cold_relaunch", "affected_flow"):
         phases[name]["observed_seconds"] = 1
-    return {
-        "schema_version": 2, "contract": "ios-distributed-upgrade-v2", "release": dict(CANDIDATE),
+    result = {
+        "schema_version": 3, "contract": "ios-release-upgrade-v3", "release": dict(CANDIDATE),
         "installation": {
             "channel": "testflight", "device": "physical-iphone", "previous_build": "2026101800",
             "installed_build": CANDIDATE["apple_build"], "storage": "preserved-app-data-and-keychain",
@@ -43,7 +43,41 @@ def receipt():
         "checks": phases,
         "crash_check": {"status": "passed", "unexpected_reports": 0,
                         "unexpected_exits": 0, "evidence_sha256": "f" * 64},
+        "quality": {
+            "cpu": {"build": CANDIDATE["apple_build"], "status": "passed",
+                    "method": "installed-foreground-cpu-v1", "evidence_sha256": "1" * 64,
+                    "qualification_sha256": "2" * 64, "warmup_seconds": 180,
+                    "discarded_interval_seconds": 60, "foreground_sample_max_gap_seconds": 1.1,
+                    "process_sample_max_gap_seconds": 5.5, "invalid_observations": 0,
+                    "process_replacements": 0, "thermal_state": "nominal",
+                    "windows": [{"observed_seconds": 60, "metric_seconds": 59,
+                                 "cpu_percent_one_core": 4, "disk_write_mib_per_minute": 0.2}
+                                for _ in range(2)]},
+            "startup": {"build": CANDIDATE["apple_build"], "status": "accepted-after-review",
+                        "flow": "cold-start-to-preserved-state", "login_flash_observed": False,
+                        "observations_sha256": "3" * 64, "regression_sha256": "4" * 64,
+                        "review_sha256": "5" * 64},
+            "send": {"build": CANDIDATE["apple_build"], "status": "accepted-after-review",
+                     "send_to_visible_seconds": 0.3, "observations_sha256": "6" * 64,
+                     "review_sha256": "7" * 64},
+        },
     }
+    result["installation"]["channel"] = channel
+    if channel == acceptance.ADHOC_CHANNEL:
+        result["installation"]["production_adhoc"] = {
+            **{field: "8" * 64 for field in ("authorization_sha256", "release_acceptance_sha256",
+                "preparation_sha256", "installation_sha256", "original_signing_sha256",
+                "profiles_sha256", "normal_launch_sha256", "qualification_sha256")},
+            "authorization": "explicit-user-direct-install", "normal_launch_route": "accepted-adhoc-normal-launch",
+            "code_provenance": "official-tagged-ipa-instructions-unchanged", "signing": "production-adhoc",
+            "push_environment": "production", "debugging": "disabled", "original_ipa": "unchanged",
+            "entitlement_delta": "beta-reports-active-removal-only", "state_policy": "in-place-no-reset-or-restore",
+            "ipa_sha256": CANDIDATE["ipa_sha256"],
+            "bundle_instruction_sha256": {role: "9" * 64 for role in
+                                          ("app", "notification-service", "share-extension")},
+            "testflight_upgrade_claimed": False, "installed_binary_extraction_claimed": False,
+        }
+    return result
 
 
 def run_metadata():
@@ -68,6 +102,8 @@ class RuntimeAcceptanceTests(unittest.TestCase):
         candidate = {**CANDIDATE, "tag": "v2024.1.1.1", "apple_version": "2024.1.101", "apple_build": "2024010101"}
         value = receipt(); value["release"] = candidate.copy()
         value["installation"].update(previous_build="2023123100", installed_build=candidate["apple_build"])
+        for check in value["quality"].values():
+            check["build"] = candidate["apple_build"]
         self.assertEqual(acceptance.validate_receipt(value, **candidate), value)
 
     def test_each_release_binding_is_required(self):
@@ -78,6 +114,87 @@ class RuntimeAcceptanceTests(unittest.TestCase):
             with self.subTest(field=field):
                 value = receipt(); value["release"][field] = wrong
                 with self.assertRaises(acceptance.ValidationError): self.validate(value)
+
+    def test_authorized_production_adhoc_requires_every_proof_and_bundle(self):
+        value = receipt(acceptance.ADHOC_CHANNEL)
+        self.assertEqual(self.validate(value), value)
+        proof = value["installation"]["production_adhoc"]
+        for field in proof:
+            invalid = copy.deepcopy(value); del invalid["installation"]["production_adhoc"][field]
+            with self.subTest(missing=field), self.assertRaises(acceptance.ValidationError): self.validate(invalid)
+        alternatives = {**{field: "/private/evidence" for field in acceptance.ADHOC_DIGESTS},
+                        **{field: "unverified" for field in acceptance.ADHOC_POLICY},
+                        "ipa_sha256": "0" * 64, "testflight_upgrade_claimed": True,
+                        "installed_binary_extraction_claimed": True}
+        for field, wrong in alternatives.items():
+            invalid = copy.deepcopy(value); invalid["installation"]["production_adhoc"][field] = wrong
+            with self.subTest(field=field), self.assertRaises(acceptance.ValidationError): self.validate(invalid)
+        for role in proof["bundle_instruction_sha256"]:
+            invalid = copy.deepcopy(value); del invalid["installation"]["production_adhoc"]["bundle_instruction_sha256"][role]
+            with self.subTest(bundle=role), self.assertRaises(acceptance.ValidationError): self.validate(invalid)
+        for path in (("production_adhoc",), ("production_adhoc", "bundle_instruction_sha256")):
+            invalid = copy.deepcopy(value); target = invalid["installation"]
+            for part in path: target = target[part]
+            target["private_path"] = "never-copy"
+            with self.subTest(path=path), self.assertRaises(acceptance.ValidationError): self.validate(invalid)
+        for field in ("testflight_upgrade_claimed", "installed_binary_extraction_claimed"):
+            invalid = copy.deepcopy(value); invalid["installation"]["production_adhoc"][field] = 0
+            with self.subTest(boolean=field), self.assertRaises(acceptance.ValidationError): self.validate(invalid)
+
+    def test_development_or_mislabeled_installation_cannot_reuse_adhoc_proof(self):
+        for channel in ("testflight", "development", "adhoc", "authorized-production-adhoc-unverified"):
+            value = receipt(acceptance.ADHOC_CHANNEL); value["installation"]["channel"] = channel
+            with self.subTest(channel=channel), self.assertRaises(acceptance.ValidationError): self.validate(value)
+        value = receipt(); value["installation"]["channel"] = acceptance.ADHOC_CHANNEL
+        with self.assertRaises(acceptance.ValidationError): self.validate(value)
+
+    def test_both_routes_require_cpu_windows_without_averaging_away_failure(self):
+        for channel in ("testflight", acceptance.ADHOC_CHANNEL):
+            valid = receipt(channel)
+            for key, wrong in (("cpu_percent_one_core", 5.3307874023075605),
+                               ("disk_write_mib_per_minute", 5.01), ("observed_seconds", 59.8),
+                               ("metric_seconds", 56.9), ("metric_seconds", 57),
+                               ("cpu_percent_one_core", True), ("cpu_percent_one_core", float("nan")),
+                               ("disk_write_mib_per_minute", -0.1)):
+                value = copy.deepcopy(valid); value["quality"]["cpu"]["windows"][1][key] = wrong
+                with self.subTest(channel=channel, key=key, wrong=wrong), self.assertRaises(acceptance.ValidationError):
+                    self.validate(value)
+            for field, wrong in (("build", "2026101800"), ("status", "failed"), ("method", "simulated"),
+                                 ("thermal_state", "fair"), ("warmup_seconds", 179),
+                                 ("discarded_interval_seconds", 59), ("foreground_sample_max_gap_seconds", 2.6),
+                                 ("process_sample_max_gap_seconds", 8.1), ("invalid_observations", 1),
+                                 ("process_replacements", 1)):
+                value = copy.deepcopy(valid); value["quality"]["cpu"][field] = wrong
+                with self.subTest(channel=channel, field=field), self.assertRaises(acceptance.ValidationError): self.validate(value)
+            for windows in ([], valid["quality"]["cpu"]["windows"][:1], valid["quality"]["cpu"]["windows"] * 2):
+                value = copy.deepcopy(valid); value["quality"]["cpu"]["windows"] = windows
+                with self.subTest(channel=channel, count=len(windows)), self.assertRaises(acceptance.ValidationError): self.validate(value)
+        value = receipt()
+        for window in value["quality"]["cpu"]["windows"]:
+            window.update(cpu_percent_one_core=5, disk_write_mib_per_minute=5)
+        self.assertEqual(self.validate(value), value)
+
+    def test_startup_and_send_require_candidate_bound_observations_and_review(self):
+        for name, field, wrong in (("startup", "login_flash_observed", True),
+                                   ("startup", "login_flash_observed", 0), ("startup", "flow", "already-running"),
+                                   ("send", "send_to_visible_seconds", -1),
+                                   ("send", "send_to_visible_seconds", float("inf")),
+                                   ("send", "send_to_visible_seconds", True)):
+            value = receipt(); value["quality"][name][field] = wrong
+            with self.subTest(name=name, field=field), self.assertRaises(acceptance.ValidationError): self.validate(value)
+        for name in ("startup", "send"):
+            for field, wrong in (("build", "2026101800"), ("status", "pending-review"),
+                                 ("observations_sha256", ""), ("review_sha256", "")):
+                value = receipt(); value["quality"][name][field] = wrong
+                with self.subTest(name=name, field=field), self.assertRaises(acceptance.ValidationError): self.validate(value)
+        # Observed latency requires review, without fabricating a new numeric budget.
+        value = receipt(); value["quality"]["send"]["send_to_visible_seconds"] = 3
+        self.assertEqual(self.validate(value), value)
+
+    def test_v2_cannot_bypass_new_quality_gates(self):
+        value = receipt(); value.update(schema_version=2, contract="ios-distributed-upgrade-v2")
+        del value["quality"]
+        with self.assertRaises(acceptance.ValidationError): self.validate(value)
 
     def test_upgrade_must_preserve_populated_physical_testflight_account(self):
         alternatives = {"channel": "development", "device": "simulator", "previous_build": "2026102101",
@@ -146,8 +263,10 @@ class RuntimeAcceptanceTests(unittest.TestCase):
             with self.subTest(field=field), self.assertRaises(acceptance.ValidationError): self.validate(value)
 
     def test_unknown_fields_are_rejected_at_every_receipt_level(self):
-        paths = [(), ("release",), ("installation",), ("checks",), ("crash_check",)]
+        paths = [(), ("release",), ("installation",), ("checks",), ("crash_check",), ("quality",)]
         paths += [("checks", name) for name in receipt()["checks"]]
+        paths += [("quality", name) for name in receipt()["quality"]]
+        paths += [("quality", "cpu", "windows", 0)]
         for path in paths:
             value = receipt(); target = value
             for part in path: target = target[part]

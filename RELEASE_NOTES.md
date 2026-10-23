@@ -2,6 +2,27 @@
 
 Each release has channel-specific notes. The release tag must match the `##` heading exactly.
 
+## v2026.10.23.1
+
+### GitHub
+
+- Avoid rewriting large saved checkpoints when they grow or queued messages are added or delivered. Store immutable queued payloads separately from retry metadata, committing every change with the ratchet state in one transaction.
+- Reuse cached payloads while saving and retain existing accounts, pending messages and encryption state during the storage migration. Migrated checkpoints require this version or newer.
+- Preserve unreadable or unsupported saved state and return an error instead of replacing it with a fresh session.
+- Add physical SQLite write checks for growth, queue admission, successful retry retirement, unchanged saves and failed-commit recovery.
+- Bind Apple upgrade acceptance to the exact official build and authorized installation route, with preserved-state, lifecycle, CPU, disk-write, startup and send checks.
+- Update the protocol source package to 0.3.6 and the CLI source package to 0.1.48.
+
+### Apple
+
+- Reduce processing and disk writes when many messages are waiting to be delivered.
+- Improve recovery of saved chats after restarting.
+
+### Zapstore
+
+- Reduce processing and disk writes when many messages are waiting to be delivered.
+- Improve recovery of saved chats after restarting.
+
 ## v2026.10.23
 
 ### GitHub

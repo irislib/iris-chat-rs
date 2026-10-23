@@ -61,8 +61,11 @@ class RuntimeWorkflowTests(unittest.TestCase):
 
     def test_actual_promotion_step_rejects_wrong_proof_and_verifies_provenance(self):
         script = step("Require exact distributed-build runtime acceptance")
-        for case in ("valid", "wrong-source", "wrong-ipa", "failed-phase", "legacy", "warm-background-only",
+        for case in ("valid", "valid-adhoc", "wrong-source", "wrong-ipa", "failed-phase", "legacy", "warm-background-only",
                      "startup-crash", "restore-finished-before-background",
+                     "adhoc-wrong-ipa", "adhoc-development", "adhoc-reset", "adhoc-no-proof",
+                     "adhoc-missing-extension", "adhoc-mislabeled", "cpu-failure", "old-v2",
+                     "startup-flash", "unreviewed-send",
                      "wrong-workflow", "failed-attestation", "missing-artifact"):
             with self.subTest(case=case), tempfile.TemporaryDirectory() as folder:
                 root = Path(folder)
@@ -70,6 +73,20 @@ class RuntimeWorkflowTests(unittest.TestCase):
                 shutil.copy2(ROOT / "scripts/ios_runtime_acceptance.py",
                              root / "source/scripts/ios_runtime_acceptance.py")
                 proof, metadata = receipt(), run_metadata()
+                if "adhoc" in case:
+                    proof = receipt("authorized-production-adhoc")
+                if case == "adhoc-wrong-ipa": proof["installation"]["production_adhoc"]["ipa_sha256"] = "0" * 64
+                if case == "adhoc-development": proof["installation"]["production_adhoc"]["signing"] = "development"
+                if case == "adhoc-reset": proof["installation"]["storage"] = "fresh-data"
+                if case == "adhoc-no-proof": del proof["installation"]["production_adhoc"]
+                if case == "adhoc-missing-extension": del proof["installation"]["production_adhoc"]["bundle_instruction_sha256"]["notification-service"]
+                if case == "adhoc-mislabeled": proof["installation"]["channel"] = "testflight"
+                if case == "cpu-failure": proof["quality"]["cpu"]["windows"][1]["cpu_percent_one_core"] = 5.3307874023075605
+                if case == "old-v2":
+                    proof.update(schema_version=2, contract="ios-distributed-upgrade-v2")
+                    del proof["quality"]
+                if case == "startup-flash": proof["quality"]["startup"]["login_flash_observed"] = True
+                if case == "unreviewed-send": proof["quality"]["send"]["status"] = "pending-review"
                 if case == "wrong-source": proof["release"]["source_commit"] = "0" * 40
                 if case == "wrong-ipa": proof["release"]["ipa_sha256"] = "0" * 64
                 if case == "failed-phase": proof["checks"]["background"]["status"] = "failed"
@@ -114,7 +131,7 @@ class RuntimeWorkflowTests(unittest.TestCase):
                            APPLE_VERSION=CANDIDATE["apple_version"], APPLE_BUILD=CANDIDATE["apple_build"])
                 result = subprocess.run(["bash", "-c", script], cwd=root, env=env,
                                         capture_output=True, text=True, timeout=10)
-                if case == "valid":
+                if case in ("valid", "valid-adhoc"):
                     self.assertEqual(result.returncode, 0, result.stderr)
                     calls = [json.loads(line) for line in (root / "calls").read_text().splitlines()]
                     verify = next(args for args in calls if args[:2] == ["attestation", "verify"])

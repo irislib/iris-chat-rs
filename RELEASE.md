@@ -197,7 +197,11 @@ outgoing batches must reuse unchanged payload serialization, commit once and
 write less than 4 MiB of the existing checkpoint. Failed saves and reopening
 must preserve pending work and the exact ratchet state. This mandatory storage
 regression complements physical CPU checks; it does not establish a device's
-CPU usage, and the storage adapter still compares the full checkpoint on a save.
+CPU usage. SQLite stores immutable queued payloads separately from their order
+and retry metadata, committing them with the ratchet state in one transaction.
+Growth, queue append and retry retirement tests measure actual SQLite writes;
+unchanged saves must write nothing. Existing JSON checkpoints migrate on their
+first save, and read-only recovery still reconstructs the same logical state.
 
 On Linux, the same runner also requires exactly one optimized
 `restored_backlog_batched_retry_stays_within_cpu_budget` test. It restores a
@@ -372,17 +376,31 @@ The workflow verifies the tagged IPA and its attestation before contacting
 App Store Connect. Retrying does not rebuild or upload a duplicate build.
 
 For each new release, before `testflight-public` or `app-store`, the release owner
-must verify the uploaded build on a reserved physical iPhone. Internal TestFlight
-upload and processing may happen first so the actual distributed build can be tested.
+must verify the exact release on a reserved physical iPhone. Use the actual
+TestFlight upgrade route, or the explicitly user-authorized production AdHoc
+route below. Internal TestFlight upload and processing may happen first.
 An archive, simulator run, development install, or successful launch command
-does not establish that the TestFlight build works.
+does not establish physical release acceptance.
 
-Use an owned test account populated by the previous distributed version. Update
-it in place through TestFlight, preserving its app data and Keychain. Do not
+Use an owned test account populated by the previous installed version. Update
+it in place through the selected route, preserving its app data and Keychain. Do not
 erase data, restore a secret key into a fresh profile, or use automation storage
 overrides. Record the previous and installed version/build, device and OS, tagged
-source, immutable IPA and manifest hashes, and App Store Connect build mapping.
+source, immutable IPA and manifest hashes, and App Store Connect build mapping
+for a TestFlight upgrade.
 Keep this private runtime evidence with the release coverage record.
+
+For `authorized-production-adhoc`, retain the explicit direct-install authorization
+and derive the private proof from qualified, hash-bound release, original-signing,
+preparation, provisioning, installation and ordinary-launch receipts. Use only the
+official tagged IPA. Verify unchanged instruction content, load commands and UUID
+for the app and both extensions; keep the original IPA unchanged. Re-sign only for
+the reserved device with production APNs and debugging disabled. The only allowed
+entitlement removal is `beta-reports-active`. No uninstall, profile restore, data
+reset or Keychain reset is permitted. This route verifies an in-place production
+AdHoc upgrade; it does not claim a TestFlight upgrade, extraction of the installed
+binary, or byte-identical signatures after re-signing. Both routes require every
+physical lifecycle, crash and quality check below.
 
 Launch normally without a debugger or XCTest launch assertion. Verify the
 account, an existing message and a draft; observe the same process for at least
@@ -409,18 +427,45 @@ remains an explicit outstanding gate. Do not promote to public TestFlight or
 submit to the App Store while that gate is outstanding.
 
 After verification, retain the private captures and prepare a safe receipt using
-the `ios-distributed-upgrade-v2` schema in `scripts/ios_runtime_acceptance.py`.
+the `ios-release-upgrade-v3` schema in `scripts/ios_runtime_acceptance.py`.
 It records the exact candidate, previous and installed builds, preserved-state
 results, measured lifecycle intervals, process/crash counts, and private evidence
 digests. It must contain no account or device identifiers, local paths, screenshots,
 or raw logs. A success flag or the 15-second development-restoration check cannot
-satisfy this contract. Legacy v1 receipts do not establish the required startup
-coverage and are rejected. The two startup checks include
+satisfy this contract. This validator rejects v1/v2 receipts; historical immutable
+tags retain their own unchanged validators and previously valid evidence. The two startup checks include
 `entry_state: "background"` and `foreground_activations: 0` for `cold_background_launch`, and
 `restore_in_flight: true` for `early_background`, in addition to the common phase
 fields. These attest to the private evidence; they must not be inferred from
 process survival alone. Set `affected_flow.process_state` to the actual observed
 state (`foreground` or `background-suspended`).
+
+The v3 `production_adhoc` proof contains only fixed policy enums and evidence
+digests. Derive it from the qualified private checks, not hand-written success
+claims. Its three `bundle_instruction_sha256` entries hash the UTF-8 JSON object
+containing `uuid`, `loadCommandsSHA256` and `unsignedContentSHA256` from each
+verified code-binding record, with sorted keys, compact separators and no final
+newline, for the app, notification service and share extension. Keep signing identities,
+provisioned-device identifiers and private paths out of the safe receipt.
+
+Both routes also require candidate-bound `quality` evidence. Use the qualified
+installed-app observer: 180 seconds of foreground settling, one discarded
+60-second interval and two retained 60-second intervals. Each retained interval
+must be at most 5% of one CPU core and 5 MiB/minute of disk writes, with nominal
+thermal status, unchanged process and complete foreground observations. Preserve
+the evaluator's existing clock tolerances; a short metric interval alone does not
+qualify without its matching observed interval. Do not average away a failed
+interval, subtract unqualified observer overhead or retry unchanged failures.
+Retain the qualified evaluator and source-input digests with the CPU receipt.
+
+For startup, retain observations covering cold start through preserved state,
+the focused login/loading regression and a release-owner review; an observed
+login flash fails. For sending, retain measured send-to-visible time and the
+release-owner review of the focused flow. The safe receipt records the measurement
+and accepted review without inventing a latency threshold. Review digests bind
+these decisions to the exact candidate and private observations; a status string
+alone does not replace that evidence. Any known unresolved startup or sending
+regression keeps promotion blocked.
 
 Run **iOS Runtime Acceptance** from the exact release tag, supplying that tag and
 the safe receipt JSON. It verifies the immutable release files, validates and

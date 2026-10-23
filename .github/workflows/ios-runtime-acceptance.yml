@@ -10,7 +10,7 @@ on:
         required: true
         type: string
       receipt_json:
-        description: "Safe physical TestFlight acceptance receipt; keep raw device and account evidence private."
+        description: "Safe v3 physical release acceptance receipt (TestFlight or authorized production AdHoc); keep raw evidence private."
         required: true
         type: string
 
