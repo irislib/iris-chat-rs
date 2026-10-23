@@ -1,16 +1,16 @@
 {
   "schema": "ndr-source-package-input/v1",
-  "enabled": false,
+  "enabled": true,
   "repository": "irislib/nostr-double-ratchet",
   "source": "4c52dd532b59f01cf79ac20432b0f5c687d237cb",
   "toolchain": "1.99.1",
   "resource_helper_sha256": "472f8e391785f78672cda62015feb1c3bdb5f0c64fc8e77336b6ef79875471ea",
   "qualification": {
     "full_ci_run": 39918984085,
-    "full_ci_accepted": false,
+    "full_ci_accepted": true,
     "allocation_run": 39919066502,
-    "allocation_accepted": false,
-    "source_and_workflow_reviewed": false
+    "allocation_accepted": true,
+    "source_and_workflow_reviewed": true
   },
   "packages": {
     "nostr-double-ratchet": "0.0.173",
