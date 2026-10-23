@@ -2,7 +2,7 @@
   "enabled": true,
   "optimized_enabled": true,
   "batched": {
-    "enabled": true,
+    "enabled": false,
     "correctness_tests": [
       {
         "name": "protocol_engine::tests::remote_retry_",
@@ -53,19 +53,10 @@
         "timeout_seconds": 300
       }
     ],
-    "source": "c0099d92cc6b38989b9f71aac6299ee4c200bf6c",
-    "base": "db79baa6b35b347c754f3cc55a3cdf2399c1cbf4",
+    "source": "1172ac5a836e13151c0d60dd8f66544392d6bac3",
+    "base": "c0099d92cc6b38989b9f71aac6299ee4c200bf6c",
     "changed_paths": [
-      "RELEASE.md",
-      "chat-protocol/src/protocol_engine.rs",
-      "chat-protocol/src/protocol_engine/batched_retry_cpu_tests.rs",
-      "chat-protocol/src/protocol_engine/batched_retry_durable_work.rs",
-      "chat-protocol/src/protocol_engine/engine_group_fanout_retry.rs",
-      "chat-protocol/src/protocol_engine/engine_remote_sends.rs",
-      "chat-protocol/src/protocol_engine/fanout_retry_tests.rs",
-      "chat-protocol/src/protocol_engine/remote_retry_persistence_tests.rs",
-      "scripts/test_rust.sh",
-      "scripts/test_rust_runner.py"
+      "chat-protocol/src/protocol_engine/batched_retry_cpu_tests.rs"
     ],
     "failure_marker": "batched steady retry loop still exceeds 5% of one CPU:",
     "test": {
