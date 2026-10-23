@@ -17,6 +17,38 @@ impl ProtocolEngine {
         has_recipient
     }
 
+    fn invalidate_pending_inbound_retry_deadline(&self) {
+        self.pending_inbound_retry_deadline.set(None);
+    }
+
+    fn refresh_pending_inbound_retry_deadline(&self) -> PendingInboundRetryDeadline {
+        let deadline = PendingInboundRetryDeadline {
+            queue_len: self.pending_inbound.len(),
+            next_retry_at_secs: self
+                .pending_inbound
+                .iter()
+                .map(|pending| {
+                    #[cfg(test)]
+                    tests::record_inbound_retry_deadline_scan();
+                    pending.next_retry_at_secs
+                })
+                .min(),
+        };
+        self.pending_inbound_retry_deadline.set(Some(deadline));
+        deadline
+    }
+
+    fn has_due_pending_inbound_retry(&self, now: NdrUnixSeconds) -> bool {
+        let deadline = self
+            .pending_inbound_retry_deadline
+            .get()
+            .filter(|deadline| deadline.queue_len == self.pending_inbound.len())
+            .unwrap_or_else(|| self.refresh_pending_inbound_retry_deadline());
+        deadline
+            .next_retry_at_secs
+            .is_some_and(|next_retry| next_retry <= now.get())
+    }
+
     pub fn has_due_pending_retry_work(&self, now: NdrUnixSeconds) -> bool {
         let now_secs = now.get();
         self.pending_remote_sends
@@ -26,14 +58,7 @@ impl ProtocolEngine {
                 .pending_local_sibling_sends
                 .iter()
                 .any(|pending| pending.next_retry_at_secs <= now_secs)
-            || self
-                .pending_inbound
-                .iter()
-                .any(|pending| {
-                    #[cfg(test)]
-                    tests::record_inbound_retry_deadline_scan();
-                    pending.next_retry_at_secs <= now_secs
-                })
+            || self.has_due_pending_inbound_retry(now)
             || self
                 .pending_group_fanouts
                 .iter()
@@ -510,6 +535,7 @@ impl ProtocolEngine {
             .map(|event| event.id)
             .collect::<HashSet<_>>();
         self.with_state_checkpoint(|engine| {
+            engine.invalidate_pending_inbound_retry_deadline();
             engine
                 .pending_inbound
                 .retain(|pending| !ids.contains(&pending.event.id));
@@ -564,6 +590,13 @@ impl ProtocolEngine {
         &mut self,
         now: NdrUnixSeconds,
     ) -> anyhow::Result<Vec<ProtocolDecryptedMessage>> {
+        if !self.has_due_pending_inbound_retry(now) {
+            return Ok(Vec::new());
+        }
+        // A failed save can leave a ratchet advanced with its delivery journal.
+        // Keep the hint unknown until the entire pass succeeds, so retry and
+        // rollback paths rederive it from the retained queue.
+        self.invalidate_pending_inbound_retry_deadline();
         // Keep the queue installed while decrypting: decryption persists the
         // ratchet and its delivery journal, including all not-yet-tried events.
         // Group continuations run every 25 ms even while inbound packets are
@@ -625,6 +658,7 @@ impl ProtocolEngine {
                 }
             }
         }
+        self.refresh_pending_inbound_retry_deadline();
         Ok(messages)
     }
 
@@ -711,6 +745,7 @@ impl ProtocolEngine {
                     event_id: Some(event.id.to_string()),
                     created_at_secs: event.created_at.as_secs(),
                 });
+            self.invalidate_pending_inbound_retry_deadline();
             self.pending_inbound
                 .retain(|pending| pending.event.id != event.id);
             self.flush_discarded_direct_receives()?;

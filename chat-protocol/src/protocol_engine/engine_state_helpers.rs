@@ -203,6 +203,7 @@ impl ProtocolEngine {
         self.group_invite_uses = checkpoint.group_invite_uses;
         self.session_manager = checkpoint.session_manager;
         self.group_manager = checkpoint.group_manager;
+        self.invalidate_pending_inbound_retry_deadline();
         self.pending_inbound = checkpoint.pending_inbound;
         self.pending_group_fanouts = checkpoint.pending_group_fanouts;
         self.ready_group_publications = checkpoint.ready_group_publications;

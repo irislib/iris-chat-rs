@@ -23,6 +23,7 @@ impl ProtocolEngine {
             session_manager: SessionManager::new(local_owner, device_secret),
             group_manager: GroupEventManager::new(local_owner),
             pending_inbound: Vec::new(),
+            pending_inbound_retry_deadline: std::cell::Cell::new(None),
             pending_group_fanouts: Vec::new(),
             ready_group_publications: BTreeMap::new(),
             pending_local_sibling_sends: Vec::new(),
@@ -111,6 +112,7 @@ impl ProtocolEngine {
             session_manager,
             group_manager,
             pending_inbound: state.pending_inbound,
+            pending_inbound_retry_deadline: std::cell::Cell::new(None),
             pending_group_fanouts: state.pending_group_fanouts,
             ready_group_publications: state.ready_group_publications,
             pending_local_sibling_sends: state.pending_local_sibling_sends,
@@ -204,6 +206,7 @@ impl ProtocolEngine {
             return;
         }
         let known_authors = self.known_message_author_hexes();
+        self.invalidate_pending_inbound_retry_deadline();
         self.pending_inbound
             .retain(|pending| known_authors.contains(&pending_inbound_sender_pubkey_hex(pending)));
     }
