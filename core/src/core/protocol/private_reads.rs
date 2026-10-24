@@ -101,8 +101,8 @@ fn test_tls_roots(certificates: &[Vec<u8>]) -> Result<rustls::RootCertStore, Str
     Ok(roots)
 }
 
-/// Retained state is configuration, bounded author/relay TLS tickets and positive
-/// signature tuples, and a cancellable task, never an SDK client or idle socket.
+/// Retained state is configuration, bounded author/relay TLS tickets, positive
+/// signature tuples and read-only sockets, and a cancellable task, never an SDK client.
 /// Dropping the last descriptor cancels even a queued read and releases its state.
 #[derive(Debug)]
 pub(in crate::core) struct PrivateDiscoveryClient {
@@ -137,6 +137,7 @@ impl PrivateDiscoveryClient {
             let mut cadence = DiscoveryCadence::default();
             let mut snapshots = Vec::<DiscoverySnapshot>::new();
             let mut tls_connectors = Vec::new();
+            let mut connections = Vec::new();
             let mut tls_config = None;
             let mut redeliver = false;
             loop {
@@ -159,16 +160,27 @@ impl PrivateDiscoveryClient {
                         .iter()
                         .map(|relay| current.tls_connector(relay))
                         .collect();
+                    connections = current
+                        .relays
+                        .iter()
+                        .map(|relay| {
+                            super::anonymous_reads::ScopedReadConnection::new(
+                                relay,
+                                &current.filters,
+                            )
+                        })
+                        .collect();
                     tls_config = Some(current.clone());
                 }
                 let mut changed = false;
                 let mut read_succeeded = false;
                 let cycle = async {
-                    for (relay_index, ((relay, snapshot), tls)) in current
+                    for (relay_index, (((relay, snapshot), tls), connection)) in current
                         .relays
                         .iter()
                         .zip(snapshots.iter_mut())
                         .zip(&tls_connectors)
+                        .zip(&mut connections)
                         .enumerate()
                     {
                         if let Ok(events) = super::anonymous_reads::poll_retained(
@@ -176,6 +188,7 @@ impl PrivateDiscoveryClient {
                             current.filters.clone(),
                             tls.as_ref(),
                             verification.relay(relay_index),
+                            Some(connection),
                         )
                         .await
                         {
@@ -222,6 +235,7 @@ impl PrivateDiscoveryClient {
                         cadence.reset();
                         snapshots.clear();
                         tls_connectors.clear();
+                        connections.clear();
                         tls_config = None;
                         verification.clear();
                         continue;
@@ -234,6 +248,7 @@ impl PrivateDiscoveryClient {
                 // A demand coalesces while a query is running. Consume it
                 // after completion instead of cancelling a useful catch-up.
                 tokio::select! {
+                    _ = super::anonymous_reads::idle_connections(&mut connections) => {},
                     _ = sleep(cadence.after_poll(changed)) => {},
                     _ = demanded.notified() => {
                         cadence.reset();
@@ -244,6 +259,7 @@ impl PrivateDiscoveryClient {
                         cadence.reset();
                         snapshots.clear();
                         tls_connectors.clear();
+                        connections.clear();
                         tls_config = None;
                         verification.clear();
                     },
@@ -650,17 +666,19 @@ mod tests {
             });
             let first = PrivateDiscoveryClient::new(runtime.handle(), sender.clone());
             let other = PrivateDiscoveryClient::new(runtime.handle(), sender.clone());
-            let connections = |peer: PublicKey| {
+            let completed_queries = |peer: PublicKey| {
                 let rows = wire.lock().unwrap();
                 rows.iter()
                     .filter(|(connection, value)| {
                         value[0] == "REQ"
                             && value.to_string().contains(&peer.to_hex())
-                            && rows
-                                .iter()
-                                .any(|(id, value)| id == connection && value[0] == "CLOSE")
+                            && rows.iter().any(|(id, closed)| {
+                                id == connection && closed[0] == "CLOSE" && closed[1] == value[1]
+                            })
                     })
-                    .map(|(connection, _)| *connection)
+                    .map(|(connection, request)| {
+                        (*connection, request[1].as_str().unwrap().to_owned())
+                    })
                     .collect::<HashSet<_>>()
                     .len()
             };
@@ -671,7 +689,7 @@ mod tests {
                 .configure(std::slice::from_ref(&relay), filters[1].clone())
                 .unwrap();
             tokio::time::timeout(Duration::from_secs(3), async {
-                while connections(peers[0]) < 1 || connections(peers[1]) < 1 {
+                while completed_queries(peers[0]) < 1 || completed_queries(peers[1]) < 1 {
                     sleep(Duration::from_millis(5)).await;
                 }
             })
@@ -680,27 +698,43 @@ mod tests {
             for expected in 2..=3 {
                 first.refresh();
                 tokio::time::timeout(Duration::from_secs(3), async {
-                    while connections(peers[0]) < expected {
+                    while completed_queries(peers[0]) < expected {
                         sleep(Duration::from_millis(5)).await;
                     }
                 })
                 .await
                 .unwrap();
             }
+            let before_restart = wire
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|(_, value)| {
+                    value[0] == "REQ" && value.to_string().contains(&peers[0].to_hex())
+                })
+                .map(|(connection, _)| *connection)
+                .collect::<HashSet<_>>();
             first.cancel();
+            tokio::time::timeout(Duration::from_secs(1), async {
+                while !first.task.is_finished() {
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .unwrap();
             let restarted = PrivateDiscoveryClient::new(runtime.handle(), sender);
             restarted
                 .configure(std::slice::from_ref(&relay), filters[0].clone())
                 .unwrap();
             tokio::time::timeout(Duration::from_secs(3), async {
-                while connections(peers[0]) < 4 {
+                while completed_queries(peers[0]) < 4 {
                     sleep(Duration::from_millis(5)).await;
                 }
             })
             .await
             .unwrap();
             assert_eq!(
-                connections(peers[1]),
+                completed_queries(peers[1]),
                 1,
                 "another author's idle scope was woken"
             );
@@ -708,6 +742,20 @@ mod tests {
             other.cancel();
 
             let rows = wire.lock().unwrap().clone();
+            let restarted_connections = rows
+                .iter()
+                .filter(|(connection, value)| {
+                    value[0] == "REQ"
+                        && value.to_string().contains(&peers[0].to_hex())
+                        && !before_restart.contains(connection)
+                })
+                .map(|(connection, _)| *connection)
+                .collect::<HashSet<_>>();
+            assert_eq!(
+                restarted_connections.len(),
+                1,
+                "restart must discard the previous socket"
+            );
             let identified = rows
                 .iter()
                 .filter(|(_, value)| {
@@ -717,6 +765,7 @@ mod tests {
                 .collect::<HashSet<_>>();
             let mut anonymous_authors = HashSet::new();
             let mut read_connections = HashSet::new();
+            let mut subjects = std::collections::BTreeMap::<usize, HashSet<String>>::new();
             for (connection, value) in &rows {
                 if value[0] != "REQ"
                     || !peers
@@ -734,6 +783,14 @@ mod tests {
                         .count(),
                     1
                 );
+                let author = peers
+                    .iter()
+                    .find(|peer| value.to_string().contains(&peer.to_hex()))
+                    .unwrap();
+                subjects
+                    .entry(*connection)
+                    .or_default()
+                    .insert(author.to_hex());
                 read_connections.insert(*connection);
             }
             for connection in &read_connections {
@@ -746,10 +803,19 @@ mod tests {
                 assert!(peers.iter().all(|peer| key != peer.to_hex()));
                 assert!(
                     anonymous_authors.insert(key.to_string()),
-                    "demand/restart reused an authentication identity"
+                    "a reconnect/restart reused an authentication identity"
                 );
             }
-            assert_eq!(read_connections.len(), 5);
+            assert!(
+                subjects.values().all(|authors| authors.len() == 1),
+                "one socket linked different public authors"
+            );
+            // Repeated demand can reuse its exact anonymous scope; restart
+            // must create a new connection and a new anonymous signer. A full
+            // retention budget may still use disposable reads for each poll.
+            assert!((3..=5).contains(&read_connections.len()));
+            assert_eq!(completed_queries(peers[0]), 4);
+            assert_eq!(completed_queries(peers[1]), 1);
             receiver.shutdown().await;
         });
     }

@@ -2,6 +2,24 @@
 
 Each release has channel-specific notes. The release tag must match the `##` heading exactly.
 
+## v2026.10.24.1
+
+### GitHub
+
+- Reduce repeated TCP and TLS setup by reusing read-only discovery connections within one exact public-author, message-server and filter scope.
+- Bound retained connections and handle idle server pings without opening extra queries. Preserve the current discovery schedule and first-contact capacity.
+- Discard connections on configuration changes, cancellation and restart. Reconnect with fresh anonymous authentication; keep private publication on separate send-only connections.
+- Add serialized request, authentication, TLS, restart, cancellation and resource-limit tests for discovery connection reuse.
+- Update the CLI source package to 0.1.50. The protocol wire format and stored message state are unchanged from v2026.10.24.
+
+### Apple
+
+- Reduce idle processing and repeated connections to message servers.
+
+### Zapstore
+
+- Reduce idle processing and repeated connections to message servers.
+
 ## v2026.10.24
 
 ### GitHub

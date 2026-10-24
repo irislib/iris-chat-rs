@@ -44,6 +44,76 @@ async fn stop(worker: &PrivateDiscoveryClient) {
     .expect("cancelled discovery worker retained its task and TLS state");
 }
 
+async fn wait_queries(relay: &fixture::Relay, author: PublicKey, expected: usize) {
+    tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            let count = {
+                let rows = relay.wire.lock().unwrap();
+                rows.iter()
+                    .filter(|(_, value)| value[0] == "CLOSE")
+                    .filter(|(connection, closed)| {
+                        rows.iter().any(|(id, request)| {
+                            id == connection
+                                && request[0] == "REQ"
+                                && request[1] == closed[1]
+                                && request[2]["authors"] == serde_json::json!([author.to_hex()])
+                        })
+                    })
+                    .count()
+            };
+            if count == expected {
+                break;
+            }
+            assert!(count < expected, "unexpected extra query");
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn retained_worker_reuses_reads_and_discards_sockets_on_configuration_and_restart() {
+    tokio::time::timeout(Duration::from_secs(10), async {
+        let relay = fixture::persistent_relay(vec![]).await;
+        let alice = Keys::generate().public_key();
+        let bob = Keys::generate().public_key();
+        let filter = |author| Filter::new().author(author).kind(Kind::Metadata);
+        let runtime = tokio::runtime::Handle::current();
+        let (sender, _events) = flume::unbounded();
+        let first = PrivateDiscoveryClient::new(&runtime, sender.clone());
+        let second = PrivateDiscoveryClient::new(&runtime, sender.clone());
+        configure(&first, &relay.url, vec![filter(alice)]);
+        wait_queries(&relay, alice, 1).await;
+        configure(&second, &relay.url, vec![filter(bob)]);
+        wait_queries(&relay, bob, 1).await;
+        for expected in 2..=4 {
+            first.refresh();
+            wait_queries(&relay, alice, expected).await;
+        }
+        assert_eq!(relay.handshakes.lock().unwrap().len(), 2);
+        fixture::assert_wire(&relay, &[alice, bob], 2);
+        first
+            .configure(
+                std::slice::from_ref(&relay.url),
+                vec![filter(alice).limit(1)],
+            )
+            .unwrap();
+        wait_queries(&relay, alice, 5).await;
+        assert_eq!(relay.handshakes.lock().unwrap().len(), 3);
+        stop(&first).await;
+        let restarted = PrivateDiscoveryClient::new(&runtime, sender);
+        configure(&restarted, &relay.url, vec![filter(alice)]);
+        wait_queries(&relay, alice, 6).await;
+        assert_eq!(relay.handshakes.lock().unwrap().len(), 4);
+        fixture::assert_wire(&relay, &[alice, bob], 4);
+        stop(&restarted).await;
+        stop(&second).await;
+    })
+    .await
+    .unwrap();
+}
+
 fn configure(worker: &PrivateDiscoveryClient, relay: &RelayUrl, filters: Vec<Filter>) {
     worker
         .configure(std::slice::from_ref(relay), filters)

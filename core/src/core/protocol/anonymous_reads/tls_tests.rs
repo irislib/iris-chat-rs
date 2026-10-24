@@ -97,6 +97,14 @@ pub(in crate::core) async fn relay(resume: bool, tls12_only: bool, events: Vec<E
 }
 
 async fn relay_with_acceptor(acceptor: TlsAcceptor, events: Vec<Event>) -> Relay {
+    relay_with_retention(acceptor, events, false).await
+}
+
+pub(in crate::core) async fn persistent_relay(events: Vec<Event>) -> Relay {
+    relay_with_retention(acceptor(true, false), events, true).await
+}
+
+async fn relay_with_retention(acceptor: TlsAcceptor, events: Vec<Event>, keep_open: bool) -> Relay {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = RelayUrl::parse(&format!("wss://{}", listener.local_addr().unwrap())).unwrap();
     let wire: Wire = Arc::default();
@@ -154,7 +162,7 @@ async fn relay_with_acceptor(acceptor: TlsAcceptor, events: Vec<Event>) -> Relay
                                     }
                                     socket.send(Message::Text(serde_json::json!(["EOSE", value[1]]).to_string())).await.unwrap();
                                 }
-                                Some("CLOSE") => break,
+                                Some("CLOSE") if !keep_open => break,
                                 _ => {},
                             }
                         }

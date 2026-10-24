@@ -1,4 +1,4 @@
-//! Small, disposable read connections. Never construct an SDK Client here:
+//! Small anonymous read connections. Never construct an SDK Client here:
 //! its verification caches are eagerly allocated even for an empty lookup.
 use super::*;
 use futures_util::{stream, SinkExt, StreamExt};
@@ -8,9 +8,11 @@ use tokio::sync::Semaphore;
 use tokio_tungstenite::{
     client_async_tls_with_config,
     tungstenite::{protocol::WebSocketConfig, Message},
-    Connector,
+    Connector, MaybeTlsStream, WebSocketStream,
 };
 
+mod retained_connection;
+pub(in crate::core) use retained_connection::{idle_connections, ScopedReadConnection};
 mod relay_addresses;
 mod scoped_tls;
 pub(in crate::core) use scoped_tls::ScopedTlsConnector;
@@ -126,7 +128,7 @@ pub(super) async fn poll(
     filters: Vec<Filter>,
     tls: Option<&ScopedTlsConnector>,
 ) -> Result<Vec<Event>, String> {
-    background_read(relay, &filters, tls, None)
+    background_read(relay, &filters, tls, None, None)
         .await
         .map_err(ReadFailure::message)
 }
@@ -136,9 +138,10 @@ pub(super) async fn poll_retained(
     filters: Vec<Filter>,
     tls: Option<&ScopedTlsConnector>,
     verification: RelayVerification<'_>,
+    connection: Option<&mut ScopedReadConnection>,
 ) -> Result<Vec<Event>, String> {
     let verification = scoped_tls::sole_public_author(&filters).map(|_| verification);
-    background_read(relay, &filters, tls, verification)
+    background_read(relay, &filters, tls, verification, connection)
         .await
         .map_err(ReadFailure::message)
 }
@@ -146,25 +149,46 @@ pub(super) async fn poll_retained(
 /// A retained one-author worker uses background admission, preserving cold
 /// capacity for invites. Relay fan-out and aggregate result limits remain
 /// bounded just as for cold reads; a safety-limit failure is never partial success.
+#[cfg(test)]
 pub(in crate::core) async fn poll_relays(
     relays: &[RelayUrl],
     filters: &[Filter],
     tls: &[Option<ScopedTlsConnector>],
 ) -> Result<Vec<Event>, String> {
+    let mut connections = relays
+        .iter()
+        .map(|relay| ScopedReadConnection::new(relay, filters))
+        .collect::<Vec<_>>();
+    poll_relays_reusing(relays, filters, tls, &mut connections).await
+}
+
+pub(in crate::core) async fn poll_relays_reusing(
+    relays: &[RelayUrl],
+    filters: &[Filter],
+    tls: &[Option<ScopedTlsConnector>],
+    connections: &mut [ScopedReadConnection],
+) -> Result<Vec<Event>, String> {
     if relays.is_empty()
         || relays.len() != tls.len()
+        || relays.len() != connections.len()
         || scoped_tls::sole_public_author(filters).is_none()
     {
         return Err("invalid scoped discovery relays or filters".into());
     }
-    let jobs = (0..relays.len()).map(|index| async move {
-        let Some((relay, tls)) = relays.get(index).zip(tls.get(index)) else {
-            return Err(ReadFailure::Unavailable(
-                "invalid scoped discovery relay".into(),
-            ));
-        };
-        background_read(relay, filters, tls.as_ref(), None).await
-    });
+    // Materialize the borrowed jobs before awaiting the bounded stream. The
+    // iterator's higher-ranked mutable borrows otherwise obscure Send when
+    // this reader is used from the spawned mesh discovery worker.
+    let mut jobs: Vec<futures_util::future::BoxFuture<'_, Result<Vec<Event>, ReadFailure>>> =
+        Vec::with_capacity(relays.len());
+    for ((relay, tls), connection) in relays.iter().zip(tls).zip(connections) {
+        jobs.push(Box::pin(background_read(
+            relay,
+            filters,
+            tls.as_ref(),
+            None,
+            Some(connection),
+        )));
+    }
     collect_reads(
         stream::iter(jobs).buffer_unordered(COLD_READERS),
         filters.iter().any(requests_message_history),
@@ -177,6 +201,7 @@ async fn background_read(
     filters: &[Filter],
     tls: Option<&ScopedTlsConnector>,
     verification: Option<RelayVerification<'_>>,
+    connection: Option<&mut ScopedReadConnection>,
 ) -> Result<Vec<Event>, ReadFailure> {
     let _permit = BACKGROUND_SLOTS
         .get_or_init(|| Semaphore::new(BACKGROUND_READERS))
@@ -195,6 +220,7 @@ async fn background_read(
         Duration::from_secs(3),
         connector,
         verification,
+        connection,
     )
     .await
 }
@@ -280,7 +306,7 @@ async fn read_one(
     filters: &[Filter],
     timeout: Duration,
 ) -> Result<Vec<Event>, ReadFailure> {
-    read_one_with_connector(relay, filters, timeout, None, None).await
+    read_one_with_connector(relay, filters, timeout, None, None, None).await
 }
 
 async fn read_one_with_connector(
@@ -289,12 +315,19 @@ async fn read_one_with_connector(
     timeout: Duration,
     connector: Option<Connector>,
     verification: Option<RelayVerification<'_>>,
+    connection: Option<&mut ScopedReadConnection>,
 ) -> Result<Vec<Event>, ReadFailure> {
     let mut collected = Collection::new(filters.iter().any(requests_message_history));
-    match tokio::time::timeout(
-        timeout,
-        read_socket(relay, filters, &mut collected, connector, verification),
-    )
+    match tokio::time::timeout(timeout, async {
+        match connection {
+            Some(connection) => {
+                connection
+                    .read(relay, filters, &mut collected, connector, verification)
+                    .await
+            }
+            None => read_socket(relay, filters, &mut collected, connector, verification).await,
+        }
+    })
     .await
     {
         // Match the former SDK fetch deadline: already validated events remain
@@ -345,14 +378,26 @@ async fn read_socket(
     .await
 }
 
-async fn read_socket_with_transport(
-    relay: &RelayUrl,
-    filters: &[Filter],
-    collected: &mut Collection,
-    connector: Option<Connector>,
-    transport: impl std::future::Future<Output = std::io::Result<tokio::net::TcpStream>>,
-    mut verification: Option<RelayVerification<'_>>,
-) -> anyhow::Result<()> {
+type ReadSocket = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
+
+#[derive(Default)]
+struct ReadAuthentication {
+    id: Option<String>,
+    accepted: bool,
+}
+
+#[derive(Debug)]
+struct ReadClosed;
+
+impl std::fmt::Display for ReadClosed {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("anonymous discovery closed before EOSE")
+    }
+}
+
+impl std::error::Error for ReadClosed {}
+
+fn validate_read_filters(filters: &[Filter]) -> anyhow::Result<()> {
     anyhow::ensure!(!filters.is_empty(), "no discovery filters");
     let authors = filters
         .iter()
@@ -363,6 +408,14 @@ async fn read_socket_with_transport(
         authors.len() <= 1,
         "discovery must isolate each public author"
     );
+    Ok(())
+}
+
+async fn open_read_socket(
+    relay: &RelayUrl,
+    connector: Option<Connector>,
+    transport: impl std::future::Future<Output = std::io::Result<tokio::net::TcpStream>>,
+) -> anyhow::Result<ReadSocket> {
     let config = WebSocketConfig {
         write_buffer_size: 0,
         max_write_buffer_size: MAX_FRAME_BYTES * 2,
@@ -373,8 +426,46 @@ async fn read_socket_with_transport(
     let transport = transport.await?;
     // The original URL remains authoritative for Host, SNI and certificate
     // verification. Only DNS answers are shared; every read owns a fresh socket.
-    let (mut socket, _) =
+    let (socket, _) =
         client_async_tls_with_config(relay.as_str(), transport, Some(config), connector).await?;
+    Ok(socket)
+}
+
+async fn read_socket_with_transport(
+    relay: &RelayUrl,
+    filters: &[Filter],
+    collected: &mut Collection,
+    connector: Option<Connector>,
+    transport: impl std::future::Future<Output = std::io::Result<tokio::net::TcpStream>>,
+    verification: Option<RelayVerification<'_>>,
+) -> anyhow::Result<()> {
+    validate_read_filters(filters)?;
+    let mut socket = open_read_socket(relay, connector, transport).await?;
+    let result = read_query(
+        relay,
+        filters,
+        collected,
+        &mut socket,
+        &mut ReadAuthentication::default(),
+        verification,
+    )
+    .await;
+    if result.is_ok() {
+        let _ = socket.close(None).await;
+    }
+    result.map(|_| ())
+}
+
+// The bool permits retention only after the exact subscription was closed.
+// A failed CLOSE does not discard an otherwise complete validated response.
+async fn read_query(
+    relay: &RelayUrl,
+    filters: &[Filter],
+    collected: &mut Collection,
+    socket: &mut ReadSocket,
+    authentication: &mut ReadAuthentication,
+    mut verification: Option<RelayVerification<'_>>,
+) -> anyhow::Result<bool> {
     let id = SubscriptionId::generate();
     let mut request = vec![serde_json::json!("REQ"), serde_json::json!(id)];
     for filter in filters {
@@ -385,8 +476,6 @@ async fn read_socket_with_transport(
         return Err(ReadLimit("discovery request too large".into()).into());
     }
     socket.send(Message::Text(request.clone())).await?;
-    let mut auth_id = None;
-    let mut authenticated = false;
     let allow_history = filters.iter().any(requests_message_history);
     let mut received_bytes = 0usize;
     while let Some(message) = socket.next().await {
@@ -427,24 +516,29 @@ async fn read_socket_with_transport(
         match parts.first().and_then(serde_json::Value::as_str) {
             Some("AUTH") => {
                 anyhow::ensure!(
-                    auth_id.is_none(),
+                    authentication.id.is_none(),
                     "repeated anonymous authentication challenge"
                 );
                 let challenge = target.ok_or_else(|| anyhow::anyhow!("invalid auth"))?;
                 let auth = EventBuilder::auth(challenge, relay.clone())
                     .sign_with_keys(&Keys::generate())?;
-                auth_id = Some(auth.id.to_hex());
+                authentication.id = Some(auth.id.to_hex());
                 socket
                     .send(Message::Text(serde_json::json!(["AUTH", auth]).to_string()))
                     .await?;
             }
-            Some("OK") if auth_id.as_deref().is_some_and(|auth| target == Some(auth)) => {
+            Some("OK")
+                if authentication
+                    .id
+                    .as_deref()
+                    .is_some_and(|auth| target == Some(auth)) =>
+            {
                 anyhow::ensure!(
                     parts.get(2).and_then(serde_json::Value::as_bool) == Some(true),
                     "anonymous authentication rejected"
                 );
-                if !authenticated {
-                    authenticated = true;
+                if !authentication.accepted {
+                    authentication.accepted = true;
                     socket.send(Message::Text(request.clone())).await?;
                 }
             }
@@ -456,14 +550,13 @@ async fn read_socket_with_transport(
             }
             Some("EOSE") if our_subscription => {
                 // A challenged relay may answer the first REQ before AUTH.
-                if auth_id.is_some() && !authenticated {
+                if authentication.id.is_some() && !authentication.accepted {
                     continue;
                 }
-                let _ = socket
+                return Ok(socket
                     .send(Message::Text(serde_json::json!(["CLOSE", id]).to_string()))
-                    .await;
-                let _ = socket.close(None).await;
-                return Ok(());
+                    .await
+                    .is_ok());
             }
             Some("CLOSED") if our_subscription => {
                 let reason = parts
@@ -471,12 +564,12 @@ async fn read_socket_with_transport(
                     .and_then(serde_json::Value::as_str)
                     .unwrap_or("");
                 anyhow::ensure!(
-                    !authenticated && reason.starts_with("auth-required:"),
+                    !authentication.accepted && reason.starts_with("auth-required:"),
                     "anonymous discovery closed"
                 );
             }
             _ => {}
         }
     }
-    anyhow::bail!("anonymous discovery closed before EOSE")
+    Err(ReadClosed.into())
 }

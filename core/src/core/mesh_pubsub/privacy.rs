@@ -1,5 +1,7 @@
 use super::*;
-use crate::core::protocol::anonymous_reads::ScopedTlsConnector;
+use crate::core::protocol::anonymous_reads::{
+    idle_connections, ScopedReadConnection, ScopedTlsConnector,
+};
 use crate::core::protocol::private_reads::DiscoveryCadence;
 use fips_core::config::{PeerConfig, TransportInstances, UdpConfig, WebSocketConfig};
 use fips_core::{Config, FipsEndpoint};
@@ -262,6 +264,7 @@ impl PrivateMeshProviders {
         sender: Sender<CoreMsg>,
         observations: &mut DiscoveryObservations,
         advert_tls: &[Option<ScopedTlsConnector>],
+        connections: &mut [ScopedReadConnection],
     ) -> DiscoveryPoll {
         let mut poll = DiscoveryPoll::default();
         let Some(filter) = filters.first() else {
@@ -282,10 +285,11 @@ impl PrivateMeshProviders {
             .collect::<Vec<_>>();
         if !adverts.is_empty() && !self.relays.is_empty() {
             poll.attempted = true;
-            if let Ok(events) = crate::core::protocol::anonymous_reads::poll_relays(
+            if let Ok(events) = crate::core::protocol::anonymous_reads::poll_relays_reusing(
                 &self.relays,
                 &adverts,
                 advert_tls,
+                connections,
             )
             .await
             {
@@ -491,6 +495,11 @@ impl PrivateMeshDiscovery {
                     .cloned()
                     .collect::<Vec<_>>();
                 let advert_tls = providers.advert_tls(&advert_filters);
+                let mut connections = providers
+                    .relays
+                    .iter()
+                    .map(|relay| ScopedReadConnection::new(relay, &advert_filters))
+                    .collect::<Vec<_>>();
                 let mut observations = DiscoveryObservations::default();
                 let mut cadence = DiscoveryCadence::default();
                 loop {
@@ -501,6 +510,7 @@ impl PrivateMeshDiscovery {
                             sender.clone(),
                             &mut observations,
                             &advert_tls,
+                            &mut connections,
                         )
                         .await;
                     if poll.closed {
@@ -515,6 +525,7 @@ impl PrivateMeshDiscovery {
                     // A real demand is coalesced during a busy query. It never
                     // interrupts the in-flight anonymous authentication/read.
                     tokio::select! {
+                        _ = idle_connections(&mut connections) => {},
                         _ = sleep(delay) => {},
                         _ = requested.notified() => cadence.reset(),
                     }

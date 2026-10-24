@@ -155,6 +155,7 @@ async fn retained_signature_cache_still_matches_current_filters_and_uses_fresh_a
                 vec![Filter::new().author(peer.public_key()).kind(kind)],
                 None,
                 cache.relay(0),
+                None,
             )
             .await
             .unwrap(),

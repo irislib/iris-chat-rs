@@ -30,6 +30,11 @@ fn live_peer_advert_queries_have_one_anonymous_subject_and_no_own_receive_contex
         for peer in peers {
             let filters = vec![Filter::new().kind(Kind::Custom(37195)).author(peer)];
             let tls = adapter.advert_tls(&filters);
+            let mut connections = adapter
+                .relays
+                .iter()
+                .map(|relay| ScopedReadConnection::new(relay, &filters))
+                .collect::<Vec<_>>();
             adapter
                 .discover(
                     filters,
@@ -37,6 +42,7 @@ fn live_peer_advert_queries_have_one_anonymous_subject_and_no_own_receive_contex
                     flume::unbounded().0,
                     &mut DiscoveryObservations::default(),
                     &tls,
+                    &mut connections,
                 )
                 .await;
         }
@@ -227,10 +233,10 @@ async fn discovery_relay_with_auth(
     (relay, wire, release)
 }
 
-fn subject_connections(
+fn subject_queries(
     wire: &DiscoveryWire,
     author: PublicKey,
-) -> std::collections::BTreeSet<usize> {
+) -> std::collections::BTreeSet<(usize, String)> {
     let mut authenticated = HashSet::new();
     let mut requested = std::collections::BTreeSet::new();
     for (connection, value) in wire.lock().unwrap().iter() {
@@ -246,7 +252,7 @@ fn subject_connections(
                 .skip(2)
                 .any(|filter| filter["authors"] == serde_json::json!([author.to_hex()]))
         {
-            requested.insert(*connection);
+            requested.insert((*connection, value[1].as_str().unwrap().to_owned()));
         }
     }
     requested
@@ -254,7 +260,7 @@ fn subject_connections(
 
 async fn wait_subject(wire: &DiscoveryWire, author: PublicKey, count: usize) {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
-    while subject_connections(wire, author).len() < count {
+    while subject_queries(wire, author).len() < count {
         assert!(
             tokio::time::Instant::now() < deadline,
             "missing anonymous subject query"
@@ -318,10 +324,10 @@ fn mesh_discovery_preserves_unrelated_workers_and_refreshes_only_requested_autho
             .find(|worker| worker.author == peers[0])
             .unwrap();
         assert!(Arc::ptr_eq(&original, &retained.wake));
-        assert_eq!(subject_connections(&wire, peers[0]).len(), 1);
+        assert_eq!(subject_queries(&wire, peers[0]).len(), 1);
         discovery.refresh_author(peers[0]);
         wait_subject(&wire, peers[0], 2).await;
-        assert_eq!(subject_connections(&wire, peers[1]).len(), 1);
+        assert_eq!(subject_queries(&wire, peers[1]).len(), 1);
         let rows = wire.lock().unwrap().clone();
         let mut authenticated = BTreeMap::new();
         for (connection, frame) in &rows {
@@ -329,6 +335,7 @@ fn mesh_discovery_preserves_unrelated_workers_and_refreshes_only_requested_autho
                 let event: Event = serde_json::from_value(frame[1].clone()).unwrap();
                 event.verify().unwrap();
                 assert_ne!(event.pubkey, own);
+                assert!(!peers.contains(&event.pubkey));
                 assert!(authenticated.insert(*connection, event.pubkey).is_none());
             }
             if frame[0] == "REQ" {
@@ -340,8 +347,19 @@ fn mesh_discovery_preserves_unrelated_workers_and_refreshes_only_requested_autho
             }
             assert_ne!(frame[0], "EVENT");
         }
-        assert_eq!(authenticated.len(), 3);
-        assert_eq!(authenticated.values().collect::<HashSet<_>>().len(), 3);
+        assert!((2..=3).contains(&authenticated.len()));
+        assert_eq!(
+            authenticated.values().collect::<HashSet<_>>().len(),
+            authenticated.len()
+        );
+        let mut subjects = BTreeMap::<usize, HashSet<String>>::new();
+        for (connection, frame) in rows.iter().filter(|(_, frame)| frame[0] == "REQ") {
+            subjects
+                .entry(*connection)
+                .or_default()
+                .insert(frame[2]["authors"][0].as_str().unwrap().into());
+        }
+        assert!(subjects.values().all(|authors| authors.len() == 1));
         let stopped = discovery
             .workers
             .values()
@@ -392,7 +410,7 @@ fn mesh_discovery_demand_waits_for_busy_query_and_coalesces() {
         discovery.refresh_author(author);
         sleep(Duration::from_millis(25)).await;
         assert_eq!(
-            subject_connections(&wire, author).len(),
+            subject_queries(&wire, author).len(),
             1,
             "demand interrupted a busy read"
         );
@@ -400,7 +418,7 @@ fn mesh_discovery_demand_waits_for_busy_query_and_coalesces() {
         wait_subject(&wire, author, 2).await;
         sleep(Duration::from_millis(25)).await;
         assert_eq!(
-            subject_connections(&wire, author).len(),
+            subject_queries(&wire, author).len(),
             2,
             "demand failed to coalesce"
         );
@@ -511,6 +529,11 @@ fn mesh_failed_anonymous_reads_back_off_and_explicit_demand_resets() {
         let mut cadence = DiscoveryCadence::default();
         let filters = vec![Filter::new().kind(Kind::Custom(37195)).author(author)];
         let tls = providers.advert_tls(&filters);
+        let mut connections = providers
+            .relays
+            .iter()
+            .map(|relay| ScopedReadConnection::new(relay, &filters))
+            .collect::<Vec<_>>();
         for expected in [30, 60, 120, 120] {
             let poll = providers
                 .discover(
@@ -519,6 +542,7 @@ fn mesh_failed_anonymous_reads_back_off_and_explicit_demand_resets() {
                     flume::unbounded().0,
                     &mut observations,
                     &tls,
+                    &mut connections,
                 )
                 .await;
             assert!(poll.attempted);
@@ -534,7 +558,7 @@ fn mesh_failed_anonymous_reads_back_off_and_explicit_demand_resets() {
             );
         }
         assert!(
-            subject_connections(&wire, author).is_empty(),
+            subject_queries(&wire, author).is_empty(),
             "rejected AUTH became a completed authenticated query"
         );
         let rows = wire.lock().unwrap().clone();
@@ -590,13 +614,16 @@ fn inject_route_need(core: &mut AppCore, author: PublicKey, generation: u64, gua
 async fn wait_subject_closed(wire: &DiscoveryWire, author: PublicKey, count: usize) {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
     loop {
-        let connections = subject_connections(wire, author);
+        let connections = subject_queries(wire, author);
         let closed = wire
             .lock()
             .unwrap()
             .iter()
-            .filter(|(connection, value)| connections.contains(connection) && value[0] == "CLOSE")
-            .map(|(connection, _)| *connection)
+            .filter(|(connection, value)| {
+                value[0] == "CLOSE"
+                    && connections.contains(&(*connection, value[1].as_str().unwrap().to_owned()))
+            })
+            .map(|(connection, value)| (*connection, value[1].as_str().unwrap().to_owned()))
             .collect::<HashSet<_>>();
         if closed.len() >= count {
             return;
@@ -683,13 +710,9 @@ fn mesh_route_retry_core_guard_requires_exact_private_work_on_actual_wire() {
                 inject_route_need(&mut core, a, 7, true);
             }
             sleep(Duration::from_millis(100)).await;
+            assert_eq!(subject_queries(&wire, a).len(), 1, "idle retry: {state}");
             assert_eq!(
-                subject_connections(&wire, a).len(),
-                1,
-                "idle retry: {state}"
-            );
-            assert_eq!(
-                subject_connections(&wire, b).len(),
+                subject_queries(&wire, b).len(),
                 1,
                 "unrelated author: {state}"
             );
@@ -704,7 +727,7 @@ fn mesh_route_retry_core_guard_requires_exact_private_work_on_actual_wire() {
         inject_route_need(&mut core, a, 6, false);
         sleep(Duration::from_millis(100)).await;
         assert_eq!(
-            subject_connections(&wire, a).len(),
+            subject_queries(&wire, a).len(),
             1,
             "stale generation woke query"
         );
@@ -716,7 +739,7 @@ fn mesh_route_retry_core_guard_requires_exact_private_work_on_actual_wire() {
         }
         sleep(Duration::from_millis(100)).await;
         assert_eq!(
-            subject_connections(&wire, a).len(),
+            subject_queries(&wire, a).len(),
             2,
             "receipt failed to stop retry lookups"
         );
@@ -724,11 +747,11 @@ fn mesh_route_retry_core_guard_requires_exact_private_work_on_actual_wire() {
         wait_subject_closed(&wire, a, 3).await;
         sleep(Duration::from_millis(100)).await;
         assert_eq!(
-            subject_connections(&wire, a).len(),
+            subject_queries(&wire, a).len(),
             3,
             "one link loss must request one lookup"
         );
-        assert_eq!(subject_connections(&wire, b).len(), 1);
+        assert_eq!(subject_queries(&wire, b).len(), 1);
 
         let mut authenticated = BTreeMap::new();
         let mut subjects = BTreeMap::<usize, HashSet<PublicKey>>::new();
@@ -755,9 +778,12 @@ fn mesh_route_retry_core_guard_requires_exact_private_work_on_actual_wire() {
                 _ => {}
             }
         }
-        assert_eq!(authenticated.len(), 4);
-        assert_eq!(authenticated.values().collect::<HashSet<_>>().len(), 4);
-        assert_eq!(subjects.len(), 4);
+        assert!((2..=4).contains(&authenticated.len()));
+        assert_eq!(
+            authenticated.values().collect::<HashSet<_>>().len(),
+            authenticated.len()
+        );
+        assert_eq!(subjects.len(), authenticated.len());
         assert!(subjects.values().all(|authors| authors.len() == 1));
         drop(core.device_sync.take());
         live.shutdown().await.unwrap();

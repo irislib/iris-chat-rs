@@ -39,6 +39,13 @@ impl VerificationCache {
 }
 
 impl RelayVerification<'_> {
+    pub(super) fn reborrow(&mut self) -> RelayVerification<'_> {
+        RelayVerification {
+            cache: self.cache,
+            relay: self.relay,
+        }
+    }
+
     pub(super) fn verify(&mut self, event: &Event) -> bool {
         // An ID-only hit must never accept changed content, tags, time or author.
         if !event.verify_id() {
