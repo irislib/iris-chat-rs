@@ -15,7 +15,7 @@ import tomllib
 import urllib.request
 
 SOURCE = "da9eaa01c8a3cef34646f4cb19b3a09009ffa2c1"
-EXECUTION_ENABLED = False  # Wait for corrected full-core acceptance before qualification.
+EXECUTION_ENABLED = True  # Corrected full-core run40107155587 accepted by release owner.
 RUST_TOOLCHAIN = "1.99.1"
 CORE_RUN = 40107155587
 PROTOCOL = "0.3.7"
