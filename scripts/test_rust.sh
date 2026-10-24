@@ -191,7 +191,10 @@ assert result["discovery_subjects"] == 384 and result["readiness_round_min"] >= 
 assert result["mesh_discovery_subjects"] == 96
 assert result["total_discovery_subjects"] == result["discovery_subjects"] + result["mesh_discovery_subjects"] == 480
 assert result["completed_peer_polls"] >= result["total_discovery_subjects"] * result["readiness_round_min"]
-assert result["fresh_anonymous_authentications"] >= result["completed_peer_polls"] + 1
+assert all(type(result[key]) is int and result[key] >= 0 for key in ("fresh_anonymous_authentications", "anonymous_connections", "all_completed_polls", "all_reused_polls"))
+assert result["fresh_anonymous_authentications"] == result["anonymous_connections"] >= result["total_discovery_subjects"]
+assert result["all_completed_polls"] == result["anonymous_connections"] + result["all_reused_polls"]
+assert result["all_completed_polls"] >= result["completed_peer_polls"] + 2 * result["total_discovery_subjects"] + 1
 assert result["revoked_stale_records"] >= 96
 assert result["targeted_fresh_proof_delivered"] is True and result["privacy_wire_passed"] is True
 samples = result["quiet_samples"]
@@ -202,12 +205,17 @@ for sample in samples:
 cycles = result["full_cycle_tls_samples"]
 assert len(cycles) == 2
 for cycle in cycles:
+    assert all(type(cycle[key]) is int and cycle[key] >= 0 for key in ("completed_polls", "new_poll_connections", "reused_polls", "reused_connections", "tls_resumed_handshakes", "tls_full_handshakes", "connections"))
     assert math.isfinite(cycle["seconds"]) and cycle["seconds"] >= 125
     assert math.isfinite(cycle["cpu_percent_one_core"]) and 0 <= cycle["cpu_percent_one_core"] <= 5
     assert cycle["every_author_polled"] is True
     assert cycle["tls_full_handshakes"] == 0
-    assert cycle["tls_resumed_handshakes"] >= result["total_discovery_subjects"]
-    assert cycle["connections"] >= result["total_discovery_subjects"] and cycle["application_wire_bytes"] > 0
+    assert result["total_discovery_subjects"] <= cycle["completed_polls"] <= 2 * result["total_discovery_subjects"]
+    assert cycle["reused_connections"] == 64 and 64 <= cycle["reused_polls"] <= 128
+    assert cycle["new_poll_connections"] >= result["total_discovery_subjects"] - 64
+    assert cycle["tls_resumed_handshakes"] == cycle["connections"] == cycle["new_poll_connections"]
+    assert cycle["completed_polls"] == cycle["new_poll_connections"] + cycle["reused_polls"]
+    assert cycle["application_wire_bytes"] > 0
 print("Populated discovery CPU/wire companion evidence verified")
 CPU_RECEIPT
     fi

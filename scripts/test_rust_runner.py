@@ -236,15 +236,17 @@ class RustRunnerTests(unittest.TestCase):
                     sample = {"seconds": 35.0, "cpu_percent_one_core": 0.2,
                               "application_wire_bytes": 0, "connections": 0}
                     cycle = {"seconds": 125.0, "cpu_percent_one_core": 0.4,
-                             "application_wire_bytes": 1000000, "connections": 480,
+                             "application_wire_bytes": 1000000, "connections": 416,
                              "every_author_polled": True, "tls_full_handshakes": 0,
-                             "tls_resumed_handshakes": 480}
+                             "tls_resumed_handshakes": 416, "completed_polls": 480,
+                             "new_poll_connections": 416, "reused_polls": 64, "reused_connections": 64}
                     measurements = {"database_bytes": 100 * 1024 * 1024,
                                     "message_rows": 30000, "contacts": 96,
                                     "peer_devices": 288, "own_devices": 3, "groups": 8,
                                     "discovery_subjects": 384, "readiness_round_min": 3,
                                     "mesh_discovery_subjects": 96, "total_discovery_subjects": 480,
-                                    "completed_peer_polls": 1440, "fresh_anonymous_authentications": 1441,
+                                    "completed_peer_polls": 1440, "fresh_anonymous_authentications": 2145,
+                                    "anonymous_connections": 2145, "all_completed_polls": 2401, "all_reused_polls": 256,
                                     "revoked_stale_records": 96,
                                     "targeted_fresh_proof_delivered": True,
                                     "privacy_wire_passed": True,
@@ -288,6 +290,33 @@ class RustRunnerTests(unittest.TestCase):
                         measurements["full_cycle_tls_samples"][1]["tls_resumed_handshakes"] = 384
                     elif cpu_receipt == "ordinary-only-connection-cycle":
                         measurements["full_cycle_tls_samples"][1]["connections"] = 384
+                    elif cpu_receipt == "missing-retention-accounting":
+                        del measurements["all_reused_polls"]
+                    elif cpu_receipt == "unauthed-connection":
+                        measurements["anonymous_connections"] += 1
+                    elif cpu_receipt == "unaccounted-poll":
+                        measurements["all_completed_polls"] += 1
+                    elif cpu_receipt == "missing-final-poll":
+                        measurements["all_completed_polls"] -= 1
+                        measurements["all_reused_polls"] -= 1
+                    elif cpu_receipt == "retention-cap-exceeded":
+                        measurements["full_cycle_tls_samples"][0]["reused_connections"] = 65
+                    elif cpu_receipt == "retained-scope-missed":
+                        measurements["full_cycle_tls_samples"][0]["reused_connections"] = 63
+                    elif cpu_receipt == "extra-retained-polls":
+                        measurements["full_cycle_tls_samples"][0].update(completed_polls=545, reused_polls=129)
+                    elif cpu_receipt == "missed-disposable-scope":
+                        measurements["full_cycle_tls_samples"][0].update(
+                            completed_polls=480, reused_polls=65, new_poll_connections=415,
+                            connections=415, tls_resumed_handshakes=415)
+                    elif cpu_receipt == "unaccounted-cycle-poll":
+                        measurements["full_cycle_tls_samples"][0]["completed_polls"] += 1
+                    elif cpu_receipt == "boolean-cycle-counter":
+                        measurements["full_cycle_tls_samples"][0]["tls_full_handshakes"] = False
+                    elif cpu_receipt == "fractional-cycle-counter":
+                        measurements["full_cycle_tls_samples"][0]["completed_polls"] = 480.0
+                    elif cpu_receipt == "negative-reuse-counter":
+                        measurements["all_reused_polls"] = -1
                     (output / "populated-discovery-idle.log").write_bytes(child_log)
                     (output / "populated-discovery-idle.json").write_text(json.dumps(receipt))
             if approval_relay is not None:
@@ -433,7 +462,10 @@ class RustRunnerTests(unittest.TestCase):
                          "missing-cycles", "partial-cycle", "excess-cycle-cpu", "unresumed-cycle", "no-cycle-polls",
                          "missing-mesh-subjects", "missing-total-subjects", "too-few-mesh-subjects", "wrong-total-subjects",
                          "mesh-not-warmed-up", "missing-fresh-mesh-auth", "ordinary-only-tls-cycle",
-                         "ordinary-only-connection-cycle"):
+                         "ordinary-only-connection-cycle", "missing-retention-accounting", "unauthed-connection",
+                         "unaccounted-poll", "missing-final-poll", "retention-cap-exceeded", "retained-scope-missed",
+                         "extra-retained-polls", "missed-disposable-scope", "unaccounted-cycle-poll",
+                         "boolean-cycle-counter", "fractional-cycle-counter", "negative-reuse-counter"):
                 with self.subTest(nextest=nextest, receipt=mode):
                     result, calls = self.run_runner(nextest, platform="Linux", cpu_receipt=mode)
                     if mode == "passed":

@@ -27,6 +27,7 @@ mod populated_discovery_idle {
     struct Wire {
         rows: Mutex<Vec<(usize, serde_json::Value)>>,
         rounds: Mutex<BTreeMap<String, usize>>,
+        completed: Mutex<BTreeMap<usize, usize>>,
         connections: AtomicUsize,
         bytes: AtomicUsize,
         tls_full: AtomicUsize,
@@ -52,8 +53,8 @@ mod populated_discovery_idle {
             return;
         }
         let mut authenticated = false;
-        let mut answered = false;
-        let mut subjects = HashSet::new();
+        let mut pending = HashMap::<String, HashSet<String>>::new();
+        let mut closed = HashSet::new();
         while let Some(Ok(incoming)) = socket.next().await {
             let text = match incoming {
                 Message::Text(text) => text,
@@ -84,12 +85,20 @@ mod populated_discovery_idle {
                         .map(serde_json::from_value::<Filter>)
                         .collect::<Result<Vec<_>, _>>()
                         .unwrap();
-                    subjects.extend(
-                        filters
-                            .iter()
-                            .filter_map(|f| f.authors.as_ref())
-                            .flatten()
-                            .map(PublicKey::to_hex),
+                    let subjects = filters
+                        .iter()
+                        .filter_map(|f| f.authors.as_ref())
+                        .flatten()
+                        .map(PublicKey::to_hex)
+                        .collect();
+                    let subscription = value[1].as_str().unwrap();
+                    assert!(
+                        !closed.contains(subscription),
+                        "subscription ID reused after CLOSE"
+                    );
+                    assert!(
+                        pending.insert(subscription.to_owned(), subjects).is_none(),
+                        "duplicate authenticated REQ"
                     );
                     let mut frames = events
                         .lock()
@@ -105,18 +114,21 @@ mod populated_discovery_idle {
                     frames.push(serde_json::json!(["EOSE", value[1]]).to_string());
                     frames
                 }
-                Some("CLOSE") if authenticated && !answered => {
-                    // AUTH causes REQ to be sent twice on one connection. A
-                    // finished poll is counted only after its EOSE-driven CLOSE.
-                    for author in &subjects {
-                        *wire
-                            .rounds
-                            .lock()
-                            .unwrap()
-                            .entry(author.clone())
-                            .or_default() += 1;
+                Some("CLOSE") if authenticated => {
+                    // Count exact REQ/CLOSE subscription pairs. A retained
+                    // socket completes many polls with one anonymous AUTH.
+                    let subscription = value[1].as_str().unwrap();
+                    if let Some(subjects) = pending.remove(subscription) {
+                        assert!(
+                            closed.insert(subscription.to_owned()),
+                            "subscription ID reused after CLOSE"
+                        );
+                        assert_eq!(subjects.len(), 1);
+                        for author in subjects {
+                            *wire.rounds.lock().unwrap().entry(author).or_default() += 1;
+                        }
+                        *wire.completed.lock().unwrap().entry(id).or_default() += 1;
                     }
-                    answered = true;
                     Vec::new()
                 }
                 _ => Vec::new(),
@@ -245,7 +257,7 @@ mod populated_discovery_idle {
         known_identities: &HashSet<PublicKey>,
         expected_discovery: &BTreeMap<String, HashSet<String>>,
         expected_receiver: &HashSet<String>,
-    ) -> usize {
+    ) -> (usize, usize) {
         let rows = wire.rows.lock().unwrap();
         let mut auth = HashMap::new();
         let mut keys = HashSet::new();
@@ -254,7 +266,7 @@ mod populated_discovery_idle {
             event.verify().unwrap();
             assert!(
                 auth.insert(*connection, event.pubkey).is_none(),
-                "one AUTH per disposable connection"
+                "one AUTH per anonymous or account connection"
             );
             if !own.contains(&event.pubkey) {
                 assert!(
@@ -336,11 +348,25 @@ mod populated_discovery_idle {
             "own receiver did not send its planned filters"
         );
         assert!(contexts.values().all(|authors| authors.len() == 1));
+        assert_eq!(
+            keys.len(),
+            contexts.len(),
+            "each anonymous connection has its own authentication key"
+        );
+        let completed = wire.completed.lock().unwrap();
+        assert_eq!(
+            completed.len(),
+            contexts.len(),
+            "every anonymous connection completed its query"
+        );
+        assert!(completed
+            .keys()
+            .all(|connection| contexts.contains_key(connection)));
         assert!(
             rows.iter().all(|(_, row)| row[0] != "EVENT"),
             "discovery must never publish"
         );
-        keys.len()
+        (keys.len(), contexts.len())
     }
 
     fn child() {
@@ -593,10 +619,11 @@ mod populated_discovery_idle {
             assert_eq!(*wire.rounds.lock().unwrap(), before);
             // The old 70s measurement ended before the 120s timer fired. Keep
             // that quiet-window assertion, then cover two actual steady polls
-            // for every author, including TLS, authentication and verification.
+            // for every author, including retained reads and disposable TLS.
             let mut cycle_samples = Vec::new();
             for _ in 0..2 {
                 let baseline = wire.rounds.lock().unwrap().clone();
+                let completed_before = wire.completed.lock().unwrap().clone();
                 let full = wire.tls_full.load(Ordering::SeqCst);
                 let resumed = wire.tls_resumed.load(Ordering::SeqCst);
                 let bytes = wire.bytes.load(Ordering::SeqCst);
@@ -613,16 +640,28 @@ mod populated_discovery_idle {
                 }
                 let full_delta = wire.tls_full.load(Ordering::SeqCst) - full;
                 let resumed_delta = wire.tls_resumed.load(Ordering::SeqCst) - resumed;
+                let completed_after = wire.completed.lock().unwrap().clone();
+                let completed_polls: usize = completed_after.iter().map(|(id, count)| count - completed_before.get(id).copied().unwrap_or(0)).sum();
+                let new_poll_connections = completed_after.keys().filter(|id| !completed_before.contains_key(id)).count();
+                let reused_polls = completed_polls - new_poll_connections;
+                let reused_connections = completed_after.iter().filter(|(id, count)| completed_before.get(id).is_some_and(|before| *count > before)).count();
                 let sample = serde_json::json!({"seconds": seconds, "cpu_percent_one_core": cpu,
                     "application_wire_bytes": wire.bytes.load(Ordering::SeqCst) - bytes,
                     "connections": wire.connections.load(Ordering::SeqCst) - connections,
                     "tls_full_handshakes": full_delta, "tls_resumed_handshakes": resumed_delta,
+                    "completed_polls": completed_polls, "new_poll_connections": new_poll_connections,
+                    "reused_polls": reused_polls, "reused_connections": reused_connections,
                     "every_author_polled": true});
                 println!("POPULATED_DISCOVERY_CYCLE_SAMPLE={sample}");
                 cycle_samples.push(sample);
                 assert!(!server.is_finished(), "TLS wire fixture failed");
                 assert_eq!(full_delta, 0, "quiet scopes repeated full TLS handshakes");
-                assert!(resumed_delta >= subjects.len(), "measurement missed the recurring TLS work");
+                assert!((subjects.len()..=subjects.len() * 2).contains(&completed_polls));
+                assert_eq!(reused_connections, 64, "all retained scopes must reuse their connection");
+                assert!(reused_polls >= reused_connections);
+                assert!(new_poll_connections >= subjects.len() - 64, "measurement missed disposable fallback TLS work");
+                assert_eq!(resumed_delta, new_poll_connections, "each new poll connection must resume its scoped TLS session");
+                assert_eq!(wire.connections.load(Ordering::SeqCst) - connections, new_poll_connections);
                 assert!(cpu <= 5.0, "populated full-cycle discovery exceeded 5% of one CPU: {cpu:.3}");
             }
             let before = wire.rounds.lock().unwrap().clone();
@@ -660,7 +699,11 @@ mod populated_discovery_idle {
             sleep(Duration::from_millis(100)).await;
             assert_eq!(*wire.rounds.lock().unwrap(), expected_after,
                 "targeted demand woke an unrelated contact or was duplicated");
-            let auth_count = verify_wire(&wire, &own, &subjects, &known_identities, &expected_discovery, &expected_receiver);
+            let (auth_count, anonymous_connections) = verify_wire(&wire, &own, &subjects, &known_identities, &expected_discovery, &expected_receiver);
+            let (all_completed_polls, all_reused_polls) = {
+                let final_completed = wire.completed.lock().unwrap();
+                (final_completed.values().sum::<usize>(), final_completed.values().map(|count| count - 1).sum::<usize>())
+            };
             println!("POPULATED_DISCOVERY_IDLE_RESULT={}", serde_json::json!({
                 "database_bytes": fixture.database_bytes, "message_rows": fixture.rows,
                 "contacts": CONTACTS, "peer_devices": CONTACTS * DEVICES, "own_devices": 3,
@@ -671,6 +714,8 @@ mod populated_discovery_idle {
                 "quiet_samples": samples, "full_cycle_tls_samples": cycle_samples,
                 "targeted_fresh_proof_delivered": true,
                 "fresh_anonymous_authentications": auth_count, "privacy_wire_passed": true,
+                "anonymous_connections": anonymous_connections,
+                "all_completed_polls": all_completed_polls, "all_reused_polls": all_reused_polls,
                 "revoked_stale_records": fixture.core.protocol_engine.as_ref().unwrap().session_manager_snapshot()
                     .users.iter().flat_map(|user| &user.devices).filter(|device| !device.authorized && device.is_stale).count(),
                 "fixture_source_sha256": format!("{:x}", sha2::Sha256::digest(include_bytes!("synthetic_history_scale.rs"))),
