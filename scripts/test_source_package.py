@@ -23,10 +23,10 @@ class PackageProofTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
-        self.archive = Path(self.temporary.name) / "iris-chat-0.1.49.crate"
+        self.archive = Path(self.temporary.name) / "iris-chat-0.1.50.crate"
         manifest = b'''[package]
 name = "iris-chat"
-version = "0.1.49"
+version = "0.1.50"
 default-run = "iris"
 [dependencies]
 iris-chat-protocol = { version = "=0.3.7", path = "../chat-protocol" }
@@ -37,7 +37,7 @@ path = "src/bin/iris.rs"
         lock = b'''version = 4
 [[package]]
 name = "iris-chat"
-version = "0.1.49"
+version = "0.1.50"
 dependencies = ["iris-chat-protocol"]
 [[package]]
 name = "iris-chat-protocol"
@@ -56,10 +56,10 @@ version = "0.3.7"
     def inspect(self, extra=()):
         with tarfile.open(self.archive, "w:gz") as tar:
             for path, content in [*self.members.items(), *extra]:
-                item = tarfile.TarInfo(f"iris-chat-0.1.49/{path}")
+                item = tarfile.TarInfo(f"iris-chat-0.1.50/{path}")
                 item.size = len(content)
                 tar.addfile(item, io.BytesIO(content))
-        return CHECK.inspect_archive(self.archive, "iris-chat", "0.1.49", "core",
+        return CHECK.inspect_archive(self.archive, "iris-chat", "0.1.50", "core",
                                      self.source.__getitem__, self.checksum, expected_source=CHECK.SOURCE)
 
     def inspect_protocol(self, archive_source, expected_source):
@@ -150,7 +150,7 @@ class PackageProcessCleanupTests(unittest.TestCase):
             root = Path(tmp)
             out, target = root / "evidence", root / "target"
             out.mkdir(); target.mkdir()
-            candidate = target / "package" / "iris-chat-0.1.49.crate"
+            candidate = target / "package" / "iris-chat-0.1.50.crate"
             real_popen = subprocess.Popen
             unrelated = real_popen([sys.executable, "-c", "import time; time.sleep(30)"],
                                    start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
