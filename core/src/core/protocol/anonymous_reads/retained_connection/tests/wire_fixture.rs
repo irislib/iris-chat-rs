@@ -3,6 +3,39 @@ use std::sync::Mutex;
 use tokio::net::TcpListener;
 
 #[derive(Clone, Copy)]
+pub(super) enum IdleControl {
+    Notice,
+    Closed,
+    Eose,
+    AcceptedAuth,
+    ForeignClosed,
+    ForeignEose,
+    ForeignAuth,
+    RejectedAuth,
+    Challenge,
+    Event,
+    Malformed,
+}
+
+impl IdleControl {
+    fn message(self, subscription: &serde_json::Value, auth: &str) -> serde_json::Value {
+        match self {
+            Self::Notice => json!(["NOTICE", "query complete"]),
+            Self::Closed => json!(["CLOSED", subscription, "query complete"]),
+            Self::Eose => json!(["EOSE", subscription]),
+            Self::AcceptedAuth => json!(["OK", auth, true, "already accepted"]),
+            Self::ForeignClosed => json!(["CLOSED", "another-subscription", "closed"]),
+            Self::ForeignEose => json!(["EOSE", "another-subscription"]),
+            Self::ForeignAuth => json!(["OK", "another-auth-event", true, "accepted"]),
+            Self::RejectedAuth => json!(["OK", auth, false, "rejected"]),
+            Self::Challenge => json!(["AUTH", "new-challenge"]),
+            Self::Event => json!(["EVENT", subscription, {}]),
+            Self::Malformed => json!(["NOTICE", {"message": "invalid"}]),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
 pub(super) enum Behavior {
     Keep,
     Ping,
@@ -10,6 +43,9 @@ pub(super) enum Behavior {
     Reauthenticate,
     Flood,
     NoEose,
+    PublicBeforeAuth,
+    IdleControl(IdleControl),
+    TextFlood,
 }
 
 pub(super) struct Relay {
@@ -96,6 +132,8 @@ pub(super) async fn relay(behavior: Behavior) -> Relay {
                         let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
                         socket.send(Message::Text(json!(["AUTH", format!("challenge-{id}")]).to_string())).await.unwrap();
                         let mut authenticated = false;
+                        let mut auth_id = String::new();
+                        let mut pending_public_read = None;
                         let mut reads = 0;
                         while let Some(Ok(message)) = socket.next().await {
                             if matches!(message, Message::Pong(_)) {
@@ -110,9 +148,21 @@ pub(super) async fn relay(behavior: Behavior) -> Relay {
                                     let auth: Event = serde_json::from_value(value[1].clone()).unwrap();
                                     auth.verify().unwrap();
                                     authenticated = true;
+                                    auth_id = auth.id.to_hex();
                                     if socket.send(Message::Text(json!(["OK", auth.id, true, ""]).to_string())).await.is_err() { break; }
+                                    // A public read need not require AUTH. Deliver its
+                                    // EOSE after OK, before the client's repeated REQ.
+                                    if let Some(subscription) = pending_public_read.take() {
+                                        if socket.send(Message::Text(json!(["EOSE", subscription]).to_string())).await.is_err() { break; }
+                                    }
                                 }
-                                Some("REQ") if authenticated => {
+                                Some("REQ") => {
+                                    if !authenticated {
+                                        if matches!(behavior, Behavior::PublicBeforeAuth) {
+                                            pending_public_read = Some(value[1].clone());
+                                        }
+                                        continue;
+                                    }
                                     reads += 1;
                                     if matches!(behavior, Behavior::Reauthenticate) && reads > 1 {
                                         let _ = socket.send(Message::Text(json!(["AUTH", "second-challenge"]).to_string())).await;
@@ -127,6 +177,16 @@ pub(super) async fn relay(behavior: Behavior) -> Relay {
                                 Some("CLOSE") => match behavior {
                                     Behavior::Close => { let _ = socket.close(None).await; break; },
                                     Behavior::Ping => { let _ = socket.send(Message::Ping(vec![1])).await; },
+                                    Behavior::PublicBeforeAuth => { let _ = socket.send(Message::Ping(vec![1])).await; },
+                                    Behavior::IdleControl(control) => {
+                                        if socket.send(Message::Text(control.message(&value[1], &auth_id).to_string())).await.is_err() { break; }
+                                        let _ = socket.send(Message::Ping(vec![1])).await;
+                                    }
+                                    Behavior::TextFlood => {
+                                        for _ in 0..MAX_IDLE_CONTROL_FRAMES + 1 {
+                                            if socket.send(Message::Text(json!(["NOTICE", "query complete"]).to_string())).await.is_err() { break; }
+                                        }
+                                    }
                                     Behavior::Flood => {
                                         for _ in 0..MAX_IDLE_CONTROL_FRAMES + 1 {
                                             if socket.send(Message::Ping(vec![1])).await.is_err() { break; }

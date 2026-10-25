@@ -11,8 +11,37 @@ static RETAINED_SLOTS: OnceLock<Arc<Semaphore>> = OnceLock::new();
 struct Session {
     socket: ReadSocket,
     authentication: ReadAuthentication,
+    closed_subscription: Option<SubscriptionId>,
     opened: tokio::time::Instant,
     permit: Option<OwnedSemaphorePermit>,
+}
+
+impl Session {
+    fn accepts_idle_control(&self, text: &str) -> bool {
+        use serde_json::Value;
+        let Ok(Value::Array(parts)) = serde_json::from_str(text) else {
+            return false;
+        };
+        let closed = |id: &str| {
+            self.closed_subscription
+                .as_ref()
+                .is_some_and(|subscription| subscription.as_str() == id)
+        };
+        match parts.as_slice() {
+            [Value::String(kind), Value::String(_)] if kind == "NOTICE" => true,
+            [Value::String(kind), Value::String(id)] if kind == "EOSE" => closed(id),
+            [Value::String(kind), Value::String(id), Value::String(_)] if kind == "CLOSED" => {
+                closed(id)
+            }
+            [Value::String(kind), Value::String(id), Value::Bool(true), Value::String(_)]
+                if kind == "OK" =>
+            {
+                self.authentication.accepted
+                    && self.authentication.id.as_deref() == Some(id.as_str())
+            }
+            _ => false,
+        }
+    }
 }
 
 pub(in crate::core) struct ScopedReadConnection {
@@ -54,6 +83,7 @@ impl ScopedReadConnection {
         Ok(Session {
             socket,
             authentication: ReadAuthentication::default(),
+            closed_subscription: None,
             opened: tokio::time::Instant::now(),
             permit,
         })
@@ -110,8 +140,8 @@ impl ScopedReadConnection {
             )
             .await;
         }
-        let closed_subscription = result?;
-        if closed_subscription
+        session.closed_subscription = result?;
+        if session.closed_subscription.is_some()
             && session.permit.is_some()
             && session.opened.elapsed() < MAX_CONNECTION_AGE
         {
@@ -137,6 +167,13 @@ impl ScopedReadConnection {
                         }
                     }
                     Ok(Some(Ok(Message::Pong(_)))) => {}
+                    Ok(Some(Ok(Message::Text(text)))) if session.accepts_idle_control(&text) => {
+                        // AUTH may retry a public REQ that was already served,
+                        // leaving a second EOSE after CLOSE. Accept only inert
+                        // acknowledgements of this socket's completed state.
+                        // They spend the same bounded control-frame budget and
+                        // never open a subscription, change AUTH or wake a poll.
+                    }
                     // No subscription is open while idle. Unexpected data,
                     // re-authentication, closure, flooding or expiry disposes
                     // the socket; none can wake a reconnect loop.

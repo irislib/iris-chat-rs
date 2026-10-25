@@ -4,6 +4,7 @@ use serde_json::json;
 
 mod wire_fixture;
 use wire_fixture::{relay, Behavior};
+mod idle_control_tests;
 
 fn filters(author: PublicKey) -> Vec<Filter> {
     vec![Filter::new().author(author).kind(Kind::Metadata)]

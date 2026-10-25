@@ -456,7 +456,7 @@ async fn read_socket_with_transport(
     result.map(|_| ())
 }
 
-// The bool permits retention only after the exact subscription was closed.
+// Retain the completed ID only after its exact subscription was closed.
 // A failed CLOSE does not discard an otherwise complete validated response.
 async fn read_query(
     relay: &RelayUrl,
@@ -465,7 +465,7 @@ async fn read_query(
     socket: &mut ReadSocket,
     authentication: &mut ReadAuthentication,
     mut verification: Option<RelayVerification<'_>>,
-) -> anyhow::Result<bool> {
+) -> anyhow::Result<Option<SubscriptionId>> {
     let id = SubscriptionId::generate();
     let mut request = vec![serde_json::json!("REQ"), serde_json::json!(id)];
     for filter in filters {
@@ -553,10 +553,11 @@ async fn read_query(
                 if authentication.id.is_some() && !authentication.accepted {
                     continue;
                 }
-                return Ok(socket
+                let closed = socket
                     .send(Message::Text(serde_json::json!(["CLOSE", id]).to_string()))
                     .await
-                    .is_ok());
+                    .is_ok();
+                return Ok(closed.then_some(id));
             }
             Some("CLOSED") if our_subscription => {
                 let reason = parts
