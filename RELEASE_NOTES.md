@@ -2,6 +2,28 @@
 
 Each release has channel-specific notes. The release tag must match the `##` heading exactly.
 
+## v2026.10.25.3
+
+### GitHub
+
+- Pace group-history decryption using measured work while keeping newly arriving messages responsive. Try locally expected message positions without exposing counters or identities, and preserve suspended history searches, skipped keys and recovery after failed saves.
+- Replace a later history timer when fresh messages become eligible sooner. Keep duplicate traffic and retries within the same decryption budget.
+- Avoid duplicate checkpoint payload reads while retaining raw type, length, ordering and hash validation. Reuse validated shared payloads during reconstruction.
+- Save restored authorization projections once before publishing completed app state or acknowledging decrypted deliveries. Preserve durable recovery when a page read or save fails.
+- Update the Rust ratchet library to 0.0.175, the protocol package to 0.3.10 and the CLI package to 0.1.53. Message formats and saved history remain compatible with v2026.10.25.2.
+
+### Apple
+
+- Reduce background processing while recovering older messages.
+- Keep new messages moving while older history recovers.
+- Open saved chats with less repeated database work.
+
+### Zapstore
+
+- Reduce background processing while recovering older messages.
+- Keep new messages moving while older history recovers.
+- Open saved chats with less repeated database work.
+
 ## v2026.10.25.2
 
 ### GitHub

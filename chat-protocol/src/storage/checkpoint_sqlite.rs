@@ -277,7 +277,11 @@ fn payloads<'a, T>(
             }
         }
         payload.next_chunk += 1;
-        let metadata_bytes = if matches!(scan, PayloadScan::References) { 8 } else { 20 };
+        let metadata_bytes = if matches!(scan, PayloadScan::References) {
+            8
+        } else {
+            20
+        };
         segmented::account_io(key.len() + metadata_bytes, 0);
     }
     if expected

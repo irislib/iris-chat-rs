@@ -228,7 +228,10 @@ On Linux, the same runner also requires exactly one optimized
 350,224,384-byte SQLite checkpoint with 4,214 pending incoming packets, 24,990
 group fanouts, 23,437 encrypted group messages and 44 outgoing retries. Each
 retry turn includes the app's batch boundary, journal acknowledgment and durable
-flush, with 25 ms ready continuations and 2-second liveness checks. Restore,
+flush. Continuations have a 25 ms minimum delay and pace blind history recovery
+from its measured work; liveness checks run every 2 seconds. The fixture uses
+16 authors, 46 sender-key states and 30 key distributions, with encrypted payloads
+ranging from 64 to 16,384 bytes. Restore,
 scheduler readiness and the valid message must complete within the three
 60-second settling slices. Two further 60-second slices must each use at most
 5% of one CPU core while exercising recurring due work and durable saves.
@@ -238,6 +241,11 @@ remain queued. Backoff-only retries must not substitute for real durable work.
 Unresolved work must survive, unchanged inputs must not restart exhausted
 searches, and a reload must preserve queues and ratchets. Missing-key searches
 may still make finite progress during measurement.
+Fresh current-position messages must bypass a waiting history search without
+replacing its cursor. Keep the signed-event regression with 2,000 retained keys
+and multiple key generations below one second of virtual arrival-to-delivery
+time, including measured decryption and pacing, and verify that the app replaces
+a later history timer when fresh work becomes eligible sooner.
 Incoming packets must retain valid NIP44 encodings and fail authentication,
 with positive controls proving the unmodified packets decrypt. Check their
 format and decoded sizes against the recorded aggregate workload.
@@ -245,7 +253,7 @@ format and decoded sizes against the recorded aggregate workload.
 The gate uses release optimization level 3, debug info level 1 and disabled
 debug assertions, with two build jobs and the existing Cargo target/cache.
 Retain its complete stdout, including all five `batched_retry_slice` records and
-the `iris-batched-retry-cpu/v3` summary. The runner rejects missing execution,
+the `iris-batched-retry-cpu/v4` summary. The runner rejects missing execution,
 incomplete measurements or a CPU failure. Keep standalone retry diagnostic
 results and the physical-device CPU gates as separate evidence.
 
