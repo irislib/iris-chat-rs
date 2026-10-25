@@ -160,17 +160,21 @@ fn checkpoint_metadata_updates_do_not_read_immutable_payload_pages() {
     storage
         .put_checkpoint("state", &checkpoint(&bodies, &retries, "before"))
         .unwrap();
-    conn.lock().unwrap().execute_batch(
-        "PRAGMA wal_checkpoint(TRUNCATE); PRAGMA cache_size=-2048;
+    conn.lock()
+        .unwrap()
+        .execute_batch(
+            "PRAGMA wal_checkpoint(TRUNCATE); PRAGMA cache_size=-2048;
          CREATE TABLE app_state(value INTEGER); INSERT INTO app_state VALUES(0);",
-    ).unwrap();
+        )
+        .unwrap();
     for index in 0..3 {
         // App state is committed before the protocol batch in production.
         // Evict the SQLite page cache so this measures actual pager work, not
         // just the small values returned by length(data)/typeof(data).
-        conn.lock().unwrap().execute_batch(
-            "UPDATE app_state SET value=value+1; PRAGMA shrink_memory;",
-        ).unwrap();
+        conn.lock()
+            .unwrap()
+            .execute_batch("UPDATE app_state SET value=value+1; PRAGMA shrink_memory;")
+            .unwrap();
         retries[index] += 1;
         let value = checkpoint(&bodies, &retries, "after");
         let before = read_pages(&conn);

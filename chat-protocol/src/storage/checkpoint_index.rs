@@ -31,7 +31,11 @@ fn definitions() -> Vec<(&'static str, &'static str, String)> {
     let matches_raw = format!("EXISTS(SELECT 1 FROM ndr_kv_checkpoint_chunks AS raw WHERE {} AND length(raw.data) IS NEW.byte_length AND typeof(raw.data) IS NEW.data_type)", identity("raw", "NEW"));
     let mut result = vec![
         (SHAPES, "table", TABLE.to_owned()),
-        ("ndr_kv_checkpoint_node_namespace", "index", NODES.to_owned()),
+        (
+            "ndr_kv_checkpoint_node_namespace",
+            "index",
+            NODES.to_owned(),
+        ),
     ];
     for (name, event, body) in [
         ("ndr_kv_checkpoint_shape_insert", "INSERT", upsert.clone()),
