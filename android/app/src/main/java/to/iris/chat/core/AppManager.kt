@@ -25,6 +25,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -80,6 +83,8 @@ data class PendingShare(
     val text: String,
     val attachments: List<OutgoingAttachment>,
     val isForward: Boolean = false,
+    val shortcutId: String? = null,
+    val targetChatId: String? = null,
 )
 
 private data class PendingNavigationOverride(
@@ -122,6 +127,8 @@ class AppManager(
     private val mobilePushRuntime = AndroidMobilePushRuntime(this.dataStore)
     private val callPushRuntime = AndroidMobilePushRuntime(this.dataStore, forCalls = true)
     private val readNotificationCleanup = to.iris.chat.push.ReadNotificationCleanup(applicationScope, ioDispatcher)
+    private val directShareShortcuts = DirectShareShortcuts(appContext)
+    private var pendingShortcutOpen: String? = null
     private val selfUpdateManager =
         AndroidSelfUpdateManager(
             context = appContext,
@@ -224,6 +231,15 @@ class AppManager(
         IrisDebugLog.enabled = initial.preferences.debugLoggingEnabled
         IrisDebugLog.d(TAG, "init rev=${initial.rev} defaultScreen=${initial.router.defaultScreen}")
         publishState(initial)
+        applicationScope.launch(ioDispatcher) {
+            combine(state, bootstrapState, foregroundedAtSecs) { snapshot, bootstrap, foregrounded ->
+                if (bootstrap is AccountBootstrapState.Loading && snapshot.account?.authorizationState != DeviceAuthorizationState.REVOKED) null
+                else (if (bootstrap is AccountBootstrapState.NeedsLogin) ShareShortcutState(null, emptyList())
+                    else ShareShortcutState.from(snapshot)) to foregrounded
+            }.filterNotNull().distinctUntilChanged().collect { (shortcuts, _) ->
+                directShareShortcuts.update(shortcuts)
+            }
+        }
         if (!automaticRevocationLogoutInFlight) {
             applicationScope.launch(ioDispatcher) {
                 restoreSessionFromSecureStore()
@@ -785,6 +801,7 @@ class AppManager(
     fun receiveShare(
         text: String,
         attachments: List<OutgoingAttachment>,
+        shortcutId: String? = null,
     ) {
         val trimmedText = text.trim()
         val outgoing =
@@ -798,8 +815,42 @@ class AppManager(
         if (trimmedText.isEmpty() && outgoing.isEmpty()) {
             return
         }
-        mutablePendingShare.value = PendingShare(trimmedText, outgoing)
-        dispatchToRust(AppAction.UpdateScreenStack(emptyList()))
+        mutablePendingShare.value = PendingShare(trimmedText, outgoing, shortcutId = shortcutId)
+        if (shortcutId == null) dispatchToRust(AppAction.UpdateScreenStack(emptyList()))
+        routePendingShareShortcut()
+    }
+
+    fun receiveShareShortcut(shortcutId: String) {
+        pendingShortcutOpen = shortcutId
+        routePendingShareShortcut()
+    }
+
+    private fun routePendingShareShortcut() {
+        if (automaticRevocationLogoutInFlight || mutableBootstrapState.value !is AccountBootstrapState.LoggedIn) return
+        val snapshot = mutableState.value
+        if (snapshot.account?.authorizationState != DeviceAuthorizationState.AUTHORIZED) return
+        val share = mutablePendingShare.value
+        if (share?.shortcutId == null && share?.targetChatId == null && pendingShortcutOpen == null) return
+        val recipients = ShareShortcutState.from(snapshot)
+        if (share?.targetChatId != null && recipients.recipients.none { it.chatId == share.targetChatId }) {
+            mutablePendingShare.value = share.copy(targetChatId = null)
+        }
+        val shortcutId = share?.shortcutId ?: pendingShortcutOpen ?: return
+        val chatId = directShareShortcuts.resolve(shortcutId, recipients)
+        pendingShortcutOpen = null
+        if (share?.shortcutId != null) {
+            mutablePendingShare.value = share.copy(shortcutId = null, targetChatId = chatId)
+        }
+        if (chatId != null) openChat(chatId)
+        else dispatchToRust(AppAction.UpdateScreenStack(emptyList()))
+    }
+
+    fun takePendingShareForChat(chatId: String): PendingShare? {
+        val share = mutablePendingShare.value?.takeIf { it.targetChatId == chatId } ?: return null
+        val snapshot = mutableState.value
+        if (ShareShortcutState.from(snapshot).recipients.none { it.chatId == chatId }) return null
+        clearPendingShare()
+        return share
     }
 
     fun startForward(text: String) {
@@ -970,6 +1021,8 @@ class AppManager(
 
     private fun logout(completionNotice: String?) {
         pendingChatLink.clear()
+        pendingShortcutOpen = null
+        clearPendingShare()
         signer.cancel()
         automaticRevocationLogoutInFlight = true
         applicationScope.launch(ioDispatcher) {
@@ -1824,6 +1877,7 @@ class AppManager(
                 snapshot.busy.restoringSession && snapshot.router.screenStack.lastOrNull() != Screen.RemoteSigner -> AccountBootstrapState.Loading
                 else -> AccountBootstrapState.NeedsLogin
             }
+        routePendingShareShortcut()
     }
 
     private fun publishBootstrapNeedsLogin() {

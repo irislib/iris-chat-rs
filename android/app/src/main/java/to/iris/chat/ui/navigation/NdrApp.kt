@@ -398,7 +398,7 @@ fun NdrApp(
                 )
             }
 
-            if (pendingShare != null && bootstrapState is AccountBootstrapState.LoggedIn) {
+            if (pendingShare != null && pendingShare?.shortcutId == null && pendingShare?.targetChatId == null && bootstrapState is AccountBootstrapState.LoggedIn) {
                 val chatList by appManager.chatList.collectAsStateWithLifecycle()
                 ShareTargetDialog(
                     appManager = appManager,
