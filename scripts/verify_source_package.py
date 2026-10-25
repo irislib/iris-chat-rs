@@ -14,13 +14,13 @@ import time
 import tomllib
 import urllib.request
 
-SOURCE = "6afa5a3f676fe58c6702d5f01d1279f401e66edd"
-EXECUTION_ENABLED = True  # Await exact core acceptance and published protocol archive readback.
+SOURCE = "1e889f6f0011a3376f4dd9ec5b11365364bc73ee"
+EXECUTION_ENABLED = True  # Exact protocol qualification and registry readback accepted.
 RUST_TOOLCHAIN = "1.99.1"
-CORE_RUN = 40184824093
-PROTOCOL = "0.3.8"
-PROTOCOL_SOURCE = "6afa5a3f676fe58c6702d5f01d1279f401e66edd"
-CLI = "0.1.51"
+CORE_RUN = 40203900572
+PROTOCOL = "0.3.9"
+PROTOCOL_SOURCE = "1e889f6f0011a3376f4dd9ec5b11365364bc73ee"
+CLI = "0.1.52"
 REGISTRY = "registry+https://github.com/rust-lang/crates.io-index"
 GIB = 1024**3
 

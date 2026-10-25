@@ -23,13 +23,13 @@ class PackageProofTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
-        self.archive = Path(self.temporary.name) / "iris-chat-0.1.51.crate"
+        self.archive = Path(self.temporary.name) / "iris-chat-0.1.52.crate"
         manifest = b'''[package]
 name = "iris-chat"
-version = "0.1.51"
+version = "0.1.52"
 default-run = "iris"
 [dependencies]
-iris-chat-protocol = { version = "=0.3.8", path = "../chat-protocol" }
+iris-chat-protocol = { version = "=0.3.9", path = "../chat-protocol" }
 [[bin]]
 name = "iris"
 path = "src/bin/iris.rs"
@@ -37,11 +37,11 @@ path = "src/bin/iris.rs"
         lock = b'''version = 4
 [[package]]
 name = "iris-chat"
-version = "0.1.51"
+version = "0.1.52"
 dependencies = ["iris-chat-protocol"]
 [[package]]
 name = "iris-chat-protocol"
-version = "0.3.8"
+version = "0.3.9"
 '''
         self.checksum = "a" * 64
         self.source = {"core/Cargo.toml": manifest, "core/Cargo.lock": lock}
@@ -56,28 +56,28 @@ version = "0.3.8"
     def inspect(self, extra=()):
         with tarfile.open(self.archive, "w:gz") as tar:
             for path, content in [*self.members.items(), *extra]:
-                item = tarfile.TarInfo(f"iris-chat-0.1.51/{path}")
+                item = tarfile.TarInfo(f"iris-chat-0.1.52/{path}")
                 item.size = len(content)
                 tar.addfile(item, io.BytesIO(content))
-        return CHECK.inspect_archive(self.archive, "iris-chat", "0.1.51", "core",
+        return CHECK.inspect_archive(self.archive, "iris-chat", "0.1.52", "core",
                                      self.source.__getitem__, self.checksum, expected_source=CHECK.SOURCE)
 
     def inspect_protocol(self, archive_source, expected_source):
-        manifest = b'[package]\nname = "iris-chat-protocol"\nversion = "0.3.8"\n'
-        lock = b'version = 4\n[[package]]\nname = "iris-chat-protocol"\nversion = "0.3.8"\n'
+        manifest = b'[package]\nname = "iris-chat-protocol"\nversion = "0.3.9"\n'
+        lock = b'version = 4\n[[package]]\nname = "iris-chat-protocol"\nversion = "0.3.9"\n'
         source = {"chat-protocol/Cargo.toml": manifest, "chat-protocol/Cargo.lock": lock,
                   "chat-protocol/src/lib.rs": b"pub struct Protocol;\n"}
         members = {path.removeprefix("chat-protocol/"): content for path, content in source.items()}
         members["Cargo.toml.orig"] = manifest
         members[".cargo_vcs_info.json"] = json.dumps({
             "git": {"sha1": archive_source, "dirty": False}, "path_in_vcs": "chat-protocol"}).encode()
-        archive = Path(self.temporary.name) / "iris-chat-protocol-0.3.8.crate"
+        archive = Path(self.temporary.name) / "iris-chat-protocol-0.3.9.crate"
         with tarfile.open(archive, "w:gz") as tar:
             for path, content in members.items():
-                item = tarfile.TarInfo(f"iris-chat-protocol-0.3.8/{path}")
+                item = tarfile.TarInfo(f"iris-chat-protocol-0.3.9/{path}")
                 item.size = len(content)
                 tar.addfile(item, io.BytesIO(content))
-        return CHECK.inspect_archive(archive, "iris-chat-protocol", "0.3.8", "chat-protocol",
+        return CHECK.inspect_archive(archive, "iris-chat-protocol", "0.3.9", "chat-protocol",
                                      source.__getitem__, expected_source=expected_source)
 
     def test_accepts_different_cli_and_unchanged_protocol_origins(self):
@@ -119,7 +119,7 @@ version = "0.3.8"
                 self.inspect()
 
     def test_rejects_relaxed_protocol_pin(self):
-        self.members["Cargo.toml"] = self.members["Cargo.toml"].replace(b"=0.3.8", b"0.3.8")
+        self.members["Cargo.toml"] = self.members["Cargo.toml"].replace(b"=0.3.9", b"0.3.9")
         with self.assertRaises(AssertionError):
             self.inspect()
 
@@ -129,7 +129,7 @@ version = "0.3.8"
             self.inspect()
 
     def test_rejects_changed_dependency_version(self):
-        self.members["Cargo.lock"] = self.members["Cargo.lock"].replace(b"0.3.8", b"0.3.9")
+        self.members["Cargo.lock"] = self.members["Cargo.lock"].replace(b"0.3.9", b"0.3.10")
         with self.assertRaisesRegex(AssertionError, "lock dependency change"):
             self.inspect()
 
@@ -150,7 +150,7 @@ class PackageProcessCleanupTests(unittest.TestCase):
             root = Path(tmp)
             out, target = root / "evidence", root / "target"
             out.mkdir(); target.mkdir()
-            candidate = target / "package" / "iris-chat-0.1.51.crate"
+            candidate = target / "package" / "iris-chat-0.1.52.crate"
             real_popen = subprocess.Popen
             unrelated = real_popen([sys.executable, "-c", "import time; time.sleep(30)"],
                                    start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
