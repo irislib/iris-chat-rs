@@ -15,7 +15,9 @@ fn checkpoint_remote_expiry_flushes_retry_clocks_without_rewriting_inbound_bodie
         pending.created_at_secs = NOW - 1_000;
         pending.next_retry_at_secs = NOW;
     }
-    fixture.sender.invalidate_pending_group_fanout_retry_deadline();
+    fixture
+        .sender
+        .invalidate_pending_group_fanout_retry_deadline();
     fixture.sender.pending_remote_sends = missing_roster_remote_retries(2, NOW);
     for (index, pending) in fixture.sender.pending_remote_sends.iter_mut().enumerate() {
         let expires = NOW + 60 * (index as u64 + 1);
@@ -307,7 +309,7 @@ fn checkpoint_inbound_clock_flush_commit_failure_keeps_live_and_durable_generati
 
 struct CheckpointNodeSqlAudit {
     connection: Arc<Mutex<rusqlite::Connection>>,
-    counts: Box<[std::sync::atomic::AtomicUsize; 2]>,
+    counts: Box<[std::sync::atomic::AtomicUsize; 3]>,
 }
 
 impl CheckpointNodeSqlAudit {
@@ -317,7 +319,7 @@ impl CheckpointNodeSqlAudit {
             if !table.is_null()
                 && unsafe { CStr::from_ptr(table) }.to_bytes() == b"ndr_kv_checkpoint_nodes"
             {
-                let counts = unsafe { &*(context as *const [std::sync::atomic::AtomicUsize; 2]) };
+                let counts = unsafe { &*(context as *const [std::sync::atomic::AtomicUsize; 3]) };
                 counts[index].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             }
         }
@@ -325,11 +327,14 @@ impl CheckpointNodeSqlAudit {
             context: *mut c_void,
             action: c_int,
             table: *const c_char,
-            _: *const c_char,
+            column: *const c_char,
             _: *const c_char,
             _: *const c_char,
         ) -> c_int {
-            if action == rusqlite::ffi::SQLITE_INSERT {
+            if action == rusqlite::ffi::SQLITE_UPDATE
+                && !column.is_null()
+                && unsafe { CStr::from_ptr(column) }.to_bytes() == b"next_key"
+            {
                 unsafe { count(context, table, 0) };
             }
             rusqlite::ffi::SQLITE_OK
@@ -345,9 +350,36 @@ impl CheckpointNodeSqlAudit {
                 unsafe { count(context, table, 1) };
             }
         }
+        unsafe extern "C" fn profile(
+            _: std::ffi::c_uint,
+            context: *mut c_void,
+            statement: *mut c_void,
+            _: *mut c_void,
+        ) -> c_int {
+            let statement = statement.cast::<rusqlite::ffi::sqlite3_stmt>();
+            let sql = unsafe { rusqlite::ffi::sqlite3_sql(statement) };
+            if !sql.is_null() {
+                let sql = unsafe { CStr::from_ptr(sql) }.to_bytes();
+                if sql.starts_with(b"INSERT INTO ndr_kv_checkpoint_nodes(")
+                    || sql.starts_with(b"UPDATE ndr_kv_checkpoint_nodes ")
+                {
+                    let steps = unsafe {
+                        rusqlite::ffi::sqlite3_stmt_status(
+                            statement,
+                            rusqlite::ffi::SQLITE_STMTSTATUS_VM_STEP,
+                            1,
+                        )
+                    };
+                    let counts =
+                        unsafe { &*(context as *const [std::sync::atomic::AtomicUsize; 3]) };
+                    counts[2].fetch_add(steps as usize, std::sync::atomic::Ordering::Relaxed);
+                }
+            }
+            0
+        }
         let mut audit = Self {
             connection,
-            counts: Box::new([0.into(), 0.into()]),
+            counts: Box::new([0.into(), 0.into(), 0.into()]),
         };
         let context = audit.counts.as_mut() as *mut _ as *mut c_void;
         {
@@ -358,6 +390,15 @@ impl CheckpointNodeSqlAudit {
                     rusqlite::ffi::SQLITE_OK
                 );
                 rusqlite::ffi::sqlite3_update_hook(conn.handle(), Some(update), context);
+                assert_eq!(
+                    rusqlite::ffi::sqlite3_trace_v2(
+                        conn.handle(),
+                        rusqlite::ffi::SQLITE_TRACE_PROFILE as u32,
+                        Some(profile),
+                        context,
+                    ),
+                    rusqlite::ffi::SQLITE_OK
+                );
             }
         }
         audit
@@ -367,11 +408,12 @@ impl CheckpointNodeSqlAudit {
 impl Drop for CheckpointNodeSqlAudit {
     fn drop(&mut self) {
         let conn = self.connection.lock().unwrap();
-        // Clear both hooks before the boxed callback context is released,
+        // Clear all hooks before the boxed callback context is released,
         // including if an assertion unwinds this test.
         unsafe {
             rusqlite::ffi::sqlite3_set_authorizer(conn.handle(), None, std::ptr::null_mut());
             rusqlite::ffi::sqlite3_update_hook(conn.handle(), None, std::ptr::null_mut());
+            rusqlite::ffi::sqlite3_trace_v2(conn.handle(), 0, None, std::ptr::null_mut());
         }
     }
 }
@@ -394,7 +436,9 @@ fn checkpoint_retry_clock_flush_prepares_node_update_once() {
         pending.created_at_secs = NOW - 1_000;
         pending.next_retry_at_secs = NOW;
     }
-    fixture.sender.invalidate_pending_group_fanout_retry_deadline();
+    fixture
+        .sender
+        .invalidate_pending_group_fanout_retry_deadline();
     fixture.sender.pending_remote_sends = missing_roster_remote_retries(1, NOW);
     fixture.sender.pending_remote_sends[0].expires_at_secs = Some(NOW);
     let (mut fixture, directory, connection, storage) = checkpoint_growth_install_storage(fixture);
@@ -441,6 +485,7 @@ fn checkpoint_retry_clock_flush_prepares_node_update_once() {
         .is_empty());
     let preparations = audit.counts[0].load(Relaxed);
     let updated_nodes = audit.counts[1].load(Relaxed);
+    let node_sql_steps = audit.counts[2].load(Relaxed);
     drop(audit);
     let written = checkpoint_growth_written_bytes(&connection) - before;
     assert!(fixture.sender.pending_remote_sends.is_empty());
@@ -454,7 +499,7 @@ fn checkpoint_retry_clock_flush_prepares_node_update_once() {
         sessions_before
     );
     checkpoint_growth_assert_reopen(fixture, &directory, connection, storage);
-    eprintln!("checkpoint_node_sql preparations={preparations} updated_nodes={updated_nodes} updated_fanout_nodes={FANOUTS} updated_inbound_nodes={INBOUND} sqlite_written_bytes={written}");
+    eprintln!("checkpoint_node_sql preparations={preparations} updated_nodes={updated_nodes} updated_fanout_nodes={FANOUTS} updated_inbound_nodes={INBOUND} sqlite_written_bytes={written} node_sql_steps={node_sql_steps}");
     // The exact saved vectors above prove every clock; core/reserve
     // descriptors may also change when the expiring send is retired.
     assert!(updated_nodes >= FANOUTS + INBOUND);
@@ -462,5 +507,9 @@ fn checkpoint_retry_clock_flush_prepares_node_update_once() {
     assert_eq!(
         preparations, 1,
         "one expiry flush must not recompile the same node update per dirty record"
+    );
+    assert!(
+        node_sql_steps > 0 && node_sql_steps <= updated_nodes * 40,
+        "existing metadata updates repeated compound-key insertion work: {node_sql_steps} steps for {updated_nodes} nodes"
     );
 }

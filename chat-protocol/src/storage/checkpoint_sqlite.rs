@@ -61,6 +61,7 @@ struct Meta {
     head: Option<Vec<u8>>,
 }
 struct Node<T> {
+    rowid: i64,
     next: Option<Vec<u8>>,
     payload: Vec<u8>,
     bytes: usize,
@@ -156,9 +157,9 @@ fn nodes<T>(
     // large backlog. Namespace index order follows rowid without indexing the
     // mutable descriptors, preserving cheap retry-clock updates.
     let query = if super::checkpoint_index::schema(conn, false)? {
-        "SELECT node_key,next_key,payload_key,byte_length,prefix,suffix,padding FROM ndr_kv_checkpoint_nodes INDEXED BY ndr_kv_checkpoint_node_namespace WHERE owner_pubkey_hex=?1 AND device_pubkey_hex=?2 AND key=?3 ORDER BY rowid"
+        "SELECT node_key,next_key,payload_key,byte_length,prefix,suffix,padding,rowid FROM ndr_kv_checkpoint_nodes INDEXED BY ndr_kv_checkpoint_node_namespace WHERE owner_pubkey_hex=?1 AND device_pubkey_hex=?2 AND key=?3 ORDER BY rowid"
     } else {
-        "SELECT node_key,next_key,payload_key,byte_length,prefix,suffix,padding FROM ndr_kv_checkpoint_nodes WHERE owner_pubkey_hex=?1 AND device_pubkey_hex=?2 AND key=?3"
+        "SELECT node_key,next_key,payload_key,byte_length,prefix,suffix,padding,rowid FROM ndr_kv_checkpoint_nodes WHERE owner_pubkey_hex=?1 AND device_pubkey_hex=?2 AND key=?3"
     };
     let mut stmt = conn.prepare(query).map_err(err)?;
     let mut rows = stmt.query(ns).map_err(err)?;
@@ -182,6 +183,7 @@ fn nodes<T>(
         }
         segmented::account_io(key.len() + view.stored_bytes(), 0);
         let node = Node {
+            rowid: row.get(7).map_err(err)?,
             bytes: view.bytes,
             prefix_len: view.prefix.len(),
             suffix_len: view.suffix.len(),
@@ -442,7 +444,11 @@ pub(super) fn put(
         .transpose()?
         .unwrap_or_default();
     let old_payloads = payloads(&tx, ns, &old, true)?;
-    let mut update_node = tx.prepare("INSERT INTO ndr_kv_checkpoint_nodes(owner_pubkey_hex,device_pubkey_hex,key,node_key,next_key,payload_key,byte_length,prefix,suffix,padding) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10) ON CONFLICT(owner_pubkey_hex,device_pubkey_hex,key,node_key) DO UPDATE SET next_key=excluded.next_key,payload_key=excluded.payload_key,byte_length=excluded.byte_length,prefix=excluded.prefix,suffix=excluded.suffix,padding=excluded.padding").map_err(err)?;
+    // Existing rows were validated in this same savepoint. Address their rowid
+    // directly instead of attempting a compound-key insertion for every retry
+    // clock. No row identity survives this transaction or bypasses validation.
+    let mut update_node = tx.prepare("UPDATE ndr_kv_checkpoint_nodes SET next_key=?1,payload_key=?2,byte_length=?3,prefix=?4,suffix=?5,padding=?6 WHERE rowid=?7").map_err(err)?;
+    let mut insert_node = tx.prepare("INSERT INTO ndr_kv_checkpoint_nodes(owner_pubkey_hex,device_pubkey_hex,key,node_key,next_key,payload_key,byte_length,prefix,suffix,padding) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)").map_err(err)?;
     let mut current_payloads = BTreeSet::new();
     for (index, part) in value.parts.iter().enumerate() {
         let node = proposed_node(value, index);
@@ -457,20 +463,37 @@ pub(super) fn put(
             }
         }
         if changed[index] {
-            update_node
-                .execute(rusqlite::params![
-                    ns.0,
-                    ns.1,
-                    ns.2,
-                    part.key,
-                    node.next,
-                    node.payload,
-                    node.bytes as i64,
-                    node.prefix,
-                    node.suffix,
-                    node.padding as i64
-                ])
-                .map_err(err)?;
+            let affected = if let Some(previous) = old.get(part.key.as_slice()) {
+                update_node
+                    .execute(rusqlite::params![
+                        node.next,
+                        node.payload,
+                        node.bytes as i64,
+                        node.prefix,
+                        node.suffix,
+                        node.padding as i64,
+                        previous.rowid
+                    ])
+                    .map_err(err)?
+            } else {
+                insert_node
+                    .execute(rusqlite::params![
+                        ns.0,
+                        ns.1,
+                        ns.2,
+                        part.key,
+                        node.next,
+                        node.payload,
+                        node.bytes as i64,
+                        node.prefix,
+                        node.suffix,
+                        node.padding as i64
+                    ])
+                    .map_err(err)?
+            };
+            if affected != 1 {
+                return Err(invalid());
+            }
             segmented::account_io(0, part.key.len() + node.stored_bytes());
         }
     }
@@ -503,5 +526,6 @@ pub(super) fn put(
         segmented::account_io(0, 24 + meta.head.as_ref().map_or(0, Vec::len));
     }
     drop(update_node);
+    drop(insert_node);
     tx.commit().map_err(err)
 }
