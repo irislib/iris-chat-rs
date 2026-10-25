@@ -624,7 +624,10 @@ mod tests {
             .since(Timestamp::from(10))
             .until(Timestamp::from(20))
             .limit(1);
-        assert!(discovery_filter_is_covered(&bounded, &[stable.clone()]));
+        assert!(discovery_filter_is_covered(
+            &bounded,
+            std::slice::from_ref(&stable)
+        ));
         assert!(!discovery_filter_is_covered(&stable, &[bounded]));
         for changed in [
             Filter::new()
@@ -636,7 +639,10 @@ mod tests {
             stable.clone().pubkey(Keys::generate().public_key()),
             stable.clone().search("uncovered selector"),
         ] {
-            assert!(!discovery_filter_is_covered(&changed, &[stable.clone()]));
+            assert!(!discovery_filter_is_covered(
+                &changed,
+                std::slice::from_ref(&stable)
+            ));
         }
     }
 
