@@ -2,6 +2,26 @@
 
 Each release has channel-specific notes. The release tag must match the `##` heading exactly.
 
+## v2026.10.25.1
+
+### GitHub
+
+- Reuse existing isolated discovery workers when the app returns to the foreground, including profile updates published while offline. Redeliver unchanged metadata when recovery explicitly requests it, without repeating cold fetches for covered discovery filters.
+- Preserve separate author and message-server scopes, fresh anonymous authentication on new connections, and the existing cold-fetch path for other selectors.
+- Add a foreground recovery regression that checks serialized requests and progress when one message server stalls.
+- Require both one-server and optimized five-server populated discovery CPU gates, covering 2,400 author/server pairs including live-endpoint discovery, with 64 retained connections across the whole process.
+- Update the CLI source package to 0.1.52. The protocol package remains 0.3.8; the message wire format and stored message state are unchanged from v2026.10.25.
+
+### Apple
+
+- Avoid repeated connection setup when returning to Iris.
+- Catch up on profile changes while keeping chats responsive when a message server is slow.
+
+### Zapstore
+
+- Avoid repeated connection setup when returning to Iris.
+- Catch up on profile changes while keeping chats responsive when a message server is slow.
+
 ## v2026.10.25
 
 ### GitHub

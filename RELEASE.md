@@ -184,20 +184,25 @@ remains a workflow artifact and is excluded from the app release files.
 
 The mandatory Rust suite also restores a generated 100 MiB account database with
 96 contacts, three devices per contact, three own devices and eight groups,
-plus 96 separate live-endpoint discovery scopes.
-Its populated-discovery test waits for all anonymous author scopes to settle,
-then requires two 35-second windows below 5% of one CPU core with no repeated
-application requests. Two further 125-second windows cover actual recurring
-discovery polls for every author, each below 5% of one CPU core, followed
-by prompt targeted proof recovery. TLS sessions stay isolated by author and
-exact message-server URL; a quiet gap alone does not satisfy the CPU gate. Signed wire
+plus 96 separate live-endpoint discovery scopes. The ordinary core suite runs
+the one-relay populated-discovery test once. After that suite, the runner uses
+the existing target cache to run the optimized five-relay variant exactly once,
+covering all 2,400 author/relay pairs, including live-endpoint discovery.
+Both variants wait for every author/relay pair to settle, then require two
+35-second windows below 5% of one CPU core with no repeated application
+requests. Two further 125-second windows cover actual recurring discovery polls
+for every pair, each below 5% of one CPU core, followed by prompt targeted proof
+recovery on every relay. TLS sessions stay isolated by author and exact
+message-server URL; a quiet gap alone does not satisfy the CPU gate. Signed wire
 checks must keep each peer separate from account receiving and authentication.
-Count completed request/close pairs independently of connections. Each cycle
-must exercise all 64 retained connections and the remaining disposable readers,
-whose new connections require scoped TLS resumption and fresh anonymous
-authentication. Connection reuse must not hide missed polls or extra traffic.
-Retain its CPU/wire receipt and full child log with the private-control test
-artifact. The relayless resource fixture alone does not cover this workload.
+Count completed request/close pairs independently of connections, with per-relay
+counters matching the process totals. Each cycle must exercise all 64 retained
+connections across the whole process, not 64 per relay, and the remaining
+disposable readers, whose new connections require scoped TLS resumption and
+fresh anonymous authentication. Connection reuse must not hide missed polls or
+extra traffic. Retain both CPU/wire receipts and full child logs with the
+private-control test artifact. The relayless resource fixture alone does not
+cover this workload.
 
 The Rust suite also exercises a 254,672,896-byte protocol checkpoint with 22,702
 queued group repairs and 19,231 encrypted group messages. Small incoming and
