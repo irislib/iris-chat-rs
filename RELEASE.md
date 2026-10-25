@@ -117,6 +117,10 @@ The release tag is the actual release date: `vYYYY.M.D`. If another immutable
 build is needed on the same date, use `.1`, `.2`, and so on. Never move or
 replace a published tag.
 
+Update both package versions and every build version argument in `haps.toml`
+for the same tag. Check all six source package variants with
+`python3 scripts/validate-haps-manifest.py --tag <tag>` before dispatching CI.
+
 Choose pre-release checks according to the changed components and release risk:
 
 ```bash
