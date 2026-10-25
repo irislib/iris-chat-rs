@@ -17,6 +17,41 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class ReleaseWorkflowTests(unittest.TestCase):
+    def test_protocol_scope_keeps_default_and_tagged_gates_complete(self) -> None:
+        workflow = (ROOT / ".github/workflows/ci.yml").read_text()
+        rust = workflow.split("\n  rust:\n", 1)[1].split("\n  android:\n", 1)[0]
+        self.assertIn("inputs.scope == 'protocol'", rust)
+        self.assertIn("core, protocol, android", workflow)
+        lint = rust.split("      - name: Rust lint including test targets\n", 1)[1].split("      - name:", 1)[0]
+        self.assertIn("crates=(core chat-protocol protocol-ffi)", lint)
+        self.assertIn('if [[ "$VALIDATION_SCOPE" == protocol ]]; then crates=(chat-protocol); fi', lint)
+        default = rust.split("      - name: Rust tests\n", 1)[1].split("      - name:", 1)[0]
+        self.assertIn("if: inputs.scope != 'protocol'", default)
+        self.assertIn('IRIS_PRIVATE_CONTROL_FIXTURE_OUTPUT="$PWD/work/private-controls/native-private-controls.json" ./scripts/test_rust.sh\n', default)
+        self.assertIn("test -s work/private-controls/native-private-controls.json", default)
+        fixture = rust.split("      - name: Upload native private-control interoperability fixture\n", 1)[1].split("      - name:", 1)[0]
+        self.assertIn("if: inputs.scope != 'protocol'", fixture)
+        protocol = rust.split("      - name: Protocol tests\n", 1)[1].split("      - name:", 1)[0]
+        self.assertIn("if: inputs.scope == 'protocol'", protocol)
+        self.assertIn("set -Eeuo pipefail", protocol)
+        self.assertIn('IRIS_PROTOCOL_TEST_OUTPUT_DIR="$PWD/work/protocol-checks"', protocol)
+        self.assertIn("./scripts/test_rust.sh --protocol-only 2>&1 | tee work/protocol-checks/protocol-tests.log", protocol)
+        self.assertNotIn("native-private-controls", protocol)
+        for binding in ("git rev-parse HEAD", "git rev-parse HEAD^{tree}", "GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT", "source-sha256.txt"):
+            self.assertIn(binding, protocol)
+        upload = rust.split("      - name: Retain protocol test evidence\n", 1)[1].split("      - name:", 1)[0]
+        self.assertIn("if: ${{ always() && inputs.scope == 'protocol' }}", upload)
+        self.assertIn("path: iris-chat-rs/work/protocol-checks/", upload)
+        package = rust.split("      - name: Verify protocol package\n", 1)[1].split("      - name:", 1)[0]
+        self.assertNotIn("        if:", package)
+        self.assertIn("cargo package --manifest-path chat-protocol/Cargo.toml --locked", package)
+        self.assertEqual((ROOT / "scripts/test_rust.sh").read_text().count("<<'BATCHED_CPU_RECEIPT'"), 1)
+        release = (ROOT / ".github/workflows/release.yml").read_text()
+        fast = (ROOT / "scripts/test_fast.sh").read_text()
+        self.assertIn("scripts/verify.sh fast", release)
+        self.assertNotIn("--protocol-only", release + fast)
+        self.assertEqual(fast.count('run_step "Rust tests" "${ROOT_DIR}/scripts/test_rust.sh"'), 2)
+
     def test_ios_units_run_independently_after_successful_build(self) -> None:
         workflow = (ROOT / ".github/workflows/ci.yml").read_text()
         ios = workflow.split("\n  ios:\n", 1)[1].split("\n  windows-ui:\n", 1)[0]

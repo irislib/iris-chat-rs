@@ -2,6 +2,16 @@
 
 set -Eeuo pipefail
 
+protocol_only=0
+if [[ $# -ne 0 ]]; then
+    if [[ $# -eq 1 && "$1" == --protocol-only ]]; then
+        protocol_only=1
+    else
+        echo "usage: scripts/test_rust.sh [--protocol-only]" >&2
+        exit 2
+    fi
+fi
+
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 cd "${ROOT_DIR}/core"
@@ -11,7 +21,7 @@ export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-${ROOT_DIR}/core/target}"
 
 # Device approval has its own build-time relay, separate from SetNostrRelays.
 # Keep FFI integration tests local unless the caller supplies a fixture.
-if [[ -z "${IRIS_DEVICE_APPROVAL_RELAY_URL:-}" ]]; then
+if [[ "$protocol_only" == 0 && -z "${IRIS_DEVICE_APPROVAL_RELAY_URL:-}" ]]; then
     approval_fixture="$(mktemp -d "${TMPDIR:-/tmp}/iris-rust-approval.XXXXXX")"
     cleanup_approval_fixture() {
         python3 "${ROOT_DIR}/scripts/persistent_local_nostr_relay.py" stop \
@@ -40,7 +50,7 @@ fi
 
 # Preserve the capped-process calibration and peak-memory evidence in Linux
 # release logs; successful output is otherwise hidden by either suite runner.
-if [[ "$(uname -s)" == "Linux" ]]; then
+if [[ "$protocol_only" == 0 && "$(uname -s)" == "Linux" ]]; then
     cargo test --manifest-path "${ROOT_DIR}/core/Cargo.toml" --locked --lib \
         core::protocol::anonymous_reads::memory_tests::populated_account_discovery_under_memory_limit \
         -- --exact --nocapture
@@ -49,11 +59,16 @@ fi
 # Prefer cargo-nextest when available: it runs test binaries in parallel
 # (cargo test runs them serially), which makes a big difference for the
 # CLI integration tests. Fall back to cargo test if nextest isn't installed.
-for crate in core chat-protocol protocol-ffi; do
+crates=(core chat-protocol protocol-ffi)
+if [[ "$protocol_only" == 1 ]]; then crates=(chat-protocol); fi
+for crate in "${crates[@]}"; do
     args=(--manifest-path "${ROOT_DIR}/${crate}/Cargo.toml" --locked)
     if command -v cargo-nextest >/dev/null 2>&1; then
         cargo nextest run --no-fail-fast "${args[@]}"
         cargo test -q --doc "${args[@]}"
+    elif [[ "$protocol_only" == 1 ]]; then
+        # Keep named corruption/rollback results visible in the focused job.
+        cargo test "${args[@]}"
     else
         cargo test -q "${args[@]}"
     fi
@@ -241,16 +256,23 @@ FANOUT_RECEIPT
         if [[ "$(uname -s)" == Linux ]]; then
             # One optimized protocol test, sharing the existing target/cache.
             # Retain complete stdout in the caller's log, including Cargo failure.
-            # The subshell owns only its mktemp file; the outer relay trap remains.
+            # Focused CI retains its log; default runs clean up only their mktemp.
             (
-                batched_log="$(mktemp "${TMPDIR:-/tmp}/iris-batched-retry.XXXXXX")"
-                trap 'rm -f "$batched_log"' EXIT
+                batched_receipt=""
+                if [[ "$protocol_only" == 1 && -n "${IRIS_PROTOCOL_TEST_OUTPUT_DIR:-}" ]]; then
+                    mkdir -p "$IRIS_PROTOCOL_TEST_OUTPUT_DIR"
+                    batched_log="$IRIS_PROTOCOL_TEST_OUTPUT_DIR/batched-retry.log"
+                    batched_receipt="$IRIS_PROTOCOL_TEST_OUTPUT_DIR/batched-retry-cpu.json"
+                else
+                    batched_log="$(mktemp "${TMPDIR:-/tmp}/iris-batched-retry.XXXXXX")"
+                    trap 'rm -f "$batched_log"' EXIT
+                fi
                 CARGO_PROFILE_RELEASE_OPT_LEVEL=3 CARGO_PROFILE_RELEASE_DEBUG=1 \
                 CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS=false \
                     cargo test "${args[@]}" --release --jobs 2 --lib \
                     protocol_engine::tests::restored_backlog_batched_retry_stays_within_cpu_budget \
                     -- --ignored --exact --test-threads=1 --nocapture 2>&1 | tee "$batched_log"
-                python3 - "$batched_log" <<'BATCHED_CPU_RECEIPT'
+                python3 - "$batched_log" "$batched_receipt" <<'BATCHED_CPU_RECEIPT'
 import json
 import math
 from pathlib import Path
@@ -326,6 +348,8 @@ restart = result["restart_progress"]
 assert all(type(restart[key]) is int and restart[key] >= 0 for key in counts)
 assert all(type(restart[key]) is bool for key in ("active_cursor", "prepared_result"))
 assert restart["search_starts"] == restart["repeated_search_starts"] == 0, "Restart readiness ran a key search"
+if len(sys.argv) > 2 and sys.argv[2]:
+    Path(sys.argv[2]).write_text(json.dumps(result, indent=2) + "\n")
 print("Batched protocol CPU, progress and restart evidence verified")
 BATCHED_CPU_RECEIPT
             )

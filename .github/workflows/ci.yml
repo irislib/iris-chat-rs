@@ -20,7 +20,7 @@ on:
         description: Checks to run; retain exact source-bound coverage for unchanged components
         type: choice
         default: all
-        options: [all, cli, core, android, windows, windows-keyboard, windows-restore, apple, ios, ios-unit, macos, linux, apple-products, ios-products, macos-products, ios-ui-runner, macos-ui-runner]
+        options: [all, cli, core, protocol, android, windows, windows-keyboard, windows-restore, apple, ios, ios-unit, macos, linux, apple-products, ios-products, macos-products, ios-ui-runner, macos-ui-runner]
       ios_core_seed_run:
         description: Optional exact successful core build/cache producer for Swift-only unit validation
         type: string
@@ -71,7 +71,7 @@ jobs:
       platform: ${{ inputs.scope == 'macos-ui-runner' && 'macos-ui' || inputs.scope == 'ios-ui-runner' && 'ios-ui' || inputs.scope == 'ios-products' && 'ios' || inputs.scope == 'macos-products' && 'macos' || 'both' }}
 
   rust:
-    if: ${{ inputs.scope == '' || inputs.scope == 'all' || inputs.scope == 'core' }}
+    if: ${{ inputs.scope == '' || inputs.scope == 'all' || inputs.scope == 'core' || inputs.scope == 'protocol' }}
     name: Rust and repo checks
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -123,12 +123,17 @@ jobs:
           cargo fmt --manifest-path linux/Cargo.toml -- --check
 
       - name: Rust lint including test targets
+        env:
+          VALIDATION_SCOPE: ${{ inputs.scope }}
         run: |
-          for crate in core chat-protocol protocol-ffi; do
+          crates=(core chat-protocol protocol-ffi)
+          if [[ "$VALIDATION_SCOPE" == protocol ]]; then crates=(chat-protocol); fi
+          for crate in "${crates[@]}"; do
             cargo clippy --manifest-path "$crate/Cargo.toml" --locked --all-targets -- -D warnings
           done
 
       - name: Rust tests
+        if: inputs.scope != 'protocol'
         run: |
           mkdir -p work/private-controls
           IRIS_PRIVATE_CONTROL_FIXTURE_OUTPUT="$PWD/work/private-controls/native-private-controls.json" ./scripts/test_rust.sh
@@ -138,11 +143,36 @@ jobs:
           sha256sum native-private-controls.json > SHA256SUMS
 
       - name: Upload native private-control interoperability fixture
+        if: inputs.scope != 'protocol'
         uses: actions/upload-artifact@v4
         with:
           name: native-private-control-fixture
           path: iris-chat-rs/work/private-controls/
           if-no-files-found: error
+          retention-days: 14
+
+      - name: Protocol tests
+        if: inputs.scope == 'protocol'
+        run: |
+          set -Eeuo pipefail
+          mkdir -p work/protocol-checks
+          {
+            printf 'commit=%s\n' "$(git rev-parse HEAD)"
+            printf 'tree=%s\n' "$(git rev-parse HEAD^{tree})"
+            printf 'run_id=%s\nrun_attempt=%s\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT"
+          } > work/protocol-checks/provenance.txt
+          git ls-files -z chat-protocol scripts/test_rust.sh .github/workflows/ci.yml |
+            xargs -0 sha256sum > work/protocol-checks/source-sha256.txt
+          IRIS_PROTOCOL_TEST_OUTPUT_DIR="$PWD/work/protocol-checks" \
+            ./scripts/test_rust.sh --protocol-only 2>&1 | tee work/protocol-checks/protocol-tests.log
+
+      - name: Retain protocol test evidence
+        if: ${{ always() && inputs.scope == 'protocol' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: protocol-checks
+          path: iris-chat-rs/work/protocol-checks/
+          if-no-files-found: warn
           retention-days: 14
 
       - name: Verify protocol package

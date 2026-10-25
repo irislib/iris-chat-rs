@@ -215,20 +215,20 @@ def batched_output(mode):
 
 
 class RustRunnerTests(unittest.TestCase):
-    def commands(self, nextest, platform="Darwin"):
+    def commands(self, nextest, platform="Darwin", protocol_only=False):
         commands = []
-        if platform == "Linux":
+        if platform == "Linux" and not protocol_only:
             commands.append([
                 "test", "--manifest-path", str(ROOT / "core/Cargo.toml"), "--locked",
                 "--lib", MEMORY_TEST, "--", "--exact", "--nocapture",
             ])
-        for crate in CRATES:
+        for crate in (("chat-protocol",) if protocol_only else CRATES):
             args = ["--manifest-path", str(ROOT / crate / "Cargo.toml"), "--locked"]
             if nextest:
                 commands.append(["nextest", "run", "--no-fail-fast", *args])
                 commands.append(["test", "-q", "--doc", *args])
             else:
-                commands.append(["test", "-q", *args])
+                commands.append(["test", *([] if protocol_only else ["-q"]), *args])
             if crate == "core" and platform == "Linux":
                 commands.append(fanout_command())
             if crate == "chat-protocol":
@@ -239,13 +239,14 @@ class RustRunnerTests(unittest.TestCase):
 
     def run_runner(self, nextest, target=None, fail_on=None, approval_relay=None,
                    fail_relay=False, platform="Darwin", cpu_receipt=None,
-                   checkpoint_output="passed", batched_mode="passed", fanout_mode="passed"):
+                   checkpoint_output="passed", batched_mode="passed", fanout_mode="passed",
+                   runner_args=()):
         with tempfile.TemporaryDirectory(prefix="iris-rust-runner-") as tmp:
             directory = pathlib.Path(tmp)
             binary_dir = directory / "bin"
             binary_dir.mkdir()
             # Isolate PATH so the fallback test cannot discover a real nextest.
-            for command in ("dirname", "mktemp", "rm", "tee"):
+            for command in ("dirname", "mktemp", "mkdir", "rm", "tee"):
                 (binary_dir / command).symlink_to(shutil.which(command))
             uname = binary_dir / "uname"
             uname.write_text('#!/bin/sh\nprintf "%s\\n" "$IRIS_TEST_PLATFORM"\n')
@@ -267,7 +268,7 @@ class RustRunnerTests(unittest.TestCase):
                 f'#!{sys.executable}\n'
                 'import json, os, pathlib, sys\n'
                 'env = os.environ\n'
-                'if env["IRIS_DEVICE_APPROVAL_RELAY_URL"] != env["IRIS_TEST_EXPECTED_RELAY"]: sys.exit(38)\n'
+                'if env.get("IRIS_DEVICE_APPROVAL_RELAY_URL", "") != env["IRIS_TEST_EXPECTED_RELAY"]: sys.exit(38)\n'
                 'with open(env["IRIS_TEST_LOG"], "a") as log:\n'
                 '    log.write("\\t".join([os.getcwd(), env["CARGO_TARGET_DIR"], *sys.argv[1:]]) + "\\n")\n'
                 'if sys.argv[1:] == json.loads(env["IRIS_TEST_FAIL_COMMAND"]):\n'
@@ -312,7 +313,7 @@ class RustRunnerTests(unittest.TestCase):
             env = dict(
                 os.environ, PATH=str(binary_dir), TMPDIR=str(scratch), IRIS_TEST_LOG=str(log),
                 IRIS_TEST_RELAY_LOG=str(relay_log), IRIS_TEST_RELAY_FAIL=str(int(fail_relay)),
-                IRIS_TEST_EXPECTED_RELAY=approval_relay or "ws://127.0.0.1:45678",
+                IRIS_TEST_EXPECTED_RELAY=approval_relay or ("" if runner_args else "ws://127.0.0.1:45678"),
                 IRIS_TEST_PLATFORM=platform, IRIS_TEST_REAL_PYTHON=sys.executable,
                 IRIS_TEST_CHECKPOINT_OUTPUT=checkpoint_output,
                 IRIS_TEST_BATCHED_OUTPUT=batched_output(batched_mode),
@@ -324,6 +325,10 @@ class RustRunnerTests(unittest.TestCase):
             env.pop("CARGO_TARGET_DIR", None)
             env.pop("IRIS_DEVICE_APPROVAL_RELAY_URL", None)
             env.pop("IRIS_PRIVATE_CONTROL_FIXTURE_OUTPUT", None)
+            env.pop("IRIS_PROTOCOL_TEST_OUTPUT_DIR", None)
+            protocol_output = directory / "protocol-evidence"
+            if runner_args == ("--protocol-only",):
+                env["IRIS_PROTOCOL_TEST_OUTPUT_DIR"] = str(protocol_output)
             if cpu_receipt is not None:
                 output = directory / "fixture"
                 output.mkdir()
@@ -422,7 +427,7 @@ class RustRunnerTests(unittest.TestCase):
                 env["CARGO_TARGET_DIR"] = target
             env["IRIS_TEST_FAIL_COMMAND"] = json.dumps(fail_on or [])
             result = subprocess.run(
-                [shutil.which("bash"), str(ROOT / "scripts/test_rust.sh")],
+                [shutil.which("bash"), str(ROOT / "scripts/test_rust.sh"), *runner_args],
                 cwd=directory,
                 env=env,
                 capture_output=True,
@@ -432,8 +437,8 @@ class RustRunnerTests(unittest.TestCase):
             for cwd, actual_target, *_ in calls:
                 self.assertEqual(cwd, str(ROOT / "core"))
                 self.assertEqual(actual_target, target or str(ROOT / "core/target"))
-            if approval_relay:
-                self.assertFalse(relay_log.exists(), "must not start or stop a caller-owned relay")
+            if approval_relay or runner_args:
+                self.assertFalse(relay_log.exists(), "must not start an unnecessary or caller-owned relay")
             else:
                 relay_calls = [line.rstrip("\t").split("\t") for line in relay_log.read_text().splitlines()]
                 self.assertEqual([call[1] for call in relay_calls], ["start", "stop"])
@@ -443,7 +448,54 @@ class RustRunnerTests(unittest.TestCase):
                 self.assertEqual(stop[stop.index("--pid-file") + 1], pid_file)
                 self.assertFalse(pathlib.Path(pid_file).parent.exists(), "fixture directory was not removed")
             self.assertEqual(list(scratch.iterdir()), [], "runner-owned temporary files were not removed")
+            result.protocol_files = {p.name: p.read_text() for p in protocol_output.glob("*")}
             return result, [call[2:] for call in calls]
+
+    def test_protocol_only_runs_complete_protocol_and_canonical_gates(self):
+        for nextest in (True, False):
+            with self.subTest(nextest=nextest):
+                result, calls = self.run_runner(nextest, platform="Linux", runner_args=("--protocol-only",))
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(calls, self.commands(nextest, "Linux", protocol_only=True))
+                self.assertEqual(calls.count(checkpoint_command()), 1)
+                self.assertEqual(calls.count(batched_command()), 1)
+                raw = result.protocol_files["batched-retry.log"]
+                receipt = json.loads(result.protocol_files["batched-retry-cpu.json"])
+                self.assertEqual(receipt, json.loads(next(line.split(" ", 1)[1] for line in raw.splitlines()
+                                                         if line.startswith("batched_retry_cpu "))))
+                self.assertIn("Batched protocol CPU, progress and restart evidence verified", result.stdout)
+
+    def test_protocol_only_rejects_arguments_before_any_work(self):
+        for args in (("--unknown",), ("--protocol-only", "extra"), ("--protocol-only", "--protocol-only"), ("",)):
+            with self.subTest(args=args):
+                result, calls = self.run_runner(False, platform="Linux", runner_args=args)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertEqual(calls, [])
+                self.assertEqual(result.protocol_files, {})
+
+    def test_protocol_only_failure_preserves_log_without_passed_receipt(self):
+        for nextest in (True, False):
+            for mode in ("cargo-failure", "missing-marker", "excess-first", "excess-second"):
+                with self.subTest(nextest=nextest, mode=mode):
+                    result, calls = self.run_runner(nextest, platform="Linux", runner_args=("--protocol-only",),
+                        fail_on=batched_command() if mode == "cargo-failure" else None,
+                        batched_mode="passed" if mode == "cargo-failure" else mode)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertEqual(calls, self.commands(nextest, "Linux", protocol_only=True))
+                    self.assertNotIn("batched-retry-cpu.json", result.protocol_files)
+                    raw = result.protocol_files["batched-retry.log"]
+                    self.assertIn("Synthetic cargo failure" if mode == "cargo-failure" else "batched_retry_slice ", raw)
+                    self.assertNotIn("Batched protocol CPU, progress and restart evidence verified", result.stdout)
+
+    def test_protocol_only_checkpoint_failure_stops_before_cpu(self):
+        for nextest in (True, False):
+            for mode in ("zero-tests", "wrong-counts"):
+                with self.subTest(nextest=nextest, mode=mode):
+                    result, calls = self.run_runner(nextest, platform="Linux", runner_args=("--protocol-only",),
+                                                    checkpoint_output=mode)
+                    self.assertEqual(result.returncode, 1)
+                    self.assertEqual(calls, self.commands(nextest, "Linux", protocol_only=True)[:-1])
+                    self.assertEqual(result.protocol_files, {})
 
     def test_runs_all_crates_and_doc_tests_with_each_runner(self):
         for nextest in (True, False):
