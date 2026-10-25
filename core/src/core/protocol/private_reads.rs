@@ -340,6 +340,83 @@ impl PrivateDiscoveryClient {
 }
 
 impl AppCore {
+    /// Keep foreground recovery on the existing one-author discovery workers.
+    /// Their unbounded filters also recover late metadata; unrelated/private
+    /// selectors retain the ordinary cold-fetch path.
+    pub(super) fn delegate_private_discovery_catch_up(
+        &mut self,
+        requested: Vec<Filter>,
+        relays: &[RelayUrl],
+    ) -> Vec<Filter> {
+        if requested.is_empty() {
+            return requested;
+        }
+        let Some(plan) = self
+            .protocol_subscription_runtime
+            .desired_plan
+            .clone()
+            .or_else(|| self.compute_protocol_subscription_plan())
+        else {
+            return requested;
+        };
+        let (_, stable) =
+            self.split_private_discovery_filters(build_protocol_subscription_filters(&plan));
+        let scopes = match self.private_discovery_subscriptions(stable) {
+            Ok(scopes) => scopes,
+            Err(error) => {
+                self.push_debug_log("protocol.discovery.catch_up.error", error);
+                return requested;
+            }
+        };
+        let mut configured = std::collections::BTreeMap::new();
+        for (scope, filters) in scopes {
+            let Some(scope) = scope.upgrade() else {
+                continue;
+            };
+            let Some(author) = filters
+                .first()
+                .and_then(|filter| filter.authors.as_ref())
+                .and_then(|authors| authors.first())
+                .copied()
+            else {
+                continue;
+            };
+            let already_configured = scope.config.borrow().is_some();
+            match scope.configure(relays, filters.clone()) {
+                Ok(()) => {
+                    configured.insert(author, (scope, filters, already_configured));
+                }
+                Err(error) => self.push_debug_log("protocol.discovery.catch_up.error", error),
+            }
+        }
+        let mut demanded = HashSet::new();
+        requested
+            .into_iter()
+            .filter(|filter| {
+                let Some(author) = filter
+                    .authors
+                    .as_ref()
+                    .filter(|authors| authors.len() == 1)
+                    .and_then(|authors| authors.first())
+                else {
+                    return true;
+                };
+                let Some((scope, filters, already_configured)) = configured.get(author) else {
+                    return true;
+                };
+                if !discovery_filter_is_covered(filter, filters) {
+                    return true;
+                }
+                // A new worker immediately delivers its initial poll. Existing
+                // workers must redeliver unchanged events for explicit recovery.
+                if *already_configured && demanded.insert(*author) {
+                    scope.refresh();
+                }
+                false
+            })
+            .collect()
+    }
+
     pub(in crate::core) fn refresh_private_discovery_for_author(&self, author: PublicKey) {
         if let Some(scope) = self
             .protocol_subscription_runtime
@@ -476,6 +553,14 @@ impl AppCore {
     }
 }
 
+fn discovery_filter_is_covered(requested: &Filter, configured: &[Filter]) -> bool {
+    let mut unbounded = requested.clone();
+    unbounded.since = None;
+    unbounded.until = None;
+    unbounded.limit = None;
+    configured.iter().any(|filter| filter == &unbounded)
+}
+
 fn is_public_discovery_filter(filter: &Filter) -> bool {
     (filter.authors.is_some() && filter.kinds.is_none())
         || filter.kinds.as_ref().is_some_and(|kinds| {
@@ -529,6 +614,31 @@ mod verification_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn catch_up_requires_the_exact_unbounded_discovery_selectors() {
+        let author = Keys::generate().public_key();
+        let stable = Filter::new().author(author).kind(Kind::Metadata);
+        let bounded = stable
+            .clone()
+            .since(Timestamp::from(10))
+            .until(Timestamp::from(20))
+            .limit(1);
+        assert!(discovery_filter_is_covered(&bounded, &[stable.clone()]));
+        assert!(!discovery_filter_is_covered(&stable, &[bounded]));
+        for changed in [
+            Filter::new()
+                .author(Keys::generate().public_key())
+                .kind(Kind::Metadata),
+            Filter::new()
+                .author(author)
+                .kind(Kind::from(APP_KEYS_EVENT_KIND as u16)),
+            stable.clone().pubkey(Keys::generate().public_key()),
+            stable.clone().search("uncovered selector"),
+        ] {
+            assert!(!discovery_filter_is_covered(&changed, &[stable.clone()]));
+        }
+    }
 
     #[test]
     fn quiet_discovery_has_bounded_freshness_and_demand_resets_it() {

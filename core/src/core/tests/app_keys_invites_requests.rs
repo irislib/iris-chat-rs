@@ -1564,8 +1564,12 @@ fn single_protocol_plan_builds_filters_for_all_protocol_inputs() {
         "private invite-response filters must be derived from recipient #p values"
     );
     assert!(
-        !has_filter_with_kind(&filters, 0),
-        "profile metadata should stay a targeted lookup, not a live subscription"
+        filters.contains(
+            &Filter::new()
+                .kind(Kind::Metadata)
+                .author(owner.public_key())
+        ),
+        "known-owner profiles must share the stable discovery plan with their roster"
     );
 }
 
@@ -1610,7 +1614,9 @@ fn recent_protocol_filters_backfill_messages_without_time_or_count_bounds() {
     };
     let message_filter = find_filter(MESSAGE_EVENT_KIND, message_author.public_key());
     assert!(
-        !serde_json::to_string(&filters).unwrap().contains(&group_author.public_key().to_hex()),
+        !serde_json::to_string(&filters)
+            .unwrap()
+            .contains(&group_author.public_key().to_hex()),
         "saved group plans must not reopen shared group history channels"
     );
     assert!(
@@ -1872,22 +1878,6 @@ fn has_filter_with_kind_author(filters: &[Filter], kind: u32, author: PublicKey)
                         .any(|value| value.as_str() == Some(author_hex.as_str()))
                 });
             has_kind && has_author
-        })
-}
-
-fn has_filter_with_kind(filters: &[Filter], kind: u32) -> bool {
-    filters
-        .iter()
-        .map(|filter| serde_json::to_value(filter).expect("filter json"))
-        .any(|filter| {
-            filter
-                .get("kinds")
-                .and_then(|kinds| kinds.as_array())
-                .is_some_and(|kinds| {
-                    kinds
-                        .iter()
-                        .any(|value| value.as_u64() == Some(kind as u64))
-                })
         })
 }
 
