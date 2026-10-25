@@ -2,6 +2,22 @@
 
 Each release has channel-specific notes. The release tag must match the `##` heading exactly.
 
+## v2026.10.26
+
+### GitHub
+
+- Keep isolated discovery connections open after harmless acknowledgements of completed requests, avoiding unnecessary reconnections.
+- Preserve separate author and message-server scopes, anonymous authentication and bounded idle processing. Unexpected data, re-authentication, flooding and expiry still discard the connection.
+- Update the CLI source package to 0.1.54. The protocol package remains at 0.3.10, with unchanged message formats and saved state.
+
+### Apple
+
+- Avoid unnecessary reconnections to message servers.
+
+### Zapstore
+
+- Avoid unnecessary reconnections to message servers.
+
 ## v2026.10.25.3
 
 ### GitHub
