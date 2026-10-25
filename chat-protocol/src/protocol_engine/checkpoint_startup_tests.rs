@@ -1,4 +1,78 @@
 #[test]
+fn replayed_authorization_does_not_copy_unrelated_pending_backlog() {
+    let mut fixture = remote_send_fixture();
+    let events = [1, 0].map(|created| signed_app_keys(&fixture.peer_owner, &[fixture.ready_device.public_key(), fixture.late_device.public_key()], created));
+    let small = events.iter().map(|event| {
+        let (result, bytes) = remote_roster_tests::allocated_bytes(|| fixture.sender.ingest_app_keys_event(event));
+        assert!(result.unwrap().is_empty());
+        bytes
+    }).collect::<Vec<_>>();
+    fixture.sender.pending_group_fanouts = (0..4096).map(|index|
+        pending_local_group_fanout("unrelated", Some("event"), format!("payload-{index}").as_bytes(), 5)
+    ).collect();
+    let before = fixture.sender.pending_group_fanouts.clone();
+    for (event, small) in events.iter().zip(small) {
+        let (result, large) = remote_roster_tests::allocated_bytes(|| fixture.sender.ingest_app_keys_event(event));
+        eprintln!("authorization_replay small_allocated_bytes={small} backlog_allocated_bytes={large}");
+        assert!(result.unwrap().is_empty());
+        assert_eq!(fixture.sender.pending_group_fanouts, before);
+        assert!(large <= small + 128 * 1024, "replayed authorization copied unrelated backlog: small={small}, large={large}");
+    }
+}
+
+#[test]
+fn replayed_local_authorization_does_not_persist_or_retry() {
+    let mut fixture = remote_send_fixture();
+    let event = signed_app_keys(&fixture.owner, &[fixture.device.public_key()], unix_now().get() + 1);
+    fixture.sender.ingest_app_keys_event(&event).unwrap();
+    let storage = Arc::new(GroupRetryCountingStorage { inner: fixture.sender.storage.clone(), puts: 0.into(), fail_next: false.into() });
+    fixture.sender.storage = storage.clone();
+    let before = fixture.sender.session_manager.snapshot();
+    assert!(fixture.sender.ingest_app_keys_event(&event).unwrap().is_empty());
+    assert!(fixture.sender.ingest_app_keys_snapshot(event.pubkey, AppKeys::from_event(&event).unwrap(), event.created_at.as_secs()).unwrap().is_empty());
+    assert_eq!(fixture.sender.session_manager.snapshot(), before);
+    assert_eq!(storage.puts.load(std::sync::atomic::Ordering::Relaxed), 0, "identical roster must not cause a checkpoint");
+}
+
+#[test]
+fn authorization_admission_failure_restores_exact_previous_generation() {
+    for local in [false, true] {
+        for missing_evidence in [false, true] {
+            let mut fixture = checkpoint_backlog_fixture(32, 8);
+            let signer = if local { &fixture.owner } else { &fixture.peer_owner };
+            let owner = ndr_owner(signer.public_key());
+            if missing_evidence {
+                fixture.sender.invite_owner_app_keys_evidence.remove(&owner);
+                fixture.sender.verified_app_keys_owners.remove(&owner);
+                if local { fixture.sender.local_app_keys_observed = false; }
+            }
+            fixture.sender.persist().unwrap();
+            let before: serde_json::Value = serde_json::from_str(&fixture.store.get(PROTOCOL_ENGINE_STATE_KEY).unwrap().unwrap()).unwrap();
+            let storage = Arc::new(GroupRetryCountingStorage { inner: fixture.store.clone(), puts: 0.into(), fail_next: true.into() });
+            fixture.sender.storage = storage;
+            let event = signed_app_keys(signer, &[], unix_now().get() + 1);
+            assert!(fixture.sender.ingest_app_keys_event(&event).is_err());
+            fixture.sender.persist().unwrap();
+            let after: serde_json::Value = serde_json::from_str(&fixture.store.get(PROTOCOL_ENGINE_STATE_KEY).unwrap().unwrap()).unwrap();
+            assert_eq!(after, before, "admission rollback local={local} missing_evidence={missing_evidence}");
+        }
+    }
+}
+
+#[test]
+fn equal_timestamp_conflicting_authorization_remains_ambiguous() {
+    let mut fixture = remote_send_fixture();
+    let created = unix_now().get();
+    let first = signed_app_keys(&fixture.peer_owner, &[fixture.ready_device.public_key()], created);
+    let conflicting = signed_app_keys(&fixture.peer_owner, &[fixture.late_device.public_key()], created);
+    fixture.sender.ingest_app_keys_event(&first).unwrap();
+    fixture.sender.ingest_app_keys_event(&conflicting).unwrap();
+    assert!(matches!(fixture.sender.invite_owner_app_keys_evidence.get(&ndr_owner(fixture.peer_owner.public_key())), Some(ProtocolAppKeysEvidence::Ambiguous { created_at_secs }) if *created_at_secs == created));
+    fixture.sender.ingest_app_keys_event(&first).unwrap();
+    assert!(matches!(fixture.sender.invite_owner_app_keys_evidence.get(&ndr_owner(fixture.peer_owner.public_key())), Some(ProtocolAppKeysEvidence::Ambiguous { .. })));
+}
+
+#[test]
 fn checkpoint_cold_layout_recovers_core_without_matching_quoted_or_reordered_fields() {
     let prefix = format!("{{\"version\":{},\"pending_group_sender_key_messages\":[],\"pending_group_fanouts\":[],\"pending_inbound\":[]", PROTOCOL_ENGINE_STATE_VERSION);
     let sessions = serde_json::json!({"users": (0..40).map(|i|

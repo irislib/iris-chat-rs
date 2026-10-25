@@ -2,6 +2,23 @@
 
 Each release has channel-specific notes. The release tag must match the `##` heading exactly.
 
+## v2026.10.25
+
+### GitHub
+
+- Reduce database reads when saving large pending-message backlogs. Maintain compact chunk metadata in the same transaction, preserving full-read validation and existing partial writes.
+- Avoid copying the pending backlog and repeating saves when startup replays unchanged device authorizations. Preserve authorization reconciliation, conflicting signed evidence and rollback on failed saves.
+- Add regressions for physical database reads, authorization replay allocations, migration failures, corruption checks and older-client writes.
+- Update the protocol source package to 0.3.8 and the CLI source package to 0.1.51. The message wire format is unchanged from v2026.10.24.1.
+
+### Apple
+
+- Open saved chats faster and reduce processing when many messages are waiting for delivery.
+
+### Zapstore
+
+- Open saved chats faster and reduce processing when many messages are waiting for delivery.
+
 ## v2026.10.24.1
 
 ### GitHub

@@ -206,6 +206,13 @@ and retry metadata, committing them with the ratchet state in one transaction.
 Growth, queue append and retry retirement tests measure actual SQLite writes;
 unchanged saves must write nothing. Existing JSON checkpoints migrate on their
 first save, and read-only recovery still reconstructs the same logical state.
+Incoming and outgoing batch tests also measure SQLite page reads after an
+app-state write and page-cache eviction, so small query results cannot conceal
+repeated traversal of immutable payload pages. Compact chunk metadata is
+maintained transactionally; full reads still validate the original chunks.
+Authorization replay tests must keep unchanged-event allocations independent of
+the pending backlog, avoid unnecessary saves, and preserve exact evidence,
+device reconciliation and rollback of real authorization changes.
 
 On Linux, the same runner also requires exactly one optimized
 `restored_backlog_batched_retry_stays_within_cpu_budget` test. It restores a

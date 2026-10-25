@@ -1,4 +1,5 @@
 mod checkpoint;
+mod checkpoint_index;
 mod checkpoint_sqlite;
 #[cfg(test)]
 mod checkpoint_tests;

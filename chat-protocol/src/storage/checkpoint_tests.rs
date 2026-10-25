@@ -5,6 +5,9 @@ use super::{
 use rusqlite::Connection;
 use std::sync::{Arc, Mutex};
 
+#[path = "checkpoint_index_tests.rs"]
+mod indexes;
+
 fn database() -> (tempfile::TempDir, SharedConnection, SqliteStorageAdapter) {
     let dir = tempfile::tempdir().unwrap();
     let conn = Connection::open(dir.path().join("checkpoint.sqlite3")).unwrap();
@@ -22,6 +25,22 @@ fn pages(conn: &SharedConnection) -> u64 {
         rusqlite::ffi::sqlite3_db_status(
             conn.handle(),
             rusqlite::ffi::SQLITE_DBSTATUS_CACHE_WRITE,
+            &mut current,
+            &mut high,
+            0,
+        )
+    };
+    assert_eq!(result, rusqlite::ffi::SQLITE_OK);
+    current as u64 * 4096
+}
+
+fn read_pages(conn: &SharedConnection) -> u64 {
+    let conn = conn.lock().unwrap();
+    let (mut current, mut high) = (0, 0);
+    let result = unsafe {
+        rusqlite::ffi::sqlite3_db_status(
+            conn.handle(),
+            rusqlite::ffi::SQLITE_DBSTATUS_CACHE_MISS,
             &mut current,
             &mut high,
             0,
@@ -129,6 +148,38 @@ fn checkpoint_records_append_retire_and_metadata_bound_physical_writes() {
             pages(&conn),
             before,
             "no-op checkpoint must not dirty pages"
+        );
+    }
+}
+
+#[test]
+fn checkpoint_metadata_updates_do_not_read_immutable_payload_pages() {
+    let (_dir, conn, storage) = database();
+    let bodies = (0..4096).map(body).collect::<Vec<_>>();
+    let mut retries = vec![1; bodies.len()];
+    storage
+        .put_checkpoint("state", &checkpoint(&bodies, &retries, "before"))
+        .unwrap();
+    conn.lock().unwrap().execute_batch(
+        "PRAGMA wal_checkpoint(TRUNCATE); PRAGMA cache_size=-2048;
+         CREATE TABLE app_state(value INTEGER); INSERT INTO app_state VALUES(0);",
+    ).unwrap();
+    for index in 0..3 {
+        // App state is committed before the protocol batch in production.
+        // Evict the SQLite page cache so this measures actual pager work, not
+        // just the small values returned by length(data)/typeof(data).
+        conn.lock().unwrap().execute_batch(
+            "UPDATE app_state SET value=value+1; PRAGMA shrink_memory;",
+        ).unwrap();
+        retries[index] += 1;
+        let value = checkpoint(&bodies, &retries, "after");
+        let before = read_pages(&conn);
+        storage.put_checkpoint("state", &value).unwrap();
+        let read = read_pages(&conn) - before;
+        eprintln!("checkpoint metadata update {index}: {read} pager bytes");
+        assert!(
+            read <= 2 * 1024 * 1024,
+            "metadata update traversed immutable payload pages: {read} pager bytes"
         );
     }
 }

@@ -23,12 +23,14 @@ fn schema(conn: &Connection, create: bool) -> StorageResult<bool> {
          FROM sqlite_schema WHERE name IN ('ndr_kv_checkpoint','ndr_kv_checkpoint_nodes','ndr_kv_checkpoint_chunks','ndr_kv_checkpoint_delete')", [], |r| Ok((r.get(0)?,r.get(1)?)),
     ).map_err(err)?;
     if count == 4 && valid == 4 {
+        super::checkpoint_index::schema(conn, create)?;
         return Ok(true);
     }
     if count != 0 {
         return Err(invalid());
     }
     if !create {
+        super::checkpoint_index::schema(conn, false)?;
         return Ok(false);
     }
     conn.execute_batch(
@@ -48,6 +50,7 @@ fn schema(conn: &Connection, create: bool) -> StorageResult<bool> {
            DELETE FROM ndr_kv_checkpoint WHERE owner_pubkey_hex=OLD.owner_pubkey_hex AND device_pubkey_hex=OLD.device_pubkey_hex AND key=OLD.key;
          END;"
     ).map_err(err)?;
+    super::checkpoint_index::schema(conn, create)?;
     Ok(true)
 }
 
@@ -149,7 +152,15 @@ fn nodes<T>(
     meta: &Meta,
     mut descriptors: impl FnMut(&[u8], NodeView<'_>) -> T,
 ) -> StorageResult<BTreeMap<Vec<u8>, Node<T>>> {
-    let mut stmt = conn.prepare("SELECT node_key,next_key,payload_key,byte_length,prefix,suffix,padding FROM ndr_kv_checkpoint_nodes WHERE owner_pubkey_hex=?1 AND device_pubkey_hex=?2 AND key=?3").map_err(err)?;
+    // Hash-key order repeatedly evicts/reloads the same node-table pages on a
+    // large backlog. Namespace index order follows rowid without indexing the
+    // mutable descriptors, preserving cheap retry-clock updates.
+    let query = if super::checkpoint_index::schema(conn, false)? {
+        "SELECT node_key,next_key,payload_key,byte_length,prefix,suffix,padding FROM ndr_kv_checkpoint_nodes INDEXED BY ndr_kv_checkpoint_node_namespace WHERE owner_pubkey_hex=?1 AND device_pubkey_hex=?2 AND key=?3 ORDER BY rowid"
+    } else {
+        "SELECT node_key,next_key,payload_key,byte_length,prefix,suffix,padding FROM ndr_kv_checkpoint_nodes WHERE owner_pubkey_hex=?1 AND device_pubkey_hex=?2 AND key=?3"
+    };
+    let mut stmt = conn.prepare(query).map_err(err)?;
     let mut rows = stmt.query(ns).map_err(err)?;
     let mut result = BTreeMap::new();
     while let Some(row) = rows.next().map_err(err)? {
@@ -216,6 +227,7 @@ fn payloads<'a, T>(
     conn: &Connection,
     ns: Namespace<'_>,
     nodes: &'a BTreeMap<Vec<u8>, Node<T>>,
+    indexed: bool,
 ) -> StorageResult<BTreeMap<&'a [u8], PayloadCheck>> {
     let mut expected = BTreeMap::new();
     for node in nodes.values() {
@@ -229,7 +241,12 @@ fn payloads<'a, T>(
             return Err(invalid());
         }
     }
-    let mut stmt = conn.prepare("SELECT payload_key,chunk_index,length(data),typeof(data) FROM ndr_kv_checkpoint_chunks WHERE owner_pubkey_hex=?1 AND device_pubkey_hex=?2 AND key=?3 ORDER BY payload_key,chunk_index").map_err(err)?;
+    let query = if indexed {
+        "SELECT payload_key,chunk_index,byte_length,data_type FROM ndr_kv_checkpoint_chunk_shapes WHERE owner_pubkey_hex=?1 AND device_pubkey_hex=?2 AND key=?3 ORDER BY payload_key,chunk_index"
+    } else {
+        "SELECT payload_key,chunk_index,length(data),typeof(data) FROM ndr_kv_checkpoint_chunks WHERE owner_pubkey_hex=?1 AND device_pubkey_hex=?2 AND key=?3 ORDER BY payload_key,chunk_index"
+    };
+    let mut stmt = conn.prepare(query).map_err(err)?;
     let mut rows = stmt.query(ns).map_err(err)?;
     while let Some(row) = rows.next().map_err(err)? {
         let ValueRef::Blob(key) = row.get_ref(0).map_err(err)? else {
@@ -268,7 +285,7 @@ pub(super) fn get_in_snapshot(
         return Ok(None);
     };
     let nodes = nodes(conn, ns, &meta, owned_descriptors)?;
-    payloads(conn, ns, &nodes)?;
+    payloads(conn, ns, &nodes, false)?;
     let mut output = String::new();
     output.try_reserve_exact(meta.bytes).map_err(err)?;
     let mut next = meta.head.as_ref();
@@ -308,7 +325,7 @@ pub(super) fn clear_in_snapshot(conn: &Connection, ns: Namespace<'_>) -> Storage
         return Ok(());
     };
     let old = nodes(conn, ns, &meta, owned_descriptors)?;
-    payloads(conn, ns, &old)?;
+    payloads(conn, ns, &old, false)?;
     for table in [
         "ndr_kv_checkpoint_chunks",
         "ndr_kv_checkpoint_nodes",
@@ -424,7 +441,7 @@ pub(super) fn put(
         })
         .transpose()?
         .unwrap_or_default();
-    let old_payloads = payloads(&tx, ns, &old)?;
+    let old_payloads = payloads(&tx, ns, &old, true)?;
     let mut update_node = tx.prepare("INSERT INTO ndr_kv_checkpoint_nodes(owner_pubkey_hex,device_pubkey_hex,key,node_key,next_key,payload_key,byte_length,prefix,suffix,padding) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10) ON CONFLICT(owner_pubkey_hex,device_pubkey_hex,key,node_key) DO UPDATE SET next_key=excluded.next_key,payload_key=excluded.payload_key,byte_length=excluded.byte_length,prefix=excluded.prefix,suffix=excluded.suffix,padding=excluded.padding").map_err(err)?;
     let mut current_payloads = BTreeSet::new();
     for (index, part) in value.parts.iter().enumerate() {
