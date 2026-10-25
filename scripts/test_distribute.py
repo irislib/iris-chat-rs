@@ -386,6 +386,15 @@ class DistributeTests(unittest.TestCase):
         self.assertTrue(icon_path.is_file())
         self.assertIn(f"icon: {icon_path}\n", config)
 
+    def test_zapstore_exit_zero_without_publication_proof_is_not_success(self) -> None:
+        env = self.environment()
+        env["TMPDIR"] = str(self.root)
+        result = self.run_distribution("zapstore", env=env)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn(f"Published {TAG} to Zapstore", result.stdout)
+        self.assertIn("--json", self.log.read_text())
+        self.assertNotIn("zapstore-secret", result.stdout + result.stderr)
+
     def test_hashtree_check_never_publishes(self) -> None:
         result = self.run_distribution("hashtree", "--check")
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -513,12 +522,15 @@ class DistributeTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Zapstore signer mismatch", result.stderr)
 
-    def test_publish_retries_are_idempotent_and_do_not_leak_secrets(self) -> None:
-        first = self.run_distribution("zapstore")
-        second = self.run_distribution("zapstore")
-        self.assertEqual(first.returncode, 0, first.stderr)
-        self.assertEqual(second.returncode, 0, second.stderr)
+    def test_empty_publication_retries_fail_without_leaking_secrets(self) -> None:
+        env = self.environment()
+        env["TMPDIR"] = str(self.root)
+        first = self.run_distribution("zapstore", env=env)
+        second = self.run_distribution("zapstore", env=env)
+        self.assertNotEqual(first.returncode, 0)
+        self.assertNotEqual(second.returncode, 0)
         output = first.stdout + first.stderr + second.stdout + second.stderr
+        self.assertNotIn(f"Published {TAG} to Zapstore", output)
         self.assertNotIn("zapstore-secret", output)
         log = self.log.read_text()
         self.assertEqual(log.count("zsp publish"), 2)
