@@ -345,6 +345,12 @@ After the isolated check passes, publish the remaining local channels:
 ./scripts/distribute zapstore --tag "$release_tag"
 ```
 
+Zapstore requires a current C1 ownership proof for the APK's signing certificate.
+The **Zapstore certificate proof** workflow uses the established Android release
+credentials to produce only a public certificate and unsigned proof; it does not
+rebuild the APK or export the private key. Sign and publish that proof with the
+dedicated Zapstore publisher before retrying a missing or expired proof.
+
 ## 4. Publish to Apple
 
 In GitHub, open **Actions → iOS Distribution → Run workflow**.
@@ -500,7 +506,9 @@ matching evidence; do not relabel a previous candidate's result.
   the same tag.
 - Homebrew: update the tap and run `brew info --formula sirius/iris/iris`;
   its formula URL must contain the immutable release tag.
-- Zapstore: confirm the version and publisher in Zapstore.
+- Zapstore: the distributor verifies the public signed app/release/APK records
+  and streams the full public APK to check its size and hash before reporting
+  success. A publisher exit code or relay acknowledgement alone is insufficient.
 - Apple: workflow success means delivery/submission succeeded. Approval and
   public availability remain visible in App Store Connect.
 
