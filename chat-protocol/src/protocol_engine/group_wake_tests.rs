@@ -1,4 +1,60 @@
 #[test]
+fn private_group_ready_publications_are_due_after_restart_until_outbox_ack() {
+    let mut fixture = remote_send_fixture();
+    observe_sibling_invite(&mut fixture.sender, &fixture.late, &fixture.late_device);
+    let group_id = fixture
+        .sender
+        .create_group(
+            "durable publication".into(),
+            vec![fixture.peer_owner.public_key()],
+            unix_now(),
+        )
+        .unwrap()
+        .snapshot
+        .unwrap()
+        .group_id;
+    let sent = fixture
+        .sender
+        .send_group_payload(
+            &group_id,
+            b"recover before outbox acknowledgement".to_vec(),
+            Some("ready-after-restart".into()),
+        )
+        .unwrap();
+    assert_eq!(sent.effects.len(), 2);
+    let mut restored = ProtocolEngine::load_or_create_for_local_device(
+        fixture.store,
+        fixture.owner.public_key(),
+        &fixture.device,
+    )
+    .unwrap();
+    let ids = |effects: &[ProtocolEffect]| {
+        effects
+            .iter()
+            .map(|effect| {
+                let ProtocolEffect::Publish(publish) = effect;
+                publish.event.id.to_hex()
+            })
+            .collect::<BTreeSet<_>>()
+    };
+    assert_eq!(ids(&restored.pending_group_publish_effects()), ids(&sent.effects));
+    let now = NdrUnixSeconds(unix_now().get());
+    assert!(restored.has_pending_retry_work());
+    assert!(
+        restored.has_due_pending_retry_work(now),
+        "durable ciphertext must be offered to the app outbox even with no other due work"
+    );
+    let sessions = serde_json::to_value(restored.session_manager.snapshot()).unwrap();
+    let retry = restored.retry_pending_protocol(now).unwrap();
+    assert_eq!(ids(&retry.effects), ids(&sent.effects));
+    assert_eq!(serde_json::to_value(restored.session_manager.snapshot()).unwrap(), sessions);
+    assert!(restored.has_due_pending_retry_work(now));
+    restored.ack_group_publish_effects(&retry.effects).unwrap();
+    assert!(!restored.has_pending_retry_work());
+    assert!(!restored.has_due_pending_retry_work(now));
+}
+
+#[test]
 fn private_group_wake_and_broadcast_share_one_rollback_safe_checkpoint() {
     let mut fixture = remote_send_fixture();
     let group_id = fixture

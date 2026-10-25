@@ -85,7 +85,11 @@ impl ProtocolEngine {
     }
 
     pub fn has_due_pending_retry_work(&self, now: NdrUnixSeconds) -> bool {
-        if !self.pending_decrypted_deliveries.is_empty() {
+        // Signed group batches remain immediately runnable until the app outbox
+        // acknowledges them. A retry also retires any now-ineligible entries.
+        if !self.pending_decrypted_deliveries.is_empty()
+            || !self.ready_group_publications.is_empty()
+        {
             return true;
         }
         if !self.pending_group_sender_key_messages.is_empty() {
