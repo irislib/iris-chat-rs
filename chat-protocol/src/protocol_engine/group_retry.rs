@@ -28,6 +28,7 @@ struct ProtocolGroupSenderKeyRetry {
     key_trials_remaining: usize,
     active: Option<ActiveGroupSenderKeyDecrypt>,
     prepared: Option<(String, nostr_double_ratchet::GroupSenderKeyReceivePlan)>,
+    fresh: std::collections::VecDeque<FreshGroupSenderKeyCandidate>,
     yielded: bool,
     #[cfg(test)]
     total_attempts: usize,
@@ -48,6 +49,7 @@ impl Default for ProtocolGroupSenderKeyRetry {
             key_trials_remaining: GROUP_SENDER_KEY_TRIALS_PER_TURN,
             active: None,
             prepared: None,
+            fresh: Default::default(),
             yielded: false,
             #[cfg(test)]
             total_attempts: 0,
@@ -89,7 +91,7 @@ impl ProtocolGroupSenderKeyRetry {
         }
     }
 
-    fn next(&mut self) -> Option<(NdrDevicePubkey, String)> {
+    fn next(&mut self, fresh_due: bool) -> Option<(NdrDevicePubkey, String)> {
         if self.attempts >= GROUP_SENDER_KEY_RETRY_LIMIT
             || self
                 .started
@@ -101,6 +103,12 @@ impl ProtocolGroupSenderKeyRetry {
             .prepared
             .as_ref()
             .map(|(fingerprint, _)| fingerprint)
+            .or_else(|| {
+                fresh_due
+                    .then(|| self.fresh.front())
+                    .flatten()
+                    .map(|fresh| &fresh.fingerprint)
+            })
             .or_else(|| self.active.as_ref().map(|active| &active.fingerprint));
         let active_index = active_fingerprint.and_then(|fingerprint| {
             self.ready
@@ -130,6 +138,7 @@ impl ProtocolEngine {
         if self.pending_group_sender_key_messages.is_empty() {
             retry.active = None;
             retry.prepared = None;
+            retry.fresh.clear();
             retry.inputs.clear();
             retry.ready.clear();
             retry.queued.clear();
@@ -201,7 +210,9 @@ impl ProtocolEngine {
         if self.batch_depth.get() == 0 {
             self.group_sender_key_retry.borrow_mut().reset_budget();
         }
-        if self.advance_group_sender_key_continuation()? {
+        if !self.fresh_group_sender_key_work_is_due()
+            && self.advance_group_sender_key_continuation()?
+        {
             return Ok(ProtocolGroupIncomingResult::default());
         }
         if self.batch_depth.get() > 0 {
@@ -280,23 +291,15 @@ impl ProtocolEngine {
         let mut repairs_before = self.pending_group_sender_key_repairs.clone();
         let mut result = ProtocolGroupIncomingResult::default();
         loop {
-            let next = self.group_sender_key_retry.borrow_mut().next();
+            let fresh_due = self.fresh_group_sender_key_work_is_due();
+            let next = self.group_sender_key_retry.borrow_mut().next(fresh_due);
             let Some((author, fingerprint)) = next else {
                 break;
             };
-            let Some(index) = self
-                .pending_group_sender_key_messages
-                .iter()
-                .position(|parsed| {
-                    parsed.sender_event_pubkey == author
-                        && self
-                            .group_sender_key_message_from_parsed(parsed)
-                            .is_some_and(|message| {
-                                group_sender_key_fingerprint(&message) == fingerprint
-                            })
-                })
+            let Some(index) = self.pending_group_sender_key_retry_index(author, &fingerprint)
             else {
                 let mut retry = self.group_sender_key_retry.borrow_mut();
+                retry.fresh.retain(|fresh| fresh.fingerprint != fingerprint);
                 if retry
                     .prepared
                     .as_ref()
@@ -327,6 +330,7 @@ impl ProtocolEngine {
                     });
             if discard {
                 let mut retry = self.group_sender_key_retry.borrow_mut();
+                retry.fresh.retain(|fresh| fresh.fingerprint != fingerprint);
                 if retry
                     .prepared
                     .as_ref()
@@ -382,6 +386,10 @@ impl ProtocolEngine {
                 break;
             }
             if !outcome.pending {
+                self.group_sender_key_retry
+                    .borrow_mut()
+                    .fresh
+                    .retain(|fresh| fresh.fingerprint != fingerprint);
                 removed.push((index, self.pending_group_sender_key_messages.remove(index)));
                 self.persist()?;
             }

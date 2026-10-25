@@ -4,6 +4,7 @@ include!("protocol_engine/types.rs");
 include!("protocol_engine/group_replay.rs");
 include!("protocol_engine/group_retry.rs");
 include!("protocol_engine/group_retry_pacing.rs");
+include!("protocol_engine/group_fresh.rs");
 include!("protocol_engine/group_decrypt.rs");
 include!("protocol_engine/engine_core.rs");
 include!("protocol_engine/engine_test_support.rs");
@@ -51,6 +52,7 @@ pub(crate) mod tests {
     include!("protocol_engine/group_retry_budget_tests.rs");
     include!("protocol_engine/group_decrypt_budget_tests.rs");
     include!("protocol_engine/group_retry_pacing_tests.rs");
+    include!("protocol_engine/group_fresh_tests.rs");
     #[cfg(target_os = "linux")]
     include!("protocol_engine/retry_work_audit.rs");
     #[cfg(target_os = "linux")]

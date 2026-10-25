@@ -5,7 +5,12 @@ fn enable_virtual_history_pacing(engine: &ProtocolEngine) {
 
 fn advance_history_pacing_clock(engine: &ProtocolEngine) {
     let mut pacing = engine.group_retry_pacing.borrow_mut();
-    pacing.clock = Some(pacing.not_before.unwrap_or_else(|| pacing.now()));
+    pacing.clock = Some(
+        pacing
+            .not_before
+            .unwrap_or_else(|| pacing.now())
+            .max(pacing.now()),
+    );
 }
 
 fn expensive_unknown_history() -> ProtocolEngine {
@@ -88,14 +93,28 @@ fn paced_history_delivers_late_other_authors_without_repeating_exhausted_work() 
             .queue_pending_group_sender_key_message(other)
             .unwrap();
     }
+    let arrived = engine.group_retry_pacing.borrow().now();
     let mut delivered = Vec::new();
+    let mut first_delivery_after_arrival = None;
     let mut turns = 0;
     for _ in 0..256 {
-        advance_history_pacing_clock(&engine);
+        let delay = engine.group_sender_key_retry_delay();
+        let mut pacing = engine.group_retry_pacing.borrow_mut();
+        pacing.clock = pacing.now().checked_add(delay);
+        drop(pacing);
         engine.enter_batch();
         let result = engine.retry_pending_protocol(now).unwrap();
         engine.exit_batch().unwrap();
         delivered.extend(result.group_result.events);
+        if !delivered.is_empty() && first_delivery_after_arrival.is_none() {
+            first_delivery_after_arrival = Some(
+                engine
+                    .group_retry_pacing
+                    .borrow()
+                    .now()
+                    .duration_since(arrived),
+            );
+        }
         turns += 1;
         if !engine.has_ready_group_sender_key_retry_work() {
             break;
@@ -106,6 +125,13 @@ fn paced_history_delivers_late_other_authors_without_repeating_exhausted_work() 
         "frozen work must finish and release other authors"
     );
     assert_eq!(delivered.len(), 2);
+    assert!(first_delivery_after_arrival.unwrap() < std::time::Duration::from_secs(1));
+    eprintln!(
+        "paced_history_late_delivery virtual_latency_seconds={} turns={} key_trials={}",
+        first_delivery_after_arrival.unwrap().as_secs_f64(),
+        turns,
+        engine.group_retry_pacing.borrow().key_trials,
+    );
     assert_eq!(engine.pending_group_sender_key_messages.len(), 1);
     assert_eq!(engine.pending_group_sender_key_messages[0], unresolved);
     assert!(!engine.has_ready_group_sender_key_retry_work());

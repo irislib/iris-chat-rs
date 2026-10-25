@@ -47,6 +47,24 @@ impl ProtocolEngine {
                 &mut remaining,
             );
         }
+        {
+            let mut retry = self.group_sender_key_retry.borrow_mut();
+            if let Some(index) = retry
+                .fresh
+                .iter()
+                .position(|fresh| fresh.fingerprint == fingerprint)
+            {
+                if index != 0 || !self.group_retry_pacing.borrow().fresh_delay().is_zero() {
+                    retry.yielded = true;
+                    return Ok(None);
+                }
+                retry.fresh.pop_front();
+                drop(retry);
+                let result = self.prepare_fresh_group_sender_key_message(message);
+                self.group_sender_key_retry.borrow_mut().yielded = matches!(result, Ok(None));
+                return result;
+            }
+        }
         if !self.group_retry_pacing.borrow().delay().is_zero() {
             self.group_sender_key_retry.borrow_mut().yielded = true;
             return Ok(None);
