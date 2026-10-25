@@ -341,7 +341,11 @@ impl ProtocolEngine {
             }
             {
                 let mut retry = self.group_sender_key_retry.borrow_mut();
-                if retry.active.is_none() && retry.prepared.is_none() {
+                if retry.active.is_none()
+                    && retry.prepared.is_none()
+                    && (message.encrypted_header.is_none()
+                        || self.group_retry_pacing.borrow().delay().is_zero())
+                {
                     retry.record_attempt();
                     #[cfg(all(test, target_os = "linux"))]
                     if message.encrypted_header.is_none() || retry.key_trials_remaining > 0 {

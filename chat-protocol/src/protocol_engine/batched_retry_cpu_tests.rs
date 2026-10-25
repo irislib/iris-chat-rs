@@ -1,16 +1,85 @@
 include!("batched_retry_durable_work.rs");
 
+fn enrich_retry_cpu_history(engine: &mut ProtocolEngine) {
+    let mut prototypes = vec![engine.pending_group_sender_key_messages[0].clone()];
+    for _ in 1..16 {
+        prototypes.push(add_other_group_stream(engine));
+    }
+    let mut snapshot = engine.group_manager.snapshot();
+    for record in snapshot
+        .sender_keys
+        .iter_mut()
+        .filter(|record| record.sender_event_pubkey != prototypes[0].sender_event_pubkey)
+    {
+        for id in 2..=3 {
+            record
+                .states
+                .push(nostr_double_ratchet::SenderKeyState::new(
+                    id,
+                    [id as u8; 32],
+                    0,
+                ));
+            record
+                .distribution_history
+                .push(nostr_double_ratchet::SenderKeyDistribution {
+                    group_id: record.group_id.clone(),
+                    key_id: id,
+                    sender_event_pubkey: record.sender_event_pubkey,
+                    chain_key: [id as u8; 32],
+                    iteration: 0,
+                    created_at: NdrUnixSeconds(20),
+                });
+        }
+    }
+    assert_eq!(snapshot.sender_keys.len(), 16);
+    assert_eq!(
+        snapshot
+            .sender_keys
+            .iter()
+            .map(|record| record.states.len())
+            .sum::<usize>(),
+        46
+    );
+    assert_eq!(
+        snapshot
+            .sender_keys
+            .iter()
+            .map(|record| record.distribution_history.len())
+            .sum::<usize>(),
+        30
+    );
+    engine.group_manager = GroupEventManager::from_snapshot(snapshot).unwrap();
+    let mut unavailable = nostr_double_ratchet::SenderKeyState::new(999, [99; 32], 0);
+    let mut ciphertexts = vec![prototypes[0].clone()];
+    for index in 1..engine.pending_group_sender_key_messages.len() {
+        let mut parsed = prototypes[index % prototypes.len()].clone();
+        let length = if index % 64 == 0 {
+            16_384
+        } else {
+            [64, 768, 2048, 4096][index % 4]
+        };
+        let (number, ciphertext) = unavailable.encrypt_to_bytes(&vec![42; length]).unwrap();
+        parsed.message_number = number;
+        parsed.ciphertext = ciphertext;
+        ciphertexts.push(parsed);
+    }
+    engine.pending_group_sender_key_messages = ciphertexts.into();
+    engine.persist().unwrap();
+}
+
 fn batched_retry_progress(
     engine: &ProtocolEngine,
     audit: &RetrySearchAuditGuard,
 ) -> serde_json::Value {
     let retry = engine.group_sender_key_retry.borrow();
+    let pacing = engine.group_retry_pacing.borrow();
     let (starts, repeated, changes) = audit.counts();
     serde_json::json!({
         "search_starts": starts, "repeated_search_starts": repeated,
         "input_generation_changes": changes, "ready_candidates": retry.ready.len(),
         "active_cursor": retry.active.is_some(), "prepared_result": retry.prepared.is_some(),
         "engine_attempts": retry.total_attempts,
+        "key_trials": pacing.key_trials, "blind_work_calls": pacing.work_calls,
     })
 }
 
@@ -30,13 +99,14 @@ fn restored_backlog_batched_retry_stays_within_cpu_budget() {
     const FANOUTS: usize = 24_990;
     const CIPHERTEXTS: usize = 23_437;
     const CHECKPOINT_BYTES: usize = 350_224_384;
-    let (f, _directory, storage, now_secs, clock_started) = prepared_retry_backlog_fixture(
+    let (mut f, _directory, storage, now_secs, clock_started) = prepared_retry_backlog_fixture(
         INBOUND,
         FANOUTS,
         CIPHERTEXTS,
         CHECKPOINT_BYTES,
         SyntheticInboundCiphertext::CorruptMac,
     );
+    enrich_retry_cpu_history(&mut f.sender);
     let (inbound_decoded_min_bytes, inbound_decoded_max_bytes) =
         assert_corrupt_mac_inbound_format(&f.sender.pending_inbound);
     assert_eq!(f.sender.pending_decrypted_deliveries.len(), 1);
@@ -95,6 +165,7 @@ fn restored_backlog_batched_retry_stays_within_cpu_budget() {
     )
     .unwrap();
     let restore_seconds = recovery_started.elapsed().as_secs_f64();
+    engine.enable_background_history_recovery_pacing();
     assert_eq!(engine.checkpoint_layout.borrow().bytes, CHECKPOINT_BYTES);
     assert_eq!(engine.pending_inbound.len(), INBOUND);
     assert_eq!(engine.pending_group_fanouts.len(), FANOUTS);
@@ -215,7 +286,9 @@ fn restored_backlog_batched_retry_stays_within_cpu_budget() {
             max_turn = max_turn.max(elapsed);
             let delay = if ready {
                 continuations += 1;
-                Duration::from_millis(25)
+                engine
+                    .group_sender_key_retry_delay()
+                    .max(Duration::from_millis(25))
             } else {
                 Duration::from_secs(2)
             };
@@ -372,12 +445,14 @@ fn restored_backlog_batched_retry_stays_within_cpu_budget() {
     );
     // Keep each macro expansion bounded as the receipt gains independent checks.
     let mut receipt = serde_json::json!({
-        "schema": "iris-batched-retry-cpu/v3", "fixture": "restored-mixed-backlog-with-corrupt-mac-inbound-v3", "synthetic": true,
+        "schema": "iris-batched-retry-cpu/v4", "fixture": "restored-multi-author-multi-epoch-backlog-v4", "synthetic": true,
         "pending_inbound": INBOUND, "initially_due_inbound": 102, "fanouts": FANOUTS,
         "initially_due_fanouts": 10462, "ciphertexts": CIPHERTEXTS, "remote_sends": 44,
         "expiring_controls": 2, "initial_remote_sends": 46, "retired_expiring_controls": expiring_controls.retired,
         "checkpoint_bytes": CHECKPOINT_BYTES, "outer_batch": true, "ack_and_flush_in_turn": true,
-        "continuation_delay_ms": 25, "liveness_delay_ms": 2000, "settle_seconds": 180,
+        "continuation_min_delay_ms": 25, "history_recovery_duty_percent": 2,
+        "history_authors": 16, "history_key_states": 46, "history_distributions": 30,
+        "liveness_delay_ms": 2000, "settle_seconds": 180,
         "measurement_windows": 2, "window_seconds": 60, "debug_assertions": cfg!(debug_assertions),
     });
     let serde_json::Value::Object(measurements) = serde_json::json!({
@@ -426,6 +501,11 @@ fn restored_backlog_batched_retry_stays_within_cpu_budget() {
         );
     }
     for slice in &slices[3..] {
+        assert!(
+            slice["progress_after"]["key_trials"].as_u64().unwrap()
+                > slice["progress_before"]["key_trials"].as_u64().unwrap(),
+            "measured recovery must keep making blind-search progress"
+        );
         assert!(
             slice["turns"].as_u64().unwrap() > 0
                 && slice["remote_deadline_updates"].as_u64().unwrap() > 0

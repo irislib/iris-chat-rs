@@ -75,6 +75,7 @@ fn ready_group_retry_core() -> (
         storage.clone(),
     );
     core.preferences.send_read_receipts = false;
+    receiver.engine.enable_background_history_recovery_pacing();
     core.protocol_engine = Some(receiver.engine);
     for event in initial {
         core.apply_group_decrypted_event(event);

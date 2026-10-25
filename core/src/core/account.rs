@@ -758,6 +758,7 @@ impl AppCore {
                 owner_pubkey,
                 &device_keys,
             )?;
+            engine.enable_background_history_recovery_pacing();
             // No restored intent may reach discovery or encryption before the
             // durable privacy migration completes, including interrupted startup.
             self.retire_legacy_private_contact_intents(&mut engine, owner_pubkey)?;

@@ -604,8 +604,11 @@ fn group_retry_completion_does_not_reset_the_shared_trial_budget() {
 
 #[test]
 fn group_retry_key_arriving_during_frozen_search_gets_a_fresh_pass() {
-    for outer_batch in [false, true] {
+    for (outer_batch, paced) in [(false, false), (true, false), (false, true), (true, true)] {
         let (mut engine, _, device) = queued_group_history(1);
+        if paced {
+            enable_virtual_history_pacing(&engine);
+        }
         let plaintext = JsonGroupPayloadCodecV1
             .encode_sender_key_plaintext(
                 nostr_double_ratchet::GroupPayloadEncodeContext {
@@ -643,6 +646,9 @@ fn group_retry_key_arriving_during_frozen_search_gets_a_fresh_pass() {
         for _ in 0..128 {
             if !engine.has_ready_group_sender_key_retry_work() {
                 break;
+            }
+            if paced {
+                advance_history_pacing_clock(&engine);
             }
             if outer_batch {
                 engine.enter_batch();

@@ -115,7 +115,7 @@ def fanout_evidence(mode):
 
 def batched_output(mode):
     result = {
-        "schema": "iris-batched-retry-cpu/v3", "fixture": "restored-mixed-backlog-with-corrupt-mac-inbound-v3", "synthetic": True,
+        "schema": "iris-batched-retry-cpu/v4", "fixture": "restored-multi-author-multi-epoch-backlog-v4", "synthetic": True,
         "inbound_ciphertext_format": "canonical-base64-nip44-v2-corrupt-mac",
         "inbound_ciphertext_format_checked": 4214,
         "inbound_decoded_min_bytes": 1347, "inbound_decoded_max_bytes": 1347,
@@ -123,7 +123,9 @@ def batched_output(mode):
         "initially_due_fanouts": 10462, "ciphertexts": 23437, "remote_sends": 44,
         "expiring_controls": 2, "initial_remote_sends": 46, "retired_expiring_controls": 2,
         "checkpoint_bytes": 350224384, "outer_batch": True, "ack_and_flush_in_turn": True,
-        "continuation_delay_ms": 25, "liveness_delay_ms": 2000, "settle_seconds": 180,
+        "continuation_min_delay_ms": 25, "history_recovery_duty_percent": 2,
+        "history_authors": 16, "history_key_states": 46, "history_distributions": 30,
+        "liveness_delay_ms": 2000, "settle_seconds": 180,
         "measurement_windows": 2, "window_seconds": 60, "debug_assertions": False,
         "initially_ready": True, "group_deliveries": 1, "acknowledged_deliveries": 2,
         "acknowledged_setup_deliveries": 1, "acknowledged_group_deliveries": 1,
@@ -134,10 +136,13 @@ def batched_output(mode):
         "search_starts": 30, "input_generation_changes": 1, "slices": [],
     }
     progress = {"search_starts": 0, "repeated_search_starts": 0, "input_generation_changes": 1,
-                "ready_candidates": 10, "engine_attempts": 0, "active_cursor": False, "prepared_result": False}
+                "ready_candidates": 10, "engine_attempts": 0, "active_cursor": False, "prepared_result": False,
+                "key_trials": 0, "blind_work_calls": 0}
     result["restart_progress"] = dict(progress)
     for index in range(5):
         before = dict(progress)
+        progress["key_trials"] += 512
+        progress["blind_work_calls"] += 2
         if index < 3:
             progress["search_starts"] += 10
             progress["engine_attempts"] += 100
@@ -159,6 +164,11 @@ def batched_output(mode):
     changes = {
         "wrong-schema": lambda: result.update(schema="unknown"),
         "old-schema": lambda: result.update(schema="iris-batched-retry-cpu/v2"),
+        "unpacing": lambda: result.update(history_recovery_duty_percent=100),
+        "single-author": lambda: result.update(history_authors=1),
+        "single-epoch": lambda: result.update(history_key_states=16),
+        "missing-distributions": lambda: result.update(history_distributions=0),
+        "no-blind-progress": lambda: result["slices"][3]["progress_after"].update(key_trials=result["slices"][3]["progress_before"]["key_trials"]),
         "malformed-inbound": lambda: result.update(inbound_ciphertext_format="invalid-base64"),
         "missing-inbound-format": lambda: result.pop("inbound_ciphertext_format"),
         "inbound-format-count": lambda: result.update(inbound_ciphertext_format_checked=4213),
@@ -557,7 +567,8 @@ class RustRunnerTests(unittest.TestCase):
                  "debug-mode", "late-delivery", "no-ack", "restart-unchecked", "repeated-search", "reset-audit",
                  "short-window", "wrong-stage", "excess-first", "excess-second", "nonfinite", "no-due", "no-puts", "no-controls", "no-control-retirement", "early-control-retirement",
                  "no-progress", "no-restart-ready", "bad-phase", "missing-phase", "nested-exceeds-parent",
-                 "old-schema", "malformed-inbound", "missing-inbound-format", "inbound-format-count",
+                 "old-schema", "unpacing", "single-author", "single-epoch", "missing-distributions", "no-blind-progress",
+                 "malformed-inbound", "missing-inbound-format", "inbound-format-count",
                  "small-inbound", "large-inbound", "reversed-inbound", "noninteger-inbound", "boolean-inbound")
         for nextest in (True, False):
             commands = self.commands(nextest, "Linux")

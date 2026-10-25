@@ -18,7 +18,14 @@ impl AppCore {
                 .ready_retry_due_at
                 .is_none()
             {
-                let due_at = Instant::now() + Duration::from_millis(25);
+                let delay = self
+                    .protocol_engine
+                    .as_ref()
+                    .map_or(Duration::ZERO, |engine| {
+                        engine.group_sender_key_retry_delay()
+                    })
+                    .max(Duration::from_millis(25));
+                let due_at = Instant::now() + delay;
                 self.protocol_subscription_runtime.ready_retry_due_at = Some(due_at);
                 let tx = self.core_sender.clone();
                 self.runtime.spawn(async move {

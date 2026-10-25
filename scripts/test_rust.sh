@@ -287,14 +287,16 @@ rows = re.findall(r"batched_retry_cpu (\{[^\n]+\})", text)
 assert len(rows) == 1, "Require exactly one complete batched retry receipt"
 result = json.loads(rows[0])
 expected = {
-    "schema": "iris-batched-retry-cpu/v3", "fixture": "restored-mixed-backlog-with-corrupt-mac-inbound-v3", "synthetic": True,
+    "schema": "iris-batched-retry-cpu/v4", "fixture": "restored-multi-author-multi-epoch-backlog-v4", "synthetic": True,
     "inbound_ciphertext_format": "canonical-base64-nip44-v2-corrupt-mac",
     "inbound_ciphertext_format_checked": 4214,
     "pending_inbound": 4214, "initially_due_inbound": 102, "fanouts": 24990,
     "initially_due_fanouts": 10462, "ciphertexts": 23437, "remote_sends": 44,
     "expiring_controls": 2, "initial_remote_sends": 46, "retired_expiring_controls": 2,
         "checkpoint_bytes": 350224384, "outer_batch": True, "ack_and_flush_in_turn": True,
-    "continuation_delay_ms": 25, "liveness_delay_ms": 2000, "settle_seconds": 180,
+    "continuation_min_delay_ms": 25, "history_recovery_duty_percent": 2,
+    "history_authors": 16, "history_key_states": 46, "history_distributions": 30,
+    "liveness_delay_ms": 2000, "settle_seconds": 180,
     "measurement_windows": 2, "window_seconds": 60, "debug_assertions": False,
     "initially_ready": True, "group_deliveries": 1, "acknowledged_deliveries": 2,
     "acknowledged_setup_deliveries": 1, "acknowledged_group_deliveries": 1,
@@ -311,7 +313,7 @@ assert all(type(result[key]) in (int, float) and math.isfinite(result[key]) and 
 slices = result["slices"]
 emitted = [json.loads(row) for row in re.findall(r"batched_retry_slice (\{[^\n]+\})", text)]
 assert len(slices) == 5 and emitted == slices, "Require three settling and two measured slices"
-counts = ("search_starts", "repeated_search_starts", "input_generation_changes", "ready_candidates", "engine_attempts")
+counts = ("search_starts", "repeated_search_starts", "input_generation_changes", "ready_candidates", "engine_attempts", "key_trials", "blind_work_calls")
 previous = None
 elapsed_sum = 0.0
 for index, row in enumerate(slices):
@@ -335,11 +337,12 @@ for index, row in enumerate(slices):
         assert all(type(progress[key]) is int and progress[key] >= 0 for key in counts)
         assert all(type(progress[key]) is bool for key in ("active_cursor", "prepared_result"))
         assert progress["repeated_search_starts"] == 0, "Candidate re-admitted under unchanged inputs"
-    assert all(after[key] >= before[key] for key in ("search_starts", "input_generation_changes"))
+    assert all(after[key] >= before[key] for key in ("search_starts", "input_generation_changes", "key_trials", "blind_work_calls"))
     assert previous is None or before == previous, "Audit reset between slices"
     previous = after
     assert row["expired_control_retirements"] == int(index >= 3), "Require real timed durable retirement in each measured minute"
     if index >= 3:
+        assert after["key_trials"] > before["key_trials"], "Measured history recovery must make blind-search progress"
         assert row["turns"] > 0 and row["remote_deadline_updates"] > 0 and row["puts"] > 0, "Measured slice must include recurring due work and flush"
         assert row["cpu_percent_one_core"] <= 5, "Batched retry exceeded 5% of one CPU"
 assert sum(row["acknowledged_deliveries"] for row in slices) == 2
