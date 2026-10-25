@@ -33,7 +33,7 @@ fn private_block_event_is_durable_ordered_and_preserves_direct_history() {
     drop(core);
     let mut restored =
         restart_block_history_core(&owner, &device, dir.path().to_string_lossy().into_owned());
-    restored.restore_device_sync_record_projection();
+    restored.restore_device_sync_record_projection().unwrap();
     assert!(!restored.is_owner_blocked(&target));
     assert_eq!(restored.threads[&target].messages[0].id, "old");
     assert!(!restored.chat_activity_is_deleted(&target, 20));
@@ -361,7 +361,7 @@ fn private_block_intervals_survive_multiple_cycles_late_unblock_and_device_resta
         &Keys::generate(),
         dir.path().to_string_lossy().into_owned(),
     );
-    restored.restore_device_sync_record_projection();
+    restored.restore_device_sync_record_projection().unwrap();
     for (created, allowed) in [
         (50, true),
         (150, false),

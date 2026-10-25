@@ -27,7 +27,7 @@ fn request_acceptance_negentropy_survives_restart_without_message_history() {
             pair.a_dir.path().to_string_lossy().into_owned(),
         );
         left.load_persisted().unwrap();
-        left.restore_device_sync_record_projection();
+        left.restore_device_sync_record_projection().unwrap();
         configure_test_device_sync_profile(
             &mut left,
             &pair.owner,
@@ -203,7 +203,7 @@ fn sibling_engagement_uses_original_time_and_cannot_override_newer_rejection() {
             dir.path().to_string_lossy().into_owned(),
         );
         restored.load_persisted().unwrap();
-        restored.restore_device_sync_record_projection();
+        restored.restore_device_sync_record_projection().unwrap();
         assert_eq!(
             restored.request_decision(&chat).unwrap().decision,
             "accepted"

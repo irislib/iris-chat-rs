@@ -1,6 +1,6 @@
 use super::*;
 
-fn remove_indexes(conn: &Connection) {
+pub(super) fn remove_indexes(conn: &Connection) {
     let objects = conn.prepare("SELECT type,name FROM sqlite_schema WHERE name GLOB 'ndr_kv_checkpoint_shape_*' OR name IN ('ndr_kv_checkpoint_chunk_shapes','ndr_kv_checkpoint_node_namespace') ORDER BY type DESC").unwrap()
         .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))).unwrap()
         .collect::<rusqlite::Result<Vec<_>>>().unwrap();

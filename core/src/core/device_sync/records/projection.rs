@@ -1,14 +1,41 @@
 use super::*;
+use anyhow::Context;
 
 impl AppCore {
     // Heads are committed before projections. Replay them after an interrupted
     // app-state save, without reauthoring or republishing the original controls.
-    pub(in crate::core) fn restore_device_sync_record_projection(&mut self) {
+    pub(in crate::core) fn restore_device_sync_record_projection(&mut self) -> anyhow::Result<()> {
+        // Only app projection/persistence is coalesced here. Protocol commits
+        // keep their existing ordering, including when no outer batch exists.
+        // The caller owns the completed-state emission after this checked save.
+        let previous_depth = self.batch_depth;
+        let previous_state = self.batch_dirty_state;
+        let previous_persist = self.batch_dirty_persist;
+        self.batch_depth = previous_depth
+            .checked_add(1)
+            .context("restore projection batch depth overflow")?;
+        let result = self
+            .restore_device_sync_record_projection_inner()
+            .and_then(|()| {
+                self.persist_app_state()
+                    .context("persist restored device-sync projection")
+            });
+        self.batch_depth = previous_depth;
+        self.batch_dirty_state = previous_state;
+        self.batch_dirty_persist = if result.is_ok() {
+            false
+        } else {
+            previous_persist
+        };
+        result
+    }
+
+    fn restore_device_sync_record_projection_inner(&mut self) -> anyhow::Result<()> {
         let mut after = String::new();
         loop {
-            let Ok(page) = self.sync_record_page(&after) else {
-                break;
-            };
+            let page = self
+                .sync_record_page(&after)
+                .context("restore device-sync record page")?;
             if page.is_empty() {
                 break;
             }
@@ -29,7 +56,8 @@ impl AppCore {
                 }
                 match record {
                     DeviceSyncRecord::Authorization { event } => {
-                        self.merge_authorization_event(&event);
+                        self.project_authorization_event(&event)
+                            .context("restore authorization projection")?;
                     }
                     DeviceSyncRecord::PrivateEvent { event } => {
                         if let Some(state) =
@@ -123,6 +151,7 @@ impl AppCore {
                 self.observe_chat_engagement(&chat, &owner, time.saturating_mul(1000));
             }
         }
+        Ok(())
     }
 
     pub(in crate::core) fn restore_device_sync_chat_reactions(&mut self, chat: &str) {

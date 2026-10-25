@@ -690,3 +690,199 @@ fn checkpoint_records_invalid_descriptors_in_retained_or_retired_rows_are_reject
         }
     }
 }
+
+// The borrowed callback context must outlive this guard. Holding the shared
+// connection keeps its SQLite handle valid until tracing is unregistered, even
+// while unwinding from a read/assertion that poisoned the connection mutex.
+struct CheckpointReadTrace<'a> {
+    connection: SharedConnection,
+    _context: &'a mut Vec<String>,
+}
+
+impl<'a> CheckpointReadTrace<'a> {
+    fn new(connection: SharedConnection, context: &'a mut Vec<String>) -> Self {
+        let context_pointer = (&mut *context as *mut Vec<String>).cast();
+        let trace = Self {
+            connection,
+            _context: context,
+        };
+        {
+            let conn = trace.connection.lock().unwrap();
+            assert_eq!(
+                unsafe {
+                    rusqlite::ffi::sqlite3_trace_v2(
+                        conn.handle(),
+                        rusqlite::ffi::SQLITE_TRACE_STMT as u32,
+                        Some(capture_checkpoint_read_sql),
+                        context_pointer,
+                    )
+                },
+                rusqlite::ffi::SQLITE_OK
+            );
+        }
+        trace
+    }
+}
+
+impl Drop for CheckpointReadTrace<'_> {
+    fn drop(&mut self) {
+        let conn = self
+            .connection
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        // Disabling tracing on this retained valid handle does not allocate or
+        // call back. Do not assert/panic in cleanup, including poisoned unwinds.
+        unsafe {
+            rusqlite::ffi::sqlite3_trace_v2(conn.handle(), 0, None, std::ptr::null_mut());
+        }
+    }
+}
+
+unsafe extern "C" fn capture_checkpoint_read_sql(
+    kind: u32,
+    context: *mut std::ffi::c_void,
+    statement: *mut std::ffi::c_void,
+    _: *mut std::ffi::c_void,
+) -> i32 {
+    if kind != rusqlite::ffi::SQLITE_TRACE_STMT as u32 {
+        return 0;
+    }
+    let sql = rusqlite::ffi::sqlite3_expanded_sql(statement.cast());
+    if !sql.is_null() {
+        let text = std::ffi::CStr::from_ptr(sql).to_string_lossy().into_owned();
+        rusqlite::ffi::sqlite3_free(sql.cast());
+        (*context.cast::<Vec<String>>()).push(text);
+    }
+    0
+}
+
+#[test]
+fn checkpoint_read_trace_unregisters_during_poisoned_unwind() {
+    let (_dir, shared, _storage) = database();
+    let mut statements = Box::new(Vec::<String>::new());
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let _trace = CheckpointReadTrace::new(shared.clone(), statements.as_mut());
+        let conn = shared.lock().unwrap();
+        assert_eq!(
+            conn.query_row("SELECT 1", [], |row| row.get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
+        panic!("injected traced-read unwind");
+    }));
+    assert!(result.is_err());
+    assert!(shared.is_poisoned());
+    let captured = statements.len();
+    assert!(captured > 0);
+    let conn = shared.lock().unwrap_or_else(|error| error.into_inner());
+    assert_eq!(
+        conn.query_row("SELECT 2", [], |row| row.get::<_, i64>(0))
+            .unwrap(),
+        2
+    );
+    assert_eq!(
+        statements.len(),
+        captured,
+        "callback must be unregistered before its context can drop"
+    );
+}
+
+#[test]
+fn checkpoint_cold_read_does_not_traverse_payload_pages_for_shape_validation() {
+    let (_dir, shared, storage) = database();
+    let mut records = (0..512).map(body).collect::<Vec<_>>();
+    records.push(records[0].clone());
+    let value = checkpoint(&records, &vec![1; records.len()], "cold-read");
+    storage.put_checkpoint("state", &value).unwrap();
+    let (chunk_root, distinct_payloads): (i64, usize) = shared.lock().unwrap().query_row(
+        "SELECT (SELECT rootpage FROM sqlite_schema WHERE name='ndr_kv_checkpoint_chunks'), count(DISTINCT payload_key) FROM ndr_kv_checkpoint_nodes WHERE owner_pubkey_hex='owner' AND device_pubkey_hex='device' AND key='state'",
+        [], |row| Ok((row.get(0)?, row.get(1)?)),
+    ).unwrap();
+    shared
+        .lock()
+        .unwrap()
+        .execute_batch(
+            "PRAGMA wal_checkpoint(TRUNCATE); PRAGMA cache_size=-64; PRAGMA shrink_memory;",
+        )
+        .unwrap();
+    let mut statements = Box::new(Vec::<String>::new());
+    let trace = CheckpointReadTrace::new(shared.clone(), statements.as_mut());
+    let before = read_pages(&shared);
+    let result = storage.get("state");
+    let checkpoint_read = read_pages(&shared) - before;
+    drop(trace);
+    assert_eq!(result.unwrap(), Some(value.materialize().unwrap()));
+    // Count actual executed readers using SQLite's plan, not an arbitrary I/O
+    // threshold. The raw table is needed once per distinct payload, including
+    // empty bodies. Namespace membership validation needs only its covering
+    // primary-key index; length(data)/typeof(data) would open the raw table too.
+    let conn = shared.lock().unwrap();
+    let mut raw_table_reads = 0;
+    let mut covering_reference_scans = 0;
+    for sql in statements
+        .iter()
+        .filter(|sql| sql.contains("FROM ndr_kv_checkpoint_chunks"))
+    {
+        let mut explain = conn.prepare(&format!("EXPLAIN {sql}")).unwrap();
+        let mut rows = explain.query([]).unwrap();
+        let mut reads_raw_table = false;
+        while let Some(row) = rows.next().unwrap() {
+            if row.get::<_, String>(1).unwrap() == "OpenRead"
+                && row.get::<_, i64>(3).unwrap() == chunk_root
+                && row.get::<_, i64>(4).unwrap() == 0
+            {
+                reads_raw_table = true;
+            }
+        }
+        if reads_raw_table {
+            raw_table_reads += 1;
+        } else {
+            let mut explain = conn.prepare(&format!("EXPLAIN QUERY PLAN {sql}")).unwrap();
+            let details = explain
+                .query_map([], |row| row.get::<_, String>(3))
+                .unwrap()
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .unwrap();
+            assert!(
+                details
+                    .iter()
+                    .any(|detail| detail.contains("COVERING INDEX")),
+                "raw identity scan must be covered: {details:?}"
+            );
+            covering_reference_scans += 1;
+        }
+    }
+    eprintln!("cold checkpoint: pager_bytes={checkpoint_read} raw_table_reads={raw_table_reads} distinct_payloads={distinct_payloads} covering_scans={covering_reference_scans}");
+    assert_eq!(
+        raw_table_reads, distinct_payloads,
+        "raw payload pages must not be traversed again for shape validation or shared bodies"
+    );
+    assert_eq!(
+        covering_reference_scans, 1,
+        "namespace membership remains exhaustively checked"
+    );
+}
+
+#[test]
+fn checkpoint_cold_read_checks_raw_bytes_without_trusting_shape_metadata() {
+    for indexed in [false, true] {
+        for corruption in [
+            // Same length, valid SQLite BLOB, wrong immutable content hash.
+            "UPDATE ndr_kv_checkpoint_chunks SET data=zeroblob(length(data)) WHERE substr(payload_key,1,1)=x'01' AND chunk_index=0",
+            // The concatenated bytes are unchanged, but chunk boundaries are invalid.
+            "UPDATE ndr_kv_checkpoint_chunks SET data=CAST(data||(SELECT substr(data,1,1) FROM ndr_kv_checkpoint_chunks WHERE substr(payload_key,1,1)=x'01' AND chunk_index=1) AS BLOB) WHERE substr(payload_key,1,1)=x'01' AND chunk_index=0; UPDATE ndr_kv_checkpoint_chunks SET data=substr(data,2) WHERE substr(payload_key,1,1)=x'01' AND chunk_index=1",
+        ] {
+            let (dir, shared, storage) = database();
+            let value = shared_chunked_checkpoint();
+            storage.put_checkpoint("state", &value).unwrap();
+            if !indexed {
+                indexes::remove_indexes(&shared.lock().unwrap());
+            }
+            shared.lock().unwrap().execute_batch(corruption).unwrap();
+            let before = checkpoint_rows(&shared);
+            assert!(storage.get("state").is_err(), "raw corruption, indexed={indexed}");
+            assert!(reopen(&dir).get("state").is_err());
+            assert!(checkpoint_rows(&shared) == before, "read failure must preserve raw rows");
+        }
+    }
+}

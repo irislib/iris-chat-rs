@@ -31,19 +31,32 @@ fn run_device_sync_typed_records(record_limit: Option<usize>) {
         right
             .record_device_history_approver(&a.public_key().to_hex(), 100, "ac".repeat(32))
             .unwrap();
-        for (period, created, mutated) in [("old", 50, 51), ("old-late", 50, 201), ("new", 200, 201)] {
+        for (period, created, mutated) in
+            [("old", 50, 51), ("old-late", 50, 201), ("new", 200, 201)]
+        {
             for (operation, kind, content) in [
                 ("edit", MESSAGE_EDIT_KIND, "Updated"),
                 ("delete", MESSAGE_DELETE_KIND, ""),
             ] {
                 let target = format!("mutation-{period}-{operation}");
                 left.push_incoming_message_from(
-                    &chat, Some(target.clone()), "Original".into(), created,
-                    None, None, Some(chat.clone()), None,
+                    &chat,
+                    Some(target.clone()),
+                    "Original".into(),
+                    created,
+                    None,
+                    None,
+                    Some(chat.clone()),
+                    None,
                 );
                 assert!(left.capture_device_sync_control(
-                    &chat, &format!("control-{target}"), &chat, mutated,
-                    kind, content, &[nostr::Tag::parse(["e", target.as_str()]).unwrap()],
+                    &chat,
+                    &format!("control-{target}"),
+                    &chat,
+                    mutated,
+                    kind,
+                    content,
+                    &[nostr::Tag::parse(["e", target.as_str()]).unwrap()],
                 ));
             }
         }
@@ -238,19 +251,32 @@ fn run_device_sync_typed_records(record_limit: Option<usize>) {
                 let expected = period == "new" || include_history;
                 let message = right.message_for_mutation(&chat, &target);
                 assert_eq!(message.is_some(), expected);
-                assert_eq!(!right.message_mutation_records(&chat, &target).is_empty(), expected,
-                    "Chats-only must exclude pre-link edit and deletion records too");
+                assert_eq!(
+                    !right.message_mutation_records(&chat, &target).is_empty(),
+                    expected,
+                    "Chats-only must exclude pre-link edit and deletion records too"
+                );
                 if let Some(message) = message {
                     assert_eq!(message.deleted_for_everyone, operation == "delete");
-                    assert_eq!(message.body, if operation == "edit" { "Updated" } else { "" });
+                    assert_eq!(
+                        message.body,
+                        if operation == "edit" { "Updated" } else { "" }
+                    );
                 }
             }
         }
-        assert_eq!(trace.iter().filter_map(|packet| packet["records"].as_array())
-            .flatten().any(|record| record["type"] == "messageMutation"
-                && record["mutation"]["messageId"].as_str()
-                    .is_some_and(|id| id.starts_with("mutation-old-"))), include_history,
-            "Pre-link mutations must never escape through state reconciliation");
+        assert_eq!(
+            trace
+                .iter()
+                .filter_map(|packet| packet["records"].as_array())
+                .flatten()
+                .any(|record| record["type"] == "messageMutation"
+                    && record["mutation"]["messageId"]
+                        .as_str()
+                        .is_some_and(|id| id.starts_with("mutation-old-"))),
+            include_history,
+            "Pre-link mutations must never escape through state reconciliation"
+        );
         assert!(
             right.threads[&chat]
                 .messages
@@ -310,7 +336,7 @@ fn run_device_sync_typed_records(record_limit: Option<usize>) {
             .chat_message_ttl_seconds
             .insert("group:typed-group".into(), 600);
         right.owner_profiles.remove(&chat);
-        right.restore_device_sync_record_projection();
+        right.restore_device_sync_record_projection().unwrap();
         assert!(right.threads[&chat]
             .messages
             .iter()
@@ -421,30 +447,37 @@ fn device_sync_profile_heads_reject_bad_signatures_and_preserve_latest_signed_ev
     assert!(core.apply_profile_metadata_event(&ties[0]));
     assert!(!core.apply_profile_metadata_event(&ties[1]));
 
-    core.owner_profiles.get_mut(&chat).unwrap().extra_metadata_json =
-        r#"{"custom":{"keep":true}}"#.into();
+    core.owner_profiles
+        .get_mut(&chat)
+        .unwrap()
+        .extra_metadata_json = r#"{"custom":{"keep":true}}"#.into();
     core.persist_best_effort();
-    core.restore_device_sync_record_projection();
-    assert_eq!(core.owner_profiles[&chat].extra_metadata_json,
-        r#"{"custom":{"keep":true}}"#,
-        "already projected signed heads must not overwrite persisted local fields");
+    core.restore_device_sync_record_projection().unwrap();
+    assert_eq!(
+        core.owner_profiles[&chat].extra_metadata_json, r#"{"custom":{"keep":true}}"#,
+        "already projected signed heads must not overwrite persisted local fields"
+    );
 
     let mut interrupted = [event("Crash A", 202), event("Crash B", 202)];
     interrupted.sort_by_key(|event| event.id);
     assert!(core.apply_profile_metadata_event(&interrupted[1]));
     core.persist_best_effort();
     assert!(core.cache_device_sync_profile(&interrupted[0]));
-    assert_eq!(core.owner_profiles[&chat].source_event_id.as_deref(),
-        Some(interrupted[1].id.to_hex().as_str()));
+    assert_eq!(
+        core.owner_profiles[&chat].source_event_id.as_deref(),
+        Some(interrupted[1].id.to_hex().as_str())
+    );
     drop(core);
-    let mut restored = logged_in_test_core_at_data_dir(&owner, &device,
-        dir.path().to_string_lossy().into_owned());
+    let mut restored =
+        logged_in_test_core_at_data_dir(&owner, &device, dir.path().to_string_lossy().into_owned());
     restored.owner_profiles = restored.load_persisted().unwrap().unwrap().owner_profiles;
     restored.ensure_thread_record(&chat, 1);
-    restored.restore_device_sync_record_projection();
-    assert_eq!(restored.owner_profiles[&chat].source_event_id.as_deref(),
+    restored.restore_device_sync_record_projection().unwrap();
+    assert_eq!(
+        restored.owner_profiles[&chat].source_event_id.as_deref(),
         Some(interrupted[0].id.to_hex().as_str()),
-        "same-time winning head must finish projection after interrupted save");
+        "same-time winning head must finish projection after interrupted save"
+    );
 }
 
 #[test]
@@ -527,7 +560,7 @@ fn device_sync_typed_completion_rejects_duplicate_ids_before_applying_records() 
     assert!(!right
         .owner_profiles
         .contains_key(&owner.public_key().to_hex()));
-    right.restore_device_sync_record_projection();
+    right.restore_device_sync_record_projection().unwrap();
     assert!(
         !right.owner_profiles.contains_key(&chat),
         "no record may be persisted before validating completion"

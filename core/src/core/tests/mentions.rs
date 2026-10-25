@@ -189,7 +189,7 @@ fn mentions_opt_out_is_private_durable_and_order_independent() {
     let mut restored =
         logged_in_test_core_at_data_dir(&owner, &device, dir.path().to_string_lossy().into());
     restored.load_persisted().unwrap();
-    restored.restore_device_sync_record_projection();
+    restored.restore_device_sync_record_projection().unwrap();
     assert_eq!(restored.preferences.silent_mention_chat_ids, vec![group]);
     restored.set_chat_mention_notifications(group, true);
     assert!(restored.preferences.silent_mention_chat_ids.is_empty());

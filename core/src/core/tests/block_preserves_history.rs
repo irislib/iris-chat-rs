@@ -111,7 +111,7 @@ fn private_block_keeps_existing_direct_history_including_same_second_and_late_sy
     drop(core);
     let mut restarted =
         restart_block_history_core(&owner, &device, dir.path().to_string_lossy().into_owned());
-    restarted.restore_device_sync_record_projection();
+    restarted.restore_device_sync_record_projection().unwrap();
     restarted.rebuild_state();
     assert_eq!(restarted.threads[&chat].messages.len(), 3);
     assert!(!restarted.chat_deletions.contains_key(&chat));
@@ -170,7 +170,7 @@ fn private_block_sync_keeps_earlier_history_and_explicit_delete_stays_separate()
     drop(right);
     let mut restarted =
         restart_block_history_core(&owner, &b, right_dir.path().to_string_lossy().into_owned());
-    restarted.restore_device_sync_record_projection();
+    restarted.restore_device_sync_record_projection().unwrap();
     assert!(!restarted.threads.contains_key(&chat));
     assert!(restarted.chat_activity_is_deleted(&chat, base + 50));
 }

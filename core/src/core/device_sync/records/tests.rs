@@ -274,7 +274,56 @@ fn request_acceptance_typed_reaction_never_uses_a_later_target_timestamp() {
         Some("late-target".into()),
         None,
     );
-    core.restore_device_sync_record_projection();
+    core.restore_device_sync_record_projection().unwrap();
     assert_eq!(core.request_decision(&chat).unwrap().decision, "rejected");
     assert!(core.thread_is_message_request(&chat));
+}
+
+#[test]
+fn runtime_authorization_merge_still_commits_immediately() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let (mut core, _, _dir) = crate::core::tests::logged_in_test_core_with_updates(
+        "runtime-authorization-save",
+        &owner,
+        &device,
+    );
+    core.preferences.nostr_relay_urls.clear();
+    core.state.busy.restoring_session = true;
+    let events = (0..2)
+        .map(|_| {
+            let peer = Keys::generate();
+            AppKeys::new(vec![DeviceEntry::new(Keys::generate().public_key(), 100)])
+                .get_event_at(peer.public_key(), 100)
+                .sign_with_keys(&peer)
+                .unwrap()
+        })
+        .collect::<Vec<_>>();
+    core.enter_batch();
+    assert!(core.apply_sync_record(DeviceSyncRecord::Authorization {
+        event: events[0].clone(),
+    }));
+    assert!(core
+        .app_store
+        .load_state()
+        .unwrap()
+        .unwrap()
+        .app_keys
+        .iter()
+        .any(|known| known.owner_pubkey_hex == events[0].pubkey.to_hex()));
+    core.app_store
+        .shared()
+        .lock()
+        .unwrap()
+        .execute_batch(
+            "CREATE TEMP TRIGGER reject_runtime_app_keys BEFORE INSERT ON app_keys BEGIN
+           SELECT RAISE(ABORT,'injected runtime app save failure'); END;",
+        )
+        .unwrap();
+    assert!(
+        !core.apply_sync_record(DeviceSyncRecord::Authorization {
+            event: events[1].clone(),
+        }),
+        "runtime still reports immediate save failure"
+    );
 }

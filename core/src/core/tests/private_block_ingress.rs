@@ -17,7 +17,7 @@ fn private_block_same_second_transition_survives_out_of_order_replay() {
     drop(core);
     let mut restored =
         logged_in_test_core_at_data_dir(&owner, &device, dir.path().to_string_lossy().into_owned());
-    restored.restore_device_sync_record_projection();
+    restored.restore_device_sync_record_projection().unwrap();
     assert!(!restored.block_allows_history("group:shared", &target, 100));
     assert!(restored.block_allows_history("group:shared", &target, 101));
 }
