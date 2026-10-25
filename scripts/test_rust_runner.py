@@ -15,6 +15,7 @@ MEMORY_TEST = "core::protocol::anonymous_reads::memory_tests::populated_account_
 CHECKPOINT_TEST = "protocol_engine::tests::checkpoint_backlog_production_counts_are_durable"
 CHECKPOINT_MARKER = "checkpoint_backlog fanouts=22702 ciphertexts=19231 checkpoint_bytes=254672896"
 CHECKPOINT_RESULT = "test result: ok. 1 passed; 0 failed; 0 ignored;"
+FANOUT_TEST = "core::tests::populated_discovery_idle::populated_account_five_relay_discovery_stays_quiet_and_targeted_demand_progresses"
 BATCHED_TEST = "protocol_engine::tests::restored_backlog_batched_retry_stays_within_cpu_budget"
 
 
@@ -32,6 +33,84 @@ def batched_command():
         "--release", "--jobs", "2", "--lib", BATCHED_TEST,
         "--", "--ignored", "--exact", "--test-threads=1", "--nocapture",
     ]
+
+
+def fanout_command():
+    return [
+        "test", "--manifest-path", str(ROOT / "core/Cargo.toml"), "--locked",
+        "--release", "--jobs", "2", "--lib", FANOUT_TEST,
+        "--", "--ignored", "--exact", "--test-threads=1", "--nocapture",
+    ]
+
+
+def fanout_evidence(mode):
+    # Uneven retained-socket distribution intentionally proves that the parser
+    # validates measured per-relay counters, not a fictitious 64 per relay.
+    retained = (17, 16, 13, 11, 7)
+    relays = [dict(relay_index=i, subjects=480, poll_round_min=1, poll_round_max=1,
+                   completed_polls=480, new_poll_connections=480-n, reused_connections=n,
+                   reused_polls=n, connections=480-n, tls_full_handshakes=0,
+                   tls_resumed_handshakes=480-n) for i, n in enumerate(retained)]
+    cycle = dict(seconds=125.0, cpu_percent_one_core=1.0, application_wire_bytes=5000000,
+                 every_author_polled=True, relay_samples=relays)
+    for key in ("completed_polls", "new_poll_connections", "reused_connections", "reused_polls",
+                "connections", "tls_full_handshakes", "tls_resumed_handshakes"):
+        cycle[key] = sum(row[key] for row in relays)
+    quiet = dict(seconds=35.0, cpu_percent_one_core=0.1, application_wire_bytes=0, connections=0)
+    result = dict(database_bytes=100*1024*1024, message_rows=32768, contacts=96, peer_devices=288,
+                  own_devices=3, groups=8, discovery_subjects=384, mesh_discovery_subjects=96,
+                  total_discovery_subjects=480, relay_count=5, author_relay_pairs=2400,
+                  targeted_relay_polls=5, debug_assertions=False, settle_seconds=95.0,
+                  readiness_round_min=3, completed_peer_polls=7200,
+                  relay_readiness=[dict(relay_index=i, subjects=480, readiness_round_min=3,
+                                        completed_peer_polls=1440) for i in range(5)],
+                  fresh_anonymous_authentications=11749, anonymous_connections=11749,
+                  all_completed_polls=12005, all_reused_polls=256, revoked_stale_records=96,
+                  targeted_fresh_proof_delivered=True, privacy_wire_passed=True,
+                  quiet_samples=[dict(quiet), dict(quiet)],
+                  full_cycle_tls_samples=json.loads(json.dumps([cycle, cycle])))
+    for field, path in (("fixture_source_sha256", "core/src/core/tests/synthetic_history_scale.rs"),
+                        ("test_source_sha256", "core/src/core/tests/populated_discovery_idle.rs")):
+        result[field] = hashlib.sha256((ROOT / path).read_bytes()).hexdigest()
+    first = result["full_cycle_tls_samples"][0]
+    if mode == "one-relay": result.update(relay_count=1, author_relay_pairs=480)
+    elif mode == "missing-relay": first["relay_samples"].pop()
+    elif mode == "duplicate-relay": first["relay_samples"][4]["relay_index"] = 0
+    elif mode == "missing-subject": first["relay_samples"][2]["subjects"] = 479
+    elif mode == "unpolled-pair": first["relay_samples"][2]["poll_round_min"] = 0
+    elif mode == "relay-sum": first["relay_samples"][2]["connections"] += 1
+    elif mode == "full-tls": first["relay_samples"][2]["tls_full_handshakes"] = 1
+    elif mode == "unwarmed-relay": result["relay_readiness"][2]["readiness_round_min"] = 2
+    elif mode == "missing-readiness": result["relay_readiness"].pop()
+    elif mode == "wrong-target-fanout": result["targeted_relay_polls"] = 1
+    elif mode == "excess-cpu": first["cpu_percent_one_core"] = 5.1
+    elif mode == "short-cycle": first["seconds"] = 124.0
+    elif mode == "short-quiet": result["quiet_samples"][0]["seconds"] = 34.0
+    elif mode == "global-cap": first["reused_connections"] = 320
+    elif mode == "stale-source": result["test_source_sha256"] = "0"*64
+    elif mode == "debug": result["debug_assertions"] = True
+    elif mode == "boolean-counter": first["relay_samples"][2]["tls_full_handshakes"] = False
+    elif mode == "fractional-counter": first["relay_samples"][2]["completed_polls"] = 480.0
+    elif mode == "no-privacy": result["privacy_wire_passed"] = False
+    elif mode == "settle-clock-overhead": result["settle_seconds"] = 121.25
+    lines = ["populated discovery child status=exit status: 0", "stdout:", "running 1 test",
+             "test " + FANOUT_TEST + " ... "]
+    lines += ["POPULATED_DISCOVERY_IDLE_SAMPLE="+json.dumps(row) for row in result["quiet_samples"]]
+    lines += ["POPULATED_DISCOVERY_CYCLE_SAMPLE="+json.dumps(row) for row in result["full_cycle_tls_samples"]]
+    lines += ["POPULATED_DISCOVERY_IDLE_RESULT="+json.dumps(result),
+              "ok", "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 99 filtered out; finished in 420.0s", "stderr:"]
+    if mode == "wrong-test": lines[3] = "test unrelated ... "
+    log = "\n".join(lines)+"\n"
+    receipt = dict(schema="iris-populated-discovery-idle/v1", passed=True, timed_out=False,
+                   exit_code=0, seconds=420.0, measurements=[result],
+                   log_bytes=len(log.encode()), log_sha256=hashlib.sha256(log.encode()).hexdigest())
+    if mode == "parent-close-overhead": receipt["seconds"] = 540.1
+    elif mode == "settle-clock-overhead": receipt["seconds"] = 445.0
+    elif mode == "wrong-log": receipt["log_sha256"] = "0"*64
+    elif mode == "log-mismatch": receipt["measurements"][0]["settle_seconds"] = 94.0
+    elif mode == "failed": receipt["passed"] = False
+    elif mode == "timeout": receipt["timed_out"] = True
+    return receipt, log
 
 
 def batched_output(mode):
@@ -150,6 +229,8 @@ class RustRunnerTests(unittest.TestCase):
                 commands.append(["test", "-q", "--doc", *args])
             else:
                 commands.append(["test", "-q", *args])
+            if crate == "core" and platform == "Linux":
+                commands.append(fanout_command())
             if crate == "chat-protocol":
                 commands.append(checkpoint_command())
                 if platform == "Linux":
@@ -158,7 +239,7 @@ class RustRunnerTests(unittest.TestCase):
 
     def run_runner(self, nextest, target=None, fail_on=None, approval_relay=None,
                    fail_relay=False, platform="Darwin", cpu_receipt=None,
-                   checkpoint_output="passed", batched_mode="passed"):
+                   checkpoint_output="passed", batched_mode="passed", fanout_mode="passed"):
         with tempfile.TemporaryDirectory(prefix="iris-rust-runner-") as tmp:
             directory = pathlib.Path(tmp)
             binary_dir = directory / "bin"
@@ -184,7 +265,7 @@ class RustRunnerTests(unittest.TestCase):
             cargo = binary_dir / "cargo"
             cargo.write_text(
                 f'#!{sys.executable}\n'
-                'import json, os, sys\n'
+                'import json, os, pathlib, sys\n'
                 'env = os.environ\n'
                 'if env["IRIS_DEVICE_APPROVAL_RELAY_URL"] != env["IRIS_TEST_EXPECTED_RELAY"]: sys.exit(38)\n'
                 'with open(env["IRIS_TEST_LOG"], "a") as log:\n'
@@ -193,11 +274,24 @@ class RustRunnerTests(unittest.TestCase):
                 '    print("Synthetic cargo failure stdout")\n'
                 '    print("Synthetic cargo failure stderr", file=sys.stderr)\n'
                 '    sys.exit(23)\n'
-                f'if sys.argv[1:] == {batched_command()!r}:\n'
+                f'if sys.argv[1:] in [{batched_command()!r}, {fanout_command()!r}]:\n'
                 '    assert [env.get("CARGO_PROFILE_RELEASE_" + key) for key in ("OPT_LEVEL", "DEBUG", "DEBUG_ASSERTIONS")] == ["3", "1", "false"]\n'
-                '    print(env["IRIS_TEST_BATCHED_OUTPUT"])\n'
+                f'    if sys.argv[1:] == {batched_command()!r}: print(env["IRIS_TEST_BATCHED_OUTPUT"])\n'
                 'else:\n'
                 '    assert [env.get("CARGO_PROFILE_RELEASE_" + key) for key in ("OPT_LEVEL", "DEBUG", "DEBUG_ASSERTIONS")] == ["1", "0", "true"]\n'
+                f'if sys.argv[1:] == {fanout_command()!r}:\n'
+                '    root = pathlib.Path(env["IRIS_PRIVATE_CONTROL_FIXTURE_OUTPUT"]).parent\n'
+                '    root.mkdir(parents=True, exist_ok=True)\n'
+                '    receipt = json.loads(env["IRIS_TEST_FANOUT_RECEIPT"])\n'
+                '    text = env["IRIS_TEST_FANOUT_LOG"]\n'
+                '    if env["IRIS_TEST_FANOUT_MODE"] != "missing":\n'
+                '        (root / "populated-discovery-five-relay.json").write_text(json.dumps(receipt))\n'
+                '        (root / "populated-discovery-five-relay.log").write_text(text)\n'
+                '    print(text)\n'
+                '    if env["IRIS_TEST_FANOUT_MODE"] != "missing-outer":\n'
+                '        print("POPULATED_DISCOVERY_IDLE_RECEIPT="+json.dumps(receipt))\n'
+                '    if env["IRIS_TEST_FANOUT_MODE"] == "duplicate-outer":\n'
+                '        print("POPULATED_DISCOVERY_IDLE_RECEIPT="+json.dumps(receipt))\n'
                 f'if sys.argv[1:] == {checkpoint_command()!r}:\n'
                 '    mode = env["IRIS_TEST_CHECKPOINT_OUTPUT"]\n'
                 '    if mode != "missing-marker":\n'
@@ -214,6 +308,7 @@ class RustRunnerTests(unittest.TestCase):
             relay_log = directory / "relay-commands"
             scratch = directory / "scratch"
             scratch.mkdir()
+            fanout_receipt, fanout_log = fanout_evidence(fanout_mode)
             env = dict(
                 os.environ, PATH=str(binary_dir), TMPDIR=str(scratch), IRIS_TEST_LOG=str(log),
                 IRIS_TEST_RELAY_LOG=str(relay_log), IRIS_TEST_RELAY_FAIL=str(int(fail_relay)),
@@ -221,6 +316,8 @@ class RustRunnerTests(unittest.TestCase):
                 IRIS_TEST_PLATFORM=platform, IRIS_TEST_REAL_PYTHON=sys.executable,
                 IRIS_TEST_CHECKPOINT_OUTPUT=checkpoint_output,
                 IRIS_TEST_BATCHED_OUTPUT=batched_output(batched_mode),
+                IRIS_TEST_FANOUT_RECEIPT=json.dumps(fanout_receipt), IRIS_TEST_FANOUT_LOG=fanout_log,
+                IRIS_TEST_FANOUT_MODE=fanout_mode,
                 CARGO_PROFILE_RELEASE_OPT_LEVEL="1", CARGO_PROFILE_RELEASE_DEBUG="0",
                 CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS="true",
             )
@@ -447,7 +544,10 @@ class RustRunnerTests(unittest.TestCase):
     def test_populated_discovery_runs_nonignored_in_the_core_suite(self):
         source = (ROOT / "core/src/core/tests/populated_discovery_idle.rs").read_text()
         self.assertRegex(source, r"#\[test\]\s+fn populated_account_discovery_stays_quiet_and_targeted_demand_progresses\(\)")
-        self.assertNotRegex(source, r"#\[ignore(?:\s|=|\])")
+        default = source[source.index("    #[test]\n    fn populated_account_discovery_stays_quiet"):]
+        default = default[:default.index("    #[test]", 1)]
+        self.assertNotRegex(default, r"#\[ignore(?:\s|=|\])")
+        self.assertRegex(source, r"#\[test\]\s+#\[ignore[^\n]+\]\s+fn populated_account_five_relay_discovery_stays_quiet_and_targeted_demand_progresses\(\)")
         self.assertIn('include!("tests/populated_discovery_idle.rs");',
                       (ROOT / "core/src/core/tests.rs").read_text())
         # Both ordinary runners select the full core suite once; there is no
@@ -455,6 +555,45 @@ class RustRunnerTests(unittest.TestCase):
         for nextest in (True, False):
             self.assertFalse(any("populated_account_discovery_stays_quiet" in arg
                                  for command in self.commands(nextest, "Linux") for arg in command))
+
+    def test_five_relay_gate_is_once_optimized_after_ordinary_core(self):
+        for nextest in (True, False):
+            result, calls = self.run_runner(nextest, platform="Linux", target="retained target")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(calls, self.commands(nextest, "Linux"))
+            self.assertEqual(calls.count(fanout_command()), 1)
+            self.assertIn("Five-relay populated discovery CPU/wire companion evidence verified", result.stdout)
+
+    def test_five_relay_keeps_existing_clock_and_parent_closure_tolerance(self):
+        for mode in ("parent-close-overhead", "settle-clock-overhead"):
+            with self.subTest(mode=mode):
+                result, calls = self.run_runner(False, platform="Linux", fanout_mode=mode)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(calls, self.commands(False, "Linux"))
+
+    def test_five_relay_gate_rejects_missing_or_inconsistent_evidence(self):
+        modes = ("missing", "failed", "timeout", "wrong-log", "log-mismatch", "wrong-test",
+                 "missing-outer", "duplicate-outer", "one-relay", "missing-relay", "duplicate-relay",
+                 "missing-subject", "unpolled-pair", "relay-sum", "full-tls", "unwarmed-relay",
+                 "missing-readiness", "wrong-target-fanout", "excess-cpu", "short-cycle", "short-quiet",
+                 "global-cap", "stale-source", "debug", "boolean-counter", "fractional-counter", "no-privacy")
+        for nextest in (True, False):
+            commands = self.commands(nextest, "Linux")
+            index = commands.index(fanout_command())
+            for mode in modes:
+                with self.subTest(nextest=nextest, mode=mode):
+                    result, calls = self.run_runner(nextest, platform="Linux", fanout_mode=mode)
+                    self.assertNotEqual(result.returncode, 0, result.stdout)
+                    self.assertEqual(calls, commands[:index + 1])
+
+    def test_five_relay_cargo_failure_preserves_status_output_and_cleanup(self):
+        for nextest in (True, False):
+            result, calls = self.run_runner(nextest, platform="Linux", fail_on=fanout_command())
+            self.assertEqual(result.returncode, 23)
+            self.assertIn("Synthetic cargo failure stdout", result.stdout)
+            self.assertIn("Synthetic cargo failure stderr", result.stdout)
+            commands = self.commands(nextest, "Linux")
+            self.assertEqual(calls, commands[:commands.index(fanout_command()) + 1])
 
     def test_linux_requires_valid_populated_companion_evidence(self):
         for nextest in (True, False):

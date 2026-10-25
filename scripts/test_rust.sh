@@ -57,6 +57,171 @@ for crate in core chat-protocol protocol-ffi; do
     else
         cargo test -q "${args[@]}"
     fi
+    # The populated CPU test runs once in the ordinary nonignored core suite.
+    # Nextest captures successful stdout, so CI retains its companion files with
+    # the existing native private-control artifact instead of rerunning it.
+    if [[ "$crate" == core && "$(uname -s)" == Linux && -n "${IRIS_PRIVATE_CONTROL_FIXTURE_OUTPUT:-}" ]]; then
+        python3 - "$IRIS_PRIVATE_CONTROL_FIXTURE_OUTPUT" <<'CPU_RECEIPT'
+import hashlib
+import json
+import math
+from pathlib import Path
+import sys
+
+root = Path(sys.argv[1]).parent
+receipt = json.loads((root / "populated-discovery-idle.json").read_text())
+log = (root / "populated-discovery-idle.log").read_bytes()
+assert receipt["schema"] == "iris-populated-discovery-idle/v1"
+assert receipt["passed"] is True and receipt["timed_out"] is False and receipt["exit_code"] == 0
+assert receipt["log_bytes"] == len(log) and receipt["log_sha256"] == hashlib.sha256(log).hexdigest()
+assert len(receipt["measurements"]) == 1
+result = receipt["measurements"][0]
+assert result["database_bytes"] >= 100 * 1024 * 1024 and result["message_rows"] >= 20800
+assert (result["contacts"], result["peer_devices"], result["own_devices"], result["groups"]) == (96, 288, 3, 8)
+assert result["discovery_subjects"] == 384 and result["readiness_round_min"] >= 3
+assert result["mesh_discovery_subjects"] == 96
+assert result["total_discovery_subjects"] == result["discovery_subjects"] + result["mesh_discovery_subjects"] == 480
+assert result["completed_peer_polls"] >= result["total_discovery_subjects"] * result["readiness_round_min"]
+assert all(type(result[key]) is int and result[key] >= 0 for key in ("fresh_anonymous_authentications", "anonymous_connections", "all_completed_polls", "all_reused_polls"))
+assert result["fresh_anonymous_authentications"] == result["anonymous_connections"] >= result["total_discovery_subjects"]
+assert result["all_completed_polls"] == result["anonymous_connections"] + result["all_reused_polls"]
+assert result["all_completed_polls"] >= result["completed_peer_polls"] + 2 * result["total_discovery_subjects"] + 1
+assert result["revoked_stale_records"] >= 96
+assert result["targeted_fresh_proof_delivered"] is True and result["privacy_wire_passed"] is True
+samples = result["quiet_samples"]
+assert len(samples) == 2 and sum(sample["seconds"] for sample in samples) >= 70
+for sample in samples:
+    assert math.isfinite(sample["cpu_percent_one_core"]) and 0 <= sample["cpu_percent_one_core"] <= 5
+    assert sample["application_wire_bytes"] == sample["connections"] == 0
+cycles = result["full_cycle_tls_samples"]
+assert len(cycles) == 2
+for cycle in cycles:
+    assert all(type(cycle[key]) is int and cycle[key] >= 0 for key in ("completed_polls", "new_poll_connections", "reused_polls", "reused_connections", "tls_resumed_handshakes", "tls_full_handshakes", "connections"))
+    assert math.isfinite(cycle["seconds"]) and cycle["seconds"] >= 125
+    assert math.isfinite(cycle["cpu_percent_one_core"]) and 0 <= cycle["cpu_percent_one_core"] <= 5
+    assert cycle["every_author_polled"] is True
+    assert cycle["tls_full_handshakes"] == 0
+    assert result["total_discovery_subjects"] <= cycle["completed_polls"] <= 2 * result["total_discovery_subjects"]
+    assert cycle["reused_connections"] == 64 and 64 <= cycle["reused_polls"] <= 128
+    assert cycle["new_poll_connections"] >= result["total_discovery_subjects"] - 64
+    assert cycle["tls_resumed_handshakes"] == cycle["connections"] == cycle["new_poll_connections"]
+    assert cycle["completed_polls"] == cycle["new_poll_connections"] + cycle["reused_polls"]
+    assert cycle["application_wire_bytes"] > 0
+print("Populated discovery CPU/wire companion evidence verified")
+CPU_RECEIPT
+    fi
+    if [[ "$crate" == core && "$(uname -s)" == Linux ]]; then
+        # Serialize the five-relay case after the ordinary core suite. Reuse
+        # this job's target/cache; this may incrementally build optimized core.
+        # The default one-relay test remains nonignored and runs only there.
+        (
+            fanout_tmp="$(mktemp -d "${TMPDIR:-/tmp}/iris-discovery-fanout.XXXXXX")"
+            trap 'rm -rf "$fanout_tmp"' EXIT
+            fanout_output="${IRIS_PRIVATE_CONTROL_FIXTURE_OUTPUT:-${fanout_tmp}/native-private-controls.json}"
+            IRIS_PRIVATE_CONTROL_FIXTURE_OUTPUT="$fanout_output" \
+            CARGO_PROFILE_RELEASE_OPT_LEVEL=3 CARGO_PROFILE_RELEASE_DEBUG=1 \
+            CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS=false \
+                cargo test "${args[@]}" --release --jobs 2 --lib \
+                core::tests::populated_discovery_idle::populated_account_five_relay_discovery_stays_quiet_and_targeted_demand_progresses \
+                -- --ignored --exact --test-threads=1 --nocapture 2>&1 | tee "$fanout_tmp/run.log"
+            python3 - "$fanout_output" "$ROOT_DIR" "$fanout_tmp/run.log" <<'FANOUT_RECEIPT'
+import hashlib
+import json
+import math
+from pathlib import Path
+import re
+import sys
+
+root, source, run_log = Path(sys.argv[1]).parent, Path(sys.argv[2]), Path(sys.argv[3])
+receipt = json.loads((root / "populated-discovery-five-relay.json").read_text())
+log = (root / "populated-discovery-five-relay.log").read_bytes()
+assert receipt["schema"] == "iris-populated-discovery-idle/v1"
+assert receipt["passed"] is True and receipt["timed_out"] is False and receipt["exit_code"] == 0
+assert receipt["log_bytes"] == len(log) and receipt["log_sha256"] == hashlib.sha256(log).hexdigest()
+assert len(receipt["measurements"]) == 1
+result = receipt["measurements"][0]
+assert result["debug_assertions"] is False
+assert result["database_bytes"] >= 100 * 1024 * 1024 and result["message_rows"] >= 20800
+assert (result["contacts"], result["peer_devices"], result["own_devices"], result["groups"]) == (96, 288, 3, 8)
+assert result["discovery_subjects"] == 384 and result["mesh_discovery_subjects"] == 96
+assert result["total_discovery_subjects"] == 480 and result["relay_count"] == 5
+assert result["author_relay_pairs"] == 2400 and result["targeted_relay_polls"] == 5
+assert type(result["readiness_round_min"]) is int and result["readiness_round_min"] >= 3
+assert math.isfinite(result["settle_seconds"]) and result["settle_seconds"] >= 0
+assert result["revoked_stale_records"] >= 96
+assert result["targeted_fresh_proof_delivered"] is True and result["privacy_wire_passed"] is True
+for field, path in (("fixture_source_sha256", "core/src/core/tests/synthetic_history_scale.rs"),
+                    ("test_source_sha256", "core/src/core/tests/populated_discovery_idle.rs")):
+    assert result[field] == hashlib.sha256((source / path).read_bytes()).hexdigest(), "Stale CPU fixture source"
+readiness = result["relay_readiness"]
+assert len(readiness) == 5 and sorted(row["relay_index"] for row in readiness) == list(range(5))
+for row in readiness:
+    assert all(type(row[key]) is int for key in ("relay_index", "subjects", "readiness_round_min", "completed_peer_polls"))
+    assert row["subjects"] == 480 and row["readiness_round_min"] >= 3
+    assert row["completed_peer_polls"] >= 480 * row["readiness_round_min"]
+assert result["readiness_round_min"] == min(row["readiness_round_min"] for row in readiness)
+assert result["completed_peer_polls"] == sum(row["completed_peer_polls"] for row in readiness)
+for key in ("fresh_anonymous_authentications", "anonymous_connections", "all_completed_polls", "all_reused_polls"):
+    assert type(result[key]) is int and result[key] >= 0
+assert result["fresh_anonymous_authentications"] == result["anonymous_connections"] >= 2400
+assert result["all_completed_polls"] == result["anonymous_connections"] + result["all_reused_polls"]
+assert result["all_completed_polls"] >= result["completed_peer_polls"] + 4800 + 5
+samples = result["quiet_samples"]
+assert len(samples) == 2
+for sample in samples:
+    assert math.isfinite(sample["seconds"]) and sample["seconds"] >= 35
+    assert math.isfinite(sample["cpu_percent_one_core"]) and 0 <= sample["cpu_percent_one_core"] <= 5
+    assert sample["application_wire_bytes"] == sample["connections"] == 0
+cycles = result["full_cycle_tls_samples"]
+assert len(cycles) == 2
+counters = ("completed_polls", "new_poll_connections", "reused_polls", "reused_connections", "tls_resumed_handshakes", "tls_full_handshakes", "connections")
+for cycle in cycles:
+    assert math.isfinite(cycle["seconds"]) and cycle["seconds"] >= 125
+    assert math.isfinite(cycle["cpu_percent_one_core"]) and 0 <= cycle["cpu_percent_one_core"] <= 5
+    assert cycle["every_author_polled"] is True and cycle["application_wire_bytes"] > 0
+    assert all(type(cycle[key]) is int and cycle[key] >= 0 for key in counters)
+    assert 2400 <= cycle["completed_polls"] <= 4800
+    assert cycle["reused_connections"] == 64 and 64 <= cycle["reused_polls"] <= 128
+    assert cycle["new_poll_connections"] >= 2336 and cycle["tls_full_handshakes"] == 0
+    assert cycle["tls_resumed_handshakes"] == cycle["connections"] == cycle["new_poll_connections"]
+    assert cycle["completed_polls"] == cycle["new_poll_connections"] + cycle["reused_polls"]
+    relays = cycle["relay_samples"]
+    assert len(relays) == 5 and sorted(row["relay_index"] for row in relays) == list(range(5))
+    for row in relays:
+        assert all(type(row[key]) is int and row[key] >= 0 for key in (*counters, "relay_index", "subjects", "poll_round_min", "poll_round_max"))
+        assert row["subjects"] == 480 and 1 <= row["poll_round_min"] <= row["poll_round_max"] <= 2
+        assert 480 * row["poll_round_min"] <= row["completed_polls"] <= 480 * row["poll_round_max"]
+        assert row["tls_full_handshakes"] == 0
+        assert row["tls_resumed_handshakes"] == row["connections"] == row["new_poll_connections"]
+        assert row["completed_polls"] == row["new_poll_connections"] + row["reused_polls"]
+        assert row["reused_connections"] <= row["reused_polls"] <= 2 * row["reused_connections"]
+    assert all(cycle[key] == sum(row[key] for row in relays) for key in counters), "Relay counters disagree with aggregate"
+assert math.isfinite(receipt["seconds"]) and receipt["seconds"] > 0
+assert receipt["seconds"] >= result["settle_seconds"] + sum(row["seconds"] for row in samples + cycles)
+# JSON serialization can shift one float ULP between the emitted result and
+# receipt. Keep that existing serializer tolerance, never a measurement budget.
+def equivalent(a, b):
+    if isinstance(a, float) and isinstance(b, float):
+        return math.isfinite(a) and math.isfinite(b) and abs(a-b) <= max(math.ulp(a), math.ulp(b))
+    if type(a) is not type(b): return False
+    if isinstance(a, dict): return a.keys() == b.keys() and all(equivalent(a[k], b[k]) for k in a)
+    if isinstance(a, list): return len(a) == len(b) and all(equivalent(x, y) for x, y in zip(a, b))
+    return a == b
+text = log.decode()
+test = "core::tests::populated_discovery_idle::populated_account_five_relay_discovery_stays_quiet_and_targeted_demand_progresses"
+assert "test " + test + " ... " in text
+assert re.findall(r"test result: (ok|FAILED)\. (\d+) passed; (\d+) failed; (\d+) ignored;", text) == [("ok", "1", "0", "0")]
+for marker, expected in (("POPULATED_DISCOVERY_IDLE_RESULT=", [result]),
+                         ("POPULATED_DISCOVERY_IDLE_SAMPLE=", samples),
+                         ("POPULATED_DISCOVERY_CYCLE_SAMPLE=", cycles)):
+    actual = [json.loads(line.split(marker, 1)[1]) for line in text.splitlines() if marker in line]
+    assert equivalent(actual, expected), "Companion log disagrees with CPU measurements"
+outer = [json.loads(line.split("POPULATED_DISCOVERY_IDLE_RECEIPT=", 1)[1]) for line in run_log.read_text().splitlines() if "POPULATED_DISCOVERY_IDLE_RECEIPT=" in line]
+assert len(outer) == 1 and equivalent(outer[0], receipt), "Required five-relay invocation did not emit this receipt exactly once"
+print("Five-relay populated discovery CPU/wire companion evidence verified")
+FANOUT_RECEIPT
+        )
+    fi
     if [[ "$crate" == chat-protocol ]]; then
         # A large pending protocol backlog is independent of visible message
         # history. Keep this allocation/serialization/durability regression in
@@ -166,57 +331,5 @@ BATCHED_CPU_RECEIPT
             )
         fi
     fi
-    # The populated CPU test runs once in the ordinary nonignored core suite.
-    # Nextest captures successful stdout, so CI retains its companion files with
-    # the existing native private-control artifact instead of rerunning it.
-    if [[ "$crate" == core && "$(uname -s)" == Linux && -n "${IRIS_PRIVATE_CONTROL_FIXTURE_OUTPUT:-}" ]]; then
-        python3 - "$IRIS_PRIVATE_CONTROL_FIXTURE_OUTPUT" <<'CPU_RECEIPT'
-import hashlib
-import json
-import math
-from pathlib import Path
-import sys
 
-root = Path(sys.argv[1]).parent
-receipt = json.loads((root / "populated-discovery-idle.json").read_text())
-log = (root / "populated-discovery-idle.log").read_bytes()
-assert receipt["schema"] == "iris-populated-discovery-idle/v1"
-assert receipt["passed"] is True and receipt["timed_out"] is False and receipt["exit_code"] == 0
-assert receipt["log_bytes"] == len(log) and receipt["log_sha256"] == hashlib.sha256(log).hexdigest()
-assert len(receipt["measurements"]) == 1
-result = receipt["measurements"][0]
-assert result["database_bytes"] >= 100 * 1024 * 1024 and result["message_rows"] >= 20800
-assert (result["contacts"], result["peer_devices"], result["own_devices"], result["groups"]) == (96, 288, 3, 8)
-assert result["discovery_subjects"] == 384 and result["readiness_round_min"] >= 3
-assert result["mesh_discovery_subjects"] == 96
-assert result["total_discovery_subjects"] == result["discovery_subjects"] + result["mesh_discovery_subjects"] == 480
-assert result["completed_peer_polls"] >= result["total_discovery_subjects"] * result["readiness_round_min"]
-assert all(type(result[key]) is int and result[key] >= 0 for key in ("fresh_anonymous_authentications", "anonymous_connections", "all_completed_polls", "all_reused_polls"))
-assert result["fresh_anonymous_authentications"] == result["anonymous_connections"] >= result["total_discovery_subjects"]
-assert result["all_completed_polls"] == result["anonymous_connections"] + result["all_reused_polls"]
-assert result["all_completed_polls"] >= result["completed_peer_polls"] + 2 * result["total_discovery_subjects"] + 1
-assert result["revoked_stale_records"] >= 96
-assert result["targeted_fresh_proof_delivered"] is True and result["privacy_wire_passed"] is True
-samples = result["quiet_samples"]
-assert len(samples) == 2 and sum(sample["seconds"] for sample in samples) >= 70
-for sample in samples:
-    assert math.isfinite(sample["cpu_percent_one_core"]) and 0 <= sample["cpu_percent_one_core"] <= 5
-    assert sample["application_wire_bytes"] == sample["connections"] == 0
-cycles = result["full_cycle_tls_samples"]
-assert len(cycles) == 2
-for cycle in cycles:
-    assert all(type(cycle[key]) is int and cycle[key] >= 0 for key in ("completed_polls", "new_poll_connections", "reused_polls", "reused_connections", "tls_resumed_handshakes", "tls_full_handshakes", "connections"))
-    assert math.isfinite(cycle["seconds"]) and cycle["seconds"] >= 125
-    assert math.isfinite(cycle["cpu_percent_one_core"]) and 0 <= cycle["cpu_percent_one_core"] <= 5
-    assert cycle["every_author_polled"] is True
-    assert cycle["tls_full_handshakes"] == 0
-    assert result["total_discovery_subjects"] <= cycle["completed_polls"] <= 2 * result["total_discovery_subjects"]
-    assert cycle["reused_connections"] == 64 and 64 <= cycle["reused_polls"] <= 128
-    assert cycle["new_poll_connections"] >= result["total_discovery_subjects"] - 64
-    assert cycle["tls_resumed_handshakes"] == cycle["connections"] == cycle["new_poll_connections"]
-    assert cycle["completed_polls"] == cycle["new_poll_connections"] + cycle["reused_polls"]
-    assert cycle["application_wire_bytes"] > 0
-print("Populated discovery CPU/wire companion evidence verified")
-CPU_RECEIPT
-    fi
 done
