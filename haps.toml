@@ -1,12 +1,12 @@
 # https://haps.hashtree.cc
 # Local source builds are separate from the signed, attested release binaries.
 # Keep both package versions and build version arguments in sync with the release tag.
-# v2026.10.26 uses Haps' date-revision version 2026.10.2600.
+# v2026.10.26.1 uses Haps' date-revision version 2026.10.2601.
 # Haps binds the source URL and exact commit from the selected release.
 
 [package]
 name = "iris-chat"
-version = "2026.10.2600"
+version = "2026.10.2601"
 target = "host"
 description = "Private messaging without a phone number."
 
@@ -17,7 +17,7 @@ commands = { iris-chat = "Iris Chat.app/Contents/MacOS/Iris Chat" }
 app = "Iris Chat.app"
 
 [targets.aarch64-apple-darwin.build]
-commands = [["env", "IRIS_APP_VERSION_NAME=2026.10.26", "IRIS_RELEASE_ENV_FILE=/dev/null", "MACOS_SIGNING_IDENTITY=", "IRIS_MACOS_APP_NAME=Iris Chat.app", "IRIS_MACOS_RUST_TARGETS={target}", "CARGO_TARGET_DIR=target/haps-core", "./scripts/macos-build", "macos-app"]]
+commands = [["env", "IRIS_APP_VERSION_NAME=2026.10.26.1", "IRIS_RELEASE_ENV_FILE=/dev/null", "MACOS_SIGNING_IDENTITY=", "IRIS_MACOS_APP_NAME=Iris Chat.app", "IRIS_MACOS_RUST_TARGETS={target}", "CARGO_TARGET_DIR=target/haps-core", "./scripts/macos-build", "macos-app"]]
 artifacts = { "Iris Chat.app" = "dist/macos/Iris Chat.app" }
 
 # Requires the native development libraries listed in linux/Dockerfile.
@@ -26,7 +26,7 @@ commands = { iris-chat = "usr/bin/iris-chat" }
 desktop = { name = "Iris Chat", command = "iris-chat", icon = "usr/share/icons/hicolor/256x256/apps/iris-chat.png" }
 
 [targets.x86_64-unknown-linux-gnu.build]
-commands = [["env", "IRIS_APP_VERSION_NAME=2026.10.26", "cargo", "build", "--manifest-path", "linux/Cargo.toml", "--locked", "--release", "--bin", "iris-chat", "--target", "{target}", "--target-dir", "target/haps-linux"]]
+commands = [["env", "IRIS_APP_VERSION_NAME=2026.10.26.1", "cargo", "build", "--manifest-path", "linux/Cargo.toml", "--locked", "--release", "--bin", "iris-chat", "--target", "{target}", "--target-dir", "target/haps-linux"]]
 
 [targets.x86_64-unknown-linux-gnu.build.artifacts]
 "usr/bin/iris-chat" = "target/haps-linux/{target}/release/iris-chat"
@@ -50,25 +50,25 @@ desktop = { name = "Iris Chat", command = "iris-chat", icon = "Resources/IrisCha
 # Requires PowerShell, the Windows build tools in windows/README.md, and Haps 0.1.20.
 # The root directory mapping preserves the published Windows package layout.
 [targets.x86_64-pc-windows-msvc.build]
-commands = [["pwsh", "-NoProfile", "-NonInteractive", "-Command", "$ErrorActionPreference = 'Stop'; $env:IRIS_APP_VERSION_NAME = '2026.10.26'; $env:IRIS_APP_VERSION_CODE = '2026102600'; $env:IRIS_BUILD_GIT_SHA = git rev-parse --short=12 HEAD; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; $env:IRIS_WINDOWS_TARGET = '{target}'; $env:IRIS_WINDOWS_DOTNET_CONFIG = 'Release'; $env:IRIS_WINDOWS_RUST_PROFILE = 'release'; $env:CARGO_TARGET_DIR = 'target/haps-core'; & ./scripts/windows-build-local.ps1 build; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }"]]
+commands = [["pwsh", "-NoProfile", "-NonInteractive", "-Command", "$ErrorActionPreference = 'Stop'; $env:IRIS_APP_VERSION_NAME = '2026.10.26.1'; $env:IRIS_APP_VERSION_CODE = '2026102601'; $env:IRIS_BUILD_GIT_SHA = git rev-parse --short=12 HEAD; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }; $env:IRIS_WINDOWS_TARGET = '{target}'; $env:IRIS_WINDOWS_DOTNET_CONFIG = 'Release'; $env:IRIS_WINDOWS_RUST_PROFILE = 'release'; $env:CARGO_TARGET_DIR = 'target/haps-core'; & ./scripts/windows-build-local.ps1 build; if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }"]]
 artifacts = { "." = "windows/IrisChat/bin/Release/net8.0-windows10.0.17763.0/win-x64/publish" }
 
 [packages.iris.package]
 name = "iris"
-version = "2026.10.2600"
+version = "2026.10.2601"
 target = "host"
 description = "Iris Chat command-line client"
 commands = { iris = "iris" }
 
 # Native source builds need Rust, CMake, and the platform C/C++ dependencies.
 [packages.iris.targets.aarch64-apple-darwin.build]
-commands = [["env", "IRIS_APP_VERSION_NAME=2026.10.26", "cargo", "build", "--manifest-path", "core/Cargo.toml", "--locked", "--release", "--bin", "iris", "--target", "{target}", "--target-dir", "target/haps-cli"]]
+commands = [["env", "IRIS_APP_VERSION_NAME=2026.10.26.1", "cargo", "build", "--manifest-path", "core/Cargo.toml", "--locked", "--release", "--bin", "iris", "--target", "{target}", "--target-dir", "target/haps-cli"]]
 artifacts = { iris = "target/haps-cli/{target}/release/iris" }
 
 [packages.iris.targets.x86_64-apple-darwin.build]
-commands = [["env", "IRIS_APP_VERSION_NAME=2026.10.26", "cargo", "build", "--manifest-path", "core/Cargo.toml", "--locked", "--release", "--bin", "iris", "--target", "{target}", "--target-dir", "target/haps-cli"]]
+commands = [["env", "IRIS_APP_VERSION_NAME=2026.10.26.1", "cargo", "build", "--manifest-path", "core/Cargo.toml", "--locked", "--release", "--bin", "iris", "--target", "{target}", "--target-dir", "target/haps-cli"]]
 artifacts = { iris = "target/haps-cli/{target}/release/iris" }
 
 [packages.iris.targets.x86_64-unknown-linux-gnu.build]
-commands = [["env", "IRIS_APP_VERSION_NAME=2026.10.26", "cargo", "build", "--manifest-path", "core/Cargo.toml", "--locked", "--release", "--bin", "iris", "--target", "{target}", "--target-dir", "target/haps-cli"]]
+commands = [["env", "IRIS_APP_VERSION_NAME=2026.10.26.1", "cargo", "build", "--manifest-path", "core/Cargo.toml", "--locked", "--release", "--bin", "iris", "--target", "{target}", "--target-dir", "target/haps-cli"]]
 artifacts = { iris = "target/haps-cli/{target}/release/iris" }

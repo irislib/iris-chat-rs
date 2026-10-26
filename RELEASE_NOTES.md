@@ -2,6 +2,27 @@
 
 Each release has channel-specific notes. The release tag must match the `##` heading exactly.
 
+## v2026.10.26.1
+
+### GitHub
+
+- Avoid repeating app-state saves, subscription updates and pending-message retries when unchanged signed device lists and invitations are received again.
+- Preserve real authorization updates and make completed invitation recovery durable and visible. Keep anonymous discovery and private message delivery boundaries unchanged.
+- Extend populated-account CPU and wire checks to process replayed metadata through the app, with no redundant state writes.
+- Add recent recipients to Android's system share sheet, opening shared text and files in the selected chat for review before sending.
+- Update the protocol source package to 0.3.11 and the CLI source package to 0.1.55. Message formats and saved state remain compatible with v2026.10.26.
+
+### Apple
+
+- Reduce repeated processing while Iris is open.
+- Keep recovered chats visible after an invitation completes.
+
+### Zapstore
+
+- Reduce repeated processing while Iris is open.
+- Keep recovered chats visible after an invitation completes.
+- Share directly to recent chats from other Android apps.
+
 ## v2026.10.26
 
 ### GitHub
