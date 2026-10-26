@@ -15,6 +15,8 @@ on:
       - "scripts/test_build_common.py"
       - "scripts/apple_connect_api.py"
       - "scripts/test_apple_connect_api.py"
+      - "scripts/run_public_link_phone.py"
+      - "scripts/test_ios_harness_retry_contract.py"
   pull_request:
     paths:
       - ".github/workflows/ci.yml"
@@ -28,6 +30,8 @@ on:
       - "scripts/test_build_common.py"
       - "scripts/apple_connect_api.py"
       - "scripts/test_apple_connect_api.py"
+      - "scripts/run_public_link_phone.py"
+      - "scripts/test_ios_harness_retry_contract.py"
   workflow_dispatch:
 
 permissions:
@@ -52,6 +56,7 @@ jobs:
           python3 scripts/test_release_notes.py
           python3 scripts/test_build_common.py
           python3 scripts/test_apple_connect_api.py
+          python3 scripts/test_ios_harness_retry_contract.py
           python3 - <<'PY'
           from pathlib import Path
           import re

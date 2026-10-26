@@ -294,6 +294,8 @@ class ReleaseWorkflowTests(unittest.TestCase):
             '      - "scripts/test_release_workflow.py"',
             '      - "scripts/apple_connect_api.py"',
             '      - "scripts/test_apple_connect_api.py"',
+            '      - "scripts/run_public_link_phone.py"',
+            '      - "scripts/test_ios_harness_retry_contract.py"',
         ]
         # Keep this exclusion narrow: changing any app/build input must still
         # trigger the original full platform checks.
@@ -307,9 +309,11 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertEqual(ci.count("    paths-ignore:\n"), 2)
         quick = (ROOT / ".github/workflows/release-checks.yml").read_text()
         for path in (".github/workflows/ci.yml", ".github/workflows/release.yml", ".github/workflows/release-checks.yml",
-                     "scripts/test_release_workflow.py", "scripts/apple_connect_api.py", "scripts/test_apple_connect_api.py"):
+                     "scripts/test_release_workflow.py", "scripts/apple_connect_api.py", "scripts/test_apple_connect_api.py",
+                     "scripts/run_public_link_phone.py", "scripts/test_ios_harness_retry_contract.py"):
             self.assertEqual(quick.count(f'      - "{path}"'), 2)
-        for script in ("test_release_workflow.py", "test_release_notes.py", "test_build_common.py", "test_apple_connect_api.py"):
+        for script in ("test_release_workflow.py", "test_release_notes.py", "test_build_common.py", "test_apple_connect_api.py",
+                       "test_ios_harness_retry_contract.py"):
             self.assertIn(f"python3 scripts/{script}", quick)
         self.assertIn("node --version", quick)
         self.assertIn('"scripts/render-release-notes.py"', quick)

@@ -12,6 +12,8 @@ on:
       - "scripts/test_release_workflow.py"
       - "scripts/apple_connect_api.py"
       - "scripts/test_apple_connect_api.py"
+      - "scripts/run_public_link_phone.py"
+      - "scripts/test_ios_harness_retry_contract.py"
   pull_request:
     paths-ignore:
       - "**/*.md"
@@ -20,6 +22,8 @@ on:
       - "scripts/test_release_workflow.py"
       - "scripts/apple_connect_api.py"
       - "scripts/test_apple_connect_api.py"
+      - "scripts/run_public_link_phone.py"
+      - "scripts/test_ios_harness_retry_contract.py"
   workflow_dispatch:
     inputs:
       scope:
