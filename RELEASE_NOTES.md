@@ -2,6 +2,22 @@
 
 Each release has channel-specific notes. The release tag must match the `##` heading exactly.
 
+## v2026.10.26.2
+
+### GitHub
+
+- Avoid scanning every known device when retrying a private nearby delivery. Use the existing authenticated recipient set directly, preserving recipient-specific delivery and public broadcast behavior.
+- Add regressions for private-send processing and public peer selection, alongside serialized first-contact, restart, call and group privacy coverage.
+- Update the CLI source package to 0.1.56. The protocol package remains at 0.3.11, with unchanged message formats and saved state.
+
+### Apple
+
+- Reduce repeated processing while sending and recovering messages.
+
+### Zapstore
+
+- Reduce repeated processing while sending and recovering messages.
+
 ## v2026.10.26.1
 
 ### GitHub
