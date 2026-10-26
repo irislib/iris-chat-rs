@@ -58,6 +58,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.listSaver
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -160,6 +162,7 @@ fun ChatScreen(
     val busy by appManager.busy.collectAsStateWithLifecycle()
     val router by appManager.router.collectAsStateWithLifecycle()
     val chatListSnapshots by appManager.chatList.collectAsStateWithLifecycle()
+    val pendingShare by appManager.pendingShare.collectAsStateWithLifecycle()
     val isAppForegrounded by appManager.appForegrounded.collectAsStateWithLifecycle()
     val lastUserActivityAtSecs by appManager.lastUserActivityAtSecs.collectAsStateWithLifecycle()
 
@@ -170,7 +173,10 @@ fun ChatScreen(
     val chat = currentChat?.takeIf { it.chatId == chatId }
     val draft = remember(chatId) { TextFieldState() }
     var lastPersistedDraft by remember(chatId) { mutableStateOf<String?>(null) }
-    var selectedAttachments by remember(chatId) { mutableStateOf<List<PickedAttachment>>(emptyList()) }
+    var selectedAttachments by rememberSaveable(chatId, stateSaver = listSaver<List<PickedAttachment>, String>(
+        save = { attachments -> attachments.flatMap { listOf(it.path, it.filename) } },
+        restore = { values -> values.chunked(2).map { PickedAttachment(it[0], it[1]) } },
+    )) { mutableStateOf(emptyList()) }
     var sendFilesDirectly by remember(chatId) { mutableStateOf(false) }
     var showAttachmentSources by remember(chatId) { mutableStateOf(false) }
     val attachmentPaste = rememberChatAttachmentPaste(chatId)
@@ -266,6 +272,21 @@ fun ChatScreen(
             else -> {
                 lastPersistedDraft = persisted
             }
+        }
+    }
+
+    LaunchedEffect(chatId, chat?.chatId, pendingShare) {
+        if (chat == null) return@LaunchedEffect
+        appManager.takePendingShareForChat(chatId)?.let { share ->
+            editTarget = null
+            replyTarget = null
+            val combinedText = listOf(draft.text.toString(), share.text).filter { it.isNotBlank() }.joinToString("\n")
+            draft.setTextAndPlaceCursorAtEnd(combinedText)
+            selectedAttachments = selectedAttachments + share.attachments.map { PickedAttachment(it.filePath, it.filename) }
+            sendFilesDirectly = false
+            appManager.dispatch(AppAction.SetChatDraft(chatId, combinedText))
+            composerFocusRequester.requestFocus()
+            keyboardController?.show()
         }
     }
 

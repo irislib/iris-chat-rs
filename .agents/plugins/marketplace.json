@@ -1,0 +1,20 @@
+{
+  "name": "iris-chat-plugins",
+  "interface": {
+    "displayName": "Iris Chat"
+  },
+  "plugins": [
+    {
+      "name": "iris-chat",
+      "source": {
+        "source": "local",
+        "path": "./plugins/iris-chat"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    }
+  ]
+}

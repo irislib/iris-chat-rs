@@ -21,6 +21,7 @@ import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.SideEffect
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.core.content.pm.ShortcutManagerCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
@@ -31,6 +32,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import to.iris.chat.account.AccountBootstrapState
 import to.iris.chat.core.AppContainer
+import to.iris.chat.core.DirectShareShortcuts
 import to.iris.chat.rust.AppAction
 import to.iris.chat.rust.DeviceAuthorizationState
 import to.iris.chat.rust.OutgoingAttachment
@@ -228,6 +230,11 @@ class MainActivity : ComponentActivity() {
             handleShareIntent(intent)
             return
         }
+        if (intent?.action == DirectShareShortcuts.ACTION_OPEN_CHAT) {
+            intent.getStringExtra(ShortcutManagerCompat.EXTRA_SHORTCUT_ID)?.let(container.appManager::receiveShareShortcut)
+            intent.action = null
+            return
+        }
         if (intent?.action == Intent.ACTION_VIEW) {
             handleChatLink(intent.data)
         }
@@ -236,6 +243,7 @@ class MainActivity : ComponentActivity() {
     private fun handleShareIntent(intent: Intent) {
         val text = shareTextFromIntent(intent)
         val streamUris = streamUrisFromIntent(intent)
+        val shortcutId = intent.getStringExtra(ShortcutManagerCompat.EXTRA_SHORTCUT_ID)
         if (text.isBlank() && streamUris.isEmpty()) {
             return
         }
@@ -251,7 +259,9 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                 }
-            container.appManager.receiveShare(text, attachments)
+            container.appManager.receiveShare(text, attachments, shortcutId)
+            // Consume only after import; recreation during import must be able to retry it.
+            intent.action = null
         }
     }
 
