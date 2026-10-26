@@ -594,7 +594,11 @@ mod populated_discovery_idle {
             let scopes = fixture.core.private_discovery_subscriptions(discovery).unwrap();
             let workers = scopes.iter().map(|(worker, _)| worker.upgrade().unwrap()).collect::<Vec<_>>();
             super::super::protocol::private_reads::apply_private_discovery_subscriptions(scopes, &relays).await.unwrap();
-            for worker in workers {
+            // The fixture owns these manually configured workers. Its core has
+            // no configured relays, so applying the targeted fresh roster clears
+            // the core's subscription runtime; that must not drop the remaining
+            // fixture relay polls before their CLOSE acknowledgements arrive.
+            for worker in &workers {
                 for relay in &relays {
                     worker.set_test_tls_roots(relay, tls_tests::certificates()).unwrap();
                 }
@@ -828,6 +832,7 @@ mod populated_discovery_idle {
                 "test_source_sha256": format!("{:x}", sha2::Sha256::digest(include_bytes!("populated_discovery_idle.rs")))
             }));
             fixture.core.private_discovery_subscriptions(Vec::new()).unwrap();
+            drop(workers);
             discovery_test_support::shutdown(&mut mesh_discovery).await;
             mesh_endpoint.shutdown().await.unwrap();
             client.shutdown().await;
