@@ -37,11 +37,12 @@ For local evaluation, run `claude --plugin-dir ./plugins/iris-chat` from this ch
 Grok Build supports Claude-compatible plugins. From this checkout:
 
 ```sh
-grok --plugin-dir ./plugins/iris-chat
+grok plugin install ./plugins/iris-chat
+grok inspect --json
 ```
 
-Use its plugin/skills menu to select the workflow. Grok Bot is a separate
-surface: give it the [workflow guide](https://github.com/irislib/iris-chat-rs/blob/main/docs/agents.md) and ask it to perform the task
+Start a new session and use its plugin/skills menu to select the workflow.
+Grok Bot is a separate surface: give it the [workflow guide](https://github.com/irislib/iris-chat-rs/blob/main/docs/agents.md) and ask it to perform the task
 with its terminal, then save the verified procedure as a skill. This repository
 is not automatically listed in Grok Bot's Connect apps directory.
 
