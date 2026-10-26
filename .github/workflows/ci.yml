@@ -20,17 +20,39 @@ on:
         description: Checks to run; retain exact source-bound coverage for unchanged components
         type: choice
         default: all
-        options: [all, cli, core, protocol, android, windows, windows-keyboard, windows-restore, apple, ios, ios-unit, macos, linux, apple-products, ios-products, macos-products, ios-ui-runner, macos-ui-runner]
+        options: [all, cli, core, protocol, android, windows, windows-keyboard, windows-restore, apple, ios, ios-unit, macos, linux, apple-products, ios-products, macos-products, ios-ui-runner, macos-ui-runner, rust-focused, rust-package]
       ios_core_seed_run:
         description: Optional exact successful core build/cache producer for Swift-only unit validation
         type: string
         default: ''
+      focused_crate:
+        description: Library to test with rust-focused scope
+        type: choice
+        default: core
+        options: [core, chat-protocol, protocol-ffi]
+      focused_tests:
+        description: Whitespace-separated exact Rust test names for rust-focused scope
+        type: string
+        default: ''
+      focused_release:
+        description: Use the release profile for rust-focused scope
+        type: boolean
+        default: false
+      focused_ignored:
+        description: Execute selected ignored tests in rust-focused scope
+        type: boolean
+        default: false
+      package_crate:
+        description: Crate to verify with rust-package scope; publish protocol before verifying core
+        type: choice
+        default: chat-protocol
+        options: [core, chat-protocol]
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}-${{ inputs.scope || 'all' }}-${{ inputs.ios_core_seed_run || 'full' }}
+  group: ci-${{ github.workflow }}-${{ github.ref }}-${{ inputs.scope || 'all' }}-${{ inputs.ios_core_seed_run || 'full' }}${{ inputs.scope == 'rust-focused' && format('-{0}-{1}', inputs.focused_crate, inputs.focused_release) || inputs.scope == 'rust-package' && format('-{0}', inputs.package_crate) || '' }}
   cancel-in-progress: true
 
 env:
@@ -69,6 +91,215 @@ jobs:
     with:
       commit: ${{ github.sha }}
       platform: ${{ inputs.scope == 'macos-ui-runner' && 'macos-ui' || inputs.scope == 'ios-ui-runner' && 'ios-ui' || inputs.scope == 'ios-products' && 'ios' || inputs.scope == 'macos-products' && 'macos' || 'both' }}
+
+  rust-focused:
+    if: ${{ inputs.scope == 'rust-focused' }}
+    name: Focused Rust regressions
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/cargo-target
+      FOCUSED_CRATE: ${{ inputs.focused_crate }}
+      FOCUSED_TESTS: ${{ inputs.focused_tests }}
+      FOCUSED_RELEASE: ${{ inputs.focused_release }}
+      FOCUSED_IGNORED: ${{ inputs.focused_ignored }}
+    defaults:
+      run:
+        working-directory: iris-chat-rs
+    steps:
+      - name: Checkout selected source
+        uses: actions/checkout@v4
+        with:
+          path: ${{ env.APP_DIR }}
+          ref: ${{ github.sha }}
+
+      - name: Validate runner and selected tests without compiling
+        run: |
+          set -Eeuo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          python3 scripts/test_rust_focused.py
+          flags=()
+          if [[ "$FOCUSED_RELEASE" == true ]]; then flags+=(--release); fi
+          if [[ "$FOCUSED_IGNORED" == true ]]; then flags+=(--include-ignored); fi
+          mkdir -p work/rust-focused
+          python3 scripts/test-rust-focused --crate "$FOCUSED_CRATE" --tests "$FOCUSED_TESTS" \
+            --online --timeout 600 --output work/rust-focused/run "${flags[@]}" --dry-run \
+            > work/rust-focused/plan.json
+          python3 - <<'PY'
+          import json, os, pathlib, subprocess
+          record = {key: os.environ[key] for key in ("GITHUB_SHA", "GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT", "GITHUB_WORKFLOW_REF", "GITHUB_WORKFLOW_SHA")}
+          record["checked_out_commit"] = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+          pathlib.Path("work/rust-focused/ci-source.json").write_text(json.dumps(record, indent=2) + "\n")
+          PY
+
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libdbus-1-dev pkg-config
+
+      - name: Install Rust and identify compiler cache
+        id: toolchain
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          echo "identity=$(rustc -Vv | sha256sum | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore focused compiler cache
+        id: cargo-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ${{ github.workspace }}/cargo-target
+          key: rust-focused-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.identity }}-${{ inputs.focused_crate }}-${{ inputs.focused_release && 'release' || 'debug' }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock') }}-${{ github.sha }}
+          restore-keys: |
+            rust-focused-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.identity }}-${{ inputs.focused_crate }}-${{ inputs.focused_release && 'release' || 'debug' }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock') }}-
+            rust-focused-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.identity }}-
+            rust-${{ runner.os }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock') }}
+            rust-${{ runner.os }}-
+
+      - name: Build once and run exact tests
+        id: focused
+        run: |
+          set -Eeuo pipefail
+          flags=()
+          if [[ "$FOCUSED_RELEASE" == true ]]; then flags+=(--release); fi
+          if [[ "$FOCUSED_IGNORED" == true ]]; then flags+=(--include-ignored); fi
+          python3 scripts/test-rust-focused --crate "$FOCUSED_CRATE" --tests "$FOCUSED_TESTS" \
+            --online --timeout 600 --output work/rust-focused/run "${flags[@]}"
+
+      - name: Preserve compiled dependencies after test failure
+        if: ${{ !cancelled() && (steps.focused.outcome == 'success' || steps.focused.outcome == 'failure') && steps.cargo-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ${{ github.workspace }}/cargo-target
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
+
+      - name: Retain full focused test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-focused-${{ inputs.focused_crate }}
+          path: iris-chat-rs/work/rust-focused/
+          if-no-files-found: warn
+          retention-days: 14
+
+  rust-package:
+    if: ${{ inputs.scope == 'rust-package' }}
+    name: Verify Rust package
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/cargo-target
+      CARGO_BUILD_JOBS: '2'
+      PACKAGE_CRATE: ${{ inputs.package_crate }}
+    defaults:
+      run:
+        working-directory: iris-chat-rs
+    steps:
+      - name: Checkout selected source
+        uses: actions/checkout@v4
+        with:
+          path: ${{ env.APP_DIR }}
+          ref: ${{ github.sha }}
+
+      - name: Record selected package source
+        run: |
+          set -Eeuo pipefail
+          case "$PACKAGE_CRATE" in core|chat-protocol) ;; *) exit 2 ;; esac
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          mkdir -p work/rust-package
+          python3 - <<'PY'
+          import json, os, pathlib, subprocess
+          record = {key: os.environ[key] for key in ("GITHUB_SHA", "GITHUB_RUN_ID", "GITHUB_RUN_ATTEMPT", "GITHUB_WORKFLOW_REF", "GITHUB_WORKFLOW_SHA", "CARGO_TARGET_DIR", "CARGO_BUILD_JOBS", "PACKAGE_CRATE")}
+          record["checked_out_commit"] = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+          record["command"] = ["cargo", "package", "--manifest-path", os.environ["PACKAGE_CRATE"] + "/Cargo.toml", "--locked"]
+          pathlib.Path("work/rust-package/ci-source.json").write_text(json.dumps(record, indent=2) + "\n")
+          PY
+          git ls-files -z -- "$PACKAGE_CRATE" chat-protocol .cargo .github/workflows/ci.yml |
+            xargs -0 sha256sum > work/rust-package/source-sha256.txt
+
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libdbus-1-dev pkg-config
+
+      - name: Install Rust and identify compiler cache
+        id: toolchain
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustc -Vv | tee work/rust-package/rustc.txt
+          cargo -V | tee work/rust-package/cargo.txt
+          echo "identity=$(sha256sum work/rust-package/rustc.txt | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+
+      - name: Restore package compiler cache
+        id: cargo-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ${{ github.workspace }}/cargo-target
+          key: rust-package-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.identity }}-${{ inputs.package_crate }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock') }}-${{ github.sha }}
+          restore-keys: |
+            rust-package-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.identity }}-${{ inputs.package_crate }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock') }}-
+            rust-package-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.identity }}-
+            rust-focused-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.identity }}-
+            rust-${{ runner.os }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock') }}
+            rust-${{ runner.os }}-
+
+      - name: Verify selected package without publishing
+        id: package
+        run: |
+          set -Eeuo pipefail
+          status=0
+          timeout --signal=TERM --kill-after=10s 15m \
+            cargo package --manifest-path "$PACKAGE_CRATE/Cargo.toml" --locked 2>&1 |
+            tee work/rust-package/package.log || status=$?
+          printf '{"pipeline_exit_code":%s}\n' "$status" > work/rust-package/result.json
+          if (( status != 0 )); then exit "$status"; fi
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          sha256sum --check --status work/rust-package/source-sha256.txt
+          archive="$(python3 - <<'PY'
+          import os, pathlib, tomllib
+          package = tomllib.loads(pathlib.Path(os.environ["PACKAGE_CRATE"], "Cargo.toml").read_text())["package"]
+          print(package["name"] + "-" + package["version"] + ".crate")
+          PY
+          )"
+          test -s "$CARGO_TARGET_DIR/package/$archive"
+          sha256sum "$CARGO_TARGET_DIR/package/$archive" > work/rust-package/package.sha256
+          echo "archive=$CARGO_TARGET_DIR/package/$archive" >> "$GITHUB_OUTPUT"
+
+      - name: Preserve compiled package dependencies after failure
+        if: ${{ !cancelled() && (steps.package.outcome == 'success' || steps.package.outcome == 'failure') && steps.cargo-cache.outputs.cache-hit != 'true' }}
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ${{ github.workspace }}/cargo-target
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
+
+      - name: Upload verified selected package
+        if: ${{ !cancelled() && steps.package.outcome == 'success' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: verified-${{ inputs.package_crate }}-package
+          path: |
+            ${{ steps.package.outputs.archive }}
+            iris-chat-rs/work/rust-package/package.sha256
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Retain full package verification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rust-package-${{ inputs.package_crate }}
+          path: iris-chat-rs/work/rust-package/
+          if-no-files-found: warn
+          retention-days: 14
 
   rust:
     if: ${{ inputs.scope == '' || inputs.scope == 'all' || inputs.scope == 'core' || inputs.scope == 'protocol' }}
@@ -111,6 +342,7 @@ jobs:
           ./scripts/check-no-accent-text
           ./scripts/check-source-file-sizes
           python3 scripts/test_dependency_lock_consistency.py
+          python3 scripts/test_rust_focused.py
           ./scripts/check-rust-panics
           ./scripts/test_release_publish_guard
           ./scripts/test_homebrew_tap

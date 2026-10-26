@@ -142,6 +142,33 @@ repeating unchanged device-link, web, and protocol checks. Shared-core changes
 need coverage for their affected consumers and physical paths. Preserve failed
 results; skipped checks and infrastructure failures do not count as passes.
 
+For quick Rust iteration, set `CARGO_TARGET_DIR` to the established compatible
+cache (explicitly in a worktree), reserve one writer for that cache throughout
+the run, then use
+`scripts/test-rust-focused --crate core --test module::exact_test --output work/focused-check`.
+Select `core`,
+`chat-protocol`, or `protocol-ffi`, and repeat `--test` for additional exact names.
+The runner builds one library test binary, uses two jobs and locked offline
+dependencies, and rejects zero-match or ignored-only results. `--dry-run` shows
+the target and commands without invoking Cargo; `--online` explicitly permits
+dependency fetching. Use `--release` and `--include-ignored` only when the selected
+tests require them. The default timeout is ten minutes; optional
+`--min-free-gib` and `--max-growth-gib` stop on a low free-space reading or
+cumulative filesystem growth, including other writers on that filesystem.
+Preserve the output directory containing full logs and
+source/toolchain/binary/result provenance.
+The existing CI workflow also accepts `scope=rust-focused`, `focused_crate`,
+and `focused_tests` (whitespace-separated exact names), with optional
+`focused_release` and `focused_ignored`. It retains compiled dependencies even
+after a test failure and reuses them across source revisions. These focused
+checks leave the full validation and tagged release gates unchanged.
+
+For version-only package verification, dispatch `scope=rust-package` with
+`package_crate=chat-protocol` or `core`. This runs locked package verification
+with two build jobs and retains the archive, checksum, logs and exact source;
+it does not publish. Verify and publish the protocol first so core's registry
+dependency resolves to that version, then verify the core package.
+
 Release workflow and release-note edits use the short **Release checks**
 workflow or the equivalent local checks at the candidate revision. Changes
 limited to Markdown, `.github/workflows/release.yml`, and

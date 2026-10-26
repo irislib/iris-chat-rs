@@ -1,0 +1,258 @@
+#!/usr/bin/env python3
+"""Build one Rust library test binary, then run exact regressions from it."""
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import math
+import os
+from pathlib import Path
+import re
+import selectors
+import shutil
+import signal
+import subprocess
+import sys
+import time
+
+ROOT = Path(__file__).resolve().parents[1]
+CRATES = ("core", "chat-protocol", "protocol-ffi")
+SUMMARY = re.compile(r"^test result: (ok|FAILED)\. (\d+) passed; (\d+) failed; (\d+) ignored;", re.MULTILINE)
+
+
+def sha256(path):
+    digest = hashlib.sha256()
+    with Path(path).open("rb") as source:
+        for block in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def source_state(crate):
+    paths = [crate, ".cargo", "Cargo.toml", "Cargo.lock", "rust-toolchain", "rust-toolchain.toml", "scripts/test-rust-focused"]
+    if crate != "chat-protocol":
+        paths.append("chat-protocol")
+    names = subprocess.check_output(["git", "ls-files", "-z", "--cached", "--others", "--exclude-standard", "--", *paths], cwd=ROOT).split(b"\0")
+    files = {os.fsdecode(name): sha256(ROOT / os.fsdecode(name)) for name in sorted(set(names)) if name and (ROOT / os.fsdecode(name)).is_file()}
+    return {"commit": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip(),
+            "files": files, "sha256": hashlib.sha256(json.dumps(files, sort_keys=True).encode()).hexdigest()}
+
+
+def group_alive(pid):
+    try:
+        os.killpg(pid, 0)
+        return True
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        # macOS can report EPERM for an exited, not-yet-reaped group leader.
+        # Treat it as present until polling reaps the leader or cleanup expires.
+        return True
+
+
+def close_group(process):
+    process.poll()
+    needed = group_alive(process.pid)
+    for sig, duration in ((signal.SIGTERM, 1.0), (signal.SIGKILL, 2.0)):
+        if not group_alive(process.pid):
+            break
+        try:
+            os.killpg(process.pid, sig)
+        except ProcessLookupError:
+            break
+        until = time.monotonic() + duration
+        while group_alive(process.pid) and time.monotonic() < until:
+            process.poll()
+            time.sleep(0.02)
+    process.wait(timeout=1)
+    return {"cleanup_needed": needed, "closed": not group_alive(process.pid)}
+
+
+class Runner:
+    def __init__(self, output, target, timeout, min_free=None, max_growth=None):
+        self.output, self.target = output, target
+        self.deadline = time.monotonic() + timeout
+        self.min_free, self.max_growth = min_free, max_growth
+        self.disk_path = target
+        while not self.disk_path.exists():
+            self.disk_path = self.disk_path.parent
+        self.baseline = shutil.disk_usage(self.disk_path).free
+        self.lowest_free = self.baseline
+        self.runs = []
+
+    def guard(self):
+        free = shutil.disk_usage(self.disk_path).free
+        self.lowest_free = min(self.lowest_free, free)
+        if self.min_free is not None and free < self.min_free:
+            raise RuntimeError("free-space floor reached")
+        if self.max_growth is not None and self.baseline - free > self.max_growth:
+            raise RuntimeError("cumulative filesystem growth limit reached")
+        if time.monotonic() >= self.deadline:
+            raise RuntimeError("focused run timed out")
+
+    def run(self, label, command, env, echo=False):
+        self.guard()
+        path = self.output / (label + ".log")
+        item = {"command": command, "log": str(path), "started_unix": time.time()}
+        self.runs.append(item)
+        process = None
+        try:
+            with path.open("xb") as log:
+                process = subprocess.Popen(command, cwd=ROOT, env=env, stdout=subprocess.PIPE,
+                                           stderr=subprocess.STDOUT, start_new_session=True)
+                item["process_group"] = process.pid
+                with selectors.DefaultSelector() as selector:
+                    selector.register(process.stdout, selectors.EVENT_READ)
+                    while selector.get_map():
+                        self.guard()
+                        for key, _ in selector.select(0.1):
+                            data = os.read(key.fileobj.fileno(), 65536)
+                            if not data:
+                                selector.unregister(key.fileobj)
+                                continue
+                            log.write(data)
+                            log.flush()
+                            if echo:
+                                sys.stdout.buffer.write(data)
+                                sys.stdout.buffer.flush()
+                process.wait(timeout=max(0.01, self.deadline - time.monotonic()))
+                item["exit_code"] = process.returncode
+        except BaseException as error:
+            item["error"] = str(error) or type(error).__name__
+            raise
+        finally:
+            if process is not None:
+                try:
+                    item["closure"] = close_group(process)
+                except Exception as error:
+                    item["closure"] = {"closed": False, "error": str(error)}
+                finally:
+                    process.stdout.close()
+                    item["exit_code"] = process.returncode
+            item["finished_unix"] = time.time()
+            if path.exists():
+                item["log_sha256"] = sha256(path)
+        self.guard()
+        if not item["closure"]["closed"] or item["closure"]["cleanup_needed"]:
+            raise RuntimeError(f"{label} left a live process group")
+        if item["exit_code"]:
+            raise RuntimeError(f"{label} failed with exit {item['exit_code']}; see {path}")
+        return path
+
+
+def parse_args(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--crate", required=True, choices=CRATES)
+    parser.add_argument("--test", action="append", default=[], help="exact lib-test name; repeat for multiple tests")
+    parser.add_argument("--tests", default="", help="whitespace-separated exact names (also accepts newlines)")
+    parser.add_argument("--target-dir", default=os.environ.get("CARGO_TARGET_DIR"), help="existing stable Cargo target; defaults to CARGO_TARGET_DIR")
+    parser.add_argument("--output", required=True, type=Path, help="new directory for full logs and result.json")
+    parser.add_argument("--jobs", type=int, default=2)
+    parser.add_argument("--timeout", type=float, default=600, help="total seconds for toolchain, build and tests; cleanup is bounded separately")
+    parser.add_argument("--min-free-gib", type=float)
+    parser.add_argument("--max-growth-gib", type=float)
+    parser.add_argument("--online", action="store_true", help="allow Cargo dependency downloads; local default is offline")
+    parser.add_argument("--release", action="store_true")
+    parser.add_argument("--include-ignored", action="store_true", help="deliberately execute selected ignored tests")
+    parser.add_argument("--dry-run", action="store_true", help="print commands without invoking Cargo or creating outputs")
+    args = parser.parse_args(argv)
+    args.tests = args.test + args.tests.split()
+    if not args.tests or len(set(args.tests)) != len(args.tests):
+        parser.error("provide one or more distinct exact test names")
+    if any(not re.fullmatch(r"[A-Za-z0-9_]+(?:::[A-Za-z0-9_]+)*", name) for name in args.tests):
+        parser.error("test names must be Rust module paths, not flags or shell expressions")
+    if not args.target_dir:
+        parser.error("set CARGO_TARGET_DIR or --target-dir to the established cache")
+    if not 1 <= args.jobs <= 32 or not math.isfinite(args.timeout) or args.timeout <= 0:
+        parser.error("jobs must be 1..32 and timeout must be finite and positive")
+    if any(value is not None and (not math.isfinite(value) or value <= 0) for value in (args.min_free_gib, args.max_growth_gib)):
+        parser.error("filesystem limits must be finite and positive")
+    args.target_dir = Path(args.target_dir).expanduser().resolve()
+    args.output = args.output.expanduser().resolve()
+    return args
+
+
+def main(argv=None):
+    args = parse_args(argv)
+    manifest = ROOT / args.crate / "Cargo.toml"
+    command = ["cargo", "test", "--manifest-path", str(manifest), "--locked", "--lib", "--no-run",
+               "--message-format=json-render-diagnostics", "--jobs", str(args.jobs)]
+    if not args.online:
+        command.append("--offline")
+    if args.release:
+        command.append("--release")
+    test_args = [[name, "--exact", "--nocapture", "--test-threads=1"] + (["--include-ignored"] if args.include_ignored else []) for name in args.tests]
+    plan = {"crate": args.crate, "target_dir": str(args.target_dir), "build_command": command,
+            "test_arguments": test_args, "offline": not args.online, "timeout_seconds": args.timeout,
+            "min_free_gib": args.min_free_gib, "max_growth_gib": args.max_growth_gib}
+    if args.dry_run:
+        print(json.dumps(plan, indent=2))
+        return 0
+    if os.name != "posix":
+        raise SystemExit("This focused runner currently requires POSIX process groups (macOS or Linux).")
+    os.umask(0o077)
+    args.output.mkdir(parents=True, exist_ok=False)
+    env = {**os.environ, "CARGO_TARGET_DIR": str(args.target_dir), "CARGO_BUILD_JOBS": str(args.jobs), "CARGO_TERM_COLOR": "never"}
+    runner = Runner(args.output, args.target_dir, args.timeout,
+                    None if args.min_free_gib is None else args.min_free_gib * 1024**3,
+                    None if args.max_growth_gib is None else args.max_growth_gib * 1024**3)
+    receipt = {"schema": "iris-rust-focused/v1", "passed": False, "plan": plan,
+               "started_unix": time.time(), "runs": runner.runs}
+    def terminate(signum, _frame):
+        signal.signal(signum, signal.SIG_IGN)
+        # selectors deliberately swallows InterruptedError; use a distinct error
+        # so an external stop always unwinds into process-group cleanup.
+        raise RuntimeError("focused run terminated by SIGTERM")
+    previous_sigterm = signal.signal(signal.SIGTERM, terminate)
+    try:
+        print(f"Using Cargo target: {args.target_dir}", flush=True)
+        receipt["source"] = source_state(args.crate)
+        version = runner.run("rustc", ["rustc", "-Vv"], env)
+        receipt["rustc"] = version.read_text()
+        version = runner.run("cargo", ["cargo", "-V"], env)
+        receipt["cargo"] = version.read_text()
+        receipt["build_environment"] = {key: env[key] for key in ("RUSTFLAGS", "CARGO_ENCODED_RUSTFLAGS", "CARGO_PROFILE_RELEASE_OPT_LEVEL", "CARGO_PROFILE_RELEASE_DEBUG", "CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS") if key in env}
+        print(f"Building {args.crate} once; full output: {args.output / 'build.log'}", flush=True)
+        build_log = runner.run("build", command, env)
+        executables = set()
+        for line in build_log.read_text().splitlines():
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if (row.get("reason") == "compiler-artifact" and row.get("profile", {}).get("test")
+                    and row.get("executable") and Path(row.get("manifest_path", "")).resolve() == manifest):
+                executables.add(Path(row["executable"]).resolve())
+        if len(executables) != 1:
+            raise RuntimeError("Cargo did not report exactly one selected library test executable")
+        binary = executables.pop()
+        if args.target_dir not in binary.parents or not binary.is_file():
+            raise RuntimeError("reported test executable is outside the selected target")
+        receipt["binary"] = {"path": str(binary), "sha256": sha256(binary)}
+        for index, arguments in enumerate(test_args):
+            log = runner.run(f"test-{index + 1:03d}", [str(binary), *arguments], env, echo=True)
+            counts = SUMMARY.findall(log.read_text())
+            runner.runs[-1]["test_summary"] = counts
+            if counts != [("ok", "1", "0", "0")]:
+                raise RuntimeError(f"{arguments[0]} did not execute exactly one passing, nonignored test")
+        if source_state(args.crate) != receipt["source"]:
+            raise RuntimeError("source changed during the focused run")
+        if sha256(binary) != receipt["binary"]["sha256"]:
+            raise RuntimeError("test executable changed during the focused run")
+        runner.guard()
+        receipt["passed"] = True
+    except (Exception, KeyboardInterrupt) as error:
+        receipt["error"] = str(error) or type(error).__name__
+        print(receipt["error"], file=sys.stderr)
+    finally:
+        receipt.update(finished_unix=time.time(), free_bytes_initial=runner.baseline,
+                       lowest_free_bytes=runner.lowest_free, max_growth_bytes=runner.baseline - runner.lowest_free)
+        (args.output / "result.json").write_text(json.dumps(receipt, indent=2) + "\n")
+        print(f"Focused tests {'passed' if receipt['passed'] else 'failed'}: {args.output / 'result.json'}", flush=True)
+        signal.signal(signal.SIGTERM, previous_sigterm)
+    return 0 if receipt["passed"] else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
