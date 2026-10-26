@@ -81,17 +81,25 @@ def main():
     finally:
         try:
             if launched:
+                # End the test host in the same isolated account. A normal launch
+                # here would open ordinary storage in the development app.
+                cleanup_env = {key: value for key, value in os.environ.items()
+                               if not key.startswith("DEVICECTL_CHILD_")}
+                app_env = {"IRIS_UI_TEST_RUN_ID": "harness-" + directory.name,
+                           "IRIS_DISABLE_NOTIFICATIONS": "1"}
                 with (directory / "phone-restore.log").open("w") as log:
                     subprocess.run(["xcrun", "devicectl", "device", "process", "launch",
                                     "--device", selected, "--terminate-existing",
+                                    "--environment-variables", json.dumps(app_env),
                                     "fi.siriusbusiness.irischat"], stdout=log,
-                                   stderr=subprocess.STDOUT, check=True, timeout=30)
+                                   stderr=subprocess.STDOUT, check=True, timeout=30,
+                                   env=cleanup_env)
                 restored = True
             if target is not None:
                 target.unlink(missing_ok=True)
         finally:
-            # A failed restoration needs owner attention; never advertise the
-            # phone as free while its ordinary app state is uncertain.
+            # A failed isolated relaunch needs owner attention; never advertise
+            # the phone as free while the test host's state is uncertain.
             if not launched or restored:
                 release(lock)
 
