@@ -148,7 +148,9 @@ the run, then use
 `scripts/test-rust-focused --crate core --test module::exact_test --output work/focused-check`.
 Select `core`,
 `chat-protocol`, or `protocol-ffi`, and repeat `--test` for additional exact names.
-The runner builds one library test binary, uses two jobs and locked offline
+The runner first checks the selected crate with `cargo fmt --check`, stopping
+before compilation on failure and retaining `format.log`. It then builds one
+library test binary, uses two jobs and locked offline
 dependencies, and rejects zero-match or ignored-only results. `--dry-run` shows
 the target and commands without invoking Cargo; `--online` explicitly permits
 dependency fetching. Use `--release` and `--include-ignored` only when the selected

@@ -37,6 +37,11 @@ elif name == "rustc":
     print("rustc fixture\nhost: fixture-host")
 elif name == "cargo" and args == ["-V"]:
     print("cargo fixture")
+elif name == "cargo" and args[0] == "fmt":
+    if os.environ.get("FAKE_SCENARIO") == "format-failure":
+        print("formatting diff", flush=True)
+        print("formatting stderr", file=sys.stderr, flush=True)
+        sys.exit(3)
 elif name == "cargo":
     scenario = os.environ.get("FAKE_SCENARIO", "")
     if scenario == "build-failure":
@@ -128,8 +133,12 @@ class FocusedRunnerTests(unittest.TestCase):
         result = self.run_fixture("--test", "tests::one", "--tests", "tests::two\ntests::three")
         self.assertEqual(result.returncode, 0, result.stderr)
         calls = self.calls()
+        formats = [call for call in calls if call["tool"] == "cargo" and call["args"][0] == "fmt"]
+        self.assertEqual(len(formats), 1)
+        self.assertEqual(formats[0]["args"], ["fmt", "--manifest-path", str(self.root / "core/Cargo.toml"), "--check"])
         builds = [call for call in calls if call["tool"] == "cargo" and call["args"][0] == "test"]
         self.assertEqual(len(builds), 1)
+        self.assertLess(calls.index(formats[0]), calls.index(builds[0]))
         self.assertEqual(builds[0]["args"], ["test", "--manifest-path", str(self.root / "core/Cargo.toml"),
             "--locked", "--lib", "--no-run", "--message-format=json-render-diagnostics", "--jobs", "2", "--offline"])
         self.assertEqual(builds[0]["target"], str(self.target))
@@ -184,11 +193,33 @@ class FocusedRunnerTests(unittest.TestCase):
         self.assertEqual((self.output / "build.log").read_text(), "compiler diagnostic\ncompiler stderr\n")
         self.assertFalse(any(call["tool"] == "binary" for call in self.calls()))
 
+    def test_format_failure_stops_before_compilation_and_keeps_provenance(self):
+        self.env["FAKE_SCENARIO"] = "format-failure"
+        result = self.run_fixture("--test", "tests::one")
+        self.assertEqual(result.returncode, 1)
+        receipt = self.receipt()
+        self.assertFalse(receipt["passed"])
+        self.assertEqual(receipt["source"]["commit"], "1" * 40)
+        self.assertIn("format failed with exit 3", receipt["error"])
+        self.assertEqual(receipt["runs"][-1]["exit_code"], 3)
+        self.assertTrue(receipt["runs"][-1]["closure"]["closed"])
+        log = self.output / "format.log"
+        self.assertEqual(log.read_text(), "formatting diff\nformatting stderr\n")
+        self.assertEqual(receipt["runs"][-1]["log_sha256"], FOCUSED.sha256(log))
+        self.assertFalse((self.output / "build.log").exists())
+        self.assertFalse((self.target / "fixture-tests").exists())
+        self.assertFalse(any(call["tool"] == "binary" or
+                             (call["tool"] == "cargo" and call["args"][0] == "test")
+                             for call in self.calls()))
+
     def test_dry_run_never_invokes_commands_or_creates_output(self):
         self.env["PATH"] = ""
         result = self.run_fixture("--test", "tests::one", "--dry-run")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(json.loads(result.stdout)["target_dir"], str(self.target))
+        plan = json.loads(result.stdout)
+        self.assertEqual(plan["target_dir"], str(self.target))
+        self.assertEqual(plan["format_command"], ["cargo", "fmt", "--manifest-path",
+                                               str(self.root / "core/Cargo.toml"), "--check"])
         self.assertFalse(self.output.exists())
         self.assertFalse((self.root / "calls.jsonl").exists())
 

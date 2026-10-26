@@ -67,7 +67,10 @@ fn public_nearby_publications_keep_valid_configured_peers() {
         [local_hex.as_str(), "invalid-device", peer_hex.as_str()].into_iter(),
     );
     assert_eq!(
-        configured.iter().map(|peer| peer.npub()).collect::<Vec<_>>(),
+        configured
+            .iter()
+            .map(|peer| peer.npub())
+            .collect::<Vec<_>>(),
         vec![peer.to_bech32().unwrap()]
     );
 }
