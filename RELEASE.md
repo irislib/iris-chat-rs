@@ -450,6 +450,11 @@ route below. Internal TestFlight upload and processing may happen first.
 An archive, simulator run, development install, or successful launch command
 does not establish physical release acceptance.
 
+Before preparing device-specific signing, match the intended phone's exact UDID
+against the current USB/CoreDevice inventory, within existing device-access holds.
+Include that ID in the resource reservation, profile, installation and measurement
+receipts. Recheck connectivity at the start of the reserved window.
+
 Use an owned test account populated by the previous installed version. Update
 it in place through the selected route, preserving its app data and Keychain. Do not
 erase data, restore a secret key into a fresh profile, or use automation storage
