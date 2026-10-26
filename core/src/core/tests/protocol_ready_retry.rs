@@ -93,9 +93,14 @@ fn ready_group_retry_core() -> (
     )
 }
 
-#[test]
-fn protocol_ready_retry_continues_decryption_on_background_queue_without_network_wait() {
-    let (mut core, background, priority, _, chat_id) = ready_group_retry_core();
+fn assert_ready_group_retry_completes(
+    core: &mut AppCore,
+    background: &flume::Receiver<CoreMsg>,
+    priority: &flume::Receiver<CoreMsg>,
+    chat_id: &str,
+) -> usize {
+    assert!(core.logged_in.as_ref().unwrap().relay_urls.is_empty());
+    let deadline = Instant::now() + Duration::from_secs(10);
     core.schedule_fast_protocol_retry_if_pending();
     let continuation = background
         .recv_timeout(Duration::from_millis(500))
@@ -105,20 +110,38 @@ fn protocol_ready_retry_continues_decryption_on_background_queue_without_network
         "ready work must not bypass foreground queue fairness"
     );
     core.handle_messages(vec![continuation]);
-    for _ in 0..20 {
-        if core
+    let mut callbacks = 1;
+    let mut no_progress_callbacks = 0;
+    loop {
+        let pending = core
             .protocol_engine
             .as_ref()
             .unwrap()
             .debug_snapshot()
-            .pending_group_sender_key_message_count
-            == 0
-        {
+            .pending_group_sender_key_message_count;
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        assert!(!remaining.is_zero(),
+            "ready decryption timed out: pending={pending} callbacks={callbacks} no_progress={no_progress_callbacks}");
+        if pending == 0 {
             break;
         }
-        core.handle_messages(vec![background
-            .recv_timeout(Duration::from_millis(500))
-            .unwrap()]);
+        // A callback need not decrypt a message: unrelated completions, stale
+        // timers and paced turns share this queue. Require actual completion
+        // within a fixed budget, without extending it after partial progress.
+        let callback = background
+            .recv_timeout(remaining.min(Duration::from_millis(500)))
+            .unwrap_or_else(|error| panic!(
+                "ready continuation missing: {error}; pending={pending} callbacks={callbacks} no_progress={no_progress_callbacks} due={:?} pacing={:?}",
+                core.protocol_subscription_runtime.ready_retry_due_at,
+                core.protocol_engine.as_ref().unwrap().group_sender_key_retry_delay(),
+            ));
+        core.handle_messages(vec![callback]);
+        callbacks += 1;
+        if core.protocol_engine.as_ref().unwrap().debug_snapshot()
+            .pending_group_sender_key_message_count == pending
+        {
+            no_progress_callbacks += 1;
+        }
     }
     assert_eq!(
         core.protocol_engine
@@ -129,7 +152,7 @@ fn protocol_ready_retry_continues_decryption_on_background_queue_without_network
         0
     );
     assert_eq!(
-        core.threads[&chat_id]
+        core.threads[chat_id]
             .messages
             .iter()
             .filter(|message| message.body.starts_with("ready message "))
@@ -145,6 +168,43 @@ fn protocol_ready_retry_continues_decryption_on_background_queue_without_network
         .as_ref()
         .unwrap()
         .has_ready_group_sender_key_retry_work());
+    assert!(core.logged_in.as_ref().unwrap().relay_urls.is_empty());
+    assert!(priority.try_iter().all(|callback| !matches!(
+        callback,
+        CoreMsg::Internal(event)
+            if matches!(*event, InternalEvent::RetryReadyProtocolWork { .. })
+    )), "ready work must stay on the background queue");
+    callbacks
+}
+
+#[test]
+fn protocol_ready_retry_continues_decryption_on_background_queue_without_network_wait() {
+    let (mut core, background, priority, _, chat_id) = ready_group_retry_core();
+    assert_ready_group_retry_completes(&mut core, &background, &priority, &chat_id);
+}
+
+#[test]
+fn protocol_ready_retry_completes_with_unrelated_and_superseded_background_callbacks() {
+    let (mut core, background, priority, _, chat_id) = ready_group_retry_core();
+    // The old pump stopped after 21 arbitrary callbacks (one initial + 20),
+    // even though this queue also carries unrelated and superseded work. Put
+    // that many callbacks before the real timer, without timing assumptions.
+    let stale_due_at = Instant::now() - Duration::from_secs(1);
+    for index in 0..21 {
+        let event = if index % 2 == 0 {
+            InternalEvent::RetryReadyProtocolWork { due_at: stale_due_at }
+        } else {
+            InternalEvent::DebugLog {
+                category: "test.unrelated_background_callback".into(),
+                detail: index.to_string(),
+            }
+        };
+        core.core_sender.send(CoreMsg::Internal(Box::new(event))).unwrap();
+    }
+    let callbacks = assert_ready_group_retry_completes(
+        &mut core, &background, &priority, &chat_id,
+    );
+    assert!(callbacks > 21, "completion must outlive unrelated callbacks");
 }
 
 #[test]
