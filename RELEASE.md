@@ -165,6 +165,20 @@ and `focused_tests` (whitespace-separated exact names), with optional
 after a test failure and reuses them across source revisions. These focused
 checks leave the full validation and tagged release gates unchanged.
 
+For an optimized local Mac development build, reserve the native host and one
+writer for the selected caches, set `CARGO_TARGET_DIR` to the existing absolute
+core cache, and run `scripts/macos-build macos-dev`. Select the existing bindgen
+cache with `IRIS_MACOS_BINDGEN_TARGET_DIR` and optionally a stable Xcode cache
+with `IRIS_MACOS_DEV_DERIVED_DATA`. This builds only the native Rust library,
+once, with locked offline dependencies and two jobs by default; both Rust and
+Swift use release optimization, with the build channel set to `development`.
+Unchanged bindings and the Xcode cache survive
+repeated builds. The printed app path is for development verification: this
+command does not sign for distribution, install, launch, or publish it. A first
+optimized build may need a cold cache; keep bounded time and disk limits around
+it. Local performance evidence does not replace required acceptance of the
+unchanged tagged GitHub release artifact.
+
 For version-only package verification, dispatch `scope=rust-package` with
 `package_crate=chat-protocol` or `core`. This runs locked package verification
 with two build jobs and retains the archive, checksum, logs and exact source;

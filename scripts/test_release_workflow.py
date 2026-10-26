@@ -356,6 +356,31 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertNotIn("    if:", publish)
         self.assertNotIn("continue-on-error:", jobs["release"])
 
+    def test_focused_runner_installs_rustfmt_before_running_tests(self) -> None:
+        workflow = (ROOT / ".github/workflows/ci.yml").read_text()
+        focused = workflow.split("\n  rust-focused:\n", 1)[1].split("\n  rust-package:\n", 1)[0]
+        install = focused.split("      - name: Install Rust and identify compiler cache\n", 1)[1].split("      - name:", 1)[0]
+        self.assertIn("rustup toolchain install stable --profile minimal --component rustfmt", install)
+        self.assertIn("rustup default stable", install)
+        self.assertLess(focused.index("Install Rust and identify compiler cache"),
+                        focused.index("Build once and run exact tests"))
+        self.assertNotIn("continue-on-error:", install)
+
+    def test_release_validation_checks_shared_formatting_without_building(self) -> None:
+        workflow = (ROOT / ".github/workflows/release.yml").read_text()
+        validate = workflow.split("\n  validate:\n", 1)[1].split("\n  verify:\n", 1)[0]
+        step = validate.split("      - name: Check shared Rust formatting before builds\n", 1)[1]
+        self.assertIn('CARGO_NET_OFFLINE: "true"', step)
+        self.assertIn("set -Eeuo pipefail", step)
+        self.assertIn("rustup toolchain install stable --profile minimal --component rustfmt", step)
+        self.assertEqual(re.findall(r"cargo \+stable fmt --manifest-path (\S+) --check", step),
+                         ["chat-protocol/Cargo.toml", "core/Cargo.toml", "protocol-ffi/Cargo.toml"])
+        self.assertNotIn("continue-on-error:", validate)
+        self.assertNotIn("        if:", step)
+        self.assertNotRegex(validate, r"cargo(?: \+stable)? (?:build|test|check|fetch|install)\b")
+        self.assertNotIn("actions/cache", validate)
+        self.assertNotIn("apt-get", validate)
+
     def test_hosted_release_gate_can_write_its_first_fixture_in_a_clean_checkout(self) -> None:
         workflow = (ROOT / ".github/workflows/release.yml").read_text()
         step = workflow.split("      - name: Run hosted release gate\n", 1)[1]

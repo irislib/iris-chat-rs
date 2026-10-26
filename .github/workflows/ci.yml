@@ -148,7 +148,7 @@ jobs:
       - name: Install Rust and identify compiler cache
         id: toolchain
         run: |
-          rustup toolchain install stable --profile minimal
+          rustup toolchain install stable --profile minimal --component rustfmt
           rustup default stable
           echo "identity=$(rustc -Vv | sha256sum | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
 

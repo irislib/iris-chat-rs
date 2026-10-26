@@ -84,6 +84,16 @@ jobs:
           }
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
+      - name: Check shared Rust formatting before builds
+        env:
+          CARGO_NET_OFFLINE: "true"
+        run: |
+          set -Eeuo pipefail
+          rustup toolchain install stable --profile minimal --component rustfmt
+          cargo +stable fmt --manifest-path chat-protocol/Cargo.toml --check
+          cargo +stable fmt --manifest-path core/Cargo.toml --check
+          cargo +stable fmt --manifest-path protocol-ffi/Cargo.toml --check
+
   verify:
     name: Verify release core gate
     needs: validate

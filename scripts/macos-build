@@ -23,7 +23,13 @@ MACOS_APP_NAME="${IRIS_MACOS_APP_NAME:-Iris Chat.app}"
 
 usage() {
   cat <<'EOF'
-usage: ./scripts/macos-build <macos-gen-swift|macos-rust|macos-xcframework|macos-xcodeproj|macos-build|macos-test|macos-ui-test|macos-app|macos-notarize|macos-dmg|macos-updater-archive>
+usage: ./scripts/macos-build <macos-dev|macos-gen-swift|macos-rust|macos-xcframework|macos-xcodeproj|macos-build|macos-test|macos-ui-test|macos-app|macos-notarize|macos-dmg|macos-updater-archive>
+
+Local optimized development (no distribution, installation or launch):
+  CARGO_TARGET_DIR                 existing native core cache (required, absolute)
+  IRIS_MACOS_BINDGEN_TARGET_DIR     bindgen cache; defaults to core/uniffi-bindgen/target
+  IRIS_MACOS_DEV_DERIVED_DATA       Xcode cache; defaults to macos/.build/dev-derived-data
+  CARGO_BUILD_JOBS                  defaults to 2; reserve one writer for both caches
 
 Signing & notarization (login-keychain mode, recommended):
   MACOS_SIGNING_IDENTITY  e.g. "Developer ID Application: Your Name (TEAMID)"
@@ -275,6 +281,89 @@ run_macos_build() {
     ONLY_ACTIVE_ARCH=YES \
     build
 }
+
+# Keep this separate from the tagged release builder. One native Rust build
+# supplies both UniFFI metadata and the static library; neither cache is cleaned.
+run_macos_dev() (
+  local host_arch core_target bindgen_target derived generated headers output slice name
+  [[ "$(uname -s)" == Darwin ]] || { echo "macos-dev requires macOS" >&2; exit 2; }
+  host_arch="$(uname -m)"
+  case "$host_arch" in
+    arm64) slice="macos-arm64" ;;
+    x86_64) slice="macos-x86_64" ;;
+    *) echo "Unsupported native macOS architecture: $host_arch" >&2; exit 2 ;;
+  esac
+  core_target="${CARGO_TARGET_DIR:-}"
+  bindgen_target="${IRIS_MACOS_BINDGEN_TARGET_DIR:-$CORE_DIR/uniffi-bindgen/target}"
+  derived="${IRIS_MACOS_DEV_DERIVED_DATA:-$MACOS_BUILD_DIR/dev-derived-data}"
+  for name in "$core_target" "$bindgen_target" "$derived"; do
+    [[ "$name" = /* ]] || { echo "macos-dev requires absolute cache paths and CARGO_TARGET_DIR" >&2; exit 2; }
+  done
+  [[ -z "${CARGO_BUILD_TARGET:-}" ]] || { echo "macos-dev requires the native host target; unset CARGO_BUILD_TARGET" >&2; exit 2; }
+  export CARGO_BUILD_JOBS="${CARGO_BUILD_JOBS:-2}"
+  [[ "$CARGO_BUILD_JOBS" =~ ^[1-9][0-9]*$ ]] || { echo "macos-dev requires a positive CARGO_BUILD_JOBS" >&2; exit 2; }
+  export MACOSX_DEPLOYMENT_TARGET=14.0
+  export CARGO_PROFILE_RELEASE_OPT_LEVEL=3
+  export CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS=false
+  export IRIS_APP_VERSION="$IRIS_APP_VERSION_NAME"
+  export IRIS_BUILD_CHANNEL=development
+  mkdir -p "$MACOS_BUILD_DIR"
+  generated="$(mktemp -d "$MACOS_BUILD_DIR/dev-bindings.XXXXXX")"
+  trap 'rm -rf "$generated"' EXIT
+  cargo build --manifest-path "$CORE_DIR/Cargo.toml" --release --lib --locked --offline \
+    --message-format=json-render-diagnostics > "$generated/core-artifacts.json"
+  # Inspect this invocation's output, including cache hits, so a Cargo config
+  # selecting another target cannot silently reuse stale native libraries.
+  python3 - "$generated/core-artifacts.json" "$core_target" <<'PY'
+import json
+import pathlib
+import sys
+
+expected = {(pathlib.Path(sys.argv[2]) / "release" / ("libiris_chat_core." + suffix)).resolve()
+            for suffix in ("dylib", "a")}
+artifacts = set()
+for line in pathlib.Path(sys.argv[1]).read_text().splitlines():
+    event = json.loads(line)
+    if event.get("reason") == "compiler-artifact" and event.get("target", {}).get("name") == "iris_chat_core":
+        artifacts.update(pathlib.Path(path).resolve() for path in event.get("filenames", []))
+if not expected <= artifacts or not all(path.is_file() for path in expected):
+    raise SystemExit("macos-dev requires native core artifacts; remove any Cargo build.target override")
+PY
+  cargo run --manifest-path "$CORE_DIR/uniffi-bindgen/Cargo.toml" \
+    --target-dir "$bindgen_target" --locked --offline -- generate \
+    --library "$core_target/release/libiris_chat_core.dylib" --language swift \
+    --out-dir "$generated" --config "$CORE_DIR/uniffi.toml"
+  mkdir -p "$IOS_BINDINGS_DIR"
+  for name in IrisChatCore.swift IrisChatCoreFFI.h IrisChatCoreFFI.modulemap; do
+    [[ -s "$generated/$name" ]] || { echo "Missing generated binding: $name" >&2; exit 1; }
+    if ! cmp -s "$generated/$name" "$IOS_BINDINGS_DIR/$name"; then
+      cp "$generated/$name" "$IOS_BINDINGS_DIR/$name"
+    fi
+  done
+  headers="$MACOS_BUILD_DIR/dev-headers"
+  output="$MACOS_FRAMEWORKS_DIR/IrisChatCore.xcframework"
+  mkdir -p "$headers" "$MACOS_FRAMEWORKS_DIR"
+  if ! cmp -s "$generated/IrisChatCoreFFI.h" "$headers/IrisChatCoreFFI.h"; then
+    cp "$generated/IrisChatCoreFFI.h" "$headers/IrisChatCoreFFI.h"
+  fi
+  if ! cmp -s "$generated/IrisChatCoreFFI.modulemap" "$headers/module.modulemap"; then
+    cp "$generated/IrisChatCoreFFI.modulemap" "$headers/module.modulemap"
+  fi
+  if ! cmp -s "$core_target/release/libiris_chat_core.a" "$output/$slice/libiris_chat_core.a" \
+    || ! cmp -s "$headers/IrisChatCoreFFI.h" "$output/$slice/Headers/IrisChatCoreFFI.h" \
+    || ! cmp -s "$headers/module.modulemap" "$output/$slice/Headers/module.modulemap"; then
+    rm -rf "$output"
+    xcodebuild -create-xcframework -library "$core_target/release/libiris_chat_core.a" \
+      -headers "$headers" -output "$output"
+  fi
+  run_macos_xcodeproj
+  xcodebuild -project "$MACOS_DIR/IrisChatMac.xcodeproj" -scheme IrisChatMac \
+    -configuration Release -derivedDataPath "$derived" -jobs "$CARGO_BUILD_JOBS" \
+    -destination "platform=macOS,arch=$host_arch" \
+    CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+    ARCHS="$host_arch" VALID_ARCHS="$host_arch" ONLY_ACTIVE_ARCH=YES build
+  printf '%s\n' "$derived/Build/Products/Release/Iris Chat.app"
+)
 
 run_macos_test() {
   local host_arch
@@ -705,6 +794,7 @@ run_macos_updater_archive() {
 }
 
 case "${1:-}" in
+  macos-dev) run_macos_dev ;;
   macos-gen-swift) run_macos_gen_swift ;;
   macos-rust) run_macos_rust ;;
   macos-xcframework) run_macos_xcframework ;;
