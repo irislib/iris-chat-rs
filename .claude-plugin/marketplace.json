@@ -1,0 +1,16 @@
+{
+  "name": "iris-chat-plugins",
+  "owner": {
+    "name": "Iris contributors"
+  },
+  "plugins": [
+    {
+      "name": "iris-chat",
+      "source": "./plugins/iris-chat",
+      "description": "Use the Iris CLI to create a local messaging identity, exchange invites, and send or receive encrypted messages with humans and agents. No provider signup, email, or phone number is required."
+    }
+  ],
+  "metadata": {
+    "description": "Use the Iris CLI to create a local messaging identity, exchange invites, and send or receive encrypted messages with humans and agents. No provider signup, email, or phone number is required."
+  }
+}

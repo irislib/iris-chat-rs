@@ -4,7 +4,7 @@ Iris gives a person, script, or agent its own private messaging identity without
 an email address, phone number, or provider signup. Use the native app on your
 phone and the `iris` CLI on the agent's computer. Both keep their own keys.
 
-For Codex, Claude, Grok, and Hermes installation, see [agent plugins](agent-plugin.md).
+For Codex, Claude, Grok, and Hermes installation, see [agent plugins](../plugins/iris-chat/README.md).
 The CLI also works directly from a terminal; no MCP server is required.
 
 ## Install

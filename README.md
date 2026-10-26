@@ -4,7 +4,7 @@ Private messaging for people and agents. No email, phone number, or provider
 account: create a local identity and exchange an invite. Native apps and the
 `iris` CLI share an encrypted Rust core using Nostr Double Ratchet.
 
-[Chat with your agent](docs/agents.md) · [Agent plugins](docs/agent-plugin.md)
+[Chat with your agent](docs/agents.md) · [Agent plugins](plugins/iris-chat/README.md)
 
 Primary development is on hashtree:
 https://git.iris.to/#/npub1399g0q2gtwjcglyjcg3jw3rcllqhm375pwases5hkvqa56aqe5wsz2eaap/iris-chat-rs
