@@ -103,14 +103,17 @@ impl AppCore {
         &mut self,
         owner: PublicKey,
         app_keys: &AppKeys,
-    ) {
+    ) -> bool {
         let owner_hex = owner.to_hex();
+        let mut changed = false;
         for device in app_keys.get_all_devices() {
             let device_hex = device.identity_pubkey.to_hex();
             if device_hex != owner_hex {
+                changed |= self.threads.contains_key(&device_hex);
                 self.migrate_direct_thread_alias(&device_hex, &owner_hex);
             }
         }
+        changed
     }
 
     fn migrate_direct_thread_alias(&mut self, from_chat_id: &str, to_chat_id: &str) {

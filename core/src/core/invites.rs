@@ -410,6 +410,11 @@ impl AppCore {
                 pending.claimed_owner.to_hex()
             ),
         );
+        // Cleanup can finish on an unchanged roster replay after the protocol
+        // session was already imported. Make the recovered chat durable and
+        // visible even when another screen is open and no retry messages exist.
+        self.mark_mobile_push_dirty();
+        self.rebuild_persist_and_emit_state();
         true
     }
 

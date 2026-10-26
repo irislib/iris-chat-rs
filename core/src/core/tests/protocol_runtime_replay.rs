@@ -1,3 +1,74 @@
+fn assert_unchanged_discovery_replay_is_idle(replay_invite: bool) {
+    let owner = Keys::generate();
+    let devices = [Keys::generate(), Keys::generate(), Keys::generate()];
+    let peer = Keys::generate();
+    let peer_devices = [Keys::generate(), Keys::generate(), Keys::generate()];
+    let storage = Arc::new(CountingStorage::new());
+    let mut core = logged_in_test_core_with_storage(
+        "unchanged-discovery-replay",
+        &owner,
+        &devices[0],
+        storage.clone(),
+    );
+    let roster = |owner: &Keys, devices: &[Keys]| {
+        AppKeys::new(
+            devices
+                .iter()
+                .map(|device| DeviceEntry::new(device.public_key(), 1))
+                .collect(),
+        )
+        .get_event_at(owner.public_key(), 1)
+        .sign_with_keys(owner)
+        .unwrap()
+    };
+    let own_roster = roster(&owner, &devices);
+    let peer_roster = roster(&peer, &peer_devices);
+    let peer_engine = test_protocol_engine(&peer, &peer_devices[0]);
+    let invite = iris_chat_protocol::invite_unsigned_event(&peer_engine.local_invite().unwrap())
+        .unwrap()
+        .sign_with_keys(&peer_devices[0])
+        .unwrap();
+    core.enter_batch();
+    for event in [&own_roster, &peer_roster, &invite] {
+        core.handle_relay_event(event.clone());
+    }
+    core.exit_batch();
+    // A populated account regularly exceeds the generic recent-event window.
+    // Discovery must remain idempotent after normal message traffic evicts it.
+    for index in 0..MAX_SEEN_EVENT_IDS {
+        core.remember_event(format!("{index:064x}"));
+    }
+    let replays = if replay_invite {
+        vec![invite]
+    } else {
+        vec![own_roster, peer_roster]
+    };
+    for event in &replays {
+        assert!(!core.has_seen_event(&event.id.to_hex()));
+    }
+    let writes = storage.put_count();
+    core.mobile_push_dirty = false;
+    core.enter_batch();
+    for event in replays {
+        core.handle_relay_event(event);
+    }
+    assert!(!core.batch_dirty_persist, "unchanged discovery dirtied the app database");
+    assert!(!core.batch_dirty_state, "unchanged discovery rebuilt the UI");
+    assert!(!core.mobile_push_dirty, "unchanged discovery rebuilt notification filters");
+    core.exit_batch();
+    assert_eq!(storage.put_count(), writes, "unchanged discovery rewrote protocol state");
+}
+
+#[test]
+fn unchanged_app_keys_replay_after_event_cache_eviction_is_idle() {
+    assert_unchanged_discovery_replay_is_idle(false);
+}
+
+#[test]
+fn unchanged_invite_replay_after_event_cache_eviction_is_idle() {
+    assert_unchanged_discovery_replay_is_idle(true);
+}
+
 #[test]
 fn direct_message_storage_failure_can_be_received_again() {
     let owner = Keys::generate();

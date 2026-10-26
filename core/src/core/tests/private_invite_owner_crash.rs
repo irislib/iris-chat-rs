@@ -84,6 +84,60 @@ fn private_invite_delete_failure_blocks_sibling_imports_in_same_retry_pass() {
 }
 
 #[test]
+fn unchanged_roster_replay_finishes_invite_cleanup_visibly_and_durably() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer = Keys::generate();
+    let peer_device = Keys::generate();
+    let dir = tempfile::tempdir().unwrap();
+    let data_dir = dir.path().to_string_lossy().into_owned();
+    let mut core = logged_in_test_core_at_data_dir(&owner, &device, data_dir.clone());
+    let invite_url = create_private_invite_for_test(&mut core);
+    let invite_key = core.private_chat_invites.keys().next().unwrap().clone();
+    core.screen_stack = vec![Screen::Settings];
+    core.handle_relay_event(crafted_private_invite_response(
+        &invite_url,
+        &peer_device,
+        Some(peer_device.public_key().to_hex()),
+        Some(peer.public_key()),
+    ));
+    assert_eq!(core.pending_private_invite_responses.len(), 1);
+    {
+        let shared = core.app_store.shared();
+        shared.lock().unwrap().execute_batch(&format!(
+            "CREATE TEMP TRIGGER fail_replayed_invite_cleanup BEFORE DELETE ON ndr_kv
+             WHEN OLD.key = '{invite_key}'
+             BEGIN SELECT RAISE(ABORT, 'injected invite cleanup failure'); END;"
+        )).unwrap();
+    }
+    let roster = signed_app_keys_authorization_event(&peer, peer_device.public_key(), 10);
+    core.handle_relay_event(roster.clone());
+    assert_eq!(stored_session_count(&core, peer.public_key()), 1);
+    assert_eq!(core.pending_private_invite_responses.len(), 1);
+    let chat_id = peer.public_key().to_hex();
+    assert!(!core.threads.contains_key(&chat_id));
+    {
+        let shared = core.app_store.shared();
+        shared.lock().unwrap().execute_batch("DROP TRIGGER fail_replayed_invite_cleanup;").unwrap();
+    }
+    for index in 0..MAX_SEEN_EVENT_IDS {
+        core.remember_event(format!("{index:064x}"));
+    }
+    assert!(!core.has_seen_event(&roster.id.to_hex()));
+    core.enter_batch();
+    core.handle_relay_event(roster);
+    core.exit_batch();
+    assert!(core.pending_private_invite_responses.is_empty());
+    assert_eq!(stored_session_count(&core, peer.public_key()), 1);
+    assert_eq!(core.screen_stack, vec![Screen::Settings]);
+    assert!(core.state.chat_list.iter().any(|chat| chat.chat_id == chat_id));
+    drop(core);
+    let mut restarted = logged_in_test_core_at_data_dir(&owner, &device, data_dir);
+    let saved = restarted.load_persisted().unwrap().unwrap();
+    assert!(saved.threads.iter().any(|chat| chat.chat_id == chat_id));
+}
+
+#[test]
 fn local_relay_normal_app_keys_subscription_releases_staged_response_end_to_end() {
     let relay = crate::local_relay::TestRelay::start();
     let relay_urls = relay_urls_from_strings(&[relay.url().to_string()]);

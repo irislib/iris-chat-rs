@@ -5,10 +5,19 @@ impl ProtocolEngine {
         app_keys: AppKeys,
         created_at: u64,
     ) -> anyhow::Result<ProtocolRetryBatch> {
-        self.ingest_app_keys_snapshot_inner(owner_pubkey, app_keys, created_at, None)
+        Ok(self
+            .ingest_app_keys_snapshot_inner(owner_pubkey, app_keys, created_at, None)?
+            .retry_batch)
     }
 
     pub fn ingest_app_keys_event(&mut self, event: &Event) -> anyhow::Result<ProtocolRetryBatch> {
+        Ok(self.ingest_app_keys_event_with_outcome(event)?.retry_batch)
+    }
+
+    pub fn ingest_app_keys_event_with_outcome(
+        &mut self,
+        event: &Event,
+    ) -> anyhow::Result<ProtocolMetadataIngestionResult> {
         let app_keys = AppKeys::from_event(event)?;
         self.ingest_app_keys_snapshot_inner(
             event.pubkey,
@@ -24,7 +33,7 @@ impl ProtocolEngine {
         app_keys: AppKeys,
         created_at: u64,
         source_event: Option<&Event>,
-    ) -> anyhow::Result<ProtocolRetryBatch> {
+    ) -> anyhow::Result<ProtocolMetadataIngestionResult> {
         let owner = ndr_owner(owner_pubkey);
         // Authorization replay commonly leaves the engine unchanged. Retain
         // only the fields this admission step can mutate; copying every queued
@@ -105,7 +114,7 @@ impl ProtocolEngine {
             && !provenance_changed
             && !local_observation_changed
         {
-            return Ok(ProtocolRetryBatch::default());
+            return Ok(ProtocolMetadataIngestionResult::default());
         }
         // A real authorization change can wake retry deadlines. Take the full
         // rollback generation only now, before that work, and restore the
@@ -127,14 +136,20 @@ impl ProtocolEngine {
             self.invalidate_known_message_author_cache();
             return Err(error);
         }
-        self.retry_pending_protocol(NdrUnixSeconds(now.get()))
+        Ok(ProtocolMetadataIngestionResult {
+            changed: true,
+            retry_batch: self.retry_pending_protocol(NdrUnixSeconds(now.get()))?,
+        })
     }
 
     pub fn observe_invite_event(&mut self, event: &Event) -> anyhow::Result<ProtocolRetryBatch> {
-        let session_checkpoint = self.session_manager.clone();
-        let pending_inbound_checkpoint = self.pending_inbound.clone();
-        let pending_group_fanouts_checkpoint = self.pending_group_fanouts.clone();
-        let pending_group_pairwise_checkpoint = self.pending_group_pairwise_payloads.clone();
+        Ok(self.observe_invite_event_with_outcome(event)?.retry_batch)
+    }
+
+    pub fn observe_invite_event_with_outcome(
+        &mut self,
+        event: &Event,
+    ) -> anyhow::Result<ProtocolMetadataIngestionResult> {
         let mut invite = parse_invite_event(event)?;
         let invite_owner = invite
             .inviter_owner_pubkey
@@ -143,12 +158,23 @@ impl ProtocolEngine {
         if invite.inviter_owner_pubkey.is_none() {
             invite.inviter_owner_pubkey = Some(invite_owner);
         }
-        if invite.inviter_device_pubkey != self.local_device {
-            self.session_manager
-                .observe_device_invite(invite_owner, invite)?;
-            self.invalidate_known_message_author_cache();
-            self.wake_pending_protocol_for_owner(invite_owner);
+        if invite.inviter_device_pubkey == self.local_device {
+            return Ok(ProtocolMetadataIngestionResult::default());
         }
+        let session_checkpoint = self.session_manager.clone();
+        self.session_manager
+            .observe_device_invite(invite_owner, invite)?;
+        // The manager admits stale/equal-time invites too. Compare its complete
+        // state so replay cannot rewrite every pending payload or reset retry
+        // deadlines, while a real invite replacement still wakes delivery.
+        if self.session_manager.snapshot() == session_checkpoint.snapshot() {
+            return Ok(ProtocolMetadataIngestionResult::default());
+        }
+        let pending_inbound_checkpoint = self.pending_inbound.clone();
+        let pending_group_fanouts_checkpoint = self.pending_group_fanouts.clone();
+        let pending_group_pairwise_checkpoint = self.pending_group_pairwise_payloads.clone();
+        self.invalidate_known_message_author_cache();
+        self.wake_pending_protocol_for_owner(invite_owner);
         if let Err(error) = self.persist() {
             self.session_manager = session_checkpoint;
             self.invalidate_pending_inbound_retry_deadline();
@@ -159,7 +185,10 @@ impl ProtocolEngine {
             self.invalidate_known_message_author_cache();
             return Err(error);
         }
-        self.retry_pending_protocol(NdrUnixSeconds(event.created_at.as_secs()))
+        Ok(ProtocolMetadataIngestionResult {
+            changed: true,
+            retry_batch: self.retry_pending_protocol(NdrUnixSeconds(event.created_at.as_secs()))?,
+        })
     }
 
     pub fn observe_invite_response_event(

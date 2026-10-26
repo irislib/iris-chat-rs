@@ -194,6 +194,25 @@ fn checkpoint_backlog_send_roundtrip(fanouts: usize, ciphertexts: usize) {
     let bytes = f.sender.checkpoint_layout.borrow().bytes;
     let encoded_fanouts = CHECKPOINT_FANOUT_SERIALIZED_BYTES.with(std::cell::Cell::get);
     let encoded_ciphertexts = CHECKPOINT_PENDING_SERIALIZED_ITEMS.with(std::cell::Cell::get);
+    // Exercise discovery on the same production-sized durable backlog, not
+    // just empty batches. Replay must not rewrite or reserialize queued work.
+    let own_roster = signed_app_keys(&f.owner, &[f.device.public_key()], 1);
+    let peer_roster = signed_app_keys(
+        &f.peer_owner, &[f.ready_device.public_key(), f.late_device.public_key()], 1,
+    );
+    let invite = invite_unsigned_event(&f.ready.local_invite().unwrap())
+        .unwrap().sign_with_keys(&f.ready_device).unwrap();
+    let replay_puts = storage.puts.load(Relaxed);
+    for _ in 0..4 {
+        f.sender.enter_batch();
+        assert!(!f.sender.ingest_app_keys_event_with_outcome(&own_roster).unwrap().changed);
+        assert!(!f.sender.ingest_app_keys_event_with_outcome(&peer_roster).unwrap().changed);
+        assert!(!f.sender.observe_invite_event_with_outcome(&invite).unwrap().changed);
+        f.sender.exit_batch().unwrap();
+    }
+    assert_eq!(storage.puts.load(Relaxed), replay_puts, "discovery replay rewrote the large backlog");
+    assert_eq!(CHECKPOINT_FANOUT_SERIALIZED_BYTES.with(std::cell::Cell::get), encoded_fanouts);
+    assert_eq!(CHECKPOINT_PENDING_SERIALIZED_ITEMS.with(std::cell::Cell::get), encoded_ciphertexts);
     let before_fanouts = f.sender.pending_group_fanouts.clone();
     let before_ciphertexts = f.sender.pending_group_sender_key_messages.clone();
     let peer = f.peer_owner.public_key();

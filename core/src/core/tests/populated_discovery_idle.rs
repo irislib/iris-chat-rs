@@ -24,6 +24,8 @@ mod populated_discovery_idle {
     const DEVICES: usize = 3;
     const MESH_DEVICES: usize = 96;
 
+    include!("populated_discovery_idle_support.rs");
+
     #[derive(Default)]
     struct Wire {
         rows: Mutex<Vec<(usize, serde_json::Value)>>,
@@ -388,6 +390,11 @@ mod populated_discovery_idle {
             })
             .unwrap();
         let proof = events.remove(proof_index);
+        let replay_events = events.iter().filter(|event| {
+            matches!(event.kind.as_u16() as u32, APP_KEYS_EVENT_KIND | INVITE_EVENT_KIND)
+        }).cloned().collect::<Vec<_>>();
+        assert!(replay_events.len() >= CONTACTS * 2, "replay must include real signed rosters and invites");
+        let (app_writes, protocol_writes) = measure_core_writes(&mut fixture.core);
         let target = proof.pubkey;
         let own_roster = &fixture.core.app_keys[&fixture
             .core
@@ -596,6 +603,9 @@ mod populated_discovery_idle {
             // sample. The isolated endpoint only ingests public adverts; it has
             // no peers, STUN, seeds, local discovery, public listeners or TUN.
             let mesh_endpoint = discovery_test_support::endpoint().await;
+            // Keep core reconciliation on this same isolated transport; never
+            // let the test open configured production peers or public seeds.
+            fixture.core.install_device_sync_endpoint_for_test(mesh_endpoint.clone());
             assert!(known_identities.insert(PublicKey::parse(mesh_endpoint.npub()).unwrap()),
                 "live mesh endpoint identity must be new and forbidden for anonymous authentication");
             let mesh_adverts = events.lock().unwrap().iter()
@@ -624,14 +634,14 @@ mod populated_discovery_idle {
                     let rounds = wire.rounds.lock().unwrap();
                     pairs.iter().all(|pair| rounds.get(pair).copied().unwrap_or(0) >= 3)
                 };
-                while incoming.try_recv().is_ok() {}
+                dispatch_pending(&mut fixture.core, &incoming);
                 if ready { break; }
                 assert!(settling.elapsed() < Duration::from_secs(120), "every populated scope must reach its quiet interval");
                 sleep(Duration::from_millis(100)).await;
             }
             // EOSE and CLOSE must finish before snapshots; no traffic from the
             // just-completed third round may leak into the unchanged sample.
-            sleep(Duration::from_secs(1)).await;
+            sample_with_core(&mut fixture.core, &incoming, Duration::from_secs(1)).await;
             let settle_seconds = settling.elapsed().as_secs_f64();
             let before = wire.rounds.lock().unwrap().clone();
             let readiness_round_min = pairs.iter().map(|pair| before[pair]).min().unwrap();
@@ -643,20 +653,30 @@ mod populated_discovery_idle {
             })).collect::<Vec<_>>();
             let mut samples = Vec::new();
             for _ in 0..2 {
+                enqueue_discovery_replay(&mut fixture.core, &replay_events);
+                let app_before = app_writes.load(Ordering::SeqCst);
+                let protocol_before = protocol_writes.load(Ordering::SeqCst);
                 let bytes = wire.bytes.load(Ordering::SeqCst);
                 let connections = wire.connections.load(Ordering::SeqCst);
                 let ticks = cpu_ticks();
                 let started = Instant::now();
-                sleep(Duration::from_secs(35)).await;
+                let processed = sample_with_core(&mut fixture.core, &incoming, Duration::from_secs(35)).await;
                 let seconds = started.elapsed().as_secs_f64();
                 let cpu = (cpu_ticks() - ticks) as f64 / ticks_per_second * 100.0 / seconds;
                 let byte_delta = wire.bytes.load(Ordering::SeqCst) - bytes;
                 let connection_delta = wire.connections.load(Ordering::SeqCst) - connections;
                 let sample = serde_json::json!({"seconds": seconds, "cpu_percent_one_core": cpu,
-                    "application_wire_bytes": byte_delta, "connections": connection_delta});
+                    "application_wire_bytes": byte_delta, "connections": connection_delta,
+                    "core_messages_processed": processed, "evicted_discovery_replays": replay_events.len(),
+                    "app_row_writes": app_writes.load(Ordering::SeqCst) - app_before,
+                    "protocol_writes": protocol_writes.load(Ordering::SeqCst) - protocol_before});
                 println!("POPULATED_DISCOVERY_IDLE_SAMPLE={sample}");
                 samples.push(sample);
                 assert!(!server.is_finished());
+                assert!(processed >= replay_events.len());
+                assert!(replay_events.iter().all(|event| fixture.core.has_seen_event(&event.id.to_hex())));
+                assert_eq!(app_writes.load(Ordering::SeqCst), app_before, "unchanged discovery wrote app rows");
+                assert_eq!(protocol_writes.load(Ordering::SeqCst), protocol_before, "unchanged discovery checkpointed protocol state");
                 assert!(cpu <= 5.0, "populated unchanged discovery exceeded 5% of one CPU: {cpu:.3}");
                 assert_eq!(byte_delta, 0, "quiet discovery repeated signed metadata verification/network work");
                 assert_eq!(connection_delta, 0, "quiet discovery reopened anonymous sockets");
@@ -667,6 +687,9 @@ mod populated_discovery_idle {
             // for every author, including retained reads and disposable TLS.
             let mut cycle_samples = Vec::new();
             for _ in 0..2 {
+                enqueue_discovery_replay(&mut fixture.core, &replay_events);
+                let app_before = app_writes.load(Ordering::SeqCst);
+                let protocol_before = protocol_writes.load(Ordering::SeqCst);
                 let baseline = wire.rounds.lock().unwrap().clone();
                 let completed_before = wire.completed.lock().unwrap().clone();
                 let relay_tls_before = wire.relay_tls.lock().unwrap().clone();
@@ -677,7 +700,7 @@ mod populated_discovery_idle {
                 let connections = wire.connections.load(Ordering::SeqCst);
                 let ticks = cpu_ticks();
                 let started = Instant::now();
-                sleep(Duration::from_secs(125)).await;
+                let processed = sample_with_core(&mut fixture.core, &incoming, Duration::from_secs(125)).await;
                 let seconds = started.elapsed().as_secs_f64();
                 let cpu = (cpu_ticks() - ticks) as f64 / ticks_per_second * 100.0 / seconds;
                 let after = wire.rounds.lock().unwrap().clone();
@@ -720,10 +743,17 @@ mod populated_discovery_idle {
                     "tls_full_handshakes": full_delta, "tls_resumed_handshakes": resumed_delta,
                     "completed_polls": completed_polls, "new_poll_connections": new_poll_connections,
                     "reused_polls": reused_polls, "reused_connections": reused_connections,
-                    "every_author_polled": true, "relay_samples": relay_samples});
+                    "every_author_polled": true, "relay_samples": relay_samples,
+                    "core_messages_processed": processed, "evicted_discovery_replays": replay_events.len(),
+                    "app_row_writes": app_writes.load(Ordering::SeqCst) - app_before,
+                    "protocol_writes": protocol_writes.load(Ordering::SeqCst) - protocol_before});
                 println!("POPULATED_DISCOVERY_CYCLE_SAMPLE={sample}");
                 cycle_samples.push(sample);
                 assert!(!server.is_finished(), "TLS wire fixture failed");
+                assert!(processed >= replay_events.len());
+                assert!(replay_events.iter().all(|event| fixture.core.has_seen_event(&event.id.to_hex())));
+                assert_eq!(app_writes.load(Ordering::SeqCst), app_before, "full-cycle unchanged discovery wrote app rows");
+                assert_eq!(protocol_writes.load(Ordering::SeqCst), protocol_before, "full-cycle unchanged discovery checkpointed protocol state");
                 assert_eq!(full_delta, 0, "quiet scopes repeated full TLS handshakes");
                 assert!((pairs.len()..=pairs.len() * 2).contains(&completed_polls));
                 assert_eq!(reused_connections, 64, "all retained scopes must reuse their connection");
@@ -734,18 +764,19 @@ mod populated_discovery_idle {
                 assert!(cpu <= 5.0, "populated full-cycle discovery exceeded 5% of one CPU: {cpu:.3}");
             }
             let before = wire.rounds.lock().unwrap().clone();
-            while incoming.try_recv().is_ok() {}
+            dispatch_pending(&mut fixture.core, &incoming);
             events.lock().unwrap().push(proof.clone());
             fixture.core.refresh_private_discovery_for_author(target);
             let deadline = Instant::now() + Duration::from_secs(5);
             loop {
-                if let Ok(CoreMsg::Internal(event)) = incoming.try_recv() {
-                    if matches!(*event, InternalEvent::RelayEvent(ref found) if found.id == proof.id) { break; }
-                }
+                dispatch_pending(&mut fixture.core, &incoming);
+                if fixture.core.has_seen_event(&proof.id.to_hex()) { break; }
                 assert!(Instant::now() < deadline, "targeted proof demand did not deliver its fresh signed roster");
                 sleep(Duration::from_millis(5)).await;
             }
             let target = target.to_hex();
+            assert_eq!(fixture.core.app_keys[&target].created_at_secs, proof.created_at.as_secs(),
+                "targeted recovery must apply its proof, not merely receive a frame");
             let mut expected_after = before.clone();
             for relay in 0..relay_count {
                 *expected_after.get_mut(&(relay, target.clone())).unwrap() += 1;
@@ -786,12 +817,14 @@ mod populated_discovery_idle {
                 "readiness_round_min": readiness_round_min, "completed_peer_polls": completed_peer_polls,
                 "quiet_samples": samples, "full_cycle_tls_samples": cycle_samples,
                 "targeted_fresh_proof_delivered": true,
+                "targeted_fresh_proof_applied": fixture.core.app_keys[&target].created_at_secs == proof.created_at.as_secs(),
                 "fresh_anonymous_authentications": auth_count, "privacy_wire_passed": true,
                 "anonymous_connections": anonymous_connections,
                 "all_completed_polls": all_completed_polls, "all_reused_polls": all_reused_polls,
                 "revoked_stale_records": fixture.core.protocol_engine.as_ref().unwrap().session_manager_snapshot()
                     .users.iter().flat_map(|user| &user.devices).filter(|device| !device.authorized && device.is_stale).count(),
                 "fixture_source_sha256": format!("{:x}", sha2::Sha256::digest(include_bytes!("synthetic_history_scale.rs"))),
+                "support_source_sha256": format!("{:x}", sha2::Sha256::digest(include_bytes!("populated_discovery_idle_support.rs"))),
                 "test_source_sha256": format!("{:x}", sha2::Sha256::digest(include_bytes!("populated_discovery_idle.rs")))
             }));
             fixture.core.private_discovery_subscriptions(Vec::new()).unwrap();

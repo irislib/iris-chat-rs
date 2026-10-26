@@ -195,6 +195,13 @@ for every pair, each below 5% of one CPU core, followed by prompt targeted proof
 recovery on every relay. TLS sessions stay isolated by author and exact
 message-server URL; a quiet gap alone does not satisfy the CPU gate. Signed wire
 checks must keep each peer separate from account receiving and authentication.
+Dispatch received events through the app's production batch handling throughout
+settling and measurement. Each measured window also replays the fixture's signed
+rosters and invites after eviction from the recent-event and signature caches;
+require completed admission with no app-row writes or protocol storage mutations.
+Targeted recovery must apply its fresh proof, not merely receive its network
+frame. The fixture retains its isolated FIPS transport and does not measure full
+production FIPS reconciliation; physical CPU acceptance remains required.
 Count completed request/close pairs independently of connections, with per-relay
 counters matching the process totals. Each cycle must exercise all 64 retained
 connections across the whole process, not 64 per relay, and the remaining

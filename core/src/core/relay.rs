@@ -2,6 +2,13 @@ use super::*;
 
 type VerifiedSignature = (nostr::EventId, nostr::secp256k1::schnorr::Signature);
 
+#[derive(PartialEq, Eq)]
+enum AppKeysEventOutcome {
+    Invalid,
+    Unchanged,
+    Changed,
+}
+
 /// In-memory authentication proofs, independent of persisted delivery IDs.
 /// Recompute the content ID before reusing a proof for that exact signature.
 #[derive(Default)]
@@ -167,13 +174,12 @@ impl AppCore {
         match kind {
             APP_KEYS_EVENT_KIND if is_app_keys_protocol_event => {
                 self.debug_event_counters.app_keys_events += 1;
-                match self.apply_app_keys_event(&event) {
-                    Ok(_) => {
+                match self.apply_app_keys_event_with_outcome(&event) {
+                    Ok(outcome) => {
                         self.remember_event(event_id);
-                        self.request_protocol_subscription_refresh();
-                        self.persist_best_effort();
-                        self.rebuild_state();
-                        self.emit_state();
+                        if outcome == AppKeysEventOutcome::Changed {
+                            self.request_protocol_subscription_refresh();
+                        }
                     }
                     Err(error) => {
                         self.push_debug_log("appcore.protocol.app_keys.error", error.to_string());
@@ -231,11 +237,18 @@ impl AppCore {
                 let retry_results = self
                     .protocol_engine
                     .as_mut()
-                    .map(|engine| engine.observe_invite_event(&event))
+                    .map(|engine| engine.observe_invite_event_with_outcome(&event))
                     .transpose();
                 match retry_results {
                     Ok(Some(results)) => {
-                        self.process_protocol_engine_retry_batch("invite_event", results);
+                        if !results.changed {
+                            self.remember_event(event_id);
+                            return;
+                        }
+                        self.process_protocol_engine_retry_batch(
+                            "invite_event",
+                            results.retry_batch,
+                        );
                     }
                     Ok(None) => {}
                     Err(error) => {
@@ -669,6 +682,13 @@ impl AppCore {
     /// for an owner. The mobile-push snapshot indexes by tracked owner
     /// + device, so any change there invalidates the cache.
     pub(super) fn apply_app_keys_event(&mut self, event: &Event) -> anyhow::Result<bool> {
+        Ok(self.apply_app_keys_event_with_outcome(event)? != AppKeysEventOutcome::Invalid)
+    }
+
+    fn apply_app_keys_event_with_outcome(
+        &mut self,
+        event: &Event,
+    ) -> anyhow::Result<AppKeysEventOutcome> {
         let should_publish_backfilled_owner_app_keys =
             self.logged_in.as_ref().is_some_and(|logged_in| {
                 self.defer_owner_app_keys_publish
@@ -687,7 +707,7 @@ impl AppCore {
             })
             .or_else(|| AppKeys::from_event(event).ok());
         let Some(app_keys) = app_keys else {
-            return Ok(false);
+            return Ok(AppKeysEventOutcome::Invalid);
         };
 
         self.capture_authorization_event(event)?;
@@ -741,10 +761,10 @@ impl AppCore {
             current.as_ref(),
             &known_app_keys_from_ndr(event.pubkey, &effective_app_keys, effective_created_at),
         )?;
-        let protocol_retry_batch = if let Some(protocol_engine) = self.protocol_engine.as_mut() {
-            protocol_engine.ingest_app_keys_event(event)?
+        let protocol_result = if let Some(protocol_engine) = self.protocol_engine.as_mut() {
+            protocol_engine.ingest_app_keys_event_with_outcome(event)?
         } else {
-            ProtocolRetryBatch::default()
+            iris_chat_protocol::ProtocolMetadataIngestionResult::default()
         };
         self.cache_local_fips_identity(event);
 
@@ -771,16 +791,26 @@ impl AppCore {
             // Install that signed proof before checking the older roster for removal.
             self.publish_local_app_keys();
         }
-        // Restore reconciles once after all durable authorization heads are projected.
-        if !self.state.busy.restoring_session {
-            self.reconcile_device_sync();
-        }
-        self.migrate_verified_device_owner_threads(event.pubkey, &effective_app_keys);
+        let threads_changed =
+            self.migrate_verified_device_owner_threads(event.pubkey, &effective_app_keys);
         self.complete_authorized_device_link();
-        self.mark_mobile_push_dirty();
-        let _authorization_changed = self.refresh_local_authorization_state();
-        self.rebuild_persist_and_emit_state();
-        self.process_protocol_engine_retry_batch("app_keys", protocol_retry_batch);
+        let authorization_changed = self.refresh_local_authorization_state();
+        let changed = app_keys_changed
+            || protocol_result.changed
+            || threads_changed
+            || authorization_changed
+            || should_publish_backfilled_owner_app_keys;
+        if changed {
+            // Restore reconciles once after all durable authorization heads are projected.
+            if !self.state.busy.restoring_session {
+                self.reconcile_device_sync();
+            }
+            self.mark_mobile_push_dirty();
+            self.rebuild_persist_and_emit_state();
+            self.process_protocol_engine_retry_batch("app_keys", protocol_result.retry_batch);
+        }
+        // These explicit operations can start after the proof was first seen.
+        // They own their persistence/UI work when they actually make progress.
         self.retry_pending_private_invite_responses(event.pubkey);
         self.resume_pending_outgoing_invite_acceptance(event.pubkey);
         if app_keys_changed && self.device_sync_tracks_app_keys_owner(event.pubkey) {
@@ -792,7 +822,11 @@ impl AppCore {
         if app_keys_changed && !self.fips_nearby_links.is_empty() {
             self.emit_fips_nearby_peers();
         }
-        Ok(true)
+        Ok(if changed {
+            AppKeysEventOutcome::Changed
+        } else {
+            AppKeysEventOutcome::Unchanged
+        })
     }
 }
 

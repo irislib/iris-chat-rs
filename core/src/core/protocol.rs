@@ -688,7 +688,9 @@ impl AppCore {
                 );
             }
         }
-        authors.sort_by_key(|pubkey| pubkey.to_hex());
+        // Fixed-width bytes have the same order as hex without allocating a
+        // string on every comparison during discovery-plan construction.
+        authors.sort_unstable_by_key(|pubkey| pubkey.to_bytes());
         authors.dedup();
         authors
     }
@@ -705,7 +707,7 @@ impl AppCore {
         {
             pubkeys.push(local_invite_pubkey);
         }
-        pubkeys.sort_by_key(|pubkey| pubkey.to_hex());
+        pubkeys.sort_unstable_by_key(|pubkey| pubkey.to_bytes());
         pubkeys.dedup();
         pubkeys
     }

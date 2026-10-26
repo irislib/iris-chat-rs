@@ -250,6 +250,15 @@ impl ProtocolRetryBatch {
     }
 }
 
+/// Whether authenticated discovery changed protocol state. An empty retry
+/// batch alone cannot establish this: authorization can change without sending
+/// or decrypting a message.
+#[derive(Clone, Debug, Default)]
+pub struct ProtocolMetadataIngestionResult {
+    pub changed: bool,
+    pub retry_batch: ProtocolRetryBatch,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DirectSendReadiness {
     Ready,

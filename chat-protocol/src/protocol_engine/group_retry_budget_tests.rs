@@ -176,6 +176,103 @@ fn deferred_group_retry_query_fixture() -> (ProtocolEngine, Keys, Arc<GroupRetry
     (engine, device, storage)
 }
 
+#[test]
+fn unchanged_invite_replay_preserves_deferred_work_without_checkpointing() {
+    let (mut engine, _, storage) = deferred_group_retry_query_fixture();
+    let peer = Keys::generate();
+    let peer_device = Keys::generate();
+    let peer_engine = test_engine(&peer, &peer_device);
+    let invite = invite_unsigned_event(&peer_engine.local_invite().unwrap())
+        .unwrap()
+        .sign_with_keys(&peer_device)
+        .unwrap();
+    engine.observe_invite_event(&invite).unwrap();
+    // Pending work can arrive after the invite. Replaying unchanged discovery
+    // must not wake it or rewrite its checkpoint on every relay catch-up.
+    engine.pending_inbound = synthetic_pending_inbound(&mut engine, 128, 0, 30);
+    let before = serde_json::to_value((
+        &engine.pending_inbound,
+        &engine.pending_group_fanouts,
+        &engine.pending_group_pairwise_payloads,
+    ))
+    .unwrap();
+    let writes = storage.puts.load(std::sync::atomic::Ordering::Relaxed);
+    for _ in 0..16 {
+        assert!(engine.observe_invite_event(&invite).unwrap().is_empty());
+    }
+    assert_eq!(
+        storage.puts.load(std::sync::atomic::Ordering::Relaxed),
+        writes,
+        "unchanged invitations must not checkpoint the entire backlog"
+    );
+    assert_eq!(
+        serde_json::to_value((
+            &engine.pending_inbound,
+            &engine.pending_group_fanouts,
+            &engine.pending_group_pairwise_payloads,
+        ))
+        .unwrap(),
+        before,
+        "ordinary retry deadlines belong to the retry scheduler"
+    );
+}
+
+#[test]
+fn metadata_outcome_reports_authorization_changes_even_without_retry_effects() {
+    let mut engine = test_engine(&Keys::generate(), &Keys::generate());
+    let peer = Keys::generate();
+    let device = Keys::generate();
+    let sibling = Keys::generate();
+    let roster = signed_app_keys(&peer, &[device.public_key()], 10);
+    let first = engine.ingest_app_keys_event_with_outcome(&roster).unwrap();
+    assert!(first.changed);
+    assert!(first.retry_batch.is_empty());
+    assert!(!engine.ingest_app_keys_event_with_outcome(&roster).unwrap().changed);
+    let stale = signed_app_keys(&peer, &[device.public_key()], 9);
+    assert!(!engine.ingest_app_keys_event_with_outcome(&stale).unwrap().changed);
+
+    // A projection is insufficient when exact signed proof was lost during
+    // migration. Replaying it must restore authorization and report progress.
+    engine.invite_owner_app_keys_evidence.clear();
+    let repaired = engine.ingest_app_keys_event_with_outcome(&roster).unwrap();
+    assert!(repaired.changed);
+    assert!(repaired.retry_batch.is_empty());
+    assert_eq!(engine.invite_owner_app_keys_membership(ndr_owner(peer.public_key()), device.public_key()), Some(true));
+
+    let conflict = signed_app_keys(&peer, &[sibling.public_key()], 10);
+    assert!(engine.ingest_app_keys_event_with_outcome(&conflict).unwrap().changed);
+    assert_eq!(engine.invite_owner_app_keys_membership(ndr_owner(peer.public_key()), device.public_key()), None);
+    let removal = signed_app_keys(&peer, &[sibling.public_key()], 11);
+    assert!(engine.ingest_app_keys_event_with_outcome(&removal).unwrap().changed);
+    assert_eq!(engine.invite_owner_app_keys_membership(ndr_owner(peer.public_key()), device.public_key()), Some(false));
+}
+
+#[test]
+fn metadata_outcome_distinguishes_invite_replacement_from_exact_replay() {
+    let local = Keys::generate();
+    let mut engine = test_engine(&local, &local);
+    let peer = Keys::generate();
+    let peer_engine = test_engine(&peer, &peer);
+    let mut invite = peer_engine.local_invite().unwrap();
+    invite.created_at = NdrUnixSeconds(10);
+    let first_event = invite_unsigned_event(&invite).unwrap().sign_with_keys(&peer).unwrap();
+    let first = engine.observe_invite_event_with_outcome(&first_event).unwrap();
+    assert!(first.changed);
+    assert!(first.retry_batch.is_empty());
+    assert!(!engine.observe_invite_event_with_outcome(&first_event).unwrap().changed);
+
+    let mut replacement = test_engine(&peer, &peer).local_invite().unwrap();
+    replacement.created_at = NdrUnixSeconds(11);
+    let replacement = invite_unsigned_event(&replacement).unwrap().sign_with_keys(&peer).unwrap();
+    let replaced = engine.observe_invite_event_with_outcome(&replacement).unwrap();
+    assert!(replaced.changed);
+    assert!(replaced.retry_batch.is_empty());
+    assert!(!engine.observe_invite_event_with_outcome(&replacement).unwrap().changed);
+    let own = invite_unsigned_event(&engine.local_invite().unwrap()).unwrap().sign_with_keys(&local).unwrap();
+    let own = engine.observe_invite_event_with_outcome(&own).unwrap();
+    assert!(!own.changed && own.retry_batch.is_empty());
+}
+
 fn assert_ready_retry_queries_skip_deferred_work(
     engine: &ProtocolEngine,
     storage: &GroupRetryCountingStorage,
