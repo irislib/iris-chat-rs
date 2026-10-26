@@ -1,6 +1,10 @@
 # iris chat
 
-Encrypted chat app using Nostr Double Ratchet. Shared Rust core, native UIs.
+Private messaging for people and agents. No email, phone number, or provider
+account: create a local identity and exchange an invite. Native apps and the
+`iris` CLI share an encrypted Rust core using Nostr Double Ratchet.
+
+[Chat with your agent](docs/agents.md) · [Agent plugins](docs/agent-plugin.md)
 
 Primary development is on hashtree:
 https://git.iris.to/#/npub1399g0q2gtwjcglyjcg3jw3rcllqhm375pwases5hkvqa56aqe5wsz2eaap/iris-chat-rs
@@ -158,36 +162,15 @@ distribution channel. See the [release and distribution playbook](RELEASE.md).
 
 ## Command Line
 
-Install the Iris command line app with Homebrew:
-
-```bash
-brew tap sirius/iris https://upload.iris.to/npub1399g0q2gtwjcglyjcg3jw3rcllqhm375pwases5hkvqa56aqe5wsz2eaap/homebrew-iris.git
-brew install --formula sirius/iris/iris
-```
-
-Or install a prebuilt macOS/Linux binary directly:
+Install a prebuilt macOS/Linux binary:
 
 ```bash
 curl -fsSL https://upload.iris.to/npub1399g0q2gtwjcglyjcg3jw3rcllqhm375pwases5hkvqa56aqe5wsz2eaap/releases%2Firis-chat-rs/latest/install.sh | sh
 ```
 
-The `iris` command is useful for humans, agents, scripts, and local devices
-that need to send, search, or listen for messages and trigger normal iris chat
-notifications.
-
-CLI reads (`read`, `chat open`, `chat read`, `group read`, `tail`, and `search`)
-and listeners do not mark messages seen. Agents should call
-`iris seen <chat> <message-id>...` when they start processing those messages.
-Delivery receipts remain automatic for accepted conversations when receipts
-are enabled. Interactive apps retain their normal read behavior.
-
-For scripts that manage sync themselves, use `--no-background-sync` to prevent
-a one-shot command from starting a background process that keeps the profile
-open. Pending messages and public follows stay saved for the next `iris sync`
-or app session. An already running `iris service` continues normally.
-
-Messages can travel over Nostr relays, and nearby transports can keep local
-device messages off a remote server when the devices are close enough.
+Use `iris --help` for commands and `--json` for scripts. The
+[agent guide](docs/agents.md) covers Homebrew, first contact, listening,
+delivery receipts, and persistent profiles, with a reproducible two-party demo.
 
 ## Platform Notes
 
