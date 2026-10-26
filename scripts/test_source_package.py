@@ -23,10 +23,10 @@ class PackageProofTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
-        self.archive = Path(self.temporary.name) / "iris-chat-0.1.53.crate"
+        self.archive = Path(self.temporary.name) / "iris-chat-0.1.54.crate"
         manifest = b'''[package]
 name = "iris-chat"
-version = "0.1.53"
+version = "0.1.54"
 default-run = "iris"
 [dependencies]
 iris-chat-protocol = { version = "=0.3.10", path = "../chat-protocol" }
@@ -37,7 +37,7 @@ path = "src/bin/iris.rs"
         lock = b'''version = 4
 [[package]]
 name = "iris-chat"
-version = "0.1.53"
+version = "0.1.54"
 dependencies = ["iris-chat-protocol"]
 [[package]]
 name = "iris-chat-protocol"
@@ -56,10 +56,10 @@ version = "0.3.10"
     def inspect(self, extra=()):
         with tarfile.open(self.archive, "w:gz") as tar:
             for path, content in [*self.members.items(), *extra]:
-                item = tarfile.TarInfo(f"iris-chat-0.1.53/{path}")
+                item = tarfile.TarInfo(f"iris-chat-0.1.54/{path}")
                 item.size = len(content)
                 tar.addfile(item, io.BytesIO(content))
-        return CHECK.inspect_archive(self.archive, "iris-chat", "0.1.53", "core",
+        return CHECK.inspect_archive(self.archive, "iris-chat", "0.1.54", "core",
                                      self.source.__getitem__, self.checksum, expected_source=CHECK.SOURCE)
 
     def inspect_protocol(self, archive_source, expected_source):
@@ -106,6 +106,11 @@ version = "0.3.10"
         self.assertTrue(result["all_source_bytes_match_git"])
         self.assertEqual(result["dependency_count"], 2)
 
+    def test_rejects_wrong_cli_package_version(self):
+        self.members["Cargo.toml"] = self.members["Cargo.toml"].replace(b'version = "0.1.54"', b'version = "0.1.53"')
+        with self.assertRaises(AssertionError):
+            self.inspect()
+
     def test_rejects_changed_source_bytes(self):
         self.members["src/bin/iris.rs"] += b"tampered"
         with self.assertRaisesRegex(AssertionError, "Source bytes differ"):
@@ -150,7 +155,7 @@ class PackageProcessCleanupTests(unittest.TestCase):
             root = Path(tmp)
             out, target = root / "evidence", root / "target"
             out.mkdir(); target.mkdir()
-            candidate = target / "package" / "iris-chat-0.1.53.crate"
+            candidate = target / "package" / "iris-chat-0.1.54.crate"
             real_popen = subprocess.Popen
             unrelated = real_popen([sys.executable, "-c", "import time; time.sleep(30)"],
                                    start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

@@ -51,7 +51,7 @@ jobs:
       CARGO_TARGET_DIR: ${{ github.workspace }}/cargo-target
       CARGO_BUILD_JOBS: '2'
       CARGO_TERM_COLOR: never
-      IRIS_PACKAGE_TOOLCHAIN: '1.99.1' # Accepted protocol run 40224513414 and exact published 0.3.10 archive.
+      IRIS_PACKAGE_TOOLCHAIN: '1.99.1' # Bind accepted core run 40244929140; reuse published protocol 0.3.10.
       IRIS_PROTOCOL_SHA256: ${{ inputs.source_package_protocol_sha256 }}
     steps:
       - name: Checkout reviewed workflow driver
@@ -63,7 +63,7 @@ jobs:
       - name: Checkout qualified production source
         uses: actions/checkout@v4
         with:
-          ref: 0bef730713dc448b8bcb073619d5a879c81aec92
+          ref: 4dd00b46420cef26dcd872fd840d4e71b02236d1
           path: iris-chat-rs
           persist-credentials: false
       - name: Install accepted Rust toolchain
@@ -101,7 +101,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: source-package-0bef730713dc448b8bcb073619d5a879c81aec92
+          name: source-package-4dd00b46420cef26dcd872fd840d4e71b02236d1
           path: work/source-package/
           if-no-files-found: warn
           retention-days: 14
