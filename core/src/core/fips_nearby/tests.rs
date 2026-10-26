@@ -30,6 +30,49 @@ fn event_id() -> String {
 }
 
 #[test]
+fn private_nearby_replays_do_not_scan_known_devices() {
+    let local_hex = Keys::generate().public_key().to_hex();
+    let recipient = Keys::generate().public_key();
+    let recipient_hex = recipient.to_hex();
+    let stranger_hex = Keys::generate().public_key().to_hex();
+    for targets in [
+        BTreeSet::from([recipient.to_bech32().unwrap()]),
+        BTreeSet::new(),
+    ] {
+        let inspected = std::cell::Cell::new(0);
+        let known_devices = std::iter::repeat_n(stranger_hex.as_str(), 256)
+            .chain(std::iter::once(recipient_hex.as_str()))
+            .inspect(|_| inspected.set(inspected.get() + 1));
+        let configured = configured_fips_nearby_peers(Some(&targets), &local_hex, known_devices);
+        assert_eq!(
+            inspected.get(),
+            0,
+            "private replay must not traverse the device roster, even for unresolved invites"
+        );
+        assert!(
+            configured.is_empty(),
+            "private targets are supplied exclusively by the authenticated recipient set"
+        );
+    }
+}
+
+#[test]
+fn public_nearby_publications_keep_valid_configured_peers() {
+    let local_hex = Keys::generate().public_key().to_hex();
+    let peer = Keys::generate().public_key();
+    let peer_hex = peer.to_hex();
+    let configured = configured_fips_nearby_peers(
+        None,
+        &local_hex,
+        [local_hex.as_str(), "invalid-device", peer_hex.as_str()].into_iter(),
+    );
+    assert_eq!(
+        configured.iter().map(|peer| peer.npub()).collect::<Vec<_>>(),
+        vec![peer.to_bech32().unwrap()]
+    );
+}
+
+#[test]
 fn event_and_receipt_round_trip() {
     for packet in [
         FipsNearbyPacket::event(event_id(), "{\"kind\":14}".to_string()).unwrap(),

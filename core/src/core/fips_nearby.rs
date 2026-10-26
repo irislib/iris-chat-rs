@@ -432,18 +432,14 @@ impl AppCore {
             .as_ref()
             .map(|logged_in| logged_in.device_keys.public_key().to_hex())
             .unwrap_or_default();
-        let configured = self
-            .app_keys
-            .values()
-            .flat_map(|known| known.devices.iter())
-            .filter(|device| device.identity_pubkey_hex != local_hex)
-            .filter_map(|device| fips_peer_from_hex(&device.identity_pubkey_hex))
-            .filter(|device| {
-                recipient_targets
-                    .as_ref()
-                    .is_none_or(|targets| targets.contains(&device.npub()))
-            })
-            .collect::<Vec<_>>();
+        let configured = configured_fips_nearby_peers(
+            recipient_targets.as_ref(),
+            &local_hex,
+            self.app_keys
+                .values()
+                .flat_map(|known| known.devices.iter())
+                .map(|device| device.identity_pubkey_hex.as_str()),
+        );
         self.runtime.spawn(async move {
             if cancelled.load(std::sync::atomic::Ordering::Acquire) {
                 return;
@@ -782,6 +778,23 @@ impl AppCore {
             lan_peer_ids,
         });
     }
+}
+
+fn configured_fips_nearby_peers<'a>(
+    recipient_targets: Option<&BTreeSet<String>>,
+    local_hex: &str,
+    known_devices: impl Iterator<Item = &'a str>,
+) -> Vec<FipsPeerIdentity> {
+    // Private delivery already adds its exact recipients in the sender task.
+    // Do not scan and parse every known device on the core thread for each
+    // replayed envelope, including unresolved invites with no live target yet.
+    if recipient_targets.is_some() {
+        return Vec::new();
+    }
+    known_devices
+        .filter(|device| *device != local_hex)
+        .filter_map(fips_peer_from_hex)
+        .collect()
 }
 
 fn is_local_udp_address(address: Option<&str>) -> bool {
