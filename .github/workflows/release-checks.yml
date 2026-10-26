@@ -13,6 +13,8 @@ on:
       - "scripts/render-release-notes.py"
       - "scripts/build_common.sh"
       - "scripts/test_build_common.py"
+      - "scripts/apple_connect_api.py"
+      - "scripts/test_apple_connect_api.py"
   pull_request:
     paths:
       - ".github/workflows/ci.yml"
@@ -24,6 +26,8 @@ on:
       - "scripts/render-release-notes.py"
       - "scripts/build_common.sh"
       - "scripts/test_build_common.py"
+      - "scripts/apple_connect_api.py"
+      - "scripts/test_apple_connect_api.py"
   workflow_dispatch:
 
 permissions:
@@ -43,9 +47,11 @@ jobs:
         run: |
           set -Eeuo pipefail
           ruby --version
+          node --version
           python3 scripts/test_release_workflow.py
           python3 scripts/test_release_notes.py
           python3 scripts/test_build_common.py
+          python3 scripts/test_apple_connect_api.py
           python3 - <<'PY'
           from pathlib import Path
           import re

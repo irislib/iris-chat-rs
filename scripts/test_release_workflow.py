@@ -290,7 +290,10 @@ class ReleaseWorkflowTests(unittest.TestCase):
         expected = [
             '      - "**/*.md"',
             '      - ".github/workflows/release.yml"',
+            '      - ".github/workflows/release-checks.yml"',
             '      - "scripts/test_release_workflow.py"',
+            '      - "scripts/apple_connect_api.py"',
+            '      - "scripts/test_apple_connect_api.py"',
         ]
         # Keep this exclusion narrow: changing any app/build input must still
         # trigger the original full platform checks.
@@ -303,10 +306,12 @@ class ReleaseWorkflowTests(unittest.TestCase):
             self.assertEqual(lines, expected)
         self.assertEqual(ci.count("    paths-ignore:\n"), 2)
         quick = (ROOT / ".github/workflows/release-checks.yml").read_text()
-        for path in (".github/workflows/ci.yml", ".github/workflows/release.yml", "scripts/test_release_workflow.py"):
+        for path in (".github/workflows/ci.yml", ".github/workflows/release.yml", ".github/workflows/release-checks.yml",
+                     "scripts/test_release_workflow.py", "scripts/apple_connect_api.py", "scripts/test_apple_connect_api.py"):
             self.assertEqual(quick.count(f'      - "{path}"'), 2)
-        for script in ("test_release_workflow.py", "test_release_notes.py", "test_build_common.py"):
+        for script in ("test_release_workflow.py", "test_release_notes.py", "test_build_common.py", "test_apple_connect_api.py"):
             self.assertIn(f"python3 scripts/{script}", quick)
+        self.assertIn("node --version", quick)
         self.assertIn('"scripts/render-release-notes.py"', quick)
         self.assertIn('"--channel", "validate"', quick)
 

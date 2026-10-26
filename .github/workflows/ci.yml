@@ -8,12 +8,18 @@ on:
     paths-ignore:
       - "**/*.md"
       - ".github/workflows/release.yml"
+      - ".github/workflows/release-checks.yml"
       - "scripts/test_release_workflow.py"
+      - "scripts/apple_connect_api.py"
+      - "scripts/test_apple_connect_api.py"
   pull_request:
     paths-ignore:
       - "**/*.md"
       - ".github/workflows/release.yml"
+      - ".github/workflows/release-checks.yml"
       - "scripts/test_release_workflow.py"
+      - "scripts/apple_connect_api.py"
+      - "scripts/test_apple_connect_api.py"
   workflow_dispatch:
     inputs:
       scope:
