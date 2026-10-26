@@ -1,9 +1,9 @@
 {
   "name": "iris-chat",
   "description": "Use the Iris CLI to create a local messaging identity, exchange invites, and send or receive encrypted messages with humans and agents. No provider signup, email, or phone number is required.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "author": {
-    "name": "Iris contributors",
+    "name": "Sirius Business Ltd",
     "url": "https://irischat.org/"
   },
   "homepage": "https://irischat.org/",
