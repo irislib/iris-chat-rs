@@ -23,6 +23,13 @@ pub(in crate::core) fn build_protocol_subscription_filters(
 
     let mut filters = Vec::new();
     if !roster_authors.is_empty() {
+        // Profile catch-up belongs to the same isolated public-owner worker
+        // as its device roster, including updates published while offline.
+        filters.push(
+            Filter::new()
+                .kind(Kind::Metadata)
+                .authors(roster_authors.clone()),
+        );
         filters.push(
             Filter::new()
                 .kind(Kind::from(APP_KEYS_EVENT_KIND as u16))

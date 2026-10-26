@@ -1,0 +1,81 @@
+name: Zapstore certificate proof
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [codex/zapstore-c1-proof-2401]
+    paths:
+      - .github/workflows/zapstore-certificate-proof.yml
+      - scripts/CreateZapstoreC1Proof.java
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zapstore-certificate-proof-2401
+  cancel-in-progress: false
+
+jobs:
+  public-proof:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: android-release
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Verify exact accepted immutable APK
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: irislib/iris-chat-rs
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          stage="$RUNNER_TEMP/iris-c1-apk"
+          mkdir -m 700 "$stage"
+          gh api repos/irislib/iris-chat-rs/releases/tags/v2026.10.24.1 > "$stage/release.json"
+          python3 - "$stage/release.json" <<'PY'
+          import json,sys
+          r=json.load(open(sys.argv[1]))
+          assert r['tag_name']=='v2026.10.24.1' and r['immutable'] and not r['draft'] and not r['prerelease']
+          a,=[a for a in r['assets'] if a['name']=='iris-chat-v2026.10.24.1-android-arm64.apk']
+          assert a['id']==672786647 and a['size']==85987288
+          assert a['digest']=='sha256:2c07e751065d26350a8692ed15d8375d7d2372936818fd4fd0441882765ff1c6'
+          PY
+          gh release download v2026.10.24.1 --pattern iris-chat-v2026.10.24.1-android-arm64.apk --dir "$stage"
+          apk="$stage/iris-chat-v2026.10.24.1-android-arm64.apk"
+          test "$(stat -c %s "$apk")" = 85987288
+          printf '%s  %s\n' 2c07e751065d26350a8692ed15d8375d7d2372936818fd4fd0441882765ff1c6 "$apk" | sha256sum --check
+          sdk_root="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
+          apksigner="$sdk_root/build-tools/36.0.0/apksigner"
+          if [[ ! -x "$apksigner" ]]; then
+            "$sdk_root/cmdline-tools/latest/bin/sdkmanager" 'build-tools;36.0.0'
+          fi
+          "$apksigner" verify --print-certs "$apk" > "$stage/apk-certificate.txt"
+          python3 - "$stage/apk-certificate.txt" <<'PY'
+          import re,sys
+          text=open(sys.argv[1]).read()
+          hashes=re.findall(r'^Signer #\d+ certificate SHA-256 digest: ([0-9a-f]+)$',text,re.M)
+          assert hashes==['502a25f79314fa12feb2a517b02d897c58514650cb8cd38c80efc07ee69d1326']
+          PY
+      - name: Create only public certificate ownership proof
+        env:
+          IRIS_RELEASE_KEYSTORE_BASE64: ${{ secrets.IRIS_RELEASE_KEYSTORE_BASE64 }}
+          IRIS_RELEASE_KEYSTORE_PASSWORD: ${{ secrets.IRIS_RELEASE_KEYSTORE_PASSWORD }}
+          IRIS_RELEASE_KEY_ALIAS: ${{ secrets.IRIS_RELEASE_KEY_ALIAS }}
+          IRIS_RELEASE_KEY_PASSWORD: ${{ secrets.IRIS_RELEASE_KEY_PASSWORD }}
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          java scripts/CreateZapstoreC1Proof.java "$RUNNER_TEMP/iris-c1-public"
+      - name: Upload public proof only
+        uses: actions/upload-artifact@v7
+        with:
+          name: iris-zapstore-c1-v2026.10.24.1-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/iris-c1-public/certificate.der
+            ${{ runner.temp }}/iris-c1-public/unsigned-c1.json
+          if-no-files-found: error
+          retention-days: 30

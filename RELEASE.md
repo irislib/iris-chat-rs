@@ -117,6 +117,10 @@ The release tag is the actual release date: `vYYYY.M.D`. If another immutable
 build is needed on the same date, use `.1`, `.2`, and so on. Never move or
 replace a published tag.
 
+Update both package versions and every build version argument in `haps.toml`
+for the same tag. Check all six source package variants with
+`python3 scripts/validate-haps-manifest.py --tag <tag>` before dispatching CI.
+
 Choose pre-release checks according to the changed components and release risk:
 
 ```bash
@@ -180,20 +184,25 @@ remains a workflow artifact and is excluded from the app release files.
 
 The mandatory Rust suite also restores a generated 100 MiB account database with
 96 contacts, three devices per contact, three own devices and eight groups,
-plus 96 separate live-endpoint discovery scopes.
-Its populated-discovery test waits for all anonymous author scopes to settle,
-then requires two 35-second windows below 5% of one CPU core with no repeated
-application requests. Two further 125-second windows cover actual recurring
-discovery polls for every author, each below 5% of one CPU core, followed
-by prompt targeted proof recovery. TLS sessions stay isolated by author and
-exact message-server URL; a quiet gap alone does not satisfy the CPU gate. Signed wire
+plus 96 separate live-endpoint discovery scopes. The ordinary core suite runs
+the one-relay populated-discovery test once. After that suite, the runner uses
+the existing target cache to run the optimized five-relay variant exactly once,
+covering all 2,400 author/relay pairs, including live-endpoint discovery.
+Both variants wait for every author/relay pair to settle, then require two
+35-second windows below 5% of one CPU core with no repeated application
+requests. Two further 125-second windows cover actual recurring discovery polls
+for every pair, each below 5% of one CPU core, followed by prompt targeted proof
+recovery on every relay. TLS sessions stay isolated by author and exact
+message-server URL; a quiet gap alone does not satisfy the CPU gate. Signed wire
 checks must keep each peer separate from account receiving and authentication.
-Count completed request/close pairs independently of connections. Each cycle
-must exercise all 64 retained connections and the remaining disposable readers,
-whose new connections require scoped TLS resumption and fresh anonymous
-authentication. Connection reuse must not hide missed polls or extra traffic.
-Retain its CPU/wire receipt and full child log with the private-control test
-artifact. The relayless resource fixture alone does not cover this workload.
+Count completed request/close pairs independently of connections, with per-relay
+counters matching the process totals. Each cycle must exercise all 64 retained
+connections across the whole process, not 64 per relay, and the remaining
+disposable readers, whose new connections require scoped TLS resumption and
+fresh anonymous authentication. Connection reuse must not hide missed polls or
+extra traffic. Retain both CPU/wire receipts and full child logs with the
+private-control test artifact. The relayless resource fixture alone does not
+cover this workload.
 
 The Rust suite also exercises a 254,672,896-byte protocol checkpoint with 22,702
 queued group repairs and 19,231 encrypted group messages. Small incoming and
@@ -206,13 +215,23 @@ and retry metadata, committing them with the ratchet state in one transaction.
 Growth, queue append and retry retirement tests measure actual SQLite writes;
 unchanged saves must write nothing. Existing JSON checkpoints migrate on their
 first save, and read-only recovery still reconstructs the same logical state.
+Incoming and outgoing batch tests also measure SQLite page reads after an
+app-state write and page-cache eviction, so small query results cannot conceal
+repeated traversal of immutable payload pages. Compact chunk metadata is
+maintained transactionally; full reads still validate the original chunks.
+Authorization replay tests must keep unchanged-event allocations independent of
+the pending backlog, avoid unnecessary saves, and preserve exact evidence,
+device reconciliation and rollback of real authorization changes.
 
 On Linux, the same runner also requires exactly one optimized
 `restored_backlog_batched_retry_stays_within_cpu_budget` test. It restores a
 350,224,384-byte SQLite checkpoint with 4,214 pending incoming packets, 24,990
 group fanouts, 23,437 encrypted group messages and 44 outgoing retries. Each
 retry turn includes the app's batch boundary, journal acknowledgment and durable
-flush, with 25 ms ready continuations and 2-second liveness checks. Restore,
+flush. Continuations have a 25 ms minimum delay and pace blind history recovery
+from its measured work; liveness checks run every 2 seconds. The fixture uses
+16 authors, 46 sender-key states and 30 key distributions, with encrypted payloads
+ranging from 64 to 16,384 bytes. Restore,
 scheduler readiness and the valid message must complete within the three
 60-second settling slices. Two further 60-second slices must each use at most
 5% of one CPU core while exercising recurring due work and durable saves.
@@ -222,6 +241,11 @@ remain queued. Backoff-only retries must not substitute for real durable work.
 Unresolved work must survive, unchanged inputs must not restart exhausted
 searches, and a reload must preserve queues and ratchets. Missing-key searches
 may still make finite progress during measurement.
+Fresh current-position messages must bypass a waiting history search without
+replacing its cursor. Keep the signed-event regression with 2,000 retained keys
+and multiple key generations below one second of virtual arrival-to-delivery
+time, including measured decryption and pacing, and verify that the app replaces
+a later history timer when fresh work becomes eligible sooner.
 Incoming packets must retain valid NIP44 encodings and fail authentication,
 with positive controls proving the unmodified packets decrypt. Check their
 format and decoded sizes against the recorded aggregate workload.
@@ -229,7 +253,7 @@ format and decoded sizes against the recorded aggregate workload.
 The gate uses release optimization level 3, debug info level 1 and disabled
 debug assertions, with two build jobs and the existing Cargo target/cache.
 Retain its complete stdout, including all five `batched_retry_slice` records and
-the `iris-batched-retry-cpu/v3` summary. The runner rejects missing execution,
+the `iris-batched-retry-cpu/v4` summary. The runner rejects missing execution,
 incomplete measurements or a CPU failure. Keep standalone retry diagnostic
 results and the physical-device CPU gates as separate evidence.
 
@@ -344,6 +368,12 @@ After the isolated check passes, publish the remaining local channels:
 ./scripts/distribute zapstore --tag "$release_tag" --check
 ./scripts/distribute zapstore --tag "$release_tag"
 ```
+
+Zapstore requires a current C1 ownership proof for the APK's signing certificate.
+The **Zapstore certificate proof** workflow uses the established Android release
+credentials to produce only a public certificate and unsigned proof; it does not
+rebuild the APK or export the private key. Sign and publish that proof with the
+dedicated Zapstore publisher before retrying a missing or expired proof.
 
 ## 4. Publish to Apple
 
@@ -500,7 +530,9 @@ matching evidence; do not relabel a previous candidate's result.
   the same tag.
 - Homebrew: update the tap and run `brew info --formula sirius/iris/iris`;
   its formula URL must contain the immutable release tag.
-- Zapstore: confirm the version and publisher in Zapstore.
+- Zapstore: the distributor verifies the public signed app/release/APK records
+  and streams the full public APK to check its size and hash before reporting
+  success. A publisher exit code or relay acknowledgement alone is insufficient.
 - Apple: workflow success means delivery/submission succeeded. Approval and
   public availability remain visible in App Store Connect.
 

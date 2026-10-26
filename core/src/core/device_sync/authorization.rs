@@ -26,22 +26,22 @@ impl AppCore {
     }
 
     pub(super) fn merge_authorization_event(&mut self, event: &Event) -> bool {
+        self.project_authorization_event(event).unwrap_or(false) && self.persist_app_state().is_ok()
+    }
+
+    // Restore coalesces app snapshots after replaying all durable heads. The
+    // live merge above still requires immediate app durability before success.
+    pub(super) fn project_authorization_event(&mut self, event: &Event) -> anyhow::Result<bool> {
         // The authenticated sibling already admitted this original. Retain it
         // intact; the protocol engine still decides whether it advances authority.
-        if self.capture_authorization_event(event).is_err() {
-            return false;
-        }
+        self.capture_authorization_event(event)?;
         if AppKeys::from_event(event).is_ok() {
-            return self.apply_app_keys_event(event).unwrap_or(false)
-                && self.persist_app_state().is_ok();
+            return self.apply_app_keys_event(event);
         }
         let Some(engine) = self.protocol_engine.as_mut() else {
-            return false;
+            return Ok(false);
         };
-        let result = match engine.ingest_group_roster_fact_event(event) {
-            Ok(value) => value,
-            Err(_) => return false,
-        };
+        let result = engine.ingest_group_roster_fact_event(event)?;
         if let Some(result) = result {
             if let Some(snapshot) = result.snapshot {
                 let previous = self.groups.get(&snapshot.group_id).cloned();
@@ -57,6 +57,6 @@ impl AppCore {
                 result.retry_batch,
             );
         }
-        self.persist_app_state().is_ok()
+        Ok(true)
     }
 }

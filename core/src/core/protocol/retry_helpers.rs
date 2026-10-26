@@ -13,12 +13,22 @@ impl AppCore {
 
     pub(in crate::core) fn schedule_fast_protocol_retry_if_pending(&mut self) {
         if self.has_ready_protocol_retry_work() {
+            let delay = self
+                .protocol_engine
+                .as_ref()
+                .map_or(Duration::ZERO, |engine| {
+                    engine.group_sender_key_retry_delay()
+                })
+                .max(Duration::from_millis(25));
+            let due_at = Instant::now() + delay;
             if self
                 .protocol_subscription_runtime
                 .ready_retry_due_at
-                .is_none()
+                .is_none_or(|previous| due_at < previous)
             {
-                let due_at = Instant::now() + Duration::from_millis(25);
+                // Newly arrived messages can have an earlier work allowance
+                // than old history. The due_at identity rejects the superseded
+                // callback; equal/later requests still share the current timer.
                 self.protocol_subscription_runtime.ready_retry_due_at = Some(due_at);
                 let tx = self.core_sender.clone();
                 self.runtime.spawn(async move {

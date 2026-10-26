@@ -85,7 +85,11 @@ impl ProtocolEngine {
     }
 
     pub fn has_due_pending_retry_work(&self, now: NdrUnixSeconds) -> bool {
-        if !self.pending_decrypted_deliveries.is_empty() {
+        // Signed group batches remain immediately runnable until the app outbox
+        // acknowledges them. A retry also retires any now-ineligible entries.
+        if !self.pending_decrypted_deliveries.is_empty()
+            || !self.ready_group_publications.is_empty()
+        {
             return true;
         }
         if !self.pending_group_sender_key_messages.is_empty() {
@@ -236,7 +240,8 @@ impl ProtocolEngine {
         }
         // Direct-message probing can queue a candidate before its first group
         // attempt. Suppress only candidates already waiting for a repair.
-        if self.pending_group_sender_key_messages.contains(&parsed)
+        let already_pending = self.pending_group_sender_key_messages.contains(&parsed);
+        if already_pending
             && self.group_sender_key_message_has_pending_repair(&message)
         {
             return Ok(ProtocolGroupIncomingResult {
@@ -245,9 +250,13 @@ impl ProtocolEngine {
                 ..Default::default()
             });
         }
+        if !already_pending {
+            self.admit_fresh_group_sender_key_candidate(&parsed, usize::MAX);
+        }
         let mut result = self.handle_group_sender_key_message(message)?;
         if result.pending {
-            self.queue_pending_group_sender_key_message(parsed)?;
+            // The initial attempt already admitted (or spent) its fresh probe.
+            self.queue_group_sender_key_candidate(parsed, false)?;
         } else if self.clear_pending_group_sender_key_candidate(&parsed) {
             self.persist()?;
         }

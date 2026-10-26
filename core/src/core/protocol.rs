@@ -773,9 +773,10 @@ impl AppCore {
             self.recent_protocol_metadata_filters(now)
         };
         let (mut filters, discovery_filters) = self.split_private_discovery_filters(filters);
-        filters.extend(discovery_filters);
+        let requested_discovery = !discovery_filters.is_empty();
+        filters.extend(self.delegate_private_discovery_catch_up(discovery_filters, &relay_urls));
         if filters.is_empty() {
-            return false;
+            return requested_discovery;
         }
         self.push_debug_log(
             "protocol.catch_up.fetch",

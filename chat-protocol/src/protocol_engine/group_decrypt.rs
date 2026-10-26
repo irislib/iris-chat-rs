@@ -47,6 +47,28 @@ impl ProtocolEngine {
                 &mut remaining,
             );
         }
+        {
+            let mut retry = self.group_sender_key_retry.borrow_mut();
+            if let Some(index) = retry
+                .fresh
+                .iter()
+                .position(|fresh| fresh.fingerprint == fingerprint)
+            {
+                if index != 0 || !self.group_retry_pacing.borrow().fresh_delay().is_zero() {
+                    retry.yielded = true;
+                    return Ok(None);
+                }
+                retry.fresh.pop_front();
+                drop(retry);
+                let result = self.prepare_fresh_group_sender_key_message(message);
+                self.group_sender_key_retry.borrow_mut().yielded = matches!(result, Ok(None));
+                return result;
+            }
+        }
+        if !self.group_retry_pacing.borrow().delay().is_zero() {
+            self.group_sender_key_retry.borrow_mut().yielded = true;
+            return Ok(None);
+        }
         let (active, mut remaining) = {
             let mut retry = self.group_sender_key_retry.borrow_mut();
             if retry
@@ -64,15 +86,26 @@ impl ProtocolEngine {
             || (None, message.clone(), usize::MAX),
             |active| (Some(active.cursor), active.message, active.pending_index),
         );
-        #[cfg(all(test, target_os = "linux"))]
         let decrypt_started = std::time::Instant::now();
+        #[cfg(test)]
+        let trials_before = remaining;
         let result = self.group_manager.plan_sender_key_message_with_budget(
             message.clone(),
             &mut cursor,
             &mut remaining,
         );
+        let decrypt_elapsed = decrypt_started.elapsed();
+        #[cfg(test)]
+        {
+            let mut pacing = self.group_retry_pacing.borrow_mut();
+            pacing.key_trials += trials_before.saturating_sub(remaining);
+            pacing.work_calls += 1;
+        }
+        self.group_retry_pacing
+            .borrow_mut()
+            .record_work(decrypt_elapsed);
         #[cfg(all(test, target_os = "linux"))]
-        tests::audit_group_retry_decrypt_elapsed(decrypt_started.elapsed());
+        tests::audit_group_retry_decrypt_elapsed(decrypt_elapsed);
         let mut retry = self.group_sender_key_retry.borrow_mut();
         retry.key_trials_remaining = remaining;
         retry.yielded = matches!(result, Ok(None));
@@ -88,6 +121,13 @@ impl ProtocolEngine {
     /// Pure search does not clone rollback state or write a checkpoint per slice.
     /// Final ratchet application still uses the caller's atomic persistence batch.
     fn advance_group_sender_key_continuation(&mut self) -> anyhow::Result<bool> {
+        if self.group_sender_key_retry.borrow().active.is_some()
+            && !self.group_retry_pacing.borrow().delay().is_zero()
+        {
+            // Repeated unrelated core events must not clone the ciphertext or
+            // advance the same expensive cursor before its next work allowance.
+            return Ok(true);
+        }
         let Some(mut active) = self.group_sender_key_retry.borrow_mut().active.take() else {
             return Ok(false);
         };

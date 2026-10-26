@@ -18,6 +18,7 @@ mod populated_discovery_idle {
     use tokio_tungstenite::tungstenite::Message;
 
     const TEST: &str = "core::tests::populated_discovery_idle::populated_account_discovery_stays_quiet_and_targeted_demand_progresses";
+    const FIVE_RELAY_TEST: &str = "core::tests::populated_discovery_idle::populated_account_five_relay_discovery_stays_quiet_and_targeted_demand_progresses";
     const CHILD: &str = "IRIS_TEST_POPULATED_DISCOVERY_IDLE_CHILD";
     const CONTACTS: usize = 96;
     const DEVICES: usize = 3;
@@ -26,7 +27,9 @@ mod populated_discovery_idle {
     #[derive(Default)]
     struct Wire {
         rows: Mutex<Vec<(usize, serde_json::Value)>>,
-        rounds: Mutex<BTreeMap<String, usize>>,
+        rounds: Mutex<BTreeMap<(usize, String), usize>>,
+        connection_relays: Mutex<BTreeMap<usize, usize>>,
+        relay_tls: Mutex<BTreeMap<usize, (usize, usize)>>,
         completed: Mutex<BTreeMap<usize, usize>>,
         connections: AtomicUsize,
         bytes: AtomicUsize,
@@ -37,6 +40,7 @@ mod populated_discovery_idle {
     async fn connection<S: AsyncRead + AsyncWrite + Unpin>(
         stream: S,
         id: usize,
+        relay_index: usize,
         wire: Arc<Wire>,
         events: Arc<Mutex<Vec<Event>>>,
     ) {
@@ -125,7 +129,12 @@ mod populated_discovery_idle {
                         );
                         assert_eq!(subjects.len(), 1);
                         for author in subjects {
-                            *wire.rounds.lock().unwrap().entry(author).or_default() += 1;
+                            *wire
+                                .rounds
+                                .lock()
+                                .unwrap()
+                                .entry((relay_index, author))
+                                .or_default() += 1;
                         }
                         *wire.completed.lock().unwrap().entry(id).or_default() += 1;
                     }
@@ -369,7 +378,8 @@ mod populated_discovery_idle {
         (keys.len(), contexts.len())
     }
 
-    fn child() {
+    fn child(relay_count: usize) {
+        assert!(matches!(relay_count, 1 | 5));
         let (mut fixture, mut events) = restored_fixture();
         let proof_index = events
             .iter()
@@ -491,27 +501,41 @@ mod populated_discovery_idle {
             // discovery exercises real certificate verification and TLS tickets.
             let receiver_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
             let receiver_relay = RelayUrl::parse(&format!("ws://{}", receiver_listener.local_addr().unwrap())).unwrap();
-            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-            let relay = RelayUrl::parse(&format!("wss://{}", listener.local_addr().unwrap())).unwrap();
-            // The server's default 256-record stateful cache cannot retain
-            // tickets for 480 isolated clients. Bound this fixture's cache for
-            // two tickets per handshake and up to eight polls per author:
-            // three warmup, at most two in each cycle, and one targeted poll.
-            // The account receiver uses plain WS and consumes no TLS tickets.
+            let mut listeners = Vec::new();
+            let mut relays = Vec::new();
+            let mut acceptors = Vec::new();
+            // Each relay has an independent ticket cache. Keep the original
+            // per-relay bound: two tickets, at most eight polls per author.
+            // Neither server tickets nor client identities cross relay scopes.
             let session_capacity = subjects.len() * 2 * 8;
-            let acceptor = tls_tests::acceptor_with_sessions(
-                true, false, rustls::server::ServerSessionMemoryCache::new(session_capacity),
-            );
+            for _ in 0..relay_count {
+                let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+                relays.push(RelayUrl::parse(&format!("wss://{}", listener.local_addr().unwrap())).unwrap());
+                listeners.push(listener);
+                acceptors.push(tls_tests::acceptor_with_sessions(
+                    true, false, rustls::server::ServerSessionMemoryCache::new(session_capacity),
+                ));
+            }
             let server_wire = wire.clone();
             let server_events = events.clone();
             let server = tokio::spawn(async move {
                 let mut connections = tokio::task::JoinSet::new();
+                let mut listeners = futures_util::stream::select_all(
+                    listeners.into_iter().enumerate().map(|state| Box::pin(
+                        futures_util::stream::unfold(state, |(index, listener)| async move {
+                            let accepted = listener.accept().await;
+                            Some(((index, accepted), (index, listener)))
+                        })
+                    )),
+                );
                 loop {
                     tokio::select! {
-                        accepted = listener.accept() => {
+                        accepted = listeners.next() => {
+                            let (relay_index, accepted) = accepted.unwrap();
                             let (stream, _) = accepted.unwrap();
                             let id = server_wire.connections.fetch_add(1, Ordering::SeqCst);
-                            let acceptor = acceptor.clone();
+                            server_wire.connection_relays.lock().unwrap().insert(id, relay_index);
+                            let acceptor = acceptors[relay_index].clone();
                             let wire = server_wire.clone();
                             let events = server_events.clone();
                             connections.spawn(async move {
@@ -521,18 +545,29 @@ mod populated_discovery_idle {
                                 let tls = stream.get_ref().1;
                                 assert_eq!(tls.protocol_version(), Some(rustls::ProtocolVersion::TLSv1_3));
                                 assert!(tls.negotiated_key_exchange_group().is_some(), "resumption must retain fresh key exchange");
-                                match tls.handshake_kind().unwrap() {
-                                    rustls::HandshakeKind::Full => { wire.tls_full.fetch_add(1, Ordering::SeqCst); },
-                                    rustls::HandshakeKind::Resumed => { wire.tls_resumed.fetch_add(1, Ordering::SeqCst); },
-                                    other => panic!("unexpected TLS handshake {other:?}"),
+                                {
+                                    let mut counters = wire.relay_tls.lock().unwrap();
+                                    let counters = counters.entry(relay_index).or_default();
+                                    match tls.handshake_kind().unwrap() {
+                                        rustls::HandshakeKind::Full => {
+                                            wire.tls_full.fetch_add(1, Ordering::SeqCst);
+                                            counters.0 += 1;
+                                        },
+                                        rustls::HandshakeKind::Resumed => {
+                                            wire.tls_resumed.fetch_add(1, Ordering::SeqCst);
+                                            counters.1 += 1;
+                                        },
+                                        other => panic!("unexpected TLS handshake {other:?}"),
+                                    }
                                 }
-                                connection(stream, id, wire, events).await;
+                                connection(stream, id, relay_index, wire, events).await;
                             });
                         },
                         accepted = receiver_listener.accept() => {
                             let (stream, _) = accepted.unwrap();
                             let id = server_wire.connections.fetch_add(1, Ordering::SeqCst);
-                            connections.spawn(connection(stream, id, server_wire.clone(), server_events.clone()));
+                            server_wire.connection_relays.lock().unwrap().insert(id, usize::MAX);
+                            connections.spawn(connection(stream, id, usize::MAX, server_wire.clone(), server_events.clone()));
                         },
                         joined = connections.join_next(), if !connections.is_empty() => {
                             joined.unwrap().expect("serialized-wire fixture task failed");
@@ -551,9 +586,11 @@ mod populated_discovery_idle {
             }
             let scopes = fixture.core.private_discovery_subscriptions(discovery).unwrap();
             let workers = scopes.iter().map(|(worker, _)| worker.upgrade().unwrap()).collect::<Vec<_>>();
-            super::super::protocol::private_reads::apply_private_discovery_subscriptions(scopes, std::slice::from_ref(&relay)).await.unwrap();
+            super::super::protocol::private_reads::apply_private_discovery_subscriptions(scopes, &relays).await.unwrap();
             for worker in workers {
-                worker.set_test_tls_roots(&relay, tls_tests::certificates()).unwrap();
+                for relay in &relays {
+                    worker.set_test_tls_roots(relay, tls_tests::certificates()).unwrap();
+                }
             }
             // Real mesh workers share the same WSS server and process CPU
             // sample. The isolated endpoint only ingests public adverts; it has
@@ -569,20 +606,23 @@ mod populated_discovery_idle {
                     "every CPU fixture mesh advert must pass the real FIPS validator");
             }
             let mut mesh_providers = PrivateMeshProviders::new(
-                Vec::new(), None, Vec::new(), vec![relay.clone()],
+                Vec::new(), None, Vec::new(), relays.clone(),
             );
-            mesh_providers.set_test_tls_roots(&relay, tls_tests::certificates()).unwrap();
+            for relay in &relays {
+                mesh_providers.set_test_tls_roots(relay, tls_tests::certificates()).unwrap();
+            }
             let mut mesh_discovery = PrivateMeshDiscovery::default();
             mesh_discovery.update(
                 Arc::new(mesh_providers), mesh_filters, mesh_endpoint.clone(),
                 fixture.core.core_sender.clone(), &fixture.core.runtime,
             );
+            let pairs = (0..relay_count).flat_map(|relay| subjects.iter().map(move |author| (relay, author.clone()))).collect::<Vec<_>>();
             let settling = Instant::now();
             loop {
                 assert!(!server.is_finished(), "wire fixture failed");
                 let ready = {
                     let rounds = wire.rounds.lock().unwrap();
-                    subjects.iter().all(|author| rounds.get(author).copied().unwrap_or(0) >= 3)
+                    pairs.iter().all(|pair| rounds.get(pair).copied().unwrap_or(0) >= 3)
                 };
                 while incoming.try_recv().is_ok() {}
                 if ready { break; }
@@ -594,8 +634,13 @@ mod populated_discovery_idle {
             sleep(Duration::from_secs(1)).await;
             let settle_seconds = settling.elapsed().as_secs_f64();
             let before = wire.rounds.lock().unwrap().clone();
-            let readiness_round_min = subjects.iter().map(|author| before[author]).min().unwrap();
-            let completed_peer_polls: usize = subjects.iter().map(|author| before[author]).sum();
+            let readiness_round_min = pairs.iter().map(|pair| before[pair]).min().unwrap();
+            let completed_peer_polls: usize = pairs.iter().map(|pair| before[pair]).sum();
+            let relay_readiness = (0..relay_count).map(|relay| serde_json::json!({
+                "relay_index": relay, "subjects": subjects.len(),
+                "readiness_round_min": subjects.iter().map(|author| before[&(relay, author.clone())]).min().unwrap(),
+                "completed_peer_polls": subjects.iter().map(|author| before[&(relay, author.clone())]).sum::<usize>(),
+            })).collect::<Vec<_>>();
             let mut samples = Vec::new();
             for _ in 0..2 {
                 let bytes = wire.bytes.load(Ordering::SeqCst);
@@ -624,6 +669,8 @@ mod populated_discovery_idle {
             for _ in 0..2 {
                 let baseline = wire.rounds.lock().unwrap().clone();
                 let completed_before = wire.completed.lock().unwrap().clone();
+                let relay_tls_before = wire.relay_tls.lock().unwrap().clone();
+                let connection_relays_before = wire.connection_relays.lock().unwrap().clone();
                 let full = wire.tls_full.load(Ordering::SeqCst);
                 let resumed = wire.tls_resumed.load(Ordering::SeqCst);
                 let bytes = wire.bytes.load(Ordering::SeqCst);
@@ -634,9 +681,9 @@ mod populated_discovery_idle {
                 let seconds = started.elapsed().as_secs_f64();
                 let cpu = (cpu_ticks() - ticks) as f64 / ticks_per_second * 100.0 / seconds;
                 let after = wire.rounds.lock().unwrap().clone();
-                for author in &subjects {
-                    let delta = after[author] - baseline[author];
-                    assert!((1..=2).contains(&delta), "each full cycle must include bounded real polls for every author");
+                for pair in &pairs {
+                    let delta = after[pair] - baseline[pair];
+                    assert!((1..=2).contains(&delta), "each full cycle must include bounded real polls for every author on every relay");
                 }
                 let full_delta = wire.tls_full.load(Ordering::SeqCst) - full;
                 let resumed_delta = wire.tls_resumed.load(Ordering::SeqCst) - resumed;
@@ -645,21 +692,43 @@ mod populated_discovery_idle {
                 let new_poll_connections = completed_after.keys().filter(|id| !completed_before.contains_key(id)).count();
                 let reused_polls = completed_polls - new_poll_connections;
                 let reused_connections = completed_after.iter().filter(|(id, count)| completed_before.get(id).is_some_and(|before| *count > before)).count();
+                let relay_tls_after = wire.relay_tls.lock().unwrap().clone();
+                let connection_relays = wire.connection_relays.lock().unwrap().clone();
+                let relay_samples = (0..relay_count).map(|relay| {
+                    let polls = completed_after.iter().filter(|(id, _)| connection_relays[*id] == relay)
+                        .map(|(id, count)| count - completed_before.get(id).copied().unwrap_or(0)).sum::<usize>();
+                    let new_polls = completed_after.keys().filter(|id| connection_relays[*id] == relay && !completed_before.contains_key(id)).count();
+                    let retained = completed_after.iter().filter(|(id, count)| connection_relays[*id] == relay
+                        && completed_before.get(id).is_some_and(|before| *count > before)).count();
+                    let opened = connection_relays.iter().filter(|(id, index)| **index == relay && !connection_relays_before.contains_key(id)).count();
+                    let full = relay_tls_after[&relay].0 - relay_tls_before[&relay].0;
+                    let resumed = relay_tls_after[&relay].1 - relay_tls_before[&relay].1;
+                    let deltas = subjects.iter().map(|author| after[&(relay, author.clone())] - baseline[&(relay, author.clone())]).collect::<Vec<_>>();
+                    assert!((subjects.len()..=2 * subjects.len()).contains(&polls));
+                    assert_eq!(full, 0);
+                    assert_eq!(resumed, new_polls);
+                    assert_eq!(opened, new_polls);
+                    serde_json::json!({"relay_index": relay, "subjects": subjects.len(),
+                        "poll_round_min": deltas.iter().min().unwrap(), "poll_round_max": deltas.iter().max().unwrap(),
+                        "completed_polls": polls, "new_poll_connections": new_polls,
+                        "reused_connections": retained, "reused_polls": polls - new_polls,
+                        "connections": opened, "tls_full_handshakes": full, "tls_resumed_handshakes": resumed})
+                }).collect::<Vec<_>>();
                 let sample = serde_json::json!({"seconds": seconds, "cpu_percent_one_core": cpu,
                     "application_wire_bytes": wire.bytes.load(Ordering::SeqCst) - bytes,
                     "connections": wire.connections.load(Ordering::SeqCst) - connections,
                     "tls_full_handshakes": full_delta, "tls_resumed_handshakes": resumed_delta,
                     "completed_polls": completed_polls, "new_poll_connections": new_poll_connections,
                     "reused_polls": reused_polls, "reused_connections": reused_connections,
-                    "every_author_polled": true});
+                    "every_author_polled": true, "relay_samples": relay_samples});
                 println!("POPULATED_DISCOVERY_CYCLE_SAMPLE={sample}");
                 cycle_samples.push(sample);
                 assert!(!server.is_finished(), "TLS wire fixture failed");
                 assert_eq!(full_delta, 0, "quiet scopes repeated full TLS handshakes");
-                assert!((subjects.len()..=subjects.len() * 2).contains(&completed_polls));
+                assert!((pairs.len()..=pairs.len() * 2).contains(&completed_polls));
                 assert_eq!(reused_connections, 64, "all retained scopes must reuse their connection");
                 assert!(reused_polls >= reused_connections);
-                assert!(new_poll_connections >= subjects.len() - 64, "measurement missed disposable fallback TLS work");
+                assert!(new_poll_connections >= pairs.len() - 64, "measurement missed disposable fallback TLS work");
                 assert_eq!(resumed_delta, new_poll_connections, "each new poll connection must resume its scoped TLS session");
                 assert_eq!(wire.connections.load(Ordering::SeqCst) - connections, new_poll_connections);
                 assert!(cpu <= 5.0, "populated full-cycle discovery exceeded 5% of one CPU: {cpu:.3}");
@@ -678,13 +747,15 @@ mod populated_discovery_idle {
             }
             let target = target.to_hex();
             let mut expected_after = before.clone();
-            *expected_after.get_mut(&target).unwrap() += 1;
+            for relay in 0..relay_count {
+                *expected_after.get_mut(&(relay, target.clone())).unwrap() += 1;
+            }
             loop {
                 assert!(!server.is_finished(), "wire fixture failed");
                 let after = wire.rounds.lock().unwrap().clone();
-                for (author, count) in &after {
-                    let expected = expected_after.get(author).expect("targeted demand introduced an unrelated scope");
-                    if author == &target {
+                for (pair, count) in &after {
+                    let expected = expected_after.get(pair).expect("targeted demand introduced an unrelated scope");
+                    if pair.1 == target {
                         assert!(count <= expected, "targeted demand duplicated its poll");
                     } else {
                         assert_eq!(count, expected, "targeted demand woke an unrelated contact");
@@ -709,6 +780,8 @@ mod populated_discovery_idle {
                 "contacts": CONTACTS, "peer_devices": CONTACTS * DEVICES, "own_devices": 3,
                 "groups": 8, "discovery_subjects": discovery_subjects,
                 "mesh_discovery_subjects": MESH_DEVICES, "total_discovery_subjects": subjects.len(),
+                "relay_count": relay_count, "author_relay_pairs": pairs.len(), "relay_readiness": relay_readiness,
+                "targeted_relay_polls": relay_count, "debug_assertions": cfg!(debug_assertions),
                 "settle_seconds": settle_seconds,
                 "readiness_round_min": readiness_round_min, "completed_peer_polls": completed_peer_polls,
                 "quiet_samples": samples, "full_cycle_tls_samples": cycle_samples,
@@ -733,8 +806,18 @@ mod populated_discovery_idle {
 
     #[test]
     fn populated_account_discovery_stays_quiet_and_targeted_demand_progresses() {
+        run_case(1, TEST, "populated-discovery-idle");
+    }
+
+    #[test]
+    #[ignore = "serialized optimized five-relay CPU gate in scripts/test_rust.sh"]
+    fn populated_account_five_relay_discovery_stays_quiet_and_targeted_demand_progresses() {
+        run_case(5, FIVE_RELAY_TEST, "populated-discovery-five-relay");
+    }
+
+    fn run_case(relay_count: usize, test: &str, artifact: &str) {
         if std::env::var(CHILD).as_deref() == Ok("1") {
-            child();
+            child(relay_count);
             return;
         }
         let artifacts = std::env::var_os("IRIS_PRIVATE_CONTROL_FIXTURE_OUTPUT")
@@ -742,7 +825,7 @@ mod populated_discovery_idle {
             .and_then(|path| path.parent().map(std::path::Path::to_path_buf));
         if let Some(directory) = &artifacts {
             std::fs::create_dir_all(directory).unwrap();
-            std::fs::write(directory.join("populated-discovery-idle.json"),
+            std::fs::write(directory.join(format!("{artifact}.json")),
                 b"{\"schema\":\"iris-populated-discovery-idle/v1\",\"passed\":false,\"status\":\"starting\"}\n").unwrap();
         }
         // File-backed pipes keep a failing assertion's full output without
@@ -754,8 +837,12 @@ mod populated_discovery_idle {
         let stdout = logs.path().join("stdout.log");
         let stderr = logs.path().join("stderr.log");
         let started = Instant::now();
-        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
-            .args(["--exact", TEST, "--nocapture", "--test-threads=1"])
+        let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+        command.args(["--exact", test, "--nocapture", "--test-threads=1"]);
+        if relay_count == 5 {
+            command.arg("--ignored");
+        }
+        let mut child = command
             .env(CHILD, "1")
             .env("TOKIO_WORKER_THREADS", "2")
             .env("RUST_BACKTRACE", "0")
@@ -794,9 +881,9 @@ mod populated_discovery_idle {
             "log_sha256": format!("{:x}", sha2::Sha256::digest(log.as_bytes())),
         });
         if let Some(directory) = &artifacts {
-            std::fs::write(directory.join("populated-discovery-idle.log"), &log).unwrap();
+            std::fs::write(directory.join(format!("{artifact}.log")), &log).unwrap();
             std::fs::write(
-                directory.join("populated-discovery-idle.json"),
+                directory.join(format!("{artifact}.json")),
                 serde_json::to_vec_pretty(&receipt).unwrap(),
             )
             .unwrap();

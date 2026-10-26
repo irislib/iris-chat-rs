@@ -56,7 +56,7 @@ fn independent_request_choices_and_chat_deletions_merge_after_restart() {
             dir.path().to_string_lossy().into_owned(),
         );
         restored.load_persisted().unwrap();
-        restored.restore_device_sync_record_projection();
+        restored.restore_device_sync_record_projection().unwrap();
         assert_eq!(restored.chat_deletions.get(&first), Some(&150));
         assert_eq!(restored.chat_deletions.get(&second), Some(&120));
         assert_eq!(restored.request_decision(&first).unwrap().decision, "none");
@@ -106,7 +106,7 @@ fn authorization_records_keep_signatures_and_reject_forged_proofs() {
         .iter()
         .any(|entry| entry["record"] == record && entry["id"] == event.id.to_hex()));
     assert!(serde_json::to_value(record).unwrap()["event"]["sig"].is_string());
-    restored.restore_device_sync_record_projection();
+    restored.restore_device_sync_record_projection().unwrap();
     assert!(restored.app_keys.contains_key(&peer.public_key().to_hex()));
 }
 

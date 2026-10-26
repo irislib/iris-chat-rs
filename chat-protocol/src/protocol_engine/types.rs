@@ -449,6 +449,7 @@ pub struct ProtocolEngine {
     pending_group_sender_key_repairs: Vec<ProtocolPendingGroupSenderKeyRepair>,
     processed_group_sender_key_messages: ProtocolGroupReplayCache,
     group_sender_key_retry: std::cell::RefCell<ProtocolGroupSenderKeyRetry>,
+    group_retry_pacing: std::cell::RefCell<GroupRetryPacing>,
     answered_group_sender_key_repairs: Vec<ProtocolAnsweredGroupSenderKeyRepair>,
     pending_decrypted_deliveries: Vec<ProtocolPendingDecryptedDelivery>,
     group_roster_fact_histories: BTreeMap<String, GroupRosterFactHistory>,

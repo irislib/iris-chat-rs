@@ -152,6 +152,15 @@ fn checkpoint_backlog_fixture(fanout_count: usize, ciphertext_count: usize) -> R
     f
 }
 
+fn checkpoint_pager_bytes(connection: &Arc<Mutex<rusqlite::Connection>>) -> u64 {
+    let connection = connection.lock().unwrap();
+    let (mut current, mut high) = (0, 0);
+    let status = unsafe { rusqlite::ffi::sqlite3_db_status(connection.handle(), rusqlite::ffi::SQLITE_DBSTATUS_CACHE_MISS, &mut current, &mut high, 0) };
+    assert_eq!(status, rusqlite::ffi::SQLITE_OK);
+    let page_size: u64 = connection.query_row("PRAGMA page_size", [], |r| r.get(0)).unwrap();
+    current as u64 * page_size
+}
+
 fn checkpoint_backlog_send_roundtrip(fanouts: usize, ciphertexts: usize) {
     use std::sync::atomic::Ordering::Relaxed;
     let fixture_started = std::time::Instant::now();
@@ -161,8 +170,9 @@ fn checkpoint_backlog_send_roundtrip(fanouts: usize, ciphertexts: usize) {
     connection.execute_batch("PRAGMA journal_mode=WAL; CREATE TABLE ndr_kv (
         owner_pubkey_hex TEXT NOT NULL, device_pubkey_hex TEXT NOT NULL,
         key TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY(owner_pubkey_hex, device_pubkey_hex, key));").unwrap();
+    let connection = Arc::new(Mutex::new(connection));
     let sqlite = Arc::new(SqliteStorageAdapter::new(
-        Arc::new(Mutex::new(connection)),
+        connection.clone(),
         f.owner.public_key().to_hex(),
         f.device.public_key().to_hex(),
     ));
@@ -204,6 +214,11 @@ fn checkpoint_backlog_send_roundtrip(fanouts: usize, ciphertexts: usize) {
         );
     }
     let before_puts = storage.puts.load(Relaxed);
+    // Real AppCore writes app state before protocol checkpointing. A cold pager
+    // makes this catch visits to immutable chunk pages even when SQL returns
+    // only their small length/type metadata and logical I/O counters look low.
+    connection.lock().unwrap().execute_batch("CREATE TABLE app_state(value INTEGER); INSERT INTO app_state VALUES(0); PRAGMA cache_size=-2048; PRAGMA shrink_memory;").unwrap();
+    let before_pager = checkpoint_pager_bytes(&connection);
     let before_io = crate::storage::checkpoint_io_bytes();
     let before_scan = CHECKPOINT_LAYOUT_SCANNED_BYTES.with(std::cell::Cell::get);
     let started = std::time::Instant::now();
@@ -211,6 +226,9 @@ fn checkpoint_backlog_send_roundtrip(fanouts: usize, ciphertexts: usize) {
     assert_eq!(decrypt_own_sync_effects(&mut f.sender, effects).len(), 3);
     f.sender.exit_batch().unwrap();
     let warm_ms = started.elapsed().as_millis();
+    let pager_bytes = checkpoint_pager_bytes(&connection) - before_pager;
+    let pager_limit = ((fanouts + ciphertexts) * 1024 + 2 * 1024 * 1024) as u64;
+    assert!(pager_bytes <= pager_limit, "checkpoint traversed payload pages: {pager_bytes} > {pager_limit}");
     let after_io = crate::storage::checkpoint_io_bytes();
     let read_bytes = after_io.0 - before_io.0;
     let written_bytes = after_io.1 - before_io.1;
@@ -248,6 +266,8 @@ fn checkpoint_backlog_send_roundtrip(fanouts: usize, ciphertexts: usize) {
         CHECKPOINT_PENDING_SERIALIZED_ITEMS.with(std::cell::Cell::get),
         encoded_ciphertexts
     );
+    connection.lock().unwrap().execute_batch("UPDATE app_state SET value=value+1; PRAGMA shrink_memory;").unwrap();
+    let outgoing_pager = checkpoint_pager_bytes(&connection);
     let outgoing_io = crate::storage::checkpoint_io_bytes();
     let outgoing_scan = CHECKPOINT_LAYOUT_SCANNED_BYTES.with(std::cell::Cell::get);
     let outgoing_started = std::time::Instant::now();
@@ -269,6 +289,8 @@ fn checkpoint_backlog_send_roundtrip(fanouts: usize, ciphertexts: usize) {
     }
     f.sender.exit_batch().unwrap();
     let outgoing_ms = outgoing_started.elapsed().as_millis();
+    let outgoing_pager_bytes = checkpoint_pager_bytes(&connection) - outgoing_pager;
+    assert!(outgoing_pager_bytes <= pager_limit, "direct-send checkpoint traversed payload pages: {outgoing_pager_bytes} > {pager_limit}");
     let outgoing_after_io = crate::storage::checkpoint_io_bytes();
     let outgoing_read_bytes = outgoing_after_io.0 - outgoing_io.0;
     let outgoing_written_bytes = outgoing_after_io.1 - outgoing_io.1;
@@ -358,6 +380,7 @@ fn checkpoint_backlog_send_roundtrip(fanouts: usize, ciphertexts: usize) {
         "the exact committed ratchet must resume after reopening"
     );
     eprintln!("checkpoint_backlog fanouts={fanouts} ciphertexts={ciphertexts} checkpoint_bytes={bytes} cold_ms={cold_ms} warm_three_receive_batch_ms={warm_ms} scanned_bytes={scanned_bytes} read_bytes={read_bytes} written_bytes={written_bytes} warm_three_send_batch_ms={outgoing_ms} outgoing_scanned_bytes={outgoing_scanned_bytes} outgoing_read_bytes={outgoing_read_bytes} outgoing_written_bytes={outgoing_written_bytes}");
+    eprintln!("checkpoint_pager receive_bytes={pager_bytes} send_bytes={outgoing_pager_bytes} limit={pager_limit}");
     assert!(
         fixture_started.elapsed() < std::time::Duration::from_secs(180),
         "bounded backlog checkpoint fixture exceeded three minutes"

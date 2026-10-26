@@ -2,6 +2,111 @@
 
 Each release has channel-specific notes. The release tag must match the `##` heading exactly.
 
+## v2026.10.26
+
+### GitHub
+
+- Keep isolated discovery connections open after harmless acknowledgements of completed requests, avoiding unnecessary reconnections.
+- Preserve separate author and message-server scopes, anonymous authentication and bounded idle processing. Unexpected data, re-authentication, flooding and expiry still discard the connection.
+- Update the CLI source package to 0.1.54. The protocol package remains at 0.3.10, with unchanged message formats and saved state.
+
+### Apple
+
+- Avoid unnecessary reconnections to message servers.
+
+### Zapstore
+
+- Avoid unnecessary reconnections to message servers.
+
+## v2026.10.25.3
+
+### GitHub
+
+- Pace group-history decryption using measured work while keeping newly arriving messages responsive. Try locally expected message positions without exposing counters or identities, and preserve suspended history searches, skipped keys and recovery after failed saves.
+- Replace a later history timer when fresh messages become eligible sooner. Keep duplicate traffic and retries within the same decryption budget.
+- Avoid duplicate checkpoint payload reads while retaining raw type, length, ordering and hash validation. Reuse validated shared payloads during reconstruction.
+- Save restored authorization projections once before publishing completed app state or acknowledging decrypted deliveries. Preserve durable recovery when a page read or save fails.
+- Update the Rust ratchet library to 0.0.175, the protocol package to 0.3.10 and the CLI package to 0.1.53. Message formats and saved history remain compatible with v2026.10.25.2.
+
+### Apple
+
+- Reduce background processing while recovering older messages.
+- Keep new messages moving while older history recovers.
+- Open saved chats with less repeated database work.
+
+### Zapstore
+
+- Reduce background processing while recovering older messages.
+- Keep new messages moving while older history recovers.
+- Open saved chats with less repeated database work.
+
+## v2026.10.25.2
+
+### GitHub
+
+- Reuse existing isolated discovery workers when the app returns to the foreground, including profile updates published while offline. Redeliver unchanged metadata when recovery explicitly requests it, without repeating cold fetches for covered discovery filters.
+- Preserve separate author and message-server scopes, fresh anonymous authentication on new connections, and the existing cold-fetch path for other selectors.
+- Add a foreground recovery regression that checks serialized requests and progress when one message server stalls.
+- Require both one-server and optimized five-server populated discovery CPU gates, covering 2,400 author/server pairs including live-endpoint discovery, with 64 retained connections across the whole process.
+- Reduce SQLite work when saving queued-message retry timers by updating validated existing rows directly. Preserve transaction, corruption and restart checks.
+- Fix Ping/ACK handling in the public-advert test relay to make wire checks reliable.
+- Keep the protocol source package at 0.3.9 and the CLI source package at 0.1.52. The message wire format and stored message state are unchanged from v2026.10.25.
+
+### Apple
+
+- Avoid repeated connection setup when returning to Iris.
+- Reduce processing when saving messages waiting for delivery.
+- Catch up on profile changes while keeping chats responsive when a message server is slow.
+
+### Zapstore
+
+- Avoid repeated connection setup when returning to Iris.
+- Reduce processing when saving messages waiting for delivery.
+- Catch up on profile changes while keeping chats responsive when a message server is slow.
+
+## v2026.10.25.1
+
+### GitHub
+
+- Reuse existing isolated discovery workers when the app returns to the foreground, including profile updates published while offline. Redeliver unchanged metadata when recovery explicitly requests it, without repeating cold fetches for covered discovery filters.
+- Preserve separate author and message-server scopes, fresh anonymous authentication on new connections, and the existing cold-fetch path for other selectors.
+- Add a foreground recovery regression that checks serialized requests and progress when one message server stalls.
+- Require both one-server and optimized five-server populated discovery CPU gates, covering 2,400 author/server pairs including live-endpoint discovery, with 64 retained connections across the whole process.
+- Reduce SQLite work when saving queued-message retry timers by updating validated existing rows directly. Preserve transaction, corruption and restart checks.
+- Update the protocol source package to 0.3.9 and the CLI source package to 0.1.52. The message wire format and stored message state are unchanged from v2026.10.25.
+
+### Apple
+
+- Avoid repeated connection setup when returning to Iris.
+- Reduce processing when saving messages waiting for delivery.
+- Catch up on profile changes while keeping chats responsive when a message server is slow.
+
+### Zapstore
+
+- Avoid repeated connection setup when returning to Iris.
+- Reduce processing when saving messages waiting for delivery.
+- Catch up on profile changes while keeping chats responsive when a message server is slow.
+
+## v2026.10.25
+
+### GitHub
+
+- Reduce database reads when saving large pending-message backlogs. Maintain compact chunk metadata in the same transaction, preserving full-read validation and existing partial writes.
+- Avoid copying the pending backlog and repeating saves when startup replays unchanged device authorizations. Preserve authorization reconciliation, conflicting signed evidence and rollback on failed saves.
+- Schedule durable group-message publications after restart so recovery reoffers the complete saved batch until the application outbox commits it.
+- Add regressions for physical database reads, authorization replay allocations, migration failures, corruption checks and older-client writes.
+- Update the protocol source package to 0.3.8 and the CLI source package to 0.1.51. The message wire format is unchanged from v2026.10.24.1.
+
+### Apple
+
+- Open saved chats faster and reduce processing when many messages are waiting for delivery.
+- Resume pending group-message delivery after reopening the app.
+
+### Zapstore
+
+- Open saved chats faster and reduce processing when many messages are waiting for delivery.
+- Resume pending group-message delivery after reopening the app.
+
 ## v2026.10.24.1
 
 ### GitHub

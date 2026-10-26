@@ -341,11 +341,10 @@ publish_zapstore() {
     return
   fi
   nsec="$(read_nsec "$IRIS_ZAPSTORE_NSEC_PATH")"
-  SIGN_WITH="$nsec" zsp publish "$config" \
-    --channel main \
-    --quiet \
-    --skip-preview \
-    --overwrite-release
+  SIGN_WITH="$nsec" python3 "$ROOT/scripts/zapstore_publish.py" \
+    --config "$config" \
+    --manifest "$DOWNLOAD_DIR/iris-chat-${TAG}-manifest.json" \
+    --tag "$TAG"
   unset nsec
   echo "Published $TAG to Zapstore."
 }

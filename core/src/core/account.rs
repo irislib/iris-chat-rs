@@ -758,6 +758,7 @@ impl AppCore {
                 owner_pubkey,
                 &device_keys,
             )?;
+            engine.enable_background_history_recovery_pacing();
             // No restored intent may reach discovery or encryption before the
             // durable privacy migration completes, including interrupted startup.
             self.retire_legacy_private_contact_intents(&mut engine, owner_pubkey)?;
@@ -794,7 +795,13 @@ impl AppCore {
             relay_urls,
             authorization_state,
         });
-        self.restore_device_sync_record_projection();
+        if let Err(error) = self.restore_device_sync_record_projection() {
+            // The outer restore action may emit an error snapshot. Do not let
+            // that snapshot advertise an account whose projections did not save.
+            // Durable heads and the protocol delivery journal remain for retry.
+            self.logged_in = None;
+            return Err(error);
+        }
         self.migrate_legacy_blocks();
         self.migrate_name_approvals();
         self.reset_direct_chat_capability_runtime();

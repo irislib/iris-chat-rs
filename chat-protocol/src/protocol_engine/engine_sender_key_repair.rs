@@ -3,6 +3,14 @@ impl ProtocolEngine {
         &mut self,
         parsed: nostr_double_ratchet::wire::ParsedGroupSenderKeyMessageEvent,
     ) -> anyhow::Result<()> {
+        self.queue_group_sender_key_candidate(parsed, true)
+    }
+
+    fn queue_group_sender_key_candidate(
+        &mut self,
+        parsed: nostr_double_ratchet::wire::ParsedGroupSenderKeyMessageEvent,
+        fresh: bool,
+    ) -> anyhow::Result<()> {
         if self.unmapped_group_sender_key_candidate_is_known_message_author(&parsed) {
             return Ok(());
         }
@@ -33,12 +41,20 @@ impl ProtocolEngine {
         }
 
         if !self.pending_group_sender_key_messages.contains(&parsed) {
+            if fresh {
+                self.admit_fresh_group_sender_key_candidate(
+                    &parsed, self.pending_group_sender_key_messages.len(),
+                );
+            }
             // Direct-message probing can discover a new candidate after this
             // stream's old backlog was already attempted. Admit that candidate
             // once even if its key/revision inputs have not changed.
             if let Some(message) = self.group_sender_key_message_from_parsed(&parsed) {
                 let fingerprint = group_sender_key_fingerprint(&message);
                 let mut retry = self.group_sender_key_retry.borrow_mut();
+                if let Some(fresh) = retry.fresh.iter_mut().find(|fresh| fresh.fingerprint == fingerprint) {
+                    fresh.pending_index = self.pending_group_sender_key_messages.len();
+                }
                 if retry.queued.insert(fingerprint.clone()) {
                     retry
                         .ready
@@ -67,6 +83,7 @@ impl ProtocolEngine {
     ) -> bool {
         {
             let mut retry = self.group_sender_key_retry.borrow_mut();
+            retry.fresh.retain(|fresh| fresh.parsed.as_ref() != parsed);
             if retry
                 .active
                 .as_ref()

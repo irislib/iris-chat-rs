@@ -25,8 +25,14 @@ impl ProtocolEngine {
         created_at: u64,
         source_event: Option<&Event>,
     ) -> anyhow::Result<ProtocolRetryBatch> {
-        let checkpoint = self.state_checkpoint();
         let owner = ndr_owner(owner_pubkey);
+        // Authorization replay commonly leaves the engine unchanged. Retain
+        // only the fields this admission step can mutate; copying every queued
+        // fanout before discovering a duplicate makes cold restore quadratic.
+        let previous_session = self.session_manager.clone();
+        let previous_evidence = self.invite_owner_app_keys_evidence.get(&owner).cloned();
+        let previously_verified = self.verified_app_keys_owners.contains(&owner);
+        let previously_observed = self.local_app_keys_observed;
         let now = unix_now();
         let roster = DeviceRoster::new(
             NdrUnixSeconds(created_at),
@@ -41,7 +47,7 @@ impl ProtocolEngine {
                 })
                 .collect(),
         );
-        let roster_changed = if owner_pubkey == self.owner_pubkey {
+        let mut roster_changed = if owner_pubkey == self.owner_pubkey {
             if should_replace_provisional_local_roster(
                 &self.session_manager.snapshot(),
                 self.owner_pubkey,
@@ -67,6 +73,12 @@ impl ProtocolEngine {
                 nostr_double_ratchet::RosterSnapshotDecision::Stale
             )
         };
+        if roster_changed && (owner_pubkey == self.owner_pubkey || source_event.is_none()) {
+            // Equal-time roster merges can be exact replays. Compare all of
+            // the manager state, not just membership, so reconciliation of
+            // claimed devices and ratchets is still persisted when it changes.
+            roster_changed = self.session_manager.snapshot() != previous_session.snapshot();
+        }
         let exact_source_is_valid = source_event.is_some_and(|event| {
             app_keys_event_is_acceptable_for_owner(owner_pubkey, event, now.get())
         });
@@ -94,6 +106,19 @@ impl ProtocolEngine {
             && !local_observation_changed
         {
             return Ok(ProtocolRetryBatch::default());
+        }
+        // A real authorization change can wake retry deadlines. Take the full
+        // rollback generation only now, before that work, and restore the
+        // admission fields to their pre-event values inside it.
+        let mut checkpoint = self.state_checkpoint();
+        checkpoint.session_manager = previous_session;
+        checkpoint.local_app_keys_observed = previously_observed;
+        if !previously_verified {
+            checkpoint.verified_app_keys_owners.remove(&owner);
+        }
+        match previous_evidence {
+            Some(evidence) => { checkpoint.invite_owner_app_keys_evidence.insert(owner, evidence); }
+            None => { checkpoint.invite_owner_app_keys_evidence.remove(&owner); }
         }
         self.invalidate_known_message_author_cache();
         self.wake_pending_protocol_for_owner(owner);

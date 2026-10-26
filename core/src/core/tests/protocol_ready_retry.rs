@@ -75,6 +75,7 @@ fn ready_group_retry_core() -> (
         storage.clone(),
     );
     core.preferences.send_read_receipts = false;
+    receiver.engine.enable_background_history_recovery_pacing();
     core.protocol_engine = Some(receiver.engine);
     for event in initial {
         core.apply_group_decrypted_event(event);
@@ -212,8 +213,30 @@ fn protocol_ready_retry_coalesces_and_ignores_callbacks_after_runtime_reset() {
 }
 
 #[test]
+fn protocol_ready_retry_earlier_allowance_replaces_old_history_deadline() {
+    let (mut core, background, _, _, _) = ready_group_retry_core();
+    let old_history_deadline = Instant::now() + Duration::from_secs(30);
+    core.protocol_subscription_runtime.ready_retry_due_at = Some(old_history_deadline);
+    let pending = core.protocol_engine.as_ref().unwrap().debug_snapshot()
+        .pending_group_sender_key_message_count;
+    core.schedule_fast_protocol_retry_if_pending();
+    let replacement = core.protocol_subscription_runtime.ready_retry_due_at.unwrap();
+    assert!(replacement < Instant::now() + Duration::from_secs(1));
+    assert!(replacement < old_history_deadline);
+    core.handle_internal(InternalEvent::RetryReadyProtocolWork { due_at: old_history_deadline });
+    assert_eq!(core.protocol_subscription_runtime.ready_retry_due_at, Some(replacement));
+    assert_eq!(core.protocol_engine.as_ref().unwrap().debug_snapshot()
+        .pending_group_sender_key_message_count, pending);
+    let callback = background.recv_timeout(Duration::from_millis(500))
+        .expect("earlier work must not wait behind the old history timer");
+    core.handle_messages(vec![callback]);
+    assert!(core.protocol_engine.as_ref().unwrap().debug_snapshot()
+        .pending_group_sender_key_message_count < pending);
+}
+
+#[test]
 fn protocol_ready_retry_storage_failure_keeps_slow_backoff_and_recovers() {
-    let (mut core, _, _, storage, _) = ready_group_retry_core();
+    let (mut core, background, _, storage, _) = ready_group_retry_core();
     core.schedule_fast_protocol_retry_if_pending();
     let cancelled = core
         .protocol_subscription_runtime
@@ -241,6 +264,10 @@ fn protocol_ready_retry_storage_failure_keeps_slow_backoff_and_recovers() {
         core.protocol_subscription_runtime.liveness_due_at.unwrap()
             > Instant::now() + Duration::from_secs(1)
     );
+    // Failed transactional work still consumed CPU. The recovery request below
+    // must respect its measured allowance even after storage becomes healthy.
+    let recovery_not_before = Instant::now()
+        + core.protocol_engine.as_ref().unwrap().group_sender_key_retry_delay();
     core.handle_internal(InternalEvent::RetryReadyProtocolWork { due_at: cancelled });
     assert_eq!(
         core.protocol_engine
@@ -252,6 +279,26 @@ fn protocol_ready_retry_storage_failure_keeps_slow_backoff_and_recovers() {
     );
     storage.set_fail_puts(false);
     core.retry_protocol_engine_pending_work("ready_retry_recovery");
+    if core.protocol_engine.as_ref().unwrap().debug_snapshot()
+        .pending_group_sender_key_message_count == pending
+    {
+        let recovery_due_at = core.protocol_subscription_runtime.ready_retry_due_at
+            .expect("healthy storage must schedule the retained recovery work");
+        assert!(recovery_due_at >= recovery_not_before,
+            "recovery must not erase measured work from the failed save");
+        assert!(recovery_due_at <= Instant::now() + Duration::from_secs(1));
+        // The old cancelled callback can already be in the channel. Exercise
+        // real timer delivery and its stale-callback guard, not a manual retry
+        // loop or a reset of the protocol's resource accounting.
+        let timeout = Instant::now() + Duration::from_secs(1);
+        while core.protocol_engine.as_ref().unwrap().debug_snapshot()
+            .pending_group_sender_key_message_count == pending
+        {
+            let callback = background.recv_timeout(timeout.saturating_duration_since(Instant::now()))
+                .expect("healthy recovery must progress through its scheduled callback within one second");
+            core.handle_messages(vec![callback]);
+        }
+    }
     assert!(
         core.protocol_engine
             .as_ref()
