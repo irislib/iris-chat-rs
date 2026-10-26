@@ -196,17 +196,23 @@ fn checkpoint_backlog_send_roundtrip(fanouts: usize, ciphertexts: usize) {
     let encoded_ciphertexts = CHECKPOINT_PENDING_SERIALIZED_ITEMS.with(std::cell::Cell::get);
     // Exercise discovery on the same production-sized durable backlog, not
     // just empty batches. Replay must not rewrite or reserialize queued work.
-    let own_roster = signed_app_keys(&f.owner, &[f.device.public_key()], 1);
-    let peer_roster = signed_app_keys(
-        &f.peer_owner, &[f.ready_device.public_key(), f.late_device.public_key()], 1,
-    );
+    // Reuse the admitted signed events: building a new AppKeys event creates a
+    // fresh fact UUID, even with identical devices and timestamps, so it is not
+    // an exact replay and can legitimately update retained authorization proof.
+    let authorization_events = f.sender.authorization_events();
+    let own_roster = authorization_events.iter().find(|event| {
+        event.kind.as_u16() as u32 == APP_KEYS_EVENT_KIND && event.pubkey == f.owner.public_key()
+    }).expect("fixture retains its exact own roster proof");
+    let peer_roster = authorization_events.iter().find(|event| {
+        event.kind.as_u16() as u32 == APP_KEYS_EVENT_KIND && event.pubkey == f.peer_owner.public_key()
+    }).expect("fixture retains its exact peer roster proof");
     let invite = invite_unsigned_event(&f.ready.local_invite().unwrap())
         .unwrap().sign_with_keys(&f.ready_device).unwrap();
     let replay_puts = storage.puts.load(Relaxed);
     for _ in 0..4 {
         f.sender.enter_batch();
-        assert!(!f.sender.ingest_app_keys_event_with_outcome(&own_roster).unwrap().changed);
-        assert!(!f.sender.ingest_app_keys_event_with_outcome(&peer_roster).unwrap().changed);
+        assert!(!f.sender.ingest_app_keys_event_with_outcome(own_roster).unwrap().changed);
+        assert!(!f.sender.ingest_app_keys_event_with_outcome(peer_roster).unwrap().changed);
         assert!(!f.sender.observe_invite_event_with_outcome(&invite).unwrap().changed);
         f.sender.exit_batch().unwrap();
     }
