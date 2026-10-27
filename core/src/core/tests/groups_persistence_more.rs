@@ -892,20 +892,6 @@ fn stored_pending_decrypted_delivery_count(core: &AppCore, owner: &Keys, device:
         .unwrap_or_default()
 }
 
-fn unknown_group_sender_key_outer_event(sender_event: &Keys) -> Event {
-    use base64::Engine;
-
-    let mut payload = Vec::new();
-    payload.extend_from_slice(&7_u32.to_be_bytes());
-    payload.extend_from_slice(&1_u32.to_be_bytes());
-    payload.extend_from_slice(&[42_u8; 32]);
-    let content = base64::engine::general_purpose::STANDARD.encode(payload);
-    EventBuilder::new(Kind::from(MESSAGE_EVENT_KIND as u16), content)
-        .tag(nostr::Tag::parse(["v", "2"]).unwrap())
-        .sign_with_keys(sender_event)
-        .expect("unknown group sender-key outer")
-}
-
 fn pending_events_with_kind(core: &AppCore, kind: u32) -> Vec<Event> {
     core.pending_relay_publishes
         .values()

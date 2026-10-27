@@ -36,6 +36,7 @@ impl ProtocolEngine {
             group_manager: self.group_manager.snapshot(),
             verified_app_keys_owners: self.verified_app_keys_owners.clone(),
             app_keys_provenance_version: PROTOCOL_APP_KEYS_PROVENANCE_VERSION,
+            group_ingress_provenance_version: PROTOCOL_GROUP_INGRESS_PROVENANCE_VERSION,
             invite_owner_app_keys_evidence: self.invite_owner_app_keys_evidence.clone(),
             processed_private_invite_response_ids: self
                 .processed_private_invite_response_ids

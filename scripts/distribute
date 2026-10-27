@@ -248,6 +248,14 @@ publish_hashtree() {
     return
   fi
 
+  # Publish and cold-fetch the manifest's source before uploading any binaries.
+  HTREE_CONFIG_DIR="$IRIS_HASHTREE_CONFIG_DIR" \
+  HTREE_DATA_DIR="$IRIS_HASHTREE_DATA_DIR" \
+  HTREE_PREFER_LOCAL_DAEMON=false \
+  HTREE_LOCAL_DAEMON_ONLY=false \
+  HAPS_HOME="$IRIS_HASHTREE_DATA_DIR/haps" \
+    env -u NOSTR_RELAYS haps "${haps_args[@]}" --publish-source
+
   add_output="$(
     HTREE_CONFIG_DIR="$IRIS_HASHTREE_CONFIG_DIR" \
     HTREE_DATA_DIR="$IRIS_HASHTREE_DATA_DIR" htree add "$stage_dir"

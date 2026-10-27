@@ -179,6 +179,31 @@ and `focused_tests` (whitespace-separated exact names), with optional
 after a test failure and reuses them across source revisions. These focused
 checks leave the full validation and tagged release gates unchanged.
 
+For an optimized local Mac development build, reserve the native host and one
+writer for the selected caches, set `CARGO_TARGET_DIR` to the existing absolute
+core cache, and run `scripts/macos-build macos-dev`. Select the existing bindgen
+cache with `IRIS_MACOS_BINDGEN_TARGET_DIR` and optionally a stable Xcode cache
+with `IRIS_MACOS_DEV_DERIVED_DATA`. This builds only the native Rust library,
+once, with locked offline dependencies and two jobs by default; both Rust and
+Swift use release optimization, with the build channel set to `development`.
+Unchanged bindings and the Xcode cache survive
+repeated builds. The printed app path is for development verification: this
+command does not sign for distribution, install, launch, or publish it. A first
+optimized build may need a cold cache; keep bounded time and disk limits around
+it. Local performance evidence does not replace required acceptance of the
+unchanged tagged GitHub release artifact.
+
+Run local CPU checks separately from compilation, using the same verified app
+bundle and a bounded runtime lease. Open that exact bundle through Finder's
+normal Open action, then confirm its executable, process start identity, and
+foreground status before starting the settling period. Accessibility window
+raises and clicks can reach a background app without activating it. A visible
+window alone does not establish foreground readiness. Keep the Mac unlocked
+and foreground checks active throughout measurement; if focus changes, retain
+the failed result. Quit normally afterward and verify the process and leases
+have closed before admitting other native work. A launch or focus failure
+does not require rebuilding unchanged inputs.
+
 For version-only package verification, dispatch `scope=rust-package` with
 `package_crate=chat-protocol` or `core`. This runs locked package verification
 with two build jobs and retains the archive, checksum, logs and exact source;
@@ -195,6 +220,14 @@ stand in for unrelated platform coverage or a required physical-device check.
 
 The tagged GitHub release workflow remains the release builder and runs every
 release and mesh resource gate before publishing its signed, attested assets.
+Public release also requires the exact source commit and all ancestors to be
+available from the owned Hashtree source URL in `haps-release.json`. The
+maintainer publishes source with the existing signing identity; CI only reads
+it. Before attestation or public GitHub release creation, CI checks the tag,
+validated source and manifest agree, then uses the pinned Haps verifier and
+checksum-pinned helpers for a fresh fetch and complete-history traversal.
+Missing commits, shallow or incomplete history, and verification failures stop
+publication. No signing key is added to CI.
 
 Bluetooth changes also require a physical iPhone/Android check before release.
 `--on-device` checks LAN visibility; it does not exercise Bluetooth, and the
@@ -349,19 +382,29 @@ root stops publication; verify and capture the current root again before retryin
 Hashtree distribution also publishes the same desktop/CLI bytes through Haps,
 using `haps-release.json` and the existing dedicated Hashtree signing identity.
 The Haps checksum/layout/signer check runs before publication, including with
-`--check`; Nostr publication runs only after the canonical Hashtree updater
-readback succeeds. Any Haps failure fails distribution. No separate build,
-catalog maintenance, or mobile installer execution is involved. Haps publication
-uses the public relays in the dedicated Hashtree configuration, bypassing local
+`--check`. Real promotion first uses `import-release --publish-source` to push
+the verified manifest's source commit and its ancestors to the owned source
+URL under `refs/tags/haps-source/<commit>` and verify a cold fetch. Failure,
+including an unsupported flag, stops before binary upload or release-tree
+publication. Package metadata publication runs only after the canonical
+Hashtree updater readback succeeds. Any Haps failure fails distribution. No
+separate build, catalog maintenance, or mobile installer execution is involved.
+Haps publication uses the public relays in the dedicated Hashtree configuration, bypassing local
 daemon preferences and inherited `NOSTR_RELAYS`; a local storage acknowledgment
 is not proof of public delivery. Verify both packages from a fresh consumer
 before treating Haps distribution as complete. The local publisher needs Haps
-with `import-release` support and Python 3.9 or newer. Set
-`IRIS_DISTRIBUTION_TOOLS_DIR` to an absolute directory containing a qualified
+with qualified `import-release --publish-source` support and Python 3.9 or newer.
+Set `IRIS_DISTRIBUTION_TOOLS_DIR` to an absolute directory containing a qualified
 `haps` and `htree` pair to use dedicated release tools without replacing tools
 used by other local services. Haps helpers with source-file caching and
 retained-root delta uploads avoid processing all previous package payloads on
 each release; older helpers report when these optimizations are unavailable.
+
+For an already tagged release, run the reviewed current distributor checkout
+with the explicit original `--tag`; record the tooling commit separately from
+the release manifest's source commit. Do not restore the older tagged distributor,
+move the tag, substitute the tooling source for the manifest source, or rebuild
+the release assets to pick up a publication-tooling fix.
 
 Use this order: Hashtree, Homebrew, Zapstore. Homebrew refuses to publish
 until the exact Hashtree tag exists. Commands are safe to retry with the same

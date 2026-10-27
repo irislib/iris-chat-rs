@@ -7,6 +7,7 @@ include!("protocol_engine/group_retry_pacing.rs");
 include!("protocol_engine/group_fresh.rs");
 include!("protocol_engine/group_decrypt.rs");
 include!("protocol_engine/engine_core.rs");
+include!("protocol_engine/group_ingress_migration.rs");
 include!("protocol_engine/engine_test_support.rs");
 include!("protocol_engine/engine_state_helpers.rs");
 include!("protocol_engine/engine_fact_ingest.rs");
@@ -45,6 +46,7 @@ pub(crate) mod tests {
     include!("protocol_engine/remote_retry_persistence_tests.rs");
     include!("protocol_engine/metadata_privacy_tests.rs");
     include!("protocol_engine/group_wake_tests.rs");
+    include!("protocol_engine/group_ingress_migration_tests.rs");
     include!("protocol_engine/remote_roster_tests.rs");
     include!("protocol_engine/session_readiness_tests.rs");
     include!("protocol_engine/receive_session_fallback_tests.rs");

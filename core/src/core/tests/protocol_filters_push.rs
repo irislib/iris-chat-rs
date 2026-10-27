@@ -1880,7 +1880,11 @@ fn mobile_push_preview_resolves_from_sqlite_when_decrypt_fails() {
             ..OwnerProfileRecord::default()
         },
     );
-    let outer_event_id = "a".repeat(64);
+    let outer_event = EventBuilder::new(Kind::from(MESSAGE_EVENT_KIND as u16), "")
+        .custom_created_at(Timestamp::from_secs(200))
+        .sign_with_keys(&alice)
+        .expect("outer event");
+    let outer_event_id = outer_event.id.to_hex();
     let chat_id = alice.public_key().to_hex();
     core.threads.insert(
         chat_id.clone(),
@@ -1918,19 +1922,8 @@ fn mobile_push_preview_resolves_from_sqlite_when_decrypt_fails() {
     );
     core.persist_best_effort_inner();
 
-    let outer_event = EventBuilder::new(Kind::from(MESSAGE_EVENT_KIND as u16), "")
-        .sign_with_keys(&alice)
-        .expect("outer event");
     let payload = serde_json::json!({
-        "event": serde_json::json!({
-            "id": outer_event_id,
-            "kind": MESSAGE_EVENT_KIND,
-            "content": "",
-            "tags": [],
-            "pubkey": alice.public_key().to_hex(),
-            "created_at": 200,
-            "sig": outer_event.sig.to_string(),
-        }),
+        "event": outer_event,
         "title": "DM by Someone",
         "body": "New message",
     })
@@ -1951,31 +1944,84 @@ fn mobile_push_preview_resolves_from_sqlite_when_decrypt_fails() {
 
 #[test]
 fn appcore_persists_pending_group_sender_key_outer_when_no_group_message_emits() {
-    let owner = Keys::generate();
-    let device = Keys::generate();
-    let sender_event = Keys::generate();
-    let temp_dir = tempfile::TempDir::new().expect("temp dir");
-    let mut core = AppCore::new(
-        flume::unbounded().0,
-        flume::unbounded().0,
-        temp_dir.path().to_string_lossy().to_string(),
-        Arc::new(RwLock::new(AppState::empty())),
+    let (mut farm, group_id, chat_id) = private_group_wake_farm();
+    farm.send(0, &chat_id, "waiting for group key recovery");
+    let (nested, carriers) = private_group_wake_events(&farm, &group_id);
+    let sender = farm.owners[0].public_key();
+    let owner = farm.owners[1].clone();
+    let device = farm.devices[1].keys.clone();
+    let carrier = carriers
+        .into_iter()
+        .find(|event| {
+            event
+                .tags
+                .public_keys()
+                .any(|key| *key == device.public_key())
+        })
+        .expect("recipient-specific ratchet carrier");
+    let event_id = carrier.id.to_hex();
+    let core = &mut farm.devices[1].core;
+    let mut groups = core
+        .protocol_engine
+        .as_ref()
+        .unwrap()
+        .group_manager_snapshot_for_test();
+    let record = groups
+        .sender_keys
+        .iter_mut()
+        .find(|record| record.sender_event_pubkey == ndr_device_pubkey(nested.pubkey))
+        .expect("authenticated group author");
+    // Keep its established sender binding, but require key recovery before the
+    // nested ciphertext can produce an app-visible message.
+    record.latest_key_id = None;
+    record.states.clear();
+    record.distribution_history.clear();
+    record.repair_snapshots.clear();
+    let storage = Arc::new(crate::core::storage::SqliteStorageAdapter::new(
+        core.app_store.shared(),
+        owner.public_key().to_hex(),
+        device.public_key().to_hex(),
+    ));
+    let mut state = runtime_state_json(core, &owner, &device);
+    state["group_manager"] = serde_json::to_value(groups).unwrap();
+    storage
+        .put("appcore/protocol-engine-state-v1", state.to_string())
+        .unwrap();
+    core.protocol_engine = Some(
+        ProtocolEngine::load_or_create_for_local_device(
+            storage.clone(),
+            owner.public_key(),
+            &device,
+        )
+        .unwrap(),
     );
-    core.start_primary_session(owner.clone(), device.clone(), false, false)
-        .expect("primary session");
-    let outer = unknown_group_sender_key_outer_event(&sender_event);
-    let event_id = outer.id.to_string();
+    assert!(private_group_wake::sender_matches(
+        core.protocol_engine.as_ref().unwrap(),
+        sender,
+        &nested,
+    ));
+    let messages_before = core.threads[&chat_id].messages.len();
 
-    core.handle_relay_event(outer);
+    core.handle_relay_event(carrier);
 
     assert!(
         core.seen_event_ids.contains(&event_id),
-        "unknown group sender-key outer should be consumed by group runtime instead of falling through to pairwise decrypt"
+        "the authenticated carrier should be consumed while its nested ciphertext waits for recovery"
     );
+    assert_eq!(core.threads[&chat_id].messages.len(), messages_before);
     assert_eq!(
-        stored_pending_group_sender_key_message_count(&core, &owner, &device),
+        stored_pending_group_sender_key_message_count(core, &owner, &device),
         1,
         "group runtime pending outer must be durably stored even when no app-visible group message is emitted yet"
+    );
+    let restored =
+        ProtocolEngine::load_or_create_for_local_device(storage, owner.public_key(), &device)
+            .unwrap();
+    assert_eq!(
+        restored
+            .debug_snapshot()
+            .pending_group_sender_key_message_count,
+        1
     );
 }
 

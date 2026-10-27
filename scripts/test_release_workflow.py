@@ -356,6 +356,31 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertNotIn("    if:", publish)
         self.assertNotIn("continue-on-error:", jobs["release"])
 
+    def test_focused_runner_installs_rustfmt_before_running_tests(self) -> None:
+        workflow = (ROOT / ".github/workflows/ci.yml").read_text()
+        focused = workflow.split("\n  rust-focused:\n", 1)[1].split("\n  rust-package:\n", 1)[0]
+        install = focused.split("      - name: Install Rust and identify compiler cache\n", 1)[1].split("      - name:", 1)[0]
+        self.assertIn("rustup toolchain install stable --profile minimal --component rustfmt", install)
+        self.assertIn("rustup default stable", install)
+        self.assertLess(focused.index("Install Rust and identify compiler cache"),
+                        focused.index("Build once and run exact tests"))
+        self.assertNotIn("continue-on-error:", install)
+
+    def test_release_validation_checks_shared_formatting_without_building(self) -> None:
+        workflow = (ROOT / ".github/workflows/release.yml").read_text()
+        validate = workflow.split("\n  validate:\n", 1)[1].split("\n  verify:\n", 1)[0]
+        step = validate.split("      - name: Check shared Rust formatting before builds\n", 1)[1]
+        self.assertIn('CARGO_NET_OFFLINE: "true"', step)
+        self.assertIn("set -Eeuo pipefail", step)
+        self.assertIn("rustup toolchain install stable --profile minimal --component rustfmt", step)
+        self.assertEqual(re.findall(r"cargo \+stable fmt --manifest-path (\S+) --check", step),
+                         ["chat-protocol/Cargo.toml", "core/Cargo.toml", "protocol-ffi/Cargo.toml"])
+        self.assertNotIn("continue-on-error:", validate)
+        self.assertNotIn("        if:", step)
+        self.assertNotRegex(validate, r"cargo(?: \+stable)? (?:build|test|check|fetch|install)\b")
+        self.assertNotIn("actions/cache", validate)
+        self.assertNotIn("apt-get", validate)
+
     def test_hosted_release_gate_can_write_its_first_fixture_in_a_clean_checkout(self) -> None:
         workflow = (ROOT / ".github/workflows/release.yml").read_text()
         step = workflow.split("      - name: Run hosted release gate\n", 1)[1]
@@ -397,6 +422,100 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("--notes RELEASE_NOTES.md", workflow)
         self.assertNotIn("CHANGELOG.md", workflow)
         self.assertNotIn("ZAPSTORE_RELEASE_NOTES.md", workflow)
+
+    def test_release_requires_pinned_read_only_source_verifier_before_attestation(self) -> None:
+        workflow = (ROOT / ".github/workflows/release.yml").read_text()
+        release = workflow.split("\n  release:\n", 1)[1]
+        checkout = release.split("      - name: Checkout pinned public-source verifier\n", 1)[1]
+        checkout = checkout.split("\n      - name:", 1)[0]
+        self.assertIn("repository: mmalmi/haps", checkout)
+        self.assertIn("ref: cc6c5d441c0b4a836634ccb8f6379c33fd608b46", checkout)
+        self.assertIn("path: .release-source-verifier", checkout)
+        self.assertIn("persist-credentials: false", checkout)
+        gate = release.split("      - name: Require complete public Hashtree source history\n", 1)[1]
+        gate = gate.split("\n      - name:", 1)[0]
+        self.assertIn("SOURCE_COMMIT: ${{ needs.validate.outputs.sha }}", gate)
+        self.assertNotIn("if:", gate)
+        self.assertNotIn("continue-on-error", gate)
+        self.assertNotIn("secrets.", gate)
+        self.assertNotIn("--publish", gate)
+        self.assertNotIn("--key-file", gate)
+        self.assertLess(release.index("Create immutable release manifest"),
+                        release.index("Require complete public Hashtree source history"))
+        self.assertLess(release.index("Require complete public Hashtree source history"),
+                        release.index("Attest release build provenance"))
+        self.assertLess(release.index("Attest release build provenance"),
+                        release.index("uses: softprops/action-gh-release@v2"))
+
+    def test_public_source_workflow_stops_on_wrong_bindings_or_incomplete_remote_history(self) -> None:
+        workflow = (ROOT / ".github/workflows/release.yml").read_text()
+        step = workflow.split("      - name: Require complete public Hashtree source history\n", 1)[1]
+        script = textwrap.dedent(step.split("        run: |\n", 1)[1].split("\n      - name:", 1)[0])
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            tools = root / ".release-source-verifier/scripts"
+            tools.mkdir(parents=True)
+            (root / "artifacts").mkdir()
+            (root / "haps-release.json").write_text('{"source":"htree://npub1fixture/chat"}')
+            (tools / "bundle.py").write_text(textwrap.dedent("""\
+                import json, os, sys
+                from pathlib import Path
+                with open(os.environ['SOURCE_CALLS'], 'a') as log:
+                    log.write(json.dumps(['bundle', *sys.argv[1:]]) + '\\n')
+                if os.environ.get('SOURCE_FAILURE') == 'helper-checksum':
+                    sys.exit('Hashtree archive checksum mismatch')
+                args = sys.argv[1:]
+                assert args[args.index('--target') + 1] == 'x86_64-unknown-linux-gnu'
+                Path(args[args.index('--destination') + 1], 'libexec').mkdir(parents=True)
+                """))
+            (tools / "verify-public-source.py").write_text(textwrap.dedent("""\
+                import json, os, sys
+                from pathlib import Path
+                args = sys.argv[1:]
+                with open(os.environ['SOURCE_CALLS'], 'a') as log:
+                    log.write(json.dumps(['verify', *args]) + '\\n')
+                assert args[args.index('--commit') + 1] == os.environ['SOURCE_COMMIT']
+                assert Path(args[args.index('--config') + 1]).resolve() == Path('haps-release.json').resolve()
+                assert Path(args[args.index('--helpers') + 1]).is_dir()
+                if os.environ.get('SOURCE_FAILURE'):
+                    sys.exit(os.environ['SOURCE_FAILURE'])
+                """))
+            git = root / "git"
+            git.write_text(textwrap.dedent("""\
+                #!/usr/bin/env python3
+                import os, sys
+                assert sys.argv[1] == 'rev-parse'
+                assert sys.argv[2] in ('HEAD', 'refs/tags/' + os.environ['RELEASE_TAG'] + '^{commit}')
+                print(os.environ['CHECKOUT_COMMIT' if sys.argv[2] == 'HEAD' else 'TAG_COMMIT'])
+                """))
+            git.chmod(0o755)
+            revision = "a" * 40
+            tag = "v2026.10.27"
+            cases = ("success", "checkout", "tag", "manifest-commit", "manifest-tag",
+                     "helper-checksum", "missing-commit", "shallow-history", "missing-parent", "clone-timeout")
+            for index, case in enumerate(cases):
+                with self.subTest(case=case):
+                    calls = root / f"calls-{index}"
+                    temporary = root / f"runner-{index}"
+                    env = dict(os.environ, PATH=f"{root}:{os.environ['PATH']}",
+                               SOURCE_CALLS=str(calls), SOURCE_COMMIT=revision, RELEASE_TAG=tag,
+                               CHECKOUT_COMMIT="b" * 40 if case == "checkout" else revision,
+                               TAG_COMMIT="b" * 40 if case == "tag" else revision,
+                               GITHUB_WORKSPACE=str(root), RUNNER_TEMP=str(temporary),
+                               SOURCE_FAILURE=case if case in cases[5:] else "")
+                    manifest = {"tag": "v2026.10.26" if case == "manifest-tag" else tag,
+                                "commit": "b" * 40 if case == "manifest-commit" else revision}
+                    (root / f"artifacts/iris-chat-{tag}-manifest.json").write_text(json.dumps(manifest))
+                    result = subprocess.run(["bash", "-c", script], cwd=root, env=env,
+                                            capture_output=True, text=True, timeout=10)
+                    commands = [json.loads(line) for line in calls.read_text().splitlines()] if calls.exists() else []
+                    if case == "success":
+                        self.assertEqual(result.returncode, 0, result.stderr)
+                        self.assertEqual([command[0] for command in commands], ["bundle", "verify"])
+                    else:
+                        self.assertNotEqual(result.returncode, 0, case)
+                        expected = [] if case in cases[1:5] else ["bundle"] if case == "helper-checksum" else ["bundle", "verify"]
+                        self.assertEqual([command[0] for command in commands], expected)
 
     def test_build_workflow_uploads_only_canonical_names(self) -> None:
         workflow = (ROOT / ".github/workflows/build-artifacts.yml").read_text()

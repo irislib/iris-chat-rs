@@ -1342,6 +1342,9 @@ impl AppCore {
         {
             return true;
         }
+        if is_group_chat_id(&chat_id) {
+            self.cache_direct_group_preview_carrier(outer_event_id.as_deref());
+        }
         self.cache_mobile_push_control(
             outer_event_id.as_deref(),
             effective_sender_owner,

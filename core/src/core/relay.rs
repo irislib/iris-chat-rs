@@ -72,7 +72,7 @@ impl AppCore {
             return;
         }
         // A shared bootstrap author can match another device's subscription.
-        // Route explicit recipients before owner resolution or group fallback.
+        // Route explicit recipients before owner resolution.
         if self
             .protocol_engine
             .as_ref()
@@ -86,8 +86,6 @@ impl AppCore {
         let event_id = event.id.to_string();
         let kind = event.kind.as_u16() as u32;
         let is_app_keys_protocol_event = kind == APP_KEYS_EVENT_KIND && is_app_keys_event(&event);
-        let is_group_roster_protocol_event =
-            kind == GROUP_ROSTER_FACT_KIND && is_group_roster_fact_event(&event);
         let is_invite_protocol_event = is_protocol_invite_event(&event);
         let is_invite_response_protocol_event = kind == INVITE_RESPONSE_KIND;
         let message_has_header = kind == MESSAGE_EVENT_KIND && event_has_tag(&event, "header");
@@ -96,8 +94,16 @@ impl AppCore {
                 .protocol_engine
                 .as_ref()
                 .is_some_and(|engine| engine.is_known_group_sender_event_author(event.pubkey));
-        let should_try_group_sender_key_event =
-            kind == MESSAGE_EVENT_KIND && (!message_has_header || is_known_group_sender_key_event);
+        // Shared group ciphertext and signed rosters are local intermediates.
+        // Only authenticated recipient-specific ratchet payloads (or trusted
+        // sibling authorization records) may introduce them to group state.
+        if nostr_double_ratchet::is_group_roster_fact_event(&event)
+            || (kind == MESSAGE_EVENT_KIND
+                && (!message_has_header || is_known_group_sender_key_event))
+        {
+            self.remember_event(event_id);
+            return;
+        }
         let already_seen = self.has_seen_event(&event_id);
         let must_reapply_app_keys = already_seen
             && is_app_keys_protocol_event
@@ -155,7 +161,6 @@ impl AppCore {
 
         self.push_debug_log("relay.event", format!("kind_raw={} id={event_id}", kind));
         let protocol_inputs_changed = is_app_keys_protocol_event
-            || is_group_roster_protocol_event
             || is_invite_protocol_event
             || is_invite_response_protocol_event;
 
@@ -183,49 +188,6 @@ impl AppCore {
                     }
                     Err(error) => {
                         self.push_debug_log("appcore.protocol.app_keys.error", error.to_string());
-                        self.rebuild_state();
-                        self.emit_state();
-                    }
-                }
-                return;
-            }
-            GROUP_ROSTER_FACT_KIND if is_group_roster_protocol_event => {
-                match self
-                    .protocol_engine
-                    .as_mut()
-                    .map(|engine| engine.ingest_group_roster_fact_event(&event))
-                    .transpose()
-                {
-                    Ok(Some(Some(result))) => {
-                        if let Err(error) = self.capture_authorization_event(&event) {
-                            self.push_debug_log("device_sync.authorization", error.to_string());
-                        }
-                        if let Some(snapshot) = result.snapshot {
-                            let previous = self.groups.get(&snapshot.group_id).cloned();
-                            self.apply_group_roster_snapshot(
-                                snapshot.clone(),
-                                unix_now().get().max(snapshot.updated_at.get()),
-                            );
-                            self.apply_group_metadata_notice(previous.as_ref(), &snapshot);
-                            self.request_protocol_subscription_refresh();
-                        }
-                        self.process_protocol_engine_retry_batch(
-                            "group_roster_fact",
-                            result.retry_batch,
-                        );
-                        self.remember_event(event_id);
-                        self.persist_best_effort();
-                        self.rebuild_state();
-                        self.emit_state();
-                    }
-                    Ok(Some(None) | None) => {
-                        self.remember_event(event_id);
-                    }
-                    Err(error) => {
-                        self.push_debug_log(
-                            "appcore.protocol.group_roster.error",
-                            error.to_string(),
-                        );
                         self.rebuild_state();
                         self.emit_state();
                     }
@@ -306,74 +268,6 @@ impl AppCore {
                 }
             }
             MESSAGE_EVENT_KIND => {
-                if should_try_group_sender_key_event {
-                    let group_result = match self
-                        .protocol_engine
-                        .as_mut()
-                        .map(|engine| engine.process_group_outer_event(&event))
-                    {
-                        Some(Ok(group_result)) => group_result,
-                        Some(Err(error)) => {
-                            self.push_debug_log(
-                                "appcore.protocol.group.outer.error",
-                                error.to_string(),
-                            );
-                            self.persist_best_effort();
-                            self.rebuild_state();
-                            self.emit_state();
-                            return;
-                        }
-                        None => Default::default(),
-                    };
-                    if group_result.consumed
-                        || !group_result.events.is_empty()
-                        || !group_result.effects.is_empty()
-                    {
-                        // Only the prefix decrypted from this exact signed
-                        // envelope can establish its replay permission. Queued
-                        // messages recovered by the same operation cannot.
-                        let replay_chats = group_result
-                            .events
-                            .iter()
-                            .take(group_result.source_event_count)
-                            .filter_map(|event| match event {
-                                GroupIncomingEvent::Message(message) => {
-                                    Some(group_chat_id(&message.group_id))
-                                }
-                                _ => None,
-                            })
-                            .collect::<std::collections::BTreeSet<_>>();
-                        self.debug_event_counters.group_events += 1;
-                        let should_remember_group_event = group_result.consumed
-                            || !group_result.events.is_empty()
-                            || !group_result.effects.is_empty();
-                        for (index, group_event) in group_result.events.into_iter().enumerate() {
-                            let source =
-                                (index < group_result.source_event_count).then(|| event_id.clone());
-                            if source.is_some() {
-                                self.cache_group_mobile_push_control(&event_id, &group_event);
-                            }
-                            self.apply_group_decrypted_event_from_outer(group_event, source);
-                        }
-                        if !group_result.effects.is_empty() {
-                            self.process_protocol_engine_effects(group_result.effects);
-                        }
-                        if should_remember_group_event {
-                            self.remember_event(event_id);
-                        }
-                        self.schedule_fast_protocol_retry_if_pending();
-                        self.persist_best_effort();
-                        for chat in replay_chats {
-                            self.retain_mesh_group_envelope(&event, &chat);
-                        }
-                        self.rebuild_state();
-                        self.emit_state();
-                        return;
-                    }
-
-                    self.remember_event(event_id);
-                    return;
-                }
                 let unknown_message_author = self
                     .protocol_engine
                     .as_ref()
@@ -381,28 +275,18 @@ impl AppCore {
                 if unknown_message_author {
                     let targets_local_recipient =
                         message_has_header && self.message_targets_local_protocol_recipient(&event);
-                    let is_potential_group_sender_key_event = message_has_header
-                        && self.protocol_engine.as_ref().is_some_and(|engine| {
-                            engine.is_potential_group_sender_key_event(&event)
-                        });
-                    let is_group_sender_key_candidate_with_group_context = message_has_header
-                        && self.protocol_engine.as_ref().is_some_and(|engine| {
-                            engine.is_group_sender_key_candidate_with_local_group_context(&event)
-                        });
                     let has_tracked_sender_session = message_has_header
                         && self.protocol_engine.as_ref().is_some_and(|engine| {
                             engine.header_message_sender_has_tracked_session(&event)
                         });
-                    let should_keep_unknown_header = is_potential_group_sender_key_event
-                        || is_group_sender_key_candidate_with_group_context
-                        || has_tracked_sender_session
+                    let should_keep_unknown_header = has_tracked_sender_session
                         || !self.private_chat_invites.is_empty()
                         || targets_local_recipient;
                     if !message_has_header || !should_keep_unknown_header {
                         self.push_debug_log(
                             "appcore.protocol.message.ignored",
                             format!(
-                                "unknown message author header={message_has_header} targets_local_recipient={targets_local_recipient} group_candidate={is_potential_group_sender_key_event} group_context_candidate={is_group_sender_key_candidate_with_group_context} tracked_sender_session={has_tracked_sender_session}"
+                                "unknown message author header={message_has_header} targets_local_recipient={targets_local_recipient} tracked_sender_session={has_tracked_sender_session}"
                             ),
                         );
                         return;
@@ -410,7 +294,7 @@ impl AppCore {
                     self.push_debug_log(
                         "appcore.protocol.message.pending_header",
                         format!(
-                            "unknown message author targets_local_recipient={targets_local_recipient} group_candidate={is_potential_group_sender_key_event} group_context_candidate={is_group_sender_key_candidate_with_group_context} tracked_sender_session={has_tracked_sender_session}"
+                            "unknown message author targets_local_recipient={targets_local_recipient} tracked_sender_session={has_tracked_sender_session}"
                         ),
                     );
                 }
@@ -463,8 +347,13 @@ impl AppCore {
                             "appcore.protocol.message.error",
                             format!("event_id={event_id} author={} error={error}", event.pubkey),
                         );
+                        // Capacity deferral must not mark a valid first-contact
+                        // packet as completed before its session can arrive.
+                        if error.is::<iris_chat_protocol::PendingInboundAdmissionError>() {
+                            return;
+                        }
                         // Saving may fail after the ratchet has already advanced.
-                        // Keep storage failures retryable; malformed input stays deduplicated.
+                        // Keep storage failures retryable.
                         if error
                             .downcast_ref::<iris_chat_protocol::StorageError>()
                             .is_some()

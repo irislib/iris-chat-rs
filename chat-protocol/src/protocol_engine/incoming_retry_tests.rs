@@ -19,6 +19,21 @@ mod incoming_retry_tests {
         body: &str,
         created_at_secs: u64,
     ) -> (Event, Event) {
+        let (envelope, response) = direct_envelope_before_receiver_observes_response(
+            receiver,
+            sender_owner,
+            body,
+            created_at_secs,
+        );
+        (message_event(&envelope).unwrap(), response)
+    }
+
+    fn direct_envelope_before_receiver_observes_response(
+        receiver: &ProtocolEngine,
+        sender_owner: &Keys,
+        body: &str,
+        created_at_secs: u64,
+    ) -> (MessageEnvelope, Event) {
         let invite = receiver.local_invite().expect("receiver invite");
         let (mut sender_session, response) = invite
             .accept_with_owner(
@@ -33,8 +48,7 @@ mod incoming_retry_tests {
             .plan_send(body.as_bytes(), NdrUnixSeconds(created_at_secs))
             .expect("sender plans direct message");
         let sent = sender_session.apply_send(plan);
-        let message_event = message_event(&sent.envelope).expect("direct message event");
-        (message_event, response_event)
+        (sent.envelope, response_event)
     }
 
     #[test]
@@ -318,7 +332,7 @@ mod incoming_retry_tests {
     }
 
     #[test]
-    fn direct_message_retry_clears_header_sender_key_candidate() {
+    fn direct_message_before_handshake_survives_restart_without_group_recovery() {
         let bob_owner = Keys::generate();
         let bob_device = Keys::generate();
         let alice_owner = Keys::generate();
@@ -337,11 +351,18 @@ mod incoming_retry_tests {
             "receiver should not decrypt before it observes the session response"
         );
         assert_eq!(bob.pending_inbound.len(), 1);
-        assert_eq!(bob.pending_group_sender_key_messages.len(), 1);
-        assert!(
-            bob.has_pending_retry_work(),
-            "queued direct/group candidate should keep liveness retry work active"
-        );
+        assert!(bob.pending_group_sender_key_messages.is_empty());
+        assert!(bob.pending_group_sender_key_repairs.is_empty());
+        assert!(bob.pending_group_fanouts.is_empty());
+        bob = ProtocolEngine::load_or_create_for_local_device(
+            bob.storage.clone(),
+            bob_owner.public_key(),
+            &bob_device,
+        )
+        .unwrap();
+        assert_eq!(bob.pending_inbound.len(), 1);
+        assert!(bob.pending_group_sender_key_messages.is_empty());
+        assert!(bob.has_pending_retry_work());
 
         let mut direct_messages = bob
             .observe_invite_response_event(&response_event)
@@ -379,72 +400,121 @@ mod incoming_retry_tests {
     }
 
     #[test]
-    fn unknown_group_sender_key_candidate_alone_does_not_keep_retry_work_alive() {
-        let bob_owner = Keys::generate();
-        let bob_device = Keys::generate();
-        let alice_owner = Keys::generate();
-        let mut bob = test_engine(&bob_owner, &bob_device);
-        let (message_event, _response_event) = direct_message_before_receiver_observes_response(
-            &bob,
-            &alice_owner,
-            "hello before metadata",
-            100,
-        );
-
-        assert!(bob
-            .process_direct_message_event(&message_event)
-            .expect("unknown direct message queues")
-            .is_none());
-        assert_eq!(bob.pending_group_sender_key_messages.len(), 1);
-        bob.pending_inbound.clear();
-
-        assert!(
-            !bob.has_pending_retry_work(),
-            "a header-shaped direct event with no known group sender key must not keep liveness hot by itself"
-        );
+    fn unreadable_direct_headers_never_enter_group_recovery() {
+        for known_sender in [false, true] {
+            for header in ["", "invalid encrypted header"] {
+                let owner = Keys::generate();
+                let device = Keys::generate();
+                let sender = Keys::generate();
+                let mut receiver = test_engine(&owner, &device);
+                let (mut envelope, response) = direct_envelope_before_receiver_observes_response(
+                    &receiver,
+                    &sender,
+                    "direct ciphertext",
+                    100,
+                );
+                if known_sender {
+                    receiver.observe_invite_response_event(&response).unwrap();
+                }
+                envelope.encrypted_header = header.into();
+                let event = message_event(&envelope).unwrap();
+                event.verify().unwrap();
+                let sessions = receiver.session_manager.snapshot();
+                let result = receiver.process_direct_message_event(&event);
+                if known_sender || header.is_empty() {
+                    assert!(result.is_err());
+                } else {
+                    assert!(result.unwrap().is_none());
+                    assert_eq!(receiver.pending_inbound.len(), 1);
+                }
+                assert!(receiver.pending_group_sender_key_messages.is_empty());
+                assert!(receiver.pending_group_sender_key_repairs.is_empty());
+                assert!(receiver.pending_group_fanouts.is_empty());
+                assert_eq!(receiver.session_manager.snapshot(), sessions);
+            }
+        }
     }
 
     #[test]
-    fn known_direct_message_author_prunes_unmapped_sender_key_candidate_without_decrypt() {
-        let bob_owner = Keys::generate();
-        let bob_device = Keys::generate();
-        let alice_owner = Keys::generate();
-        let mut bob = test_engine(&bob_owner, &bob_device);
-        let (message_event, response_event) = direct_message_before_receiver_observes_response(
-            &bob,
-            &alice_owner,
-            "hello from another target",
+    fn untracked_direct_admission_is_bounded_without_eviction_and_recovers_after_handshake() {
+        let owner = Keys::generate();
+        let device = Keys::generate();
+        let mut receiver = test_engine(&owner, &device);
+        let sender = Keys::generate();
+        let (mut envelope, _) = direct_envelope_before_receiver_observes_response(
+            &receiver,
+            &sender,
+            "first retained packet",
             100,
         );
-
-        assert!(bob
-            .process_direct_message_event(&message_event)
-            .expect("unknown direct message queues")
-            .is_none());
-        assert_eq!(bob.pending_inbound.len(), 1);
-        assert_eq!(bob.pending_group_sender_key_messages.len(), 1);
-
-        bob.pending_inbound.clear();
-        let retry = bob
-            .observe_invite_response_event(&response_event)
-            .expect("receiver observes session response");
-
-        assert!(
-            retry.direct_messages.is_empty(),
-            "test setup removed the pending direct decrypt path"
+        let first = message_event(&envelope).unwrap();
+        // Distinct signed packets from one still-untracked author count
+        // individually, and every admission goes through the real wire parser.
+        receiver.enter_batch();
+        for index in 0..MAX_UNTRACKED_PENDING_INBOUND {
+            envelope.created_at = NdrUnixSeconds(100 + index as u64);
+            let event = message_event(&envelope).unwrap();
+            receiver.process_direct_message_event(&event).unwrap();
+        }
+        receiver.exit_batch().unwrap();
+        let before = receiver.pending_inbound.clone();
+        receiver.process_direct_message_event(&first).unwrap();
+        assert_eq!(
+            receiver.pending_inbound, before,
+            "same-ID replay is idempotent at capacity"
         );
-        assert!(bob.is_known_message_author(message_event.pubkey));
-        assert!(
-            bob.pending_group_sender_key_messages.is_empty(),
-            "once the event pubkey is known to be a direct-message author, an unmapped group sender-key candidate should be pruned"
+        let (later, response) = direct_message_before_receiver_observes_response(
+            &receiver,
+            &Keys::generate(),
+            "admitted after handshake",
+            101,
+        );
+        let error = receiver.process_direct_message_event(&later).unwrap_err();
+        assert!(error.is::<PendingInboundAdmissionError>());
+        assert_eq!(receiver.pending_inbound, before);
+        assert!(receiver.pending_group_sender_key_messages.is_empty());
+        // Older saved queues may already exceed the new admission limit. Keep
+        // their signed packets rather than evicting history to enforce it.
+        envelope.created_at = NdrUnixSeconds(1_000);
+        let mut grandfathered = receiver.pending_inbound[0].clone();
+        grandfathered.event = message_event(&envelope).unwrap();
+        grandfathered.event_id = grandfathered.event.id.to_hex();
+        grandfathered.envelope = Some(envelope);
+        receiver.pending_inbound.push(grandfathered);
+        receiver.persist_now().unwrap();
+        let retained_ids = receiver
+            .pending_inbound
+            .iter()
+            .map(|pending| pending.event.id)
+            .collect::<Vec<_>>();
+        receiver = ProtocolEngine::load_or_create_for_local_device(
+            receiver.storage.clone(),
+            owner.public_key(),
+            &device,
+        )
+        .unwrap();
+        assert_eq!(
+            receiver
+                .pending_inbound
+                .iter()
+                .map(|pending| pending.event.id)
+                .collect::<Vec<_>>(),
+            retained_ids
         );
         assert_eq!(
-            bob.debug_snapshot().pending_group_sender_key_unmapped_count,
-            0
+            receiver.pending_inbound.len(),
+            MAX_UNTRACKED_PENDING_INBOUND + 1
         );
-        assert!(
-            !bob.has_pending_retry_work(),
-            "pruning the stale candidate should leave no background retry work"
+        receiver.observe_invite_response_event(&response).unwrap();
+        let received = receiver
+            .process_direct_message_event(&later)
+            .unwrap()
+            .unwrap();
+        assert_eq!(received.content, "admitted after handshake");
+        assert_eq!(
+            receiver.pending_inbound.len(),
+            MAX_UNTRACKED_PENDING_INBOUND + 1
         );
+        assert!(receiver.pending_group_sender_key_messages.is_empty());
     }
 }

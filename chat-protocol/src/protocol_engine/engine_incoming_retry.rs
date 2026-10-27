@@ -1,6 +1,6 @@
 impl ProtocolEngine {
     /// Shared bootstrap authors can expose ciphertext addressed to other devices.
-    /// Untargeted legacy messages and group broadcasts remain eligible.
+    /// Untargeted session messages remain eligible for authenticated decryption.
     pub fn message_targets_another_device(&self, event: &Event) -> bool {
         if event.kind.as_u16() as u32 != MESSAGE_EVENT_KIND
             || !protocol_event_has_tag(event, "header")
@@ -134,7 +134,6 @@ impl ProtocolEngine {
             ProtocolSenderOwnerResolution::Verified { .. }
             | ProtocolSenderOwnerResolution::ProvisionalDeviceOwner { .. } => {}
             ProtocolSenderOwnerResolution::PendingOwnerClaim { .. } => {
-                self.queue_header_group_sender_key_candidate(event)?;
                 self.queue_pending_inbound_direct_event(
                     event.clone(),
                     event.created_at.as_secs(),
@@ -149,9 +148,6 @@ impl ProtocolEngine {
             Ok(DirectReceive::Discarded) => return Ok(None),
             Ok(DirectReceive::Pending) => {}
             Err(error) => {
-                if self.queue_header_group_sender_key_candidate_after_direct_error(event)? {
-                    return Ok(None);
-                }
                 if protocol_event_has_tag(event, "header")
                     && !self.is_known_message_author(event.pubkey)
                 {
@@ -166,7 +162,6 @@ impl ProtocolEngine {
                 return Err(error);
             }
         }
-        self.queue_header_group_sender_key_candidate(event)?;
         self.queue_pending_inbound_direct_event(
             event.clone(),
             event.created_at.as_secs(),
@@ -176,33 +171,9 @@ impl ProtocolEngine {
         Ok(None)
     }
 
-    fn queue_header_group_sender_key_candidate(&mut self, event: &Event) -> anyhow::Result<()> {
-        if !protocol_event_has_tag(event, "header") {
-            return Ok(());
-        }
-        if self.is_known_message_author(event.pubkey) {
-            return Ok(());
-        }
-        if let Ok(parsed) = parse_group_sender_key_message_event_unchecked(event) {
-            self.queue_pending_group_sender_key_message(parsed)?;
-        }
-        Ok(())
-    }
-
-    fn queue_header_group_sender_key_candidate_after_direct_error(
-        &mut self,
-        event: &Event,
-    ) -> anyhow::Result<bool> {
-        if !protocol_event_has_tag(event, "header") || self.is_known_message_author(event.pubkey) {
-            return Ok(false);
-        }
-        let Ok(parsed) = parse_group_sender_key_message_event_unchecked(event) else {
-            return Ok(false);
-        };
-        self.queue_pending_group_sender_key_message(parsed)?;
-        Ok(true)
-    }
-
+    /// Process a local group ciphertext extracted from an authenticated pairwise
+    /// wrapper after its sender/group binding was checked. Never pass a raw
+    /// network event here or use it as a fallback for failed direct decryption.
     pub fn process_group_outer_event(
         &mut self,
         event: &Event,
@@ -238,12 +209,10 @@ impl ProtocolEngine {
                 ..Default::default()
             });
         }
-        // Direct-message probing can queue a candidate before its first group
-        // attempt. Suppress only candidates already waiting for a repair.
+        // Authenticated nested ciphertext may already be queued. Suppress only
+        // candidates already waiting for a repair.
         let already_pending = self.pending_group_sender_key_messages.contains(&parsed);
-        if already_pending
-            && self.group_sender_key_message_has_pending_repair(&message)
-        {
+        if already_pending && self.group_sender_key_message_has_pending_repair(&message) {
             return Ok(ProtocolGroupIncomingResult {
                 consumed: true,
                 pending: true,

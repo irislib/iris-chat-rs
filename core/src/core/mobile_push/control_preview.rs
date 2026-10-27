@@ -142,6 +142,7 @@ pub(super) fn lookup(
     data_dir: &str,
     outer_id: &str,
     owner_pubkey_hex: &str,
+    authenticated_group_source: bool,
 ) -> Option<MobilePushNotificationResolution> {
     let json: String = conn
         .query_row(
@@ -151,6 +152,9 @@ pub(super) fn lookup(
         )
         .ok()?;
     let preview: ControlPreview = serde_json::from_str(&json).ok()?;
+    if is_group_chat_id(&preview.chat_id) && !authenticated_group_source {
+        return Some(suppressed_resolution());
+    }
     if !preview.owner.eq_ignore_ascii_case(owner_pubkey_hex) {
         return Some(suppressed_resolution());
     }
