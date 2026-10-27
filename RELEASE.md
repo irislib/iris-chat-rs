@@ -215,6 +215,14 @@ stand in for unrelated platform coverage or a required physical-device check.
 
 The tagged GitHub release workflow remains the release builder and runs every
 release and mesh resource gate before publishing its signed, attested assets.
+Public release also requires the exact source commit and all ancestors to be
+available from the owned Hashtree source URL in `haps-release.json`. The
+maintainer publishes source with the existing signing identity; CI only reads
+it. Before attestation or public GitHub release creation, CI checks the tag,
+validated source and manifest agree, then uses the pinned Haps verifier and
+checksum-pinned helpers for a fresh fetch and complete-history traversal.
+Missing commits, shallow or incomplete history, and verification failures stop
+publication. No signing key is added to CI.
 
 Bluetooth changes also require a physical iPhone/Android check before release.
 `--on-device` checks LAN visibility; it does not exercise Bluetooth, and the
