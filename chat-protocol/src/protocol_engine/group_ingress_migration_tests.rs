@@ -1,5 +1,10 @@
 fn legacy_group_ingress_fixture() -> (ProtocolEngine, String) {
     let (mut engine, request) = repair_retry_fixture();
+    // Include actual session secrets as well as group chain keys, so an archive
+    // regression cannot silently retain keys merely absent from the fixture.
+    let pending = std::mem::take(&mut engine.pending_group_sender_key_messages);
+    assert!(synthetic_pending_inbound(&mut engine, 0, 0, 100).is_empty());
+    engine.pending_group_sender_key_messages = pending;
     engine
         .sender_key_repair_request_effects(request, NdrUnixSeconds(100))
         .unwrap();
@@ -43,7 +48,13 @@ fn legacy_group_ingress_fixture() -> (ProtocolEngine, String) {
         .unwrap();
     let marker = ",\"group_ingress_provenance_version\":1";
     assert_eq!(current.matches(marker).count(), 1);
-    let raw = current.replace(marker, "");
+    let raw = current
+        .replace(marker, "")
+        .replace(
+            "\"pending_group_sender_key_messages\":[",
+            "\"pending_group_sender_key_messages\":[\n ",
+        )
+        .replace("group-delivery:legacy", "group\\u002ddelivery:legacy");
     engine
         .storage
         .put(PROTOCOL_ENGINE_STATE_KEY, raw.clone())
@@ -59,18 +70,92 @@ fn reload_group_ingress(
     ProtocolEngine::load_or_create_for_local_device(storage, engine.owner_pubkey, &device)
 }
 
+fn assert_legacy_group_ingress_archive(storage: &dyn StorageAdapter, original: &str) -> String {
+    use serde_json::value::RawValue;
+    let archive = storage
+        .get(LEGACY_GROUP_INGRESS_QUARANTINE_KEY)
+        .unwrap()
+        .unwrap();
+    let before: BTreeMap<String, Box<RawValue>> = serde_json::from_str(original).unwrap();
+    let after: BTreeMap<String, Box<RawValue>> = serde_json::from_str(&archive).unwrap();
+    assert_eq!(
+        after.keys().map(String::as_str).collect::<Vec<_>>(),
+        vec![
+            "pending_decrypted_deliveries",
+            "pending_group_sender_key_messages",
+            "pending_group_sender_key_repairs",
+        ]
+    );
+    for field in [
+        "pending_group_sender_key_messages",
+        "pending_group_sender_key_repairs",
+    ] {
+        assert_eq!(
+            after[field].get(),
+            before.get(field).map_or("[]", |value| value.get()),
+            "removed queue encoding changed: {field}"
+        );
+    }
+    let original_journal: Vec<Box<RawValue>> = serde_json::from_str(
+        before
+            .get("pending_decrypted_deliveries")
+            .map_or("[]", |value| value.get()),
+    )
+    .unwrap();
+    let removed = original_journal
+        .iter()
+        .filter(|entry| {
+            let value: serde_json::Value = serde_json::from_str(entry.get()).unwrap();
+            value["event_id"]
+                .as_str()
+                .is_some_and(|id| id.starts_with("group-delivery:"))
+        })
+        .map(|entry| entry.get())
+        .collect::<Vec<_>>();
+    let retained: Vec<Box<RawValue>> =
+        serde_json::from_str(after["pending_decrypted_deliveries"].get()).unwrap();
+    assert_eq!(
+        retained.iter().map(|entry| entry.get()).collect::<Vec<_>>(),
+        removed,
+        "only synthetic journal items should be retained, in their original encoding"
+    );
+    archive
+}
+
 #[test]
 fn legacy_group_ingress_is_quarantined_once_without_retiring_outgoing_work() {
     let (engine, raw) = legacy_group_ingress_fixture();
     let before: serde_json::Value = serde_json::from_str(&raw).unwrap();
     let mut restored = reload_group_ingress(&engine, engine.storage.clone()).unwrap();
-    assert_eq!(
-        engine
-            .storage
-            .get(LEGACY_GROUP_INGRESS_QUARANTINE_KEY)
-            .unwrap()
-            .as_deref(),
-        Some(raw.as_str())
+    let archive = assert_legacy_group_ingress_archive(engine.storage.as_ref(), &raw);
+    let sessions = engine.session_manager.snapshot();
+    let session = sessions
+        .users
+        .iter()
+        .flat_map(|user| &user.devices)
+        .find_map(|device| device.active_session.as_ref())
+        .expect("fixture contains a real ratchet session");
+    for secret in [session.root_key, session.our_next_nostr_key.private_key]
+        .into_iter()
+        .chain(session.receiving_chain_key)
+        .chain(session.sending_chain_key)
+    {
+        let secret = hex::encode(secret);
+        assert!(
+            raw.contains(&secret),
+            "fixture must contain session secrets"
+        );
+        assert!(
+            !archive.contains(&secret),
+            "quarantine retained a session secret"
+        );
+    }
+    let group_chain_key = before["group_manager"]["sender_keys"][0]["states"][0]["chain_key"]
+        .as_str()
+        .expect("fixture contains a real group chain key");
+    assert!(
+        !archive.contains(group_chain_key),
+        "quarantine retained a group key"
     );
     assert!(restored.pending_group_sender_key_messages.is_empty());
     assert!(restored.pending_group_sender_key_repairs.is_empty());
@@ -115,12 +200,8 @@ fn legacy_group_ingress_is_quarantined_once_without_retiring_outgoing_work() {
         restored.pending_decrypted_deliveries
     );
     assert_eq!(
-        again
-            .storage
-            .get(LEGACY_GROUP_INGRESS_QUARANTINE_KEY)
-            .unwrap()
-            .as_deref(),
-        Some(raw.as_str())
+        assert_legacy_group_ingress_archive(again.storage.as_ref(), &raw),
+        archive
     );
 }
 
@@ -185,20 +266,13 @@ fn legacy_group_ingress_migration_write_failures_preserve_the_original_and_retry
         if fail_key == LEGACY_GROUP_INGRESS_QUARANTINE_KEY && !write_before_failure {
             assert!(quarantine.is_none());
         } else {
-            assert_eq!(quarantine.as_deref(), Some(raw.as_str()));
+            assert_legacy_group_ingress_archive(engine.storage.as_ref(), &raw);
         }
         let restored = reload_group_ingress(&engine, engine.storage.clone()).unwrap();
         assert!(restored.pending_group_sender_key_messages.is_empty());
         assert!(restored.pending_group_sender_key_repairs.is_empty());
         assert_eq!(restored.pending_group_fanouts, engine.pending_group_fanouts);
-        assert_eq!(
-            restored
-                .storage
-                .get(LEGACY_GROUP_INGRESS_QUARANTINE_KEY)
-                .unwrap()
-                .as_deref(),
-            Some(raw.as_str())
-        );
+        assert_legacy_group_ingress_archive(restored.storage.as_ref(), &raw);
     }
 }
 
@@ -277,13 +351,7 @@ fn legacy_group_ingress_segmented_storage_and_outer_rollback_preserve_exact_byte
             .unwrap();
         let restored = reload_group_ingress(&engine, storage.clone()).unwrap();
         assert!(restored.pending_group_sender_key_messages.is_empty());
-        assert_eq!(
-            storage
-                .get(LEGACY_GROUP_INGRESS_QUARANTINE_KEY)
-                .unwrap()
-                .as_deref(),
-            Some(raw.as_str())
-        );
+        assert_legacy_group_ingress_archive(storage.as_ref(), &raw);
         connection
             .lock()
             .unwrap()
@@ -300,13 +368,7 @@ fn legacy_group_ingress_segmented_storage_and_outer_rollback_preserve_exact_byte
         let reopened = reload_group_ingress(&engine, storage.clone()).unwrap();
         assert_eq!(reopened.pending_group_fanouts, engine.pending_group_fanouts);
         assert!(reopened.pending_group_sender_key_repairs.is_empty());
-        assert_eq!(
-            storage
-                .get(LEGACY_GROUP_INGRESS_QUARANTINE_KEY)
-                .unwrap()
-                .as_deref(),
-            Some(raw.as_str())
-        );
+        assert_legacy_group_ingress_archive(storage.as_ref(), &raw);
     }
 }
 
@@ -326,26 +388,14 @@ fn legacy_group_ingress_archive_precedes_debounced_state_checkpoint() {
         files.get(PROTOCOL_ENGINE_STATE_KEY).unwrap().as_deref(),
         Some(raw.as_str())
     );
-    assert_eq!(
-        files
-            .get(LEGACY_GROUP_INGRESS_QUARANTINE_KEY)
-            .unwrap()
-            .as_deref(),
-        Some(raw.as_str())
-    );
+    assert_legacy_group_ingress_archive(&files, &raw);
     drop(restored);
     drop(buffered);
     let buffered =
         Arc::new(DebouncedFileStorage::new(directory.path().to_owned(), 60_000).unwrap());
     let restored = reload_group_ingress(&engine, buffered.clone()).unwrap();
     buffered.flush().unwrap();
-    assert_eq!(
-        files
-            .get(LEGACY_GROUP_INGRESS_QUARANTINE_KEY)
-            .unwrap()
-            .as_deref(),
-        Some(raw.as_str())
-    );
+    assert_legacy_group_ingress_archive(&files, &raw);
     let reopened = reload_group_ingress(&restored, Arc::new(files)).unwrap();
     assert!(reopened.pending_group_sender_key_messages.is_empty());
     assert_eq!(reopened.pending_group_fanouts, engine.pending_group_fanouts);

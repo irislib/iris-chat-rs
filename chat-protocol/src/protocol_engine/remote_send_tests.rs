@@ -580,10 +580,7 @@ fn direct_foreign_recipient_is_pruned_from_persisted_retry_queues() {
         .unwrap();
     f.late = ProtocolEngine::load_or_create_for_local_device(storage.clone(), peer, &f.late_device)
         .unwrap();
-    assert_eq!(
-        storage.get(LEGACY_GROUP_INGRESS_QUARANTINE_KEY).unwrap(),
-        Some(legacy)
-    );
+    assert_legacy_group_ingress_archive(storage.as_ref(), &legacy);
     let retry = f
         .late
         .retry_pending_protocol(NdrUnixSeconds(unix_now().get() + 60))

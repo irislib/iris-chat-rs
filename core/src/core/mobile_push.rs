@@ -666,7 +666,7 @@ fn lookup_mobile_push_source_preview(
     }
 
     if block_policy::suppresses(
-        &conn,
+        conn,
         author_owner.as_deref().unwrap_or(&author_hex),
         Some(created),
     ) {
@@ -676,13 +676,13 @@ fn lookup_mobile_push_source_preview(
         return Some(read_state::dismissed_resolution());
     }
     let group_id = chat_id.strip_prefix(GROUP_CHAT_PREFIX);
-    if mention_policy::suppresses(&conn, &chat_id, owner_pubkey_hex, &body, true) {
+    if mention_policy::suppresses(conn, &chat_id, owner_pubkey_hex, &body, true) {
         return Some(suppressed_resolution());
     }
     let sender_pubkey = nostr::PublicKey::parse(&author_hex).ok();
     let sender_name = sender_pubkey
         .as_ref()
-        .and_then(|pubkey| lookup_owner_display_name(&conn, pubkey))
+        .and_then(|pubkey| lookup_owner_display_name(conn, pubkey))
         .filter(|value| !is_generic_sender_title(value))
         .unwrap_or_else(|| {
             // Author column on incoming messages is the resolved
@@ -700,7 +700,7 @@ fn lookup_mobile_push_source_preview(
                 "Iris Chat".to_string()
             }
         });
-    let group_title = group_id.and_then(|id| lookup_group_name_in(&conn, id));
+    let group_title = group_id.and_then(|id| lookup_group_name_in(conn, id));
 
     let body_preview = persisted_message_body_preview(&body, &attachments);
     let body_text = if body_preview.is_empty() {
