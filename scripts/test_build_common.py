@@ -112,7 +112,7 @@ if tool == "uname":
     print("Darwin" if args == ["-s"] else "arm64")
     raise SystemExit(0)
 with open(os.environ["FAKE_LOG"], "a") as log:
-    log.write(json.dumps({"tool": tool, "args": args, "env": {
+    log.write(json.dumps({"tool": tool, "args": args, "cwd": os.getcwd(), "env": {
         key: os.environ.get(key) for key in (
             "CARGO_TARGET_DIR", "CARGO_BUILD_JOBS", "CARGO_PROFILE_RELEASE_OPT_LEVEL",
             "CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS", "IRIS_BUILD_CHANNEL")}}) + "\n")
@@ -162,7 +162,7 @@ elif stage == "swift":
     def run_build(self, **environment: str) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
             ["/bin/bash", str(self.root / "scripts/macos-build"), "macos-dev"],
-            env={**self.env, **environment}, capture_output=True, text=True, timeout=15,
+            cwd=self.root, env={**self.env, **environment}, capture_output=True, text=True, timeout=15,
         )
 
     def commands(self) -> list[dict]:
@@ -186,6 +186,8 @@ elif stage == "swift":
             "IRIS_BUILD_CHANNEL": "development",
         })
         bindgen = next(command for command in commands if command["tool"] == "cargo" and command["args"][0] == "run")
+        self.assertEqual(pathlib.Path(bindgen["cwd"]), (self.root / "core").resolve(),
+                         "UniFFI runs cargo metadata from its working directory")
         self.assertEqual(bindgen["args"][bindgen["args"].index("--target-dir") + 1], str(self.bindgen_target))
         self.assertEqual(bindgen["args"][bindgen["args"].index("--library") + 1], str(self.target / "release/libiris_chat_core.dylib"))
         swift = commands[-1]

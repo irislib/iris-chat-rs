@@ -329,10 +329,13 @@ for line in pathlib.Path(sys.argv[1]).read_text().splitlines():
 if not expected <= artifacts or not all(path.is_file() for path in expected):
     raise SystemExit("macos-dev requires native core artifacts; remove any Cargo build.target override")
 PY
-  cargo run --manifest-path "$CORE_DIR/uniffi-bindgen/Cargo.toml" \
-    --target-dir "$bindgen_target" --locked --offline -- generate \
-    --library "$core_target/release/libiris_chat_core.dylib" --language swift \
-    --out-dir "$generated" --config "$CORE_DIR/uniffi.toml"
+  (
+    cd "$CORE_DIR"
+    cargo run --manifest-path "$CORE_DIR/uniffi-bindgen/Cargo.toml" \
+      --target-dir "$bindgen_target" --locked --offline -- generate \
+      --library "$core_target/release/libiris_chat_core.dylib" --language swift \
+      --out-dir "$generated" --config "$CORE_DIR/uniffi.toml"
+  )
   mkdir -p "$IOS_BINDINGS_DIR"
   for name in IrisChatCore.swift IrisChatCoreFFI.h IrisChatCoreFFI.modulemap; do
     [[ -s "$generated/$name" ]] || { echo "Missing generated binding: $name" >&2; exit 1; }
