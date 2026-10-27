@@ -205,6 +205,11 @@ optimized build may need a cold cache; keep bounded time and disk limits around
 it. Local performance evidence does not replace required acceptance of the
 unchanged tagged GitHub release artifact.
 
+After a newer release or development build has opened a profile, do not launch
+an older build against that profile to create a pre-upgrade witness. Record the
+actual last-opening build and upgrade directly from that state. Older-version
+tests must use a separately owned profile created under that version.
+
 Run local CPU checks separately from compilation, using the same verified app
 bundle and a bounded runtime lease. Open that exact bundle through Finder's
 normal Open action, then confirm its executable, process start identity, and

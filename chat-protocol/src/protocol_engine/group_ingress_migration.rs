@@ -73,15 +73,29 @@ fn quarantine_legacy_group_ingress(
         // get() reconstructs segmented/checkpoint storage. Preserve only the
         // removed input before changing executable state. A failed archive or
         // subsequent checkpoint leaves the migration safe to repeat.
-        if let Some(previous) = storage.get(LEGACY_GROUP_INGRESS_QUARANTINE_KEY)? {
-            anyhow::ensure!(
-                previous == quarantine,
-                "A different legacy group state is already quarantined. Existing data has been kept."
-            );
-        }
+        let quarantine_key = match storage.get(LEGACY_GROUP_INGRESS_QUARANTINE_KEY)? {
+            Some(previous) if previous != quarantine => {
+                use nostr::hashes::{sha256, Hash};
+                // An older app can drop the marker and accumulate new legacy
+                // ingress. Keep the original archive and preserve this input
+                // separately; neither archive is ever executable state.
+                let key = format!(
+                    "{LEGACY_GROUP_INGRESS_QUARANTINE_KEY}/{}",
+                    sha256::Hash::hash(quarantine.as_bytes())
+                );
+                if let Some(previous) = storage.get(&key)? {
+                    anyhow::ensure!(
+                        previous == quarantine,
+                        "Saved group journal archive conflicts with its contents. Existing data has been kept."
+                    );
+                }
+                key
+            }
+            _ => LEGACY_GROUP_INGRESS_QUARANTINE_KEY.to_owned(),
+        };
         // A previous preservation attempt may have written the bytes but failed
         // synchronization. Matching bytes alone are not a durable acknowledgment.
-        storage.put_preserved(LEGACY_GROUP_INGRESS_QUARANTINE_KEY, quarantine)?;
+        storage.put_preserved(&quarantine_key, quarantine)?;
         state.pending_group_sender_key_messages = PendingGroupMessages::default();
         state.pending_group_sender_key_repairs.clear();
         state

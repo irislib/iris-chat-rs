@@ -71,11 +71,16 @@ fn reload_group_ingress(
 }
 
 fn assert_legacy_group_ingress_archive(storage: &dyn StorageAdapter, original: &str) -> String {
+    assert_legacy_group_ingress_archive_at(storage, original, LEGACY_GROUP_INGRESS_QUARANTINE_KEY)
+}
+
+fn assert_legacy_group_ingress_archive_at(
+    storage: &dyn StorageAdapter,
+    original: &str,
+    key: &str,
+) -> String {
     use serde_json::value::RawValue;
-    let archive = storage
-        .get(LEGACY_GROUP_INGRESS_QUARANTINE_KEY)
-        .unwrap()
-        .unwrap();
+    let archive = storage.get(key).unwrap().unwrap();
     let before: BTreeMap<String, Box<RawValue>> = serde_json::from_str(original).unwrap();
     let after: BTreeMap<String, Box<RawValue>> = serde_json::from_str(&archive).unwrap();
     assert_eq!(
@@ -211,7 +216,7 @@ fn legacy_group_ingress_is_quarantined_once_without_retiring_outgoing_work() {
 
 struct GroupIngressFailStorage {
     inner: Arc<dyn StorageAdapter>,
-    fail_key: &'static str,
+    fail_key: String,
     write_before_failure: bool,
 }
 
@@ -246,7 +251,7 @@ fn legacy_group_ingress_migration_write_failures_preserve_the_original_and_retry
         let (engine, raw) = legacy_group_ingress_fixture();
         let failed = Arc::new(GroupIngressFailStorage {
             inner: engine.storage.clone(),
-            fail_key,
+            fail_key: fail_key.into(),
             write_before_failure,
         });
         assert!(reload_group_ingress(&engine, failed.clone()).is_err());
@@ -280,49 +285,231 @@ fn legacy_group_ingress_migration_write_failures_preserve_the_original_and_retry
     }
 }
 
+fn downgraded_group_ingress_fixture() -> (ProtocolEngine, String, String, String) {
+    use nostr::hashes::{sha256, Hash};
+    let (engine, original) = legacy_group_ingress_fixture();
+    reload_group_ingress(&engine, engine.storage.clone()).unwrap();
+    let first_archive = assert_legacy_group_ingress_archive(engine.storage.as_ref(), &original);
+    // Simulate an older app writing its markerless state after new legacy
+    // ingress arrives. The already preserved archive must remain untouched.
+    let raw = original.replace(
+        "preserve unproven group journal bytes",
+        "preserve changed group journal bytes after downgrade",
+    );
+    assert_ne!(raw, original);
+    engine
+        .storage
+        .put(PROTOCOL_ENGINE_STATE_KEY, raw.clone())
+        .unwrap();
+    let state = serde_json::from_str(&raw).unwrap();
+    let next_archive = legacy_group_ingress_quarantine(&raw, &state).unwrap();
+    let key = format!(
+        "{LEGACY_GROUP_INGRESS_QUARANTINE_KEY}/{}",
+        sha256::Hash::hash(next_archive.as_bytes())
+    );
+    (engine, raw, first_archive, key)
+}
+
 #[test]
-fn legacy_group_ingress_quarantine_conflict_and_future_version_fail_closed() {
-    for future in [false, true] {
-        let (engine, mut raw) = legacy_group_ingress_fixture();
-        if future {
-            let mut state: serde_json::Value = serde_json::from_str(&raw).unwrap();
-            state["group_ingress_provenance_version"] = serde_json::json!(2);
-            raw = state.to_string();
-            engine
-                .storage
-                .put(PROTOCOL_ENGINE_STATE_KEY, raw.clone())
-                .unwrap();
-        } else {
-            engine
-                .storage
-                .put(
-                    LEGACY_GROUP_INGRESS_QUARANTINE_KEY,
-                    "previous preserved state".into(),
-                )
-                .unwrap();
-        }
-        assert!(reload_group_ingress(&engine, engine.storage.clone()).is_err());
+fn legacy_group_ingress_downgrade_reupgrade_preserves_both_archives_and_is_idempotent() {
+    let (engine, raw, first_archive, key) = downgraded_group_ingress_fixture();
+    for _ in 0..2 {
+        // Repeat the old-version write too, not just a current-version restart.
+        engine
+            .storage
+            .put(PROTOCOL_ENGINE_STATE_KEY, raw.clone())
+            .unwrap();
+        let mut restored = reload_group_ingress(&engine, engine.storage.clone()).unwrap();
         assert_eq!(
             engine
                 .storage
-                .get(PROTOCOL_ENGINE_STATE_KEY)
+                .get(LEGACY_GROUP_INGRESS_QUARANTINE_KEY)
+                .unwrap(),
+            Some(first_archive.clone())
+        );
+        assert_legacy_group_ingress_archive_at(engine.storage.as_ref(), &raw, &key);
+        assert_eq!(
+            engine
+                .storage
+                .list(LEGACY_GROUP_INGRESS_QUARANTINE_KEY)
                 .unwrap()
-                .as_deref(),
-            Some(raw.as_str())
+                .len(),
+            2
+        );
+        assert!(restored.pending_group_sender_key_messages.is_empty());
+        assert!(restored.pending_group_sender_key_repairs.is_empty());
+        assert_eq!(restored.pending_decrypted_deliveries.len(), 1);
+        assert_eq!(
+            restored.pending_decrypted_deliveries[0].content,
+            "retain ordinary DM journal"
+        );
+        assert_eq!(restored.pending_group_fanouts, engine.pending_group_fanouts);
+        assert!(restored
+            .pending_group_decrypted_delivery("group-delivery:legacy")
+            .is_err());
+        assert!(restored
+            .retry_pending_group_sender_key_repairs(NdrUnixSeconds(u64::MAX))
+            .unwrap()
+            .is_empty());
+        let again = reload_group_ingress(&restored, restored.storage.clone()).unwrap();
+        assert!(again.pending_group_sender_key_messages.is_empty());
+        assert_eq!(
+            again
+                .storage
+                .list(LEGACY_GROUP_INGRESS_QUARANTINE_KEY)
+                .unwrap()
+                .len(),
+            2
+        );
+        assert_legacy_group_ingress_archive_at(again.storage.as_ref(), &raw, &key);
+    }
+}
+
+#[test]
+fn legacy_group_ingress_additional_archive_failures_keep_state_and_retry_durably() {
+    for (fail_checkpoint, write_before_failure) in [(false, false), (false, true), (true, false)] {
+        let (engine, raw, first_archive, key) = downgraded_group_ingress_fixture();
+        let failed = Arc::new(GroupIngressFailStorage {
+            inner: engine.storage.clone(),
+            fail_key: if fail_checkpoint {
+                PROTOCOL_ENGINE_STATE_KEY.into()
+            } else {
+                key.clone()
+            },
+            write_before_failure,
+        });
+        assert!(reload_group_ingress(&engine, failed.clone()).is_err());
+        // Matching archived bytes after a failed synchronization must not let
+        // a retry bypass put_preserved and commit the cleared checkpoint.
+        assert!(reload_group_ingress(&engine, failed).is_err());
+        assert_eq!(
+            engine.storage.get(PROTOCOL_ENGINE_STATE_KEY).unwrap(),
+            Some(raw.clone())
         );
         assert_eq!(
             engine
                 .storage
                 .get(LEGACY_GROUP_INGRESS_QUARANTINE_KEY)
+                .unwrap(),
+            Some(first_archive.clone())
+        );
+        if !fail_checkpoint && !write_before_failure {
+            assert!(engine.storage.get(&key).unwrap().is_none());
+        } else {
+            assert_legacy_group_ingress_archive_at(engine.storage.as_ref(), &raw, &key);
+        }
+        let restored = reload_group_ingress(&engine, engine.storage.clone()).unwrap();
+        assert!(restored.pending_group_sender_key_messages.is_empty());
+        assert!(restored.pending_group_sender_key_repairs.is_empty());
+        assert_eq!(restored.pending_group_fanouts, engine.pending_group_fanouts);
+        assert_eq!(
+            engine
+                .storage
+                .get(LEGACY_GROUP_INGRESS_QUARANTINE_KEY)
+                .unwrap(),
+            Some(first_archive)
+        );
+        assert_legacy_group_ingress_archive_at(engine.storage.as_ref(), &raw, &key);
+        assert_eq!(
+            engine
+                .storage
+                .list(LEGACY_GROUP_INGRESS_QUARANTINE_KEY)
                 .unwrap()
-                .as_deref(),
-            if future {
-                None
-            } else {
-                Some("previous preserved state")
-            }
+                .len(),
+            2
         );
     }
+}
+
+#[test]
+fn legacy_group_ingress_content_address_conflict_preserves_every_input() {
+    let (engine, raw, first_archive, key) = downgraded_group_ingress_fixture();
+    engine
+        .storage
+        .put(&key, "different preserved bytes".into())
+        .unwrap();
+    assert!(reload_group_ingress(&engine, engine.storage.clone()).is_err());
+    assert_eq!(
+        engine.storage.get(PROTOCOL_ENGINE_STATE_KEY).unwrap(),
+        Some(raw)
+    );
+    assert_eq!(
+        engine
+            .storage
+            .get(LEGACY_GROUP_INGRESS_QUARANTINE_KEY)
+            .unwrap(),
+        Some(first_archive)
+    );
+    assert_eq!(
+        engine.storage.get(&key).unwrap().as_deref(),
+        Some("different preserved bytes")
+    );
+}
+
+#[test]
+fn legacy_group_ingress_additional_archive_precedes_debounced_checkpoint() {
+    let (engine, raw, first_archive, key) = downgraded_group_ingress_fixture();
+    let directory = tempfile::tempdir().unwrap();
+    let files = FileStorageAdapter::new(directory.path().to_owned()).unwrap();
+    files.put(PROTOCOL_ENGINE_STATE_KEY, raw.clone()).unwrap();
+    files
+        .put(LEGACY_GROUP_INGRESS_QUARANTINE_KEY, first_archive.clone())
+        .unwrap();
+    let buffered =
+        Arc::new(DebouncedFileStorage::new(directory.path().to_owned(), 60_000).unwrap());
+    let restored = reload_group_ingress(&engine, buffered.clone()).unwrap();
+    // Before the delayed checkpoint, both inert archives are durable and the
+    // markerless input is still present. A fresh startup can safely repeat it.
+    assert_eq!(
+        files.get(PROTOCOL_ENGINE_STATE_KEY).unwrap(),
+        Some(raw.clone())
+    );
+    assert_eq!(
+        files.get(LEGACY_GROUP_INGRESS_QUARANTINE_KEY).unwrap(),
+        Some(first_archive.clone())
+    );
+    assert_legacy_group_ingress_archive_at(&files, &raw, &key);
+    drop(restored);
+    drop(buffered);
+    let buffered =
+        Arc::new(DebouncedFileStorage::new(directory.path().to_owned(), 60_000).unwrap());
+    let restored = reload_group_ingress(&engine, buffered.clone()).unwrap();
+    buffered.flush().unwrap();
+    assert!(restored.pending_group_sender_key_messages.is_empty());
+    assert_eq!(
+        files.get(LEGACY_GROUP_INGRESS_QUARANTINE_KEY).unwrap(),
+        Some(first_archive)
+    );
+    assert_legacy_group_ingress_archive_at(&files, &raw, &key);
+    assert_eq!(
+        files
+            .list(LEGACY_GROUP_INGRESS_QUARANTINE_KEY)
+            .unwrap()
+            .len(),
+        2
+    );
+}
+
+#[test]
+fn legacy_group_ingress_future_version_still_fails_closed() {
+    let (engine, original) = legacy_group_ingress_fixture();
+    let mut state: serde_json::Value = serde_json::from_str(&original).unwrap();
+    state["group_ingress_provenance_version"] = serde_json::json!(2);
+    let raw = state.to_string();
+    engine
+        .storage
+        .put(PROTOCOL_ENGINE_STATE_KEY, raw.clone())
+        .unwrap();
+    assert!(reload_group_ingress(&engine, engine.storage.clone()).is_err());
+    assert_eq!(
+        engine.storage.get(PROTOCOL_ENGINE_STATE_KEY).unwrap(),
+        Some(raw)
+    );
+    assert!(engine
+        .storage
+        .list(LEGACY_GROUP_INGRESS_QUARANTINE_KEY)
+        .unwrap()
+        .is_empty());
 }
 
 #[test]
