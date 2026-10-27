@@ -94,6 +94,20 @@ def validate(manifest, config, tag):
             names_match = False
         if not names_match:
             raise ValueError(f"{label}: IRIS_APP_VERSION_NAME does not match {tag}")
+        if name == "iris-chat" and target == "x86_64-unknown-linux-gnu":
+            # Haps audits a source build, not our Docker/DEB release pipeline.
+            # Keep its reachable tools explicit: no auto-installed cargo-deb,
+            # container provisioning, or release-packaging shell scripts.
+            expected_commands = [[
+                "env", f"IRIS_APP_VERSION_NAME={names[0]}", "cargo", "build",
+                "--manifest-path", "linux/Cargo.toml", "--locked", "--release",
+                "--bin", "iris-chat", "--target", "{target}",
+                "--target-dir", "target/haps-linux",
+            ]]
+            if (build["commands"] != expected_commands or
+                    build["artifacts"].get("usr/bin/iris-chat") !=
+                    "target/haps-linux/{target}/release/iris-chat"):
+                raise ValueError(f"{label}: source recipe must use the native locked Cargo build")
         codes = versions["IRIS_APP_VERSION_CODE"]
         if ("windows" in target and not codes) or any(not value.isascii() or not value.isdecimal() or int(value) != version_code for value in codes):
             raise ValueError(f"{label}: IRIS_APP_VERSION_CODE does not match {tag}")

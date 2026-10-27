@@ -120,6 +120,24 @@ class HapsManifestTests(unittest.TestCase):
             with self.subTest(tag=tag), self.assertRaises(ValueError):
                 self.checker.release_versions(tag)
 
+    def test_rejects_linux_release_packaging_and_unlocked_source_builds(self):
+        target = "x86_64-unknown-linux-gnu"
+        for change in ("release-script", "unlocked", "extra-install", "wrong-artifact"):
+            with self.subTest(change=change):
+                manifest = copy.deepcopy(self.manifest)
+                build = manifest["targets"][target]["build"]
+                if change == "release-script":
+                    build["commands"] = [["env", f"IRIS_APP_VERSION_NAME={self.tag[1:]}",
+                                          "./scripts/linux-release"]]
+                elif change == "unlocked":
+                    build["commands"][0].remove("--locked")
+                elif change == "extra-install":
+                    build["commands"].insert(0, ["cargo", "install", "cargo-deb", "--locked"])
+                else:
+                    build["artifacts"]["usr/bin/iris-chat"] = "linux/target/release/iris-chat"
+                with self.assertRaisesRegex(ValueError, "native locked Cargo"):
+                    self.validate(manifest)
+
     def test_cli_fails_a_deliberately_stale_manifest(self):
         with tempfile.TemporaryDirectory() as directory:
             manifest = Path(directory) / "haps.toml"
