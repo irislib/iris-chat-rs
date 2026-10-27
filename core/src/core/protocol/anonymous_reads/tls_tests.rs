@@ -58,6 +58,16 @@ pub(in crate::core) fn acceptor_with_sessions(
 pub(in crate::core) type Wire = Arc<Mutex<Vec<(usize, serde_json::Value)>>>;
 pub(in crate::core) type Handshakes = Arc<Mutex<Vec<(HandshakeKind, ProtocolVersion, bool)>>>;
 
+#[derive(Default)]
+pub(in crate::core) struct RelayControl {
+    pub(in crate::core) stall_queries: bool,
+    pub(in crate::core) ping_after_close: bool,
+    pub(in crate::core) query_waiting: tokio::sync::Notify,
+    pub(in crate::core) release_query: tokio::sync::Notify,
+    pub(in crate::core) send_ping: tokio::sync::Notify,
+    pub(in crate::core) pong: tokio::sync::Notify,
+}
+
 struct RecordHost(Arc<Mutex<Vec<String>>>);
 
 impl tokio_tungstenite::tungstenite::handshake::server::Callback for RecordHost {
@@ -97,14 +107,23 @@ pub(in crate::core) async fn relay(resume: bool, tls12_only: bool, events: Vec<E
 }
 
 async fn relay_with_acceptor(acceptor: TlsAcceptor, events: Vec<Event>) -> Relay {
-    relay_with_retention(acceptor, events, false).await
+    relay_with_retention(acceptor, events, false, None).await
 }
 
 pub(in crate::core) async fn persistent_relay(events: Vec<Event>) -> Relay {
-    relay_with_retention(acceptor(true, false), events, true).await
+    relay_with_retention(acceptor(true, false), events, true, None).await
 }
 
-async fn relay_with_retention(acceptor: TlsAcceptor, events: Vec<Event>, keep_open: bool) -> Relay {
+pub(in crate::core) async fn controlled_persistent_relay(control: Arc<RelayControl>) -> Relay {
+    relay_with_retention(acceptor(true, false), vec![], true, Some(control)).await
+}
+
+async fn relay_with_retention(
+    acceptor: TlsAcceptor,
+    events: Vec<Event>,
+    keep_open: bool,
+    control: Option<Arc<RelayControl>>,
+) -> Relay {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = RelayUrl::parse(&format!("wss://{}", listener.local_addr().unwrap())).unwrap();
     let wire: Wire = Arc::default();
@@ -130,6 +149,7 @@ async fn relay_with_retention(acceptor: TlsAcceptor, events: Vec<Event>, keep_op
                     let names = names.clone();
                     let hosts = hosts.clone();
                     let events = events.clone();
+                    let control = control.clone();
                     children.spawn(async move {
                         // Rejected certificates are an expected negative case.
                         let Ok(stream) = acceptor.accept(stream).await else { return; };
@@ -143,7 +163,13 @@ async fn relay_with_retention(acceptor: TlsAcceptor, events: Vec<Event>, keep_op
                         let mut socket = tokio_tungstenite::accept_hdr_async(stream, RecordHost(hosts)).await.unwrap();
                         socket.send(Message::Text(serde_json::json!(["AUTH", format!("tls-fixture-{id}")]).to_string())).await.unwrap();
                         let mut authenticated = false;
-                        while let Some(Ok(Message::Text(text))) = socket.next().await {
+                        while let Some(Ok(message)) = socket.next().await {
+                            if let Message::Pong(payload) = &message {
+                                assert_eq!(payload, &[7, 1, 9]);
+                                control.as_ref().expect("only controlled relays send Ping").pong.notify_one();
+                                continue;
+                            }
+                            let Message::Text(text) = message else { break; };
                             let value: serde_json::Value = serde_json::from_str(&text).unwrap();
                             wire.lock().unwrap().push((id, value.clone()));
                             match value[0].as_str() {
@@ -155,6 +181,10 @@ async fn relay_with_retention(acceptor: TlsAcceptor, events: Vec<Event>, keep_op
                                     socket.send(Message::Text(serde_json::json!(["OK", auth.id, true, ""]).to_string())).await.unwrap();
                                 }
                                 Some("REQ") if authenticated => {
+                                    if let Some(control) = control.as_ref().filter(|control| control.stall_queries) {
+                                        control.query_waiting.notify_one();
+                                        control.release_query.notified().await;
+                                    }
                                     let filters = value.as_array().unwrap()[2..].iter().cloned()
                                         .map(serde_json::from_value::<Filter>).collect::<Result<Vec<_>, _>>().unwrap();
                                     for event in events.iter().filter(|event| filters.iter().any(|filter| filter.match_event(event, nostr::filter::MatchEventOptions::new()))) {
@@ -163,6 +193,13 @@ async fn relay_with_retention(acceptor: TlsAcceptor, events: Vec<Event>, keep_op
                                     socket.send(Message::Text(serde_json::json!(["EOSE", value[1]]).to_string())).await.unwrap();
                                 }
                                 Some("CLOSE") if !keep_open => break,
+                                Some("CLOSE") => {
+                                    if let Some(control) = control.as_ref().filter(|control| control.ping_after_close) {
+                                        control.send_ping.notified().await;
+                                        socket.send(Message::Text(serde_json::json!(["NOTICE", "query complete"]).to_string())).await.unwrap();
+                                        socket.send(Message::Ping(vec![7, 1, 9])).await.unwrap();
+                                    }
+                                }
                                 _ => {},
                             }
                         }

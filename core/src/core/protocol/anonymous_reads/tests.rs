@@ -352,6 +352,94 @@ fn capacity_experiment_in_child(test: &str) -> bool {
 }
 
 #[tokio::test]
+async fn anonymous_reads_background_admission_services_current_retained_controls() {
+    if capacity_experiment_in_child(
+        "anonymous_reads_background_admission_services_current_retained_controls",
+    ) {
+        return;
+    }
+    tokio::time::timeout(Duration::from_secs(10), async {
+        let control = Arc::new(tls_tests::RelayControl {
+            ping_after_close: true,
+            ..Default::default()
+        });
+        let relay = tls_tests::controlled_persistent_relay(control.clone()).await;
+        let author = Keys::generate().public_key();
+        let filters = vec![Filter::new().author(author).kind(Kind::Metadata)];
+        let connector =
+            ScopedTlsConnector::new_with_roots(&relay.url, &filters, tls_tests::roots()).unwrap();
+        let mut connection = ScopedReadConnection::new(&relay.url, &filters);
+        let mut verification = VerificationCache::default();
+        poll_retained(
+            &relay.url,
+            filters.clone(),
+            Some(&connector),
+            verification.relay(0),
+            Some(&mut connection),
+        )
+        .await
+        .unwrap();
+        let requests = || {
+            relay
+                .wire
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|(_, value)| value[0] == "REQ")
+                .count()
+        };
+        assert_eq!(requests(), 2, "initial REQ and anonymous AUTH retry");
+
+        let occupied = BACKGROUND_SLOTS
+            .get()
+            .unwrap()
+            .acquire_many(BACKGROUND_READERS as u32)
+            .await
+            .unwrap();
+        {
+            let read = poll_retained(
+                &relay.url,
+                filters.clone(),
+                Some(&connector),
+                verification.relay(0),
+                Some(&mut connection),
+            );
+            tokio::pin!(read);
+            control.send_ping.notify_one();
+            tokio::select! {
+                result = &mut read => panic!("read bypassed occupied admission: {result:?}"),
+                result = tokio::time::timeout(Duration::from_secs(1), control.pong.notified()) => {
+                    result.expect("admission wait starved the current retained socket's Ping");
+                },
+            }
+            assert_eq!(
+                requests(),
+                2,
+                "idle control cannot send a query before admission"
+            );
+            assert_eq!(relay.handshakes.lock().unwrap().len(), 1);
+            // Drop the queued read while every permit is still held. This
+            // must not take or destroy the still-idle scoped session.
+        }
+        drop(occupied);
+        poll_retained(
+            &relay.url,
+            filters.clone(),
+            Some(&connector),
+            verification.relay(0),
+            Some(&mut connection),
+        )
+        .await
+        .unwrap();
+        assert_eq!(requests(), 3, "cancelled admission must send no query");
+        assert_eq!(relay.handshakes.lock().unwrap().len(), 1);
+        tls_tests::assert_wire(&relay, &[author], 1);
+    })
+    .await
+    .expect("current-socket admission control regression timed out");
+}
+
+#[tokio::test]
 async fn anonymous_reads_global_budget_covers_concurrent_callers_before_socket_open() {
     if capacity_experiment_in_child(
         "anonymous_reads_global_budget_covers_concurrent_callers_before_socket_open",

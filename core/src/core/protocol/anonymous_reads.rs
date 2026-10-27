@@ -201,13 +201,23 @@ async fn background_read(
     filters: &[Filter],
     tls: Option<&ScopedTlsConnector>,
     verification: Option<RelayVerification<'_>>,
-    connection: Option<&mut ScopedReadConnection>,
+    mut connection: Option<&mut ScopedReadConnection>,
 ) -> Result<Vec<Event>, ReadFailure> {
-    let _permit = BACKGROUND_SLOTS
-        .get_or_init(|| Semaphore::new(BACKGROUND_READERS))
-        .acquire()
-        .await
-        .map_err(|error| ReadFailure::Unavailable(error.to_string()))?;
+    let slots = BACKGROUND_SLOTS.get_or_init(|| Semaphore::new(BACKGROUND_READERS));
+    // Admission can wait longer than a relay's Ping deadline. The current
+    // socket is still idle until the permit arrives; service only its bounded
+    // control traffic, without opening a query or taking transaction ownership.
+    let _permit = tokio::select! {
+        permit = slots.acquire() => permit,
+        _ = async {
+            if let Some(connection) = connection.as_deref_mut() {
+                idle_connections(std::slice::from_mut(connection)).await;
+            } else {
+                std::future::pending::<()>().await;
+            }
+        } => unreachable!("idle handling never admits a background read"),
+    }
+    .map_err(|error| ReadFailure::Unavailable(error.to_string()))?;
     // Bound an unresponsive subject's turn; Tokio's semaphore is FIFO, so
     // every retained author eventually runs even when all relays are offline.
     let connector = tls

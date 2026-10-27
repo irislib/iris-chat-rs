@@ -175,23 +175,37 @@ impl PrivateDiscoveryClient {
                 let mut changed = false;
                 let mut read_succeeded = false;
                 let cycle = async {
-                    for (relay_index, (((relay, snapshot), tls), connection)) in current
+                    for (relay_index, ((relay, snapshot), tls)) in current
                         .relays
                         .iter()
                         .zip(snapshots.iter_mut())
                         .zip(&tls_connectors)
-                        .zip(&mut connections)
                         .enumerate()
                     {
-                        if let Ok(events) = super::anonymous_reads::poll_retained(
-                            relay,
-                            current.filters.clone(),
-                            tls.as_ref(),
-                            verification.relay(relay_index),
-                            Some(connection),
-                        )
-                        .await
-                        {
+                        let (before, remaining) = connections.split_at_mut(relay_index);
+                        let (connection, after) = remaining
+                            .split_first_mut()
+                            .expect("one retained connection per configured relay");
+                        // Other exact scopes may already have healthy sockets.
+                        // Keep their bounded control handling alive while this
+                        // read waits for admission or a relay response. Cancelling
+                        // idle handling retains healthy sockets and opens no REQ.
+                        let result = tokio::select! {
+                            result = super::anonymous_reads::poll_retained(
+                                relay,
+                                current.filters.clone(),
+                                tls.as_ref(),
+                                verification.relay(relay_index),
+                                Some(connection),
+                            ) => result,
+                            _ = async {
+                                tokio::join!(
+                                    super::anonymous_reads::idle_connections(before),
+                                    super::anonymous_reads::idle_connections(after),
+                                );
+                            } => unreachable!("idle handling never starts another poll"),
+                        };
+                        if let Ok(events) = result {
                             read_succeeded = true;
                             let response_changed = snapshot.observe(&events);
                             changed |= response_changed;

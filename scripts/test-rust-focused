@@ -237,8 +237,10 @@ def main(argv=None):
             log = runner.run(f"test-{index + 1:03d}", [str(binary), *arguments], env, echo=True)
             counts = SUMMARY.findall(log.read_text())
             runner.runs[-1]["test_summary"] = counts
-            if counts != [("ok", "1", "0", "0")]:
-                raise RuntimeError(f"{arguments[0]} did not execute exactly one passing, nonignored test")
+            # Isolated regressions can print their owned child harness output.
+            # Require every child result and the final outer result to pass one test.
+            if not counts or any(count != ("ok", "1", "0", "0") for count in counts):
+                raise RuntimeError(f"{arguments[0]} did not execute exactly one passing, nonignored test in every reported result")
         if source_state(args.crate) != receipt["source"]:
             raise RuntimeError("source changed during the focused run")
         if sha256(binary) != receipt["binary"]["sha256"]:

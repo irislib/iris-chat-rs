@@ -2,6 +2,27 @@
 
 Each release has channel-specific notes. The release tag must match the `##` heading exactly.
 
+## v2026.10.27.1
+
+### GitHub
+
+- Recover safely when legacy group state appears again after switching app versions. Preserve previous archives and outgoing work, keep quarantined traffic inactive, and retry interrupted saves without overwriting preserved data.
+- Avoid repetitive peer-key validation and keep idle connections responsive while preserving anonymous discovery and recipient-specific ratchet delivery.
+- Update FIPS core and endpoint to 0.4.114, TCP endpoint to 0.2.49, and the message provider to 0.5.45, including WebRTC 0.17.4 with patched DTLS key agreement.
+- Update the protocol source package to 0.3.13 and the CLI source package to 0.1.58.
+
+### Apple
+
+- Improve chat recovery after switching app versions.
+- Reduce repeated background work and improve connection responsiveness.
+- Update connection security.
+
+### Zapstore
+
+- Improve chat recovery after switching app versions.
+- Reduce repeated background work and improve connection responsiveness.
+- Update connection security.
+
 ## v2026.10.27
 
 ### GitHub

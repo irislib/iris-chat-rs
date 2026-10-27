@@ -114,6 +114,96 @@ async fn retained_worker_reuses_reads_and_discards_sockets_on_configuration_and_
     .unwrap();
 }
 
+#[tokio::test]
+async fn discovery_worker_services_retained_sibling_controls_during_pending_relay_read() {
+    tokio::time::timeout(Duration::from_secs(10), async {
+        let idle = Arc::new(fixture::RelayControl {
+            ping_after_close: true,
+            ..Default::default()
+        });
+        let stalled = Arc::new(fixture::RelayControl {
+            stall_queries: true,
+            ..Default::default()
+        });
+        let first = fixture::controlled_persistent_relay(idle.clone()).await;
+        let second = fixture::controlled_persistent_relay(stalled.clone()).await;
+        let author = Keys::generate().public_key();
+        let (sender, events) = flume::unbounded();
+        let worker = PrivateDiscoveryClient::new(&tokio::runtime::Handle::current(), sender);
+        worker
+            .configure(
+                &[first.url.clone(), second.url.clone()],
+                vec![Filter::new().author(author).kind(Kind::Metadata)],
+            )
+            .unwrap();
+        for relay in [&first, &second] {
+            worker
+                .set_test_tls_roots(&relay.url, fixture::certificates())
+                .unwrap();
+        }
+        // The second authenticated REQ is on the wire, but its EOSE is held.
+        // Thus the whole sweep cannot finish before the idle Pong is observed.
+        stalled.query_waiting.notified().await;
+        wait_queries(&first, author, 1).await;
+        idle.send_ping.notify_one();
+        tokio::time::timeout(Duration::from_secs(1), idle.pong.notified())
+            .await
+            .expect("a stalled sibling read starved the retained socket's Ping");
+        let count = |relay: &fixture::Relay, kind: &str| {
+            relay
+                .wire
+                .lock()
+                .unwrap()
+                .iter()
+                .filter(|(_, value)| value[0] == kind)
+                .count()
+        };
+        assert_eq!(count(&second, "CLOSE"), 0);
+        for relay in [&first, &second] {
+            assert_eq!(
+                count(relay, "REQ"),
+                2,
+                "initial REQ and anonymous AUTH retry only"
+            );
+            assert_eq!(count(relay, "AUTH"), 1);
+            assert_eq!(relay.handshakes.lock().unwrap().len(), 1);
+        }
+        assert!(
+            events.is_empty(),
+            "idle controls must not create application events"
+        );
+
+        stalled.release_query.notify_one();
+        wait_queries(&second, author, 1).await;
+        // An explicit next poll must reuse each exact socket, proving that
+        // servicing the Ping retained it rather than merely delaying closure.
+        worker.refresh();
+        stalled.release_query.notify_one();
+        wait_queries(&first, author, 2).await;
+        wait_queries(&second, author, 2).await;
+        for relay in [&first, &second] {
+            assert_eq!(count(relay, "REQ"), 3, "no extra query from idle handling");
+            fixture::assert_wire(relay, &[author], 1);
+            assert_eq!(relay.handshakes.lock().unwrap().len(), 1);
+        }
+        let auth_key = |relay: &fixture::Relay| {
+            let rows = relay.wire.lock().unwrap();
+            let auth = rows.iter().find(|(_, value)| value[0] == "AUTH").unwrap();
+            serde_json::from_value::<Event>(auth.1[1].clone())
+                .unwrap()
+                .pubkey
+        };
+        assert_ne!(
+            auth_key(&first),
+            auth_key(&second),
+            "relay scopes cannot share AUTH"
+        );
+        stop(&worker).await;
+    })
+    .await
+    .expect("stalled-sibling idle-control regression timed out");
+}
+
 fn configure(worker: &PrivateDiscoveryClient, relay: &RelayUrl, filters: Vec<Filter>) {
     worker
         .configure(std::slice::from_ref(relay), filters)

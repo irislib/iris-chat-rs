@@ -75,6 +75,7 @@ pub(super) async fn run(
     let mut bootstrap_revision = 0_u64;
     let mut reported_links = Vec::new();
     let mut discovery_edges = DiscoveryRouteEdges::default();
+    let mut validated_keys = BTreeMap::new();
     let carrier = debug_snapshot_file_writes_enabled()
         .then(|| {
             endpoint
@@ -129,9 +130,9 @@ pub(super) async fn run(
                 return;
             }
         };
-        // Keep the validated curve key only for this snapshot. Nostr's byte
-        // wrapper needs no hex round trip after the FIPS decoder validated it.
-        let peers = validated_peer_snapshot(peers, |npub| {
+        // Cache only exact-string key validation for this monitor's current
+        // peers. Connection, retry, and authorization state stay fresh below.
+        let peers = validated_peer_snapshot(peers, &mut validated_keys, |npub| {
             let key = fips_core::decode_npub(npub)?;
             Ok::<_, fips_core::IdentityError>((key, PublicKey::from_byte_array(key.serialize())))
         });
@@ -250,13 +251,26 @@ pub(super) async fn run(
     }
 }
 
-fn validated_peer_snapshot<K, E>(
+fn validated_peer_snapshot<K: Copy, E>(
     peers: Vec<FipsEndpointPeer>,
+    validated_keys: &mut BTreeMap<String, Option<K>>,
     mut decode: impl FnMut(&str) -> Result<K, E>,
 ) -> Vec<(FipsEndpointPeer, K)> {
+    let current_inputs = peers
+        .iter()
+        .map(|peer| peer.npub.as_str())
+        .collect::<std::collections::BTreeSet<_>>();
+    validated_keys.retain(|npub, _| current_inputs.contains(npub.as_str()));
     peers
         .into_iter()
-        .filter_map(|peer| decode(&peer.npub).ok().map(|key| (peer, key)))
+        .filter_map(|peer| {
+            let key = validated_keys.get(&peer.npub).copied().unwrap_or_else(|| {
+                let key = decode(&peer.npub).ok();
+                validated_keys.insert(peer.npub.clone(), key);
+                key
+            });
+            key.map(|key| (peer, key))
+        })
         .collect()
 }
 
@@ -477,8 +491,9 @@ mod tests {
             peers.push(snapshot_peer(invalid.into(), 3 + index as u64));
         }
         let mut decodes = 0;
-        for _ in 0..2 {
-            let validated = validated_peer_snapshot(peers.clone(), |npub| {
+        let mut validated_keys = BTreeMap::new();
+        for _ in 0..60 {
+            let validated = validated_peer_snapshot(peers.clone(), &mut validated_keys, |npub| {
                 decodes += 1;
                 fips_core::decode_npub(npub)
             });
@@ -532,8 +547,121 @@ mod tests {
         }
         assert_eq!(
             decodes,
-            peers.len() * 2,
-            "exactly one real FIPS decode per entry per snapshot"
+            peers.len(),
+            "unchanged valid and invalid inputs each need only one real FIPS decode"
+        );
+    }
+
+    #[test]
+    fn cached_peer_validation_preserves_fresh_link_and_retry_state() {
+        let author = Keys::generate().public_key();
+        let npub = author.to_bech32().unwrap();
+        let mut validated_keys = BTreeMap::new();
+        let mut decodes = 0;
+        let mut edges = DiscoveryRouteEdges::default();
+        let now = std::time::Instant::now();
+        for (connected, retries, link_id) in [(true, 0, 1), (false, 2, 1), (true, 3, 2)] {
+            let mut peer = snapshot_peer(npub.clone(), link_id);
+            peer.connected = connected;
+            peer.direct_probe_retry_count = retries;
+            peer.nostr_traversal_consecutive_failures = retries;
+            peer.packets_recv = u64::from(retries);
+            let validated = validated_peer_snapshot(vec![peer], &mut validated_keys, |npub| {
+                decodes += 1;
+                fips_core::decode_npub(npub)
+            });
+            let [(peer, key)] = validated.as_slice() else {
+                panic!("valid peer must survive cached validation");
+            };
+            assert_eq!(PublicKey::from_byte_array(key.serialize()), author);
+            assert_eq!(peer.connected, connected);
+            assert_eq!(peer.link_id, link_id);
+            assert_eq!(peer.packets_recv, u64::from(retries));
+            let needed = edges.update(
+                BTreeMap::from([(
+                    author,
+                    discovery_state(
+                        peer.connected,
+                        peer.direct_probe_retry_count,
+                        peer.nostr_traversal_consecutive_failures,
+                    ),
+                )]),
+                now,
+            );
+            assert_eq!(
+                needed,
+                if connected {
+                    vec![]
+                } else {
+                    vec![(author, false)]
+                }
+            );
+            let state = edges.previous.get(&author).unwrap();
+            assert_eq!(state.retries, retries);
+            assert_eq!(state.failures, retries);
+        }
+        assert_eq!(decodes, 1, "fresh status must not require key revalidation");
+    }
+
+    #[test]
+    fn peer_validation_cache_revalidates_changed_and_returning_inputs() {
+        let first = Keys::generate().public_key().to_bech32().unwrap();
+        let second = Keys::generate().public_key().to_bech32().unwrap();
+        let invalid = PublicKey::from_byte_array([0xff; 32]).to_bech32().unwrap();
+        let mut validated_keys = BTreeMap::new();
+        let mut decodes = BTreeMap::<String, usize>::new();
+        for (inputs, expected) in [
+            (
+                vec![first.clone(), first.clone(), invalid.clone()],
+                vec![first.clone(), first.clone()],
+            ),
+            (
+                vec![first.clone(), second.clone(), invalid.clone()],
+                vec![first.clone(), second.clone()],
+            ),
+            (vec![second.clone()], vec![second.clone()]),
+            (vec![second.to_uppercase()], vec![second.to_uppercase()]),
+            (vec![first.clone(), invalid.clone()], vec![first.clone()]),
+            (vec![], vec![]),
+        ] {
+            let peers = inputs
+                .iter()
+                .enumerate()
+                .map(|(index, npub)| snapshot_peer(npub.clone(), index as u64))
+                .collect();
+            let validated = validated_peer_snapshot(peers, &mut validated_keys, |npub| {
+                *decodes.entry(npub.to_string()).or_default() += 1;
+                fips_core::decode_npub(npub)
+            });
+            assert_eq!(
+                validated
+                    .iter()
+                    .map(|(peer, _)| peer.npub.clone())
+                    .collect::<Vec<_>>(),
+                expected,
+                "changed input must be validated without suppressing valid duplicates"
+            );
+            assert_eq!(
+                validated_keys
+                    .keys()
+                    .collect::<std::collections::BTreeSet<_>>(),
+                inputs.iter().collect::<std::collections::BTreeSet<_>>(),
+                "departed peers and invalid inputs must not accumulate"
+            );
+        }
+        assert_eq!(
+            decodes[&first], 2,
+            "removed peers need validation on return"
+        );
+        assert_eq!(decodes[&second], 1);
+        assert_eq!(
+            decodes[&second.to_uppercase()],
+            1,
+            "cache keys are exact inputs"
+        );
+        assert_eq!(
+            decodes[&invalid], 2,
+            "invalid results expire with their input"
         );
     }
 

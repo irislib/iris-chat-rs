@@ -69,14 +69,33 @@ else:
 '''
 
 FAKE_BINARY = r'''
-import json, os, pathlib, sys
+import json, os, pathlib, subprocess, sys
 root = pathlib.Path(os.environ["FIXTURE_ROOT"])
 args = sys.argv[1:]
 with (root / "calls.jsonl").open("a") as output:
     output.write(json.dumps({"tool": "binary", "args": args}) + "\n")
 name = args[0]
 print("test diagnostic: " + name, flush=True)
-if name == "tests::missing":
+if name.startswith("tests::nested_"):
+    child_name = {
+        "tests::nested_good": "tests::one",
+        "tests::nested_child_failure": "tests::failure",
+        "tests::nested_child_zero": "tests::missing",
+        "tests::nested_child_ignored": "tests::ignored",
+        "tests::nested_outer_zero": "tests::one",
+    }[name]
+    child = subprocess.run([sys.executable, sys.argv[0], child_name, *args[1:]],
+                           capture_output=True, text=True, check=False)
+    print("owned child exit: " + str(child.returncode), flush=True)
+    print("stdout:\n" + child.stdout, flush=True)
+    print("stderr:\n" + child.stderr, flush=True)
+    # Deliberately return zero even for a failed child: the runner must inspect
+    # every result rather than trusting only the successful outer exit/summary.
+    passed = 0 if name == "tests::nested_outer_zero" else 1
+    print(f"test result: ok. {passed} passed; 0 failed; 0 ignored; 99 filtered out;")
+elif name == "tests::no_summary":
+    pass
+elif name == "tests::missing":
     print("test result: ok. 0 passed; 0 failed; 0 ignored; 99 filtered out;")
 elif name == "tests::ignored" and "--include-ignored" not in args:
     print("test result: ok. 0 passed; 0 failed; 1 ignored; 99 filtered out;")
@@ -176,6 +195,46 @@ class FocusedRunnerTests(unittest.TestCase):
                 self.assertIn("did not execute exactly one", result.stderr)
                 self.assertFalse(self.receipt()["passed"])
                 self.assertEqual(self.receipt()["runs"][-1]["exit_code"], 0)
+
+    def test_nested_child_and_outer_success_keep_both_summaries_and_logs(self):
+        result = self.run_fixture("--test", "tests::nested_good")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        receipt = self.receipt()
+        self.assertTrue(receipt["passed"])
+        run = receipt["runs"][-1]
+        self.assertEqual(run["test_summary"], [["ok", "1", "0", "0"]] * 2)
+        self.assertEqual(run["exit_code"], 0)
+        self.assertTrue(run["closure"]["closed"])
+        self.assertEqual(run["log_sha256"], FOCUSED.sha256(run["log"]))
+        self.assertIn("owned child exit: 0", result.stdout)
+        self.assertIn("test diagnostic: tests::one", Path(run["log"]).read_text())
+        self.assertEqual([call["args"][0] for call in self.calls() if call["tool"] == "binary"],
+                         ["tests::nested_good", "tests::one"])
+
+    def test_nested_bad_child_or_outer_and_missing_summaries_are_rejected(self):
+        for name, bad_index, bad_summary in (
+            ("nested_child_failure", 0, ["FAILED", "0", "1", "0"]),
+            ("nested_child_zero", 0, ["ok", "0", "0", "0"]),
+            ("nested_child_ignored", 0, ["ok", "0", "0", "1"]),
+            ("nested_outer_zero", 1, ["ok", "0", "0", "0"]),
+            ("no_summary", None, None),
+        ):
+            with self.subTest(name=name):
+                self.output = self.root / name
+                result = self.run_fixture("--test", "tests::" + name)
+                self.assertEqual(result.returncode, 1, result.stdout)
+                self.assertIn("did not execute exactly one", result.stderr)
+                receipt = self.receipt()
+                self.assertFalse(receipt["passed"])
+                run = receipt["runs"][-1]
+                self.assertEqual(run["exit_code"], 0, "summary rejection must not rely on process failure")
+                self.assertTrue(run["closure"]["closed"])
+                if bad_index is None:
+                    self.assertEqual(run["test_summary"], [])
+                else:
+                    self.assertEqual(len(run["test_summary"]), 2)
+                    self.assertEqual(run["test_summary"][bad_index], bad_summary)
+                    self.assertEqual(run["test_summary"][1 - bad_index], ["ok", "1", "0", "0"])
 
     def test_test_failure_preserves_full_diagnostic_and_exit_code(self):
         result = self.run_fixture("--test", "tests::failure")
