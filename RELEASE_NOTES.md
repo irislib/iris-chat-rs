@@ -2,6 +2,26 @@
 
 Each release has channel-specific notes. The release tag must match the `##` heading exactly.
 
+## v2026.10.27
+
+### GitHub
+
+- Require authenticated pairwise message delivery before processing group ciphertext, rosters or notification previews. Reject raw shared group traffic and cached previews without authenticated delivery provenance.
+- Quarantine unverified legacy incoming group candidates, recovery requests and synthetic delivery entries before restarting pending work. Preserve established sessions, saved history and outgoing queues without copying ratchet secrets into the quarantine.
+- Reduce repeated background processing of unverified group inputs, with regressions for restart recovery, failed saves, notification previews and serialized privacy boundaries.
+- Speed up local Mac development builds by reusing generated bindings and build caches, and check Rust formatting before the release build matrix starts.
+- Update the protocol source package to 0.3.12 and the CLI source package to 0.1.57. Private group delivery continues to use recipient-specific ratchet sessions.
+
+### Apple
+
+- Reduce background processing while recovering group messages.
+- Improve private group message and notification handling.
+
+### Zapstore
+
+- Reduce background processing while recovering group messages.
+- Improve private group message and notification handling.
+
 ## v2026.10.26.3
 
 ### GitHub
