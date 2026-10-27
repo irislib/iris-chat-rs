@@ -60,7 +60,9 @@ impl From<nostr::event::Error> for NdrError {
 impl From<anyhow::Error> for NdrError {
     fn from(error: anyhow::Error) -> Self {
         let message = error.to_string();
-        if message.contains("session") && message.contains("not ready") {
+        if error.is::<iris_chat_protocol::PendingInboundAdmissionError>()
+            || (message.contains("session") && message.contains("not ready"))
+        {
             NdrError::SessionNotReady(message)
         } else if message.contains("invite") {
             NdrError::InviteError(message)
@@ -70,6 +72,38 @@ impl From<anyhow::Error> for NdrError {
             NdrError::InvalidKey(message)
         } else {
             NdrError::InvalidEvent(message)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pending_inbound_admission_is_retryable_without_reclassifying_invalid_events() {
+        for context in [None, Some("invalid event received")] {
+            let mut error = anyhow::Error::new(iris_chat_protocol::PendingInboundAdmissionError);
+            if let Some(context) = context {
+                error = error.context(context);
+            }
+            let expected = error.to_string();
+            assert!(matches!(
+                NdrError::from(error),
+                NdrError::SessionNotReady(message) if message == expected
+            ));
+        }
+
+        // The typed cause, including through context, selects retryability.
+        // An ordinary invalid event with identical text must remain invalid.
+        for message in [
+            iris_chat_protocol::PendingInboundAdmissionError.to_string(),
+            "malformed event".to_string(),
+        ] {
+            assert!(matches!(
+                NdrError::from(anyhow::Error::msg(message.clone())),
+                NdrError::InvalidEvent(detail) if detail == message
+            ));
         }
     }
 }

@@ -56,6 +56,11 @@ pub type StorageResult<T> = Result<T, StorageError>;
 pub trait StorageAdapter: Send + Sync {
     fn get(&self, key: &str) -> StorageResult<Option<String>>;
     fn put(&self, key: &str, value: String) -> StorageResult<()>;
+    /// Preserve a migration input before a later checkpoint can replace it.
+    /// Buffered adapters must commit this write before returning success.
+    fn put_preserved(&self, key: &str, value: String) -> StorageResult<()> {
+        self.put(key, value)
+    }
     fn put_checkpoint(&self, key: &str, value: &StorageCheckpoint) -> StorageResult<()> {
         self.put(key, value.materialize()?)
     }
@@ -209,6 +214,23 @@ impl StorageAdapter for FileStorageAdapter {
         Ok(())
     }
 
+    fn put_preserved(&self, key: &str, value: String) -> StorageResult<()> {
+        self.put(key, value)?;
+        // Ordinary checkpoints remain buffered. A migration archive must be
+        // acknowledged by storage before a later checkpoint can replace it.
+        fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(self.key_to_path(key))
+            .and_then(|file| file.sync_all())
+            .map_err(|err| storage_io_error("failed to sync preserved storage file", err))?;
+        #[cfg(unix)]
+        fs::File::open(&self.base_path)
+            .and_then(|directory| directory.sync_all())
+            .map_err(|err| storage_io_error("failed to sync preserved storage directory", err))?;
+        Ok(())
+    }
+
     fn del(&self, key: &str) -> StorageResult<()> {
         let path = self.key_to_path(key);
         match fs::remove_file(&path) {
@@ -323,6 +345,16 @@ impl StorageAdapter for DebouncedFileStorage {
             .map_err(|_| StorageError::new("pending file storage mutex poisoned"))?
             .insert(key.to_string(), value);
         self.maybe_flush()
+    }
+
+    fn put_preserved(&self, key: &str, value: String) -> StorageResult<()> {
+        let mut pending = self
+            .pending_writes
+            .lock()
+            .map_err(|_| StorageError::new("pending file storage mutex poisoned"))?;
+        self.adapter.put_preserved(key, value)?;
+        pending.remove(key);
+        Ok(())
     }
 
     fn del(&self, key: &str) -> StorageResult<()> {

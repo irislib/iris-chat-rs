@@ -71,8 +71,8 @@ fn advance_fresh_pacing_clock(engine: &ProtocolEngine) {
 }
 
 #[test]
-fn fresh_public_receive_skips_old_history_without_waiting_or_losing_its_cursor() {
-    for direct_probe_first in [false, true] {
+fn fresh_authenticated_receive_skips_old_history_without_waiting_or_losing_its_cursor() {
+    for already_queued in [false, true] {
         let mut engine = expensive_unknown_history();
         let events = fresh_frontier_events(&mut engine, 2);
         enable_virtual_history_pacing(&engine);
@@ -94,9 +94,11 @@ fn fresh_public_receive_skips_old_history_without_waiting_or_losing_its_cursor()
             parsed.message_number, 2001,
             "the wire must not reveal the ratchet position"
         );
-        if direct_probe_first {
+        if already_queued {
             engine
-                .queue_header_group_sender_key_candidate(&events[0])
+                .queue_pending_group_sender_key_message(
+                    parse_group_sender_key_message_event_unchecked(&events[0]).unwrap(),
+                )
                 .unwrap();
         }
         let first = engine.process_group_outer_event(&events[0]).unwrap();
@@ -163,7 +165,7 @@ fn fresh_public_receive_skips_old_history_without_waiting_or_losing_its_cursor()
         advance_history_pacing_clock(&engine);
         engine.retry_pending_protocol(NdrUnixSeconds(30)).unwrap();
         assert!(engine.group_retry_pacing.borrow().key_trials > old_trials);
-        eprintln!("fresh_frontier_latency direct_probe_first={direct_probe_first} first_ms={} second_ms={} key_trials=2 skipped_keys=2000 epochs=3", latency.as_secs_f64()*1000.0, second_latency.as_secs_f64()*1000.0);
+        eprintln!("fresh_frontier_latency already_queued={already_queued} first_ms={} second_ms={} key_trials=2 skipped_keys=2000 epochs=3", latency.as_secs_f64()*1000.0, second_latency.as_secs_f64()*1000.0);
     }
 }
 
@@ -228,7 +230,9 @@ fn fresh_receive_failed_save_preserves_old_cursor_and_charges_work() {
     enable_virtual_history_pacing(&engine);
     engine.retry_pending_protocol(NdrUnixSeconds(30)).unwrap();
     engine
-        .queue_header_group_sender_key_candidate(&event)
+        .queue_pending_group_sender_key_message(
+            parse_group_sender_key_message_event_unchecked(&event).unwrap(),
+        )
         .unwrap();
     let old_fingerprint = engine
         .group_sender_key_retry
@@ -312,7 +316,9 @@ fn fresh_allowance_is_not_readmitted_by_restored_ciphertext_replays() {
     let event = fresh_frontier_events(&mut engine, 1).remove(0);
     enable_virtual_history_pacing(&engine);
     engine
-        .queue_header_group_sender_key_candidate(&event)
+        .queue_pending_group_sender_key_message(
+            parse_group_sender_key_message_event_unchecked(&event).unwrap(),
+        )
         .unwrap();
     assert_eq!(engine.group_sender_key_retry.borrow().fresh.len(), 1);
     let keys = Keys::new(nostr::SecretKey::from_slice(&engine.local_device_secret).unwrap());
@@ -328,7 +334,9 @@ fn fresh_allowance_is_not_readmitted_by_restored_ciphertext_replays() {
     let trials = restored.group_retry_pacing.borrow().key_trials;
     for _ in 0..16 {
         restored
-            .queue_header_group_sender_key_candidate(&event)
+            .queue_pending_group_sender_key_message(
+                parse_group_sender_key_message_event_unchecked(&event).unwrap(),
+            )
             .unwrap();
         assert!(restored
             .process_group_outer_event(&event)

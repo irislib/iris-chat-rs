@@ -551,6 +551,18 @@ impl ProtocolEngine {
                 self.persist()?;
             }
         } else {
+            let is_tracked = |sender| self.session_manager.message_sender_record(sender).is_some();
+            if !is_tracked(ndr_device(event.pubkey))
+                && self
+                    .pending_inbound
+                    .iter()
+                    .filter(|pending| !is_tracked(ndr_device(pending.event.pubkey)))
+                    .take(MAX_UNTRACKED_PENDING_INBOUND)
+                    .count()
+                    >= MAX_UNTRACKED_PENDING_INBOUND
+            {
+                return Err(PendingInboundAdmissionError.into());
+            }
             let mut pending = ProtocolPendingInbound {
                 body: ProtocolPendingInboundBody {
                     event,

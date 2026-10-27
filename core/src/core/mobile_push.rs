@@ -306,6 +306,11 @@ fn decrypt_mobile_push_notification_inner(
         }
         Err(_) => return fallback(),
     };
+    // Cached carrier evidence binds the complete signed event, not an ID or
+    // source alias supplied independently by the notification payload.
+    if outer_event.verify().is_err() {
+        return suppressed_resolution();
+    }
 
     let outer_event_id = outer_event.id.to_string();
     let is_invite_response = outer_event.kind.as_u16() as u64 == MOBILE_PUSH_INVITE_RESPONSE_KIND;
@@ -340,21 +345,8 @@ fn decrypt_mobile_push_notification_inner(
             return lookup_mobile_push_preview(&data_dir, &outer_event_id, &owner_pubkey_hex)
                 .unwrap_or_else(suppressed_resolution);
         }
-        let is_legacy_group_outer = !mobile_push_event_has_tag(&outer_event, "header")
-            && parse_group_sender_key_message_event(&outer_event).is_ok();
         lookup_mobile_push_preview_after_short_wait(&data_dir, &outer_event_id, &owner_pubkey_hex)
-            .unwrap_or_else(|| {
-                if is_legacy_group_outer {
-                    lookup_recent_group_mobile_push_preview_after_short_wait(
-                        &data_dir,
-                        outer_event.created_at.as_secs().saturating_sub(5),
-                        &owner_pubkey_hex,
-                    )
-                    .unwrap_or_else(suppressed_resolution)
-                } else {
-                    suppressed_resolution()
-                }
-            })
+            .unwrap_or_else(suppressed_resolution)
     };
 
     // If the foreground app already wrote a chat message for this
@@ -385,105 +377,44 @@ fn decrypt_mobile_push_notification_inner(
         return cached_fallback();
     };
 
-    let outer_has_header = mobile_push_event_has_tag(&outer_event, "header");
-    let should_try_group_outer =
-        !outer_has_header || engine.is_known_group_sender_event_author(outer_event.pubkey);
-    let group_outer_parse = should_try_group_outer.then(|| {
-        if outer_has_header {
-            parse_group_sender_key_message_event_unchecked(&outer_event)
-        } else {
-            parse_group_sender_key_message_event(&outer_event)
-        }
-    });
-    if group_outer_parse
-        .as_ref()
-        .is_some_and(|parse| parse.is_ok())
-    {
-        let group_result = match engine.process_group_outer_event(&outer_event) {
-            Ok(result) => result,
-            Err(_) => return cached_fallback(),
-        };
-        let Some(message) = group_result
-            .events
-            .into_iter()
-            .find_map(|event| match event {
-                GroupIncomingEvent::Message(message) => Some(message),
-                GroupIncomingEvent::MetadataUpdated(_)
-                | GroupIncomingEvent::SenderKeyRepairRequested(_) => None,
-            })
-        else {
-            return cached_fallback();
-        };
-        let Ok(sender_owner) = nostr::PublicKey::from_slice(&message.sender_owner.to_bytes())
-        else {
-            return cached_fallback();
-        };
-        let inner_json = String::from_utf8_lossy(&message.body).to_string();
-        let Some(runtime_rumor) = parse_runtime_rumor(&inner_json) else {
-            return cached_fallback();
-        };
-        if runtime_rumor.pubkey != sender_owner {
-            return cached_fallback();
-        }
-        return decrypted_mobile_push_resolution(
-            payload_object,
-            &data_dir,
-            sender_owner,
-            owner_pubkey,
-            Some(message.group_id),
-            runtime_rumor.kind as u64,
-            runtime_rumor.content,
-            inner_json,
-        );
-    }
-
     let decrypted = match engine.process_direct_message_event(&outer_event) {
         Ok(Some(decrypted)) => decrypted,
         Ok(None) | Err(_) => return cached_fallback(),
     };
     let inner_json = decrypted.content;
     let sender_owner = decrypted.sender;
-    let inner_value: serde_json::Value = match serde_json::from_str(&inner_json) {
-        Ok(value) => value,
-        Err(_) => return cached_fallback(),
+    let Some(rumor) = parse_runtime_rumor(&inner_json) else {
+        return suppressed_resolution();
     };
-    let inner_kind = inner_value
-        .get("kind")
-        .and_then(|value| value.as_u64())
-        .unwrap_or(MOBILE_PUSH_CHAT_MESSAGE_KIND);
-
-    let inner_content = inner_value
-        .get("content")
-        .and_then(|value| value.as_str())
-        .unwrap_or("")
-        .to_string();
-    if inner_kind == super::private_group_wake::GROUP_WAKE_KIND as u64 {
-        let Some(group_event) = super::private_group_wake::decode(&inner_content) else {
+    if !rumor_matches_authenticated_sender(
+        engine,
+        sender_owner,
+        decrypted.sender_device,
+        rumor.pubkey,
+    ) {
+        return suppressed_resolution();
+    }
+    if rumor.kind == super::private_group_wake::GROUP_WAKE_KIND {
+        let Some(group_event) = super::private_group_wake::decode(&rumor.content) else {
             return suppressed_resolution();
         };
         if !super::private_group_wake::sender_matches(engine, sender_owner, &group_event) {
             return suppressed_resolution();
         }
-        // Reuse the disposable engine and existing authenticated group preview.
-        // decode() only admits a signed group envelope, so this cannot recurse
-        // into arbitrary controls or another private wake.
-        let mut group_payload = payload_object.clone();
-        group_payload.insert("event".into(), serde_json::json!(group_event));
-        return decrypt_mobile_push_notification_inner(
-            data_dir,
-            owner_pubkey_hex,
-            device_nsec,
-            serde_json::Value::Object(group_payload).to_string(),
-            false,
-            preview_engine,
-        );
+        // Group ciphertext is only an authenticated ratchet payload, never a
+        // second public push entry point. Retain its exact source-ID cache.
+        return authenticated_group_mobile_push_resolution(
+            payload_object,
+            &data_dir,
+            owner_pubkey,
+            sender_owner,
+            engine,
+            &group_event,
+        )
+        .unwrap_or_else(cached_fallback);
     }
-    let inner_tags: Vec<Vec<String>> = inner_value
-        .get("tags")
-        .and_then(|value| serde_json::from_value(value.clone()).ok())
-        .unwrap_or_default();
 
-    let group_id = inner_tags.iter().find_map(|tag| match tag.as_slice() {
+    let group_id = rumor.tags.iter().find_map(|tag| match tag.as_slice() {
         [name, value, ..] if name == "l" && !value.is_empty() => Some(value.clone()),
         _ => None,
     });
@@ -494,10 +425,74 @@ fn decrypt_mobile_push_notification_inner(
         sender_owner,
         owner_pubkey,
         group_id,
-        inner_kind,
-        inner_content,
+        rumor.kind as u64,
+        rumor.content,
         inner_json,
     )
+}
+
+fn authenticated_group_mobile_push_resolution(
+    payload_object: &serde_json::Map<String, serde_json::Value>,
+    data_dir: &str,
+    local_owner: PublicKey,
+    authenticated_sender: PublicKey,
+    engine: &mut ProtocolEngine,
+    group_event: &Event,
+) -> Option<MobilePushNotificationResolution> {
+    let conn = open_lookup_connection(data_dir)?;
+    if let Some(cached) = lookup_mobile_push_source_preview(
+        &conn,
+        data_dir,
+        &group_event.id.to_hex(),
+        &local_owner.to_hex(),
+        true,
+    ) {
+        return Some(cached);
+    }
+    let result = engine.process_group_outer_event(group_event).ok()?;
+    // This operation may also recover older queued messages. Only the supplied
+    // ciphertext's own events may determine this notification's preview.
+    let message = result
+        .events
+        .into_iter()
+        .take(result.source_event_count)
+        .find_map(|event| match event {
+            GroupIncomingEvent::Message(message) => Some(message),
+            GroupIncomingEvent::MetadataUpdated(_)
+            | GroupIncomingEvent::SenderKeyRepairRequested(_) => None,
+        })?;
+    let sender = PublicKey::from_slice(&message.sender_owner.to_bytes()).ok()?;
+    let inner_json = String::from_utf8(message.body).ok()?;
+    let rumor = parse_runtime_rumor(&inner_json)?;
+    let sender_device = message
+        .sender_device
+        .and_then(|device| PublicKey::from_slice(&device.to_bytes()).ok());
+    if sender != authenticated_sender
+        || !rumor_matches_authenticated_sender(engine, sender, sender_device, rumor.pubkey)
+    {
+        return Some(suppressed_resolution());
+    }
+    Some(decrypted_mobile_push_resolution(
+        payload_object,
+        data_dir,
+        sender,
+        local_owner,
+        Some(message.group_id),
+        rumor.kind as u64,
+        rumor.content,
+        inner_json,
+    ))
+}
+
+fn rumor_matches_authenticated_sender(
+    engine: &ProtocolEngine,
+    sender_owner: PublicKey,
+    sender_device: Option<PublicKey>,
+    rumor_pubkey: PublicKey,
+) -> bool {
+    rumor_pubkey == sender_owner
+        || sender_device == Some(rumor_pubkey)
+        || engine.owner_device_binding_is_verified(sender_owner, rumor_pubkey)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -627,10 +622,33 @@ fn lookup_mobile_push_preview(
 ) -> Option<MobilePushNotificationResolution> {
     let conn = open_lookup_connection(data_dir)?;
     let source_id = super::private_group_wake::preview_source_id(&conn, outer_event_id);
-    let outer_event_id = source_id.as_str();
-    if let Some(control) =
-        control_preview::lookup(&conn, data_dir, outer_event_id, owner_pubkey_hex)
-    {
+    let authenticated_group_source = source_id.is_some()
+        && super::storage::validate_account_storage(&conn, owner_pubkey_hex).is_ok();
+    lookup_mobile_push_source_preview(
+        &conn,
+        data_dir,
+        source_id.as_deref().unwrap_or(outer_event_id),
+        owner_pubkey_hex,
+        authenticated_group_source,
+    )
+}
+
+// Only a verified carrier alias or the already-authenticated nested decoder may
+// read a cached group source. Ordinary direct-message history keeps its cache.
+fn lookup_mobile_push_source_preview(
+    conn: &rusqlite::Connection,
+    data_dir: &str,
+    outer_event_id: &str,
+    owner_pubkey_hex: &str,
+    authenticated_group_source: bool,
+) -> Option<MobilePushNotificationResolution> {
+    if let Some(control) = control_preview::lookup(
+        conn,
+        data_dir,
+        outer_event_id,
+        owner_pubkey_hex,
+        authenticated_group_source,
+    ) {
         return Some(control);
     }
     let (chat_id, body, author_hex, dismiss, author_owner, created, attachments): (String, String, String, bool, Option<String>, u64, String) = conn
@@ -643,6 +661,9 @@ fn lookup_mobile_push_preview(
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?, row.get(6)?)),
         )
         .ok()?;
+    if is_group_chat_id(&chat_id) && !authenticated_group_source {
+        return Some(suppressed_resolution());
+    }
 
     if block_policy::suppresses(
         &conn,
@@ -728,123 +749,6 @@ fn lookup_mobile_push_preview(
         body: body_text,
         payload_json,
     })
-}
-
-fn lookup_recent_group_mobile_push_preview(
-    data_dir: &str,
-    min_created_at_secs: u64,
-    owner_pubkey_hex: &str,
-) -> Option<MobilePushNotificationResolution> {
-    let conn = open_lookup_connection(data_dir)?;
-    let min_created_at_secs = i64::try_from(min_created_at_secs).ok()?;
-    let (chat_id, body, author_owner_hex, author, created, attachments): (
-        String,
-        String,
-        Option<String>,
-        String,
-        u64,
-        String,
-    ) = conn
-        .query_row(
-            "SELECT chat_id, body, author_owner_pubkey_hex, author, created_at_secs, attachments_json
-             FROM messages
-             WHERE chat_id LIKE 'group:%'
-               AND is_outgoing = 0
-               AND created_at_secs >= ?1
-             ORDER BY created_at_secs DESC, rowid DESC
-             LIMIT 1",
-            [min_created_at_secs],
-            |row| {
-                Ok((
-                    row.get(0)?,
-                    row.get(1)?,
-                    row.get(2)?,
-                    row.get(3)?,
-                    row.get(4)?,
-                    row.get(5)?,
-                ))
-            },
-        )
-        .ok()?;
-    if block_policy::suppresses(
-        &conn,
-        author_owner_hex.as_deref().unwrap_or(&author),
-        Some(created),
-    ) {
-        return Some(suppressed_resolution());
-    }
-    let group_id = chat_id.strip_prefix(GROUP_CHAT_PREFIX)?.to_string();
-    if mention_policy::suppresses(&conn, &chat_id, owner_pubkey_hex, &body, true) {
-        return Some(suppressed_resolution());
-    }
-
-    let sender_name = author_owner_hex
-        .as_deref()
-        .and_then(|hex| nostr::PublicKey::parse(hex).ok())
-        .and_then(|pubkey| lookup_owner_display_name(&conn, &pubkey))
-        .filter(|value| !is_generic_sender_title(value))
-        .or_else(|| {
-            let fallback = author.trim().to_string();
-            (!fallback.is_empty() && !is_generic_sender_title(&fallback)).then_some(fallback)
-        })
-        .unwrap_or_else(|| "Iris Chat".to_string());
-    let body_preview = persisted_message_body_preview(&body, &attachments);
-    let body_text = if body_preview.is_empty() {
-        decrypted_mobile_push_body(MOBILE_PUSH_CHAT_MESSAGE_KIND, "")
-    } else {
-        body_preview
-    };
-    let group_title = lookup_group_name_in(&conn, &group_id);
-    let (title, body_text) =
-        group_notification_title_and_body(group_title, &sender_name, body_text);
-
-    let mut payload = serde_json::Map::new();
-    payload.insert(
-        "title".to_string(),
-        serde_json::Value::String(title.clone()),
-    );
-    payload.insert(
-        "body".to_string(),
-        serde_json::Value::String(body_text.clone()),
-    );
-    payload.insert(
-        "inner_kind".to_string(),
-        serde_json::Value::String(MOBILE_PUSH_CHAT_MESSAGE_KIND.to_string()),
-    );
-    payload.insert("chat_id".to_string(), serde_json::Value::String(chat_id));
-    payload.insert("group_id".to_string(), serde_json::Value::String(group_id));
-    if let Some(author_owner_hex) = author_owner_hex {
-        payload.insert(
-            "sender_pubkey".to_string(),
-            serde_json::Value::String(author_owner_hex),
-        );
-    }
-
-    Some(MobilePushNotificationResolution {
-        should_show: true,
-        title,
-        body: body_text,
-        payload_json: serde_json::to_string(&serde_json::Value::Object(payload))
-            .unwrap_or_else(|_| "{}".to_string()),
-    })
-}
-
-fn lookup_recent_group_mobile_push_preview_after_short_wait(
-    data_dir: &str,
-    min_created_at_secs: u64,
-    owner_pubkey_hex: &str,
-) -> Option<MobilePushNotificationResolution> {
-    for delay_ms in [0_u64, 25, 75, 150, 300, 600, 1_200, 2_400] {
-        if delay_ms > 0 {
-            std::thread::sleep(Duration::from_millis(delay_ms));
-        }
-        if let Some(resolution) =
-            lookup_recent_group_mobile_push_preview(data_dir, min_created_at_secs, owner_pubkey_hex)
-        {
-            return Some(resolution);
-        }
-    }
-    None
 }
 
 fn lookup_mobile_push_preview_after_short_wait(
@@ -1406,13 +1310,6 @@ fn should_show_mobile_push_kind(kind: u64) -> bool {
         kind,
         MOBILE_PUSH_CHAT_MESSAGE_KIND | MOBILE_PUSH_INVITE_RESPONSE_KIND
     )
-}
-
-fn mobile_push_event_has_tag(event: &Event, name: &str) -> bool {
-    event
-        .tags
-        .iter()
-        .any(|tag| tag.as_slice().first().map(|value| value.as_str()) == Some(name))
 }
 
 #[cfg(test)]

@@ -4,13 +4,15 @@ pub(super) const GROUP_WAKE_KIND: u32 = 21_113;
 const MAX_GROUP_WAKE_BYTES: usize = 256 * 1024;
 const PREVIEW_ALIAS_PREFIX: &str = "mobile_push_group_wake:";
 
-pub(super) fn preview_source_id(conn: &rusqlite::Connection, event_id: &str) -> String {
+// Presence proves that this exact ID was an authenticated ratchet carrier.
+// A nested group ciphertext ID alone never supplies that proof.
+pub(super) fn preview_source_id(conn: &rusqlite::Connection, event_id: &str) -> Option<String> {
     conn.query_row(
         "SELECT value FROM app_meta WHERE key = ?1",
         [format!("{PREVIEW_ALIAS_PREFIX}{event_id}")],
         |row| row.get(0),
     )
-    .unwrap_or_else(|_| event_id.to_string())
+    .ok()
 }
 
 #[derive(Serialize, Deserialize)]
@@ -44,6 +46,17 @@ pub(super) fn sender_matches(engine: &ProtocolEngine, sender: PublicKey, event: 
 }
 
 impl AppCore {
+    pub(super) fn cache_direct_group_preview_carrier(&mut self, outer_event_id: Option<&str>) {
+        let Some(outer_event_id) = outer_event_id else {
+            return;
+        };
+        // An authenticated direct group copy stores its message/control under
+        // the carrier's own ID, rather than a nested sender-key ciphertext ID.
+        if let Err(error) = self.save_group_wake_preview_alias(outer_event_id, outer_event_id) {
+            self.push_debug_log("group.direct.preview", error.to_string());
+        }
+    }
+
     pub(super) fn receive_private_group_wake(
         &mut self,
         sender: PublicKey,

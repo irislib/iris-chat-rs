@@ -92,6 +92,7 @@ impl ProtocolEngine {
             state.version == PROTOCOL_ENGINE_STATE_VERSION,
             "Saved chat state uses an unsupported version. Existing data has been kept."
         );
+        quarantine_legacy_group_ingress(storage.as_ref(), &raw, &mut state)?;
         sanitize_invite_owner_persisted_state(&mut state);
         restore_signed_peer_evidence_for_session_manager(&mut state);
         quarantine_unverified_owner_rosters(
@@ -155,10 +156,11 @@ impl ProtocolEngine {
         local_invite_created_at: NdrUnixSeconds,
     ) -> anyhow::Result<()> {
         self.ensure_local_roster(local_invite_created_at);
-        // Keep the signed envelope until its legacy group candidate is removed.
         self.discard_pending_messages_for_other_devices()?;
         self.hydrate_pending_inbound_metadata();
-        self.prune_untracked_pending_inbound();
+        // First-contact packets can precede their invite response. Keep their
+        // signed bytes across restart; new untracked admissions are bounded at
+        // the shared queue entry point rather than dropping them on startup.
         self.prune_superseded_local_group_sync_fanouts();
         self.prune_pending_group_sender_key_work_for_inactive_local_groups();
         self.persist()
@@ -177,8 +179,10 @@ impl ProtocolEngine {
             .rev()
         {
             let keep = if pending.inner_event_id.is_none()
-                && matches!(pending.fanout.as_ref(), GroupPendingFanout::LocalSiblings { .. })
-            {
+                && matches!(
+                    pending.fanout.as_ref(),
+                    GroupPendingFanout::LocalSiblings { .. }
+                ) {
                 seen_groups.insert(pending.group_id.clone())
             } else {
                 true
@@ -211,16 +215,6 @@ impl ProtocolEngine {
         for (pending, metadata) in self.pending_inbound.iter_mut().zip(metadata) {
             apply_pending_inbound_metadata(pending, metadata);
         }
-    }
-
-    fn prune_untracked_pending_inbound(&mut self) {
-        if self.pending_inbound.is_empty() {
-            return;
-        }
-        let known_authors = self.known_message_author_hexes();
-        self.invalidate_pending_inbound_retry_deadline();
-        self.pending_inbound
-            .retain(|pending| known_authors.contains(&pending_inbound_sender_pubkey_hex(pending)));
     }
 
     pub fn debug_snapshot(&self) -> ProtocolEngineDebugSnapshot {
@@ -561,10 +555,6 @@ impl ProtocolEngine {
         self.with_known_message_author_cache(|cache| cache.pubkey_set.contains(&author))
     }
 
-    fn known_message_author_hexes(&self) -> HashSet<String> {
-        self.with_known_message_author_cache(|cache| cache.hexes.clone())
-    }
-
     fn with_known_message_author_cache<T>(
         &self,
         read: impl FnOnce(&KnownMessageAuthorCache) -> T,
@@ -581,7 +571,6 @@ impl ProtocolEngine {
         let (pubkeys, usable_session_owners) = self.message_session_projection(|_| true);
         KnownMessageAuthorCache {
             pubkey_set: pubkeys.iter().copied().collect(),
-            hexes: pubkeys.iter().map(|pubkey| pubkey.to_hex()).collect(),
             pubkeys,
             usable_session_owners,
         }

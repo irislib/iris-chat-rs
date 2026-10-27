@@ -179,11 +179,23 @@ fn remote_direct_stop_typing_reaches_ready_device_and_expires_pending_retry() {
     let stop = pairwise_codec::typing_event(
         f.owner.public_key(),
         pairwise_codec::EncodeOptions::new(now, now.saturating_mul(1000)).with_expiration(1),
-    ).unwrap();
-    let sent = f.sender.send_direct_unsigned_event(peer, &peer.to_hex(), stop, UnixSeconds(now)).unwrap();
-    assert!(sent.effects.iter().any(|effect| matches!(effect, ProtocolEffect::Publish(_))));
+    )
+    .unwrap();
+    let sent = f
+        .sender
+        .send_direct_unsigned_event(peer, &peer.to_hex(), stop, UnixSeconds(now))
+        .unwrap();
+    assert!(sent
+        .effects
+        .iter()
+        .any(|effect| matches!(effect, ProtocolEffect::Publish(_))));
     assert!(f.sender.has_pending_retry_work());
-    assert!(f.sender.retry_pending_protocol(NdrUnixSeconds(now + 11)).unwrap().effects.is_empty());
+    assert!(f
+        .sender
+        .retry_pending_protocol(NdrUnixSeconds(now + 11))
+        .unwrap()
+        .effects
+        .is_empty());
     assert!(!f.sender.has_pending_retry_work());
 }
 
@@ -548,7 +560,9 @@ fn direct_foreign_recipient_is_pruned_from_persisted_retry_queues() {
     // Reproduce an older client's durable queue, then upgrade/restart.
     let envelope = parse_message_event(&event).unwrap();
     f.late
-        .queue_header_group_sender_key_candidate(&event)
+        .queue_pending_group_sender_key_message(
+            parse_group_sender_key_message_event_unchecked(&event).unwrap(),
+        )
         .unwrap();
     f.late
         .queue_pending_inbound_direct_event(event, 10, Some(&envelope), None)
@@ -556,8 +570,20 @@ fn direct_foreign_recipient_is_pruned_from_persisted_retry_queues() {
     assert!(!f.late.pending_inbound.is_empty());
     assert!(!f.late.pending_group_sender_key_messages.is_empty());
     let storage = f.late.storage.clone();
+    let legacy = storage
+        .get(PROTOCOL_ENGINE_STATE_KEY)
+        .unwrap()
+        .unwrap()
+        .replace(",\"group_ingress_provenance_version\":1", "");
+    storage
+        .put(PROTOCOL_ENGINE_STATE_KEY, legacy.clone())
+        .unwrap();
     f.late = ProtocolEngine::load_or_create_for_local_device(storage.clone(), peer, &f.late_device)
         .unwrap();
+    assert_eq!(
+        storage.get(LEGACY_GROUP_INGRESS_QUARANTINE_KEY).unwrap(),
+        Some(legacy)
+    );
     let retry = f
         .late
         .retry_pending_protocol(NdrUnixSeconds(unix_now().get() + 60))

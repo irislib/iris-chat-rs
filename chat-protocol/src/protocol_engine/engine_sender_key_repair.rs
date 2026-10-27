@@ -43,16 +43,21 @@ impl ProtocolEngine {
         if !self.pending_group_sender_key_messages.contains(&parsed) {
             if fresh {
                 self.admit_fresh_group_sender_key_candidate(
-                    &parsed, self.pending_group_sender_key_messages.len(),
+                    &parsed,
+                    self.pending_group_sender_key_messages.len(),
                 );
             }
-            // Direct-message probing can discover a new candidate after this
+            // Authenticated group ingress can add a candidate after this
             // stream's old backlog was already attempted. Admit that candidate
             // once even if its key/revision inputs have not changed.
             if let Some(message) = self.group_sender_key_message_from_parsed(&parsed) {
                 let fingerprint = group_sender_key_fingerprint(&message);
                 let mut retry = self.group_sender_key_retry.borrow_mut();
-                if let Some(fresh) = retry.fresh.iter_mut().find(|fresh| fresh.fingerprint == fingerprint) {
+                if let Some(fresh) = retry
+                    .fresh
+                    .iter_mut()
+                    .find(|fresh| fresh.fingerprint == fingerprint)
+                {
                     fresh.pending_index = self.pending_group_sender_key_messages.len();
                 }
                 if retry.queued.insert(fingerprint.clone()) {
@@ -293,14 +298,19 @@ impl ProtocolEngine {
         // Only a ready receive (or duplicate marker) needs a rollback checkpoint.
         let plan = match self.prepare_group_sender_key_message(&message, &fingerprint) {
             Ok(Some(plan)) => Ok(plan),
-            Ok(None) => return Ok(ProtocolGroupIncomingResult {
-                consumed: true,
-                pending: true,
-                ..Default::default()
-            }),
+            Ok(None) => {
+                return Ok(ProtocolGroupIncomingResult {
+                    consumed: true,
+                    pending: true,
+                    ..Default::default()
+                })
+            }
             Err(error @ nostr_double_ratchet::Error::Decryption(_))
                 if matches!(&error, nostr_double_ratchet::Error::Decryption(reason)
-                    if reason == "duplicate or missing sender-key message") => Err(error),
+                    if reason == "duplicate or missing sender-key message") =>
+            {
+                Err(error)
+            }
             Err(error) => return Err(error.into()),
         };
         if self.batch_depth.get() > 0 {
@@ -309,7 +319,9 @@ impl ProtocolEngine {
         // The sender ratchet, replay marker and app delivery must advance together.
         // The ciphertext queue is unchanged here; avoid cloning its backlog.
         #[cfg(test)]
-        { self.group_sender_key_retry.borrow_mut().receive_checkpoints += 1; }
+        {
+            self.group_sender_key_retry.borrow_mut().receive_checkpoints += 1;
+        }
         let checkpoint = (
             self.group_manager.clone(),
             self.session_manager.clone(),
@@ -347,26 +359,27 @@ impl ProtocolEngine {
             .encrypted_header
             .is_none()
             .then_some(message.message_number);
-        let result = match plan.and_then(|plan| self.group_manager.apply_sender_key_receive_plan(plan)) {
-            Ok(result) => result,
-            Err(nostr_double_ratchet::Error::Decryption(error))
-                if error == "duplicate or missing sender-key message" =>
-            {
-                self.clear_group_sender_key_repairs(
-                    &message_repair_group_id,
-                    message_repair_sender,
-                    message_repair_key_id,
-                    message_repair_number,
-                );
-                self.processed_group_sender_key_messages.insert(fingerprint);
-                self.persist()?;
-                return Ok(ProtocolGroupIncomingResult {
-                    consumed: true,
-                    ..Default::default()
-                });
-            }
-            Err(error) => return Err(error.into()),
-        };
+        let result =
+            match plan.and_then(|plan| self.group_manager.apply_sender_key_receive_plan(plan)) {
+                Ok(result) => result,
+                Err(nostr_double_ratchet::Error::Decryption(error))
+                    if error == "duplicate or missing sender-key message" =>
+                {
+                    self.clear_group_sender_key_repairs(
+                        &message_repair_group_id,
+                        message_repair_sender,
+                        message_repair_key_id,
+                        message_repair_number,
+                    );
+                    self.processed_group_sender_key_messages.insert(fingerprint);
+                    self.persist()?;
+                    return Ok(ProtocolGroupIncomingResult {
+                        consumed: true,
+                        ..Default::default()
+                    });
+                }
+                Err(error) => return Err(error.into()),
+            };
         let now = NdrUnixSeconds(unix_now().get());
         let repair_request =
             SenderKeyRepairRequest::from_pending_sender_key_message(&message, &result, now);
@@ -377,32 +390,35 @@ impl ProtocolEngine {
                         && is_message_mutation_payload(&received.body));
                 if let GroupIncomingEvent::Message(received) = &event {
                     if !discard {
-                    // Replay through the authenticated group envelope, retaining its
-                    // scope even if the inner rumor contains a conflicting group tag.
-                    let payload = JsonGroupPayloadCodecV1.encode_pairwise_command(
-                        nostr_double_ratchet::GroupPayloadEncodeContext {
-                            local_device_pubkey: received
-                                .sender_device
-                                .unwrap_or(self.local_device),
-                            created_at: message.created_at,
-                        },
-                        &GroupPairwiseCommand::GroupMessage {
-                            group_id: received.group_id.clone(),
-                            revision: received.revision,
-                            body: received.body.clone(),
-                        },
-                    )?;
-                    self.record_pending_decrypted_delivery(
-                        ProtocolDecryptedMessage {
-                            sender: public_owner(received.sender_owner)?,
-                            sender_device: received.sender_device.map(public_device).transpose()?,
-                            conversation_owner: None,
-                            content: String::from_utf8(payload)?,
-                            event_id: Some(format!("group-delivery:{fingerprint}")),
-                            created_at_secs: message.created_at.get(),
-                        },
-                        message.created_at.get(),
-                    );
+                        // Replay through the authenticated group envelope, retaining its
+                        // scope even if the inner rumor contains a conflicting group tag.
+                        let payload = JsonGroupPayloadCodecV1.encode_pairwise_command(
+                            nostr_double_ratchet::GroupPayloadEncodeContext {
+                                local_device_pubkey: received
+                                    .sender_device
+                                    .unwrap_or(self.local_device),
+                                created_at: message.created_at,
+                            },
+                            &GroupPairwiseCommand::GroupMessage {
+                                group_id: received.group_id.clone(),
+                                revision: received.revision,
+                                body: received.body.clone(),
+                            },
+                        )?;
+                        self.record_pending_decrypted_delivery(
+                            ProtocolDecryptedMessage {
+                                sender: public_owner(received.sender_owner)?,
+                                sender_device: received
+                                    .sender_device
+                                    .map(public_device)
+                                    .transpose()?,
+                                conversation_owner: None,
+                                content: String::from_utf8(payload)?,
+                                event_id: Some(format!("group-delivery:{fingerprint}")),
+                                created_at_secs: message.created_at.get(),
+                            },
+                            message.created_at.get(),
+                        );
                     }
                 }
                 self.clear_group_sender_key_repairs(
@@ -508,13 +524,14 @@ impl ProtocolEngine {
             &mut ctx,
             &request,
         )?;
-        let session_progress = [&prepared.remote, &prepared.local_sibling]
-            .into_iter()
-            .any(|part| {
-                !part.deliveries.is_empty()
-                    || !part.invite_responses.is_empty()
-                    || !part.sender_key_messages.is_empty()
-            });
+        let session_progress =
+            [&prepared.remote, &prepared.local_sibling]
+                .into_iter()
+                .any(|part| {
+                    !part.deliveries.is_empty()
+                        || !part.invite_responses.is_empty()
+                        || !part.sender_key_messages.is_empty()
+                });
         // An attempted sibling produces a delivery or a gap. Keep gap-only
         // sibling work durable too: it may reorganize retained inactive sessions.
         let local_sibling_state_may_change = !prepared.local_sibling.relay_gaps.is_empty()

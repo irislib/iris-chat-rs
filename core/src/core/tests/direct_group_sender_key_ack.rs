@@ -1,5 +1,5 @@
 #[test]
-fn direct_group_copy_preserves_different_same_second_sender_key_candidate() {
+fn direct_group_copy_does_not_admit_unwrapped_sender_key_candidate() {
     let mut devices = sender_key_matrix_devices(2);
     let alice = 0;
     let bob = 1;
@@ -34,14 +34,14 @@ fn direct_group_copy_preserves_different_same_second_sender_key_candidate() {
     assert!(devices[bob]
         .engine
         .process_direct_message_event(&outer)
-        .expect("direct probing queues sender-key candidate")
+        .expect("unwrapped group ciphertext is not a direct delivery")
         .is_none());
     assert_eq!(
         devices[bob]
             .engine
             .debug_snapshot()
             .pending_group_sender_key_message_count,
-        1
+        0
     );
 
     let bob_engine = std::mem::replace(
@@ -79,8 +79,8 @@ fn direct_group_copy_preserves_different_same_second_sender_key_candidate() {
         .expect("protocol engine")
         .debug_snapshot();
     assert_eq!(
-        snapshot.pending_group_sender_key_message_count, 1,
-        "a direct copy cannot identify different ciphertext from the same sender and second"
+        snapshot.pending_group_sender_key_message_count, 0,
+        "only an authenticated group wake can admit shared group ciphertext"
     );
     let thread = core.threads.get(&chat_id).unwrap_or_else(|| {
         panic!(

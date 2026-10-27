@@ -1,8 +1,11 @@
 const PROTOCOL_ENGINE_STATE_KEY: &str = "appcore/protocol-engine-state-v1";
 const PROTOCOL_ENGINE_STATE_VERSION: u32 = 1;
 const PROTOCOL_APP_KEYS_PROVENANCE_VERSION: u8 = 1;
+const PROTOCOL_GROUP_INGRESS_PROVENANCE_VERSION: u8 = 1;
+const LEGACY_GROUP_INGRESS_QUARANTINE_KEY: &str = "appcore/quarantine/group-ingress-v0";
 const LOCAL_SIBLING_PROTOCOL: &str = "ndr-local-sibling-copy";
 const PENDING_RETRY_DELAY_SECS: u64 = 2;
+const MAX_UNTRACKED_PENDING_INBOUND: usize = 256;
 const PENDING_GROUP_FANOUT_RETRY_BATCH_SIZE: usize = 64;
 const PROCESSED_GROUP_SENDER_KEY_LIMIT: usize = 16_384;
 const ANSWERED_GROUP_SENDER_KEY_REPAIR_LIMIT: usize = 512;
@@ -10,6 +13,21 @@ const ANSWERED_GROUP_SENDER_KEY_REPAIR_LIMIT: usize = 512;
 fn group_chat_id(group_id: &str) -> String {
     format!("group:{group_id}")
 }
+
+/// Temporary capacity refusal. Callers must not mark this event as delivered
+/// or permanently seen: a later handshake can make its author admissible.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PendingInboundAdmissionError;
+
+impl std::fmt::Display for PendingInboundAdmissionError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(
+            "Pending first-contact message queue is full; retry after a session is available",
+        )
+    }
+}
+
+impl std::error::Error for PendingInboundAdmissionError {}
 
 #[derive(Debug, Serialize, Deserialize)]
 struct ProtocolEnginePersistedState {
@@ -36,6 +54,10 @@ struct ProtocolEnginePersistedState {
     /// could synthesize them from an owner hint.
     #[serde(default)]
     app_keys_provenance_version: u8,
+    /// Earlier releases admitted raw network ciphertext to group recovery.
+    /// Only new states have exclusively authenticated pairwise group ingress.
+    #[serde(default)]
+    group_ingress_provenance_version: u8,
     /// Exact signed evidence used for invite owner/device authorization.
     /// Reconstructed device lists and legacy booleans are never sufficient.
     #[serde(default)]
@@ -203,7 +225,6 @@ struct GroupRosterFactHistory {
 struct KnownMessageAuthorCache {
     pubkeys: Vec<PublicKey>,
     pubkey_set: HashSet<PublicKey>,
-    hexes: HashSet<String>,
     usable_session_owners: HashSet<PublicKey>,
 }
 

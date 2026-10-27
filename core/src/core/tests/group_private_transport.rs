@@ -4,6 +4,89 @@ struct SenderKeyMatrixDevice {
     engine: ProtocolEngine,
 }
 
+#[test]
+fn network_group_intermediates_require_authenticated_ratchet_delivery() {
+    use base64::Engine;
+
+    let (mut farm, group_id, chat_id) = private_group_wake_farm();
+    farm.send(0, &chat_id, "only through the private carrier");
+    let (header_event, _) = private_group_wake_events(&farm, &group_id);
+    let mut legacy_bytes = 7_u32.to_be_bytes().to_vec();
+    legacy_bytes.extend_from_slice(&0_u32.to_be_bytes());
+    legacy_bytes.extend_from_slice(b"unwrapped group ciphertext");
+    let legacy_event = EventBuilder::new(
+        Kind::from(MESSAGE_EVENT_KIND as u16),
+        base64::engine::general_purpose::STANDARD.encode(legacy_bytes),
+    )
+    .tag(nostr::Tag::parse(["v", "2"]).unwrap())
+    .sign_with_keys(&Keys::generate())
+    .unwrap();
+    assert!(parse_group_sender_key_message_event(&legacy_event).is_ok());
+    assert!(parse_group_sender_key_message_event_unchecked(&header_event).is_ok());
+
+    let mut changed_roster = farm.devices[0].core.groups[&group_id].clone();
+    changed_roster.name = "Only authenticated roster delivery".into();
+    changed_roster.revision += 1;
+    changed_roster.updated_at = NdrUnixSeconds(changed_roster.updated_at.get() + 1);
+    let roster = group_roster_unsigned_event(farm.owners[0].public_key(), &changed_roster)
+        .unwrap()
+        .sign_with_keys(&farm.owners[0])
+        .unwrap();
+    assert!(nostr_double_ratchet::parse_group_roster_fact_event(&roster).is_ok());
+
+    let receiver = &mut farm.devices[1].core;
+    let before = receiver.protocol_engine.as_ref().unwrap().debug_snapshot();
+    let groups_before = serde_json::to_value(&receiver.groups).unwrap();
+    let messages_before = receiver.threads[&chat_id].messages.len();
+    let publishes_before = receiver.pending_relay_publishes.len();
+    for channel in ["message servers", "nearby"] {
+        for event in [&header_event, &legacy_event, &roster] {
+            let wire = serde_json::to_string(event).unwrap();
+            let decoded = serde_json::from_str(&wire).unwrap();
+            assert!(receiver.handle_relay_event_with_channel(decoded, channel));
+        }
+    }
+    let after = receiver.protocol_engine.as_ref().unwrap().debug_snapshot();
+    assert_eq!(
+        after.pending_group_sender_key_message_count,
+        before.pending_group_sender_key_message_count
+    );
+    assert_eq!(
+        after.pending_group_sender_key_repair_count,
+        before.pending_group_sender_key_repair_count
+    );
+    assert_eq!(
+        after.pending_group_fanout_count,
+        before.pending_group_fanout_count
+    );
+    assert_eq!(receiver.pending_relay_publishes.len(), publishes_before);
+    assert_eq!(receiver.threads[&chat_id].messages.len(), messages_before);
+    assert_eq!(
+        serde_json::to_value(&receiver.groups).unwrap(),
+        groups_before
+    );
+
+    // The same nested ciphertext remains usable through its recipient's
+    // authenticated ratchet envelope, without exposing the group author.
+    farm.pump();
+    assert!(farm.devices[1].core.threads[&chat_id]
+        .messages
+        .iter()
+        .any(|message| message.body == "only through the private carrier"));
+
+    // The local signed-record API used by authenticated sibling replay remains
+    // available; a valid roster signature alone did not admit it from the wire.
+    let applied = farm.devices[1]
+        .core
+        .protocol_engine
+        .as_mut()
+        .unwrap()
+        .ingest_group_roster_fact_event(&roster)
+        .unwrap()
+        .unwrap();
+    assert_eq!(applied.snapshot.unwrap().name, changed_roster.name);
+}
+
 impl SenderKeyMatrixDevice {
     fn new() -> Self {
         let owner = Keys::generate();
