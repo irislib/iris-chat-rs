@@ -369,19 +369,29 @@ root stops publication; verify and capture the current root again before retryin
 Hashtree distribution also publishes the same desktop/CLI bytes through Haps,
 using `haps-release.json` and the existing dedicated Hashtree signing identity.
 The Haps checksum/layout/signer check runs before publication, including with
-`--check`; Nostr publication runs only after the canonical Hashtree updater
-readback succeeds. Any Haps failure fails distribution. No separate build,
-catalog maintenance, or mobile installer execution is involved. Haps publication
-uses the public relays in the dedicated Hashtree configuration, bypassing local
+`--check`. Real promotion first uses `import-release --publish-source` to push
+the verified manifest's source commit and its ancestors to the owned source
+URL under `refs/tags/haps-source/<commit>` and verify a cold fetch. Failure,
+including an unsupported flag, stops before binary upload or release-tree
+publication. Package metadata publication runs only after the canonical
+Hashtree updater readback succeeds. Any Haps failure fails distribution. No
+separate build, catalog maintenance, or mobile installer execution is involved.
+Haps publication uses the public relays in the dedicated Hashtree configuration, bypassing local
 daemon preferences and inherited `NOSTR_RELAYS`; a local storage acknowledgment
 is not proof of public delivery. Verify both packages from a fresh consumer
 before treating Haps distribution as complete. The local publisher needs Haps
-with `import-release` support and Python 3.9 or newer. Set
-`IRIS_DISTRIBUTION_TOOLS_DIR` to an absolute directory containing a qualified
+with qualified `import-release --publish-source` support and Python 3.9 or newer.
+Set `IRIS_DISTRIBUTION_TOOLS_DIR` to an absolute directory containing a qualified
 `haps` and `htree` pair to use dedicated release tools without replacing tools
 used by other local services. Haps helpers with source-file caching and
 retained-root delta uploads avoid processing all previous package payloads on
 each release; older helpers report when these optimizations are unavailable.
+
+For an already tagged release, run the reviewed current distributor checkout
+with the explicit original `--tag`; record the tooling commit separately from
+the release manifest's source commit. Do not restore the older tagged distributor,
+move the tag, substitute the tooling source for the manifest source, or rebuild
+the release assets to pick up a publication-tooling fix.
 
 Use this order: Hashtree, Homebrew, Zapstore. Homebrew refuses to publish
 until the exact Hashtree tag exists. Commands are safe to retry with the same

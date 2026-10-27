@@ -141,12 +141,16 @@ class DistributeTests(unittest.TestCase):
             assert args[args.index('--tag') + 1] == os.environ['FAKE_TAG']
             assert args[args.index('--key-file') + 1] == os.environ['IRIS_HASHTREE_NSEC_PATH']
             assert os.environ['HAPS_HOME'] == os.environ['IRIS_HASHTREE_DATA_DIR'] + '/haps'
-            if args[-1] == '--publish' and os.environ.get('FAKE_REQUIRE_PUBLIC_HAPS') == '1':
+            if args[-1] in ('--publish-source', '--publish') and os.environ.get('FAKE_REQUIRE_PUBLIC_HAPS') == '1':
+                assert os.environ['HTREE_CONFIG_DIR'] == os.environ['IRIS_HASHTREE_CONFIG_DIR']
+                assert os.environ['HTREE_DATA_DIR'] == os.environ['IRIS_HASHTREE_DATA_DIR']
                 assert os.environ.get('HTREE_PREFER_LOCAL_DAEMON') == 'false', 'local ACK is not public delivery'
                 assert os.environ.get('HTREE_LOCAL_DAEMON_ONLY') == 'false', 'local-only overrides daemon preference'
                 assert 'NOSTR_RELAYS' not in os.environ, 'use the dedicated publication relay configuration'
             with open(os.environ['FAKE_COMMAND_LOG'], 'a') as log:
                 log.write('haps ' + ' '.join(args) + '\n')
+            if args[-1] == '--publish-source' and os.environ.get('FAKE_HAPS_SOURCE_UNSUPPORTED') == '1':
+                sys.exit('unexpected argument --publish-source')
             if os.environ.get('FAKE_HAPS_FAIL') == args[-1]:
                 sys.exit('Haps publication failed')
             """,
@@ -422,7 +426,7 @@ class DistributeTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_haps_failure_blocks_or_fails_final_publication(self) -> None:
-        for phase in ['--check', '--publish']:
+        for phase in ['--check', '--publish-source', '--publish']:
             with self.subTest(phase=phase):
                 if self.log.exists():
                     self.log.unlink()
@@ -432,11 +436,45 @@ class DistributeTests(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn('Haps publication failed', result.stderr)
                 log = self.log.read_text()
-                if phase == '--check':
+                if phase in ('--check', '--publish-source'):
                     self.assertNotIn('htree add', log)
+                    self.assertNotIn('htree release publish', log)
+                    self.assertNotIn('signed-updater', log)
+                    self.assertFalse(any(line.endswith(' --publish') for line in log.splitlines()))
                 else:
                     self.assertIn('htree release publish', log)
                     self.assertLess(log.index('signed-updater'), log.rindex('haps import-release'))
+
+    def test_source_publication_precedes_release_tree_and_package_publication(self) -> None:
+        result = self.run_distribution('hashtree')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        lines = self.log.read_text().splitlines()
+        haps = [line for line in lines if line.startswith('haps import-release ')]
+        self.assertEqual([line.rsplit(' ', 1)[-1] for line in haps],
+                         ['--check', '--publish-source', '--publish'])
+        # Every phase consumes the same verified stage, config, tag and signer.
+        self.assertEqual(len({line.rsplit(' ', 1)[0] for line in haps}), 1)
+        source = lines.index(haps[1])
+        add = next(i for i, line in enumerate(lines) if line.startswith('htree add '))
+        release = next(i for i, line in enumerate(lines) if line.startswith('htree release publish '))
+        updater = next(i for i, line in enumerate(lines) if line.startswith('signed-updater '))
+        self.assertLess(lines.index(haps[0]), source)
+        self.assertLess(source, add)
+        self.assertLess(add, release)
+        self.assertLess(release, updater)
+        self.assertLess(updater, lines.index(haps[2]))
+
+    def test_unsupported_source_publication_stops_before_binary_upload(self) -> None:
+        env = self.environment()
+        env['FAKE_HAPS_SOURCE_UNSUPPORTED'] = '1'
+        result = self.run_distribution('hashtree', env=env)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('unexpected argument --publish-source', result.stderr)
+        log = self.log.read_text()
+        self.assertNotIn('htree add', log)
+        self.assertNotIn('htree release publish', log)
+        self.assertNotIn('signed-updater', log)
+        self.assertFalse(any(line.endswith(' --publish') for line in log.splitlines()))
 
     def test_homebrew_check_downloads_only_cli_archives(self) -> None:
         result = self.run_distribution("homebrew", "--check")
@@ -583,7 +621,8 @@ class DistributeTests(unittest.TestCase):
         self.assertIn("differs from --expected-root", result.stderr)
         log = self.log.read_text()
         self.assertIn("--expected-root verified-previous-root", log)
-        self.assertNotIn("--publish", log)
+        self.assertIn("--publish-source", log)
+        self.assertFalse(any(line.endswith(" --publish") for line in log.splitlines()))
         self.assertNotIn("signed-updater", log)
 
     def test_hashtree_publish_requires_the_signed_updater_to_accept_the_release(self) -> None:
