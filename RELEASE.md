@@ -129,6 +129,11 @@ replace a published tag.
 Update both package versions and every build version argument in `haps.toml`
 for the same tag. Check all six source package variants with
 `python3 scripts/validate-haps-manifest.py --tag <tag>` before dispatching CI.
+The Linux Haps source recipe must invoke locked Cargo directly and stage its
+matching output. Do not route it through `scripts/linux-release`: that separate
+Docker/DEB packaging pipeline provisions additional build tools. The validator
+rejects that substitution. An audit of an older published recipe must be rerun
+against the newly published package; a source change does not clear old findings.
 
 Choose pre-release checks according to the changed components and release risk:
 
