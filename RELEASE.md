@@ -185,6 +185,11 @@ and `focused_tests` (whitespace-separated exact names), with optional
 `focused_release` and `focused_ignored`. It retains compiled dependencies even
 after a test failure and reuses them across source revisions. These focused
 checks leave the full validation and tagged release gates unchanged.
+The tagged core gate also retains compiled outputs after a test failure, using
+the existing target paths and default-branch cache fallbacks. It keeps at most
+one partial and one complete cache per source, compiler, architecture and lock
+set. Repeated failures reuse the first partial cache; a later passing gate saves
+the complete cache without creating a new multi-gigabyte entry for every retry.
 
 For an optimized local Mac development build, reserve the native host and one
 writer for the selected caches, set `CARGO_TARGET_DIR` to the existing absolute

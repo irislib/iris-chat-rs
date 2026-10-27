@@ -112,23 +112,32 @@ jobs:
           path: iris-chat-rs
 
       - name: Install Rust and native dependencies
+        id: toolchain
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends cmake libdbus-1-dev pkg-config
           rustup toolchain install stable --profile minimal --component rustfmt --component clippy
           rustup default stable
+          echo "identity=$(rustc -Vv | sha256sum | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
 
-      - name: Cache Cargo
-        uses: actions/cache@v6
+      - name: Restore release compiler cache
+        id: cargo-cache
+        uses: actions/cache/restore@v6
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             ${{ github.workspace }}/cargo-target
-          key: rust-${{ runner.os }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock') }}
-          restore-keys: rust-${{ runner.os }}-
+          key: rust-release-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.identity }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock') }}-${{ needs.validate.outputs.sha }}-complete
+          restore-keys: |
+            rust-release-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.identity }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock') }}-${{ needs.validate.outputs.sha }}-
+            rust-release-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.identity }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock') }}-
+            rust-${{ runner.os }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock') }}
+            rust-release-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.identity }}-
+            rust-${{ runner.os }}-
 
       - name: Run hosted release gate
+        id: release-gate
         run: |
           set -Eeuo pipefail
           python3 scripts/test_release_notes.py
@@ -145,6 +154,16 @@ jobs:
           path: iris-chat-rs/work/private-controls/
           if-no-files-found: warn
           retention-days: 14
+      - name: Preserve release compiler cache after tests
+        if: ${{ !cancelled() && steps.cargo-cache.outcome == 'success' && (steps.release-gate.outcome == 'success' || steps.release-gate.outcome == 'failure') && steps.cargo-cache.outputs.cache-hit != 'true' && (steps.release-gate.outcome == 'success' || !endsWith(steps.cargo-cache.outputs.cache-matched-key, format('-{0}-partial', needs.validate.outputs.sha))) }}
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ${{ github.workspace }}/cargo-target
+          key: rust-release-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.identity }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock') }}-${{ needs.validate.outputs.sha }}-${{ steps.release-gate.outcome == 'success' && 'complete' || 'partial' }}
+
 
   mesh-resource:
     name: Relayless recovery and resource budgets

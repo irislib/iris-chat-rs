@@ -246,14 +246,15 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("working-directory: iris-chat-rs", gate)
         self.assertIn("path: iris-chat-rs", gate)
         ci = (ROOT / ".github/workflows/ci.yml").read_text()
-        for text in (ci, gate):
-            cache = text.split("- name: Cache Cargo\n", 1)[1].split("- name:", 1)[0]
-            self.assertIn("uses: actions/cache@v6", cache)
+        cache = ci.split("- name: Cache Cargo\n", 1)[1].split("- name:", 1)[0]
+        self.assertIn("uses: actions/cache@v6", cache)
+        restore = gate.split("- name: Restore release compiler cache\n", 1)[1].split("- name:", 1)[0]
+        self.assertIn("uses: actions/cache/restore@v6", restore)
         for fragment in (
             "~/.cargo/registry",
             "~/.cargo/git",
             "${{ github.workspace }}/cargo-target",
-            "key: rust-${{ runner.os }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock') }}",
+            "rust-${{ runner.os }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock') }}",
             "rust-${{ runner.os }}-",
         ):
             self.assertIn(fragment, ci)
@@ -284,6 +285,63 @@ class ReleaseWorkflowTests(unittest.TestCase):
                 self.assertIn(f"            {key.split('${{ hashFiles', 1)[0]}", caches[0])
                 for path in ("~/.cargo/registry", "~/.cargo/git", "${{ github.workspace }}/cargo-target", *extra_paths):
                     self.assertIn(path, caches[0])
+
+    def test_release_cache_retains_partial_then_complete_without_per_retry_entries(self) -> None:
+        workflow = (ROOT / ".github/workflows/release.yml").read_text()
+        gate = workflow.split("\n  verify:\n", 1)[1].split("\n  mesh-resource:\n", 1)[0]
+        restore = gate.split("      - name: Restore release compiler cache\n", 1)[1].split("\n      - name:", 1)[0]
+        save = gate.split("      - name: Preserve release compiler cache after tests\n", 1)[1].split("\n      - name:", 1)[0]
+        self.assertIn("uses: actions/cache/save@v6", save)
+        for step in (restore, save):
+            self.assertIn("runner.arch", step)
+            self.assertIn("steps.toolchain.outputs.identity", step)
+            self.assertIn("needs.validate.outputs.sha", step)
+            self.assertNotIn("github.run_id", step)
+            self.assertNotIn("github.run_attempt", step)
+            self.assertNotIn("github.sha", step)  # Dispatch may select a different immutable tag.
+        self.assertEqual(restore.split("          path: |\n", 1)[1].split("          key:", 1)[0],
+                         save.split("          path: |\n", 1)[1].split("          key:", 1)[0])
+        self.assertIn("${{ needs.validate.outputs.sha }}-complete", restore)
+        self.assertIn("${{ steps.release-gate.outcome == 'success' && 'complete' || 'partial' }}", save)
+        self.assertIn('identity=$(rustc -Vv | sha256sum | cut -d\' \' -f1)', gate)
+        self.assertLess(gate.index("Upload populated discovery CPU and privacy evidence"),
+                        gate.index("Preserve release compiler cache after tests"))
+        self.assertNotIn("continue-on-error:", gate)
+
+        # Evaluate the actual workflow predicate against failure/cancellation and
+        # restored-cache states, without invoking GitHub, Cargo or a cache writer.
+        expression = re.search(r"        if: \$\{\{ (.+) \}\}", save).group(1)
+        source = "a" * 40
+        partial = "rust-release-v1-Linux-X64-compiler-lock-" + source + "-partial"
+        cases = [
+            ("cold pass", False, "success", "success", "false", "", True),
+            ("cold failure", False, "success", "failure", "false", "", True),
+            ("legacy fallback failure", False, "success", "failure", "false", "rust-Linux-lock", True),
+            ("partial becomes complete", False, "success", "success", "false", partial, True),
+            ("repeat partial failure", False, "success", "failure", "false", partial, False),
+            ("other source partial", False, "success", "failure", "false", partial.replace(source, "b" * 40), True),
+            ("complete hit", False, "success", "success", "true", "complete", False),
+            ("complete hit then test failure", False, "success", "failure", "true", "complete", False),
+            ("cancelled", True, "success", "failure", "false", "", False),
+            ("restore failed", False, "failure", "success", "false", "", False),
+            ("gate skipped", False, "success", "skipped", "false", "", False),
+        ]
+        for name, cancelled, restored, outcome, hit, matched, expected in cases:
+            with self.subTest(case=name):
+                predicate = expression
+                for field, value in {
+                    "cancelled()": cancelled, "steps.cargo-cache.outcome": restored,
+                    "steps.release-gate.outcome": outcome,
+                    "steps.cargo-cache.outputs.cache-hit": hit,
+                    "steps.cargo-cache.outputs.cache-matched-key": matched,
+                    "needs.validate.outputs.sha": source,
+                }.items():
+                    predicate = predicate.replace(field, repr(value))
+                predicate = re.sub(r"!(?!=)", "not ", predicate).replace("&&", "and").replace("||", "or")
+                actual = eval(predicate, {"__builtins__": {},
+                                         "endsWith": lambda value, suffix: value.endswith(suffix),
+                                         "format": lambda pattern, value: pattern.format(value)})
+                self.assertEqual(actual, expected)
 
     def test_release_only_edits_keep_contract_checks_without_native_rebuilds(self) -> None:
         ci = (ROOT / ".github/workflows/ci.yml").read_text()
