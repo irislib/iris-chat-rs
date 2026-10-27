@@ -116,6 +116,8 @@ targets:
     platform: iOS
     sources:
       - path: ShareExtension/ShareViewController.swift
+      - path: Sources/IrisAvatarContent.swift
+      - path: Sources/ShareSuggestionEntry.swift
     settings:
       base:
         PRODUCT_NAME: ShareExtension

@@ -2854,8 +2854,9 @@ final class AppManager: ObservableObject {
         guard iosSideEffectGate.shouldSyncShareSuggestions(chatList: chatList) else {
             return
         }
-        shareSuggestionDonor.syncRecentChats(chatList)
-        shareSuggestionsExporter.export(chats: chatList)
+        shareSuggestionsExporter.export(chats: chatList, manager: self) { [weak self] avatars in
+            self?.shareSuggestionDonor.syncRecentChats(chatList, avatars: avatars)
+        }
     }
 
     private func syncMobilePushIfNeeded(state: AppState) {
