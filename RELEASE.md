@@ -17,6 +17,15 @@ exact, attested files from an immutable GitHub Release.
 | Google Play | A signed AAB is built, but upload is not automated | Roadmap |
 | crates.io | Protocol library and CLI source packages | Publish verified source packages separately |
 
+Haps publication also updates the source used by Omarchy's Haps menu. Users
+enable that integration once with `haps omarchy`; no separate Omarchy release
+or menu edit is needed. AUR is not currently a published Iris Chat channel:
+local recipes alone do not establish a listing. Before enabling automatic AUR
+publication, obtain a working AUR publisher identity and package access, then
+promote the exact attested Linux release with pinned checksums and regenerated
+`.SRCINFO`. Do not add a second application build or block existing channels on
+AUR registration. Use a public company contact in package metadata and commits.
+
 The release builds Android arm64, iOS, macOS arm64, Windows x64, Linux x64,
 and CLI archives for macOS arm64/x64 and Linux x64.
 
