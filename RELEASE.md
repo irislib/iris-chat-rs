@@ -34,6 +34,13 @@ The existing crates.io packages use separate semantic versions. When updating
 lockfiles. Update the `iris-chat` package too when its published CLI would
 otherwise retain an older protocol. Run the Rust gates and package verification,
 publish the protocol first, then verify and publish the CLI source package.
+Before either crates.io upload, push its exact source revision and ancestors to
+the owned Hashtree source URL in `haps-release.json` and require a fresh,
+complete-history verification with the pinned Haps verifier described below.
+A verified descendant's complete history may cover an ancestor package revision
+only with recorded ancestry and matching source configuration. Retain that
+proof together with the verified package archive's checksum; a successful Git
+push alone is insufficient.
 Check the registry archives and dependency pins after publication. Do not use
 the unsupported scripts under `scripts/legacy/release`. This source publication
 does not replace any tagged binary or satisfy a binary distribution gate.
