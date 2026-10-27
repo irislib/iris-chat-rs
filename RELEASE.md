@@ -179,6 +179,17 @@ optimized build may need a cold cache; keep bounded time and disk limits around
 it. Local performance evidence does not replace required acceptance of the
 unchanged tagged GitHub release artifact.
 
+Run local CPU checks separately from compilation, using the same verified app
+bundle and a bounded runtime lease. Open that exact bundle through Finder's
+normal Open action, then confirm its executable, process start identity, and
+foreground status before starting the settling period. Accessibility window
+raises and clicks can reach a background app without activating it. A visible
+window alone does not establish foreground readiness. Keep the Mac unlocked
+and foreground checks active throughout measurement; if focus changes, retain
+the failed result. Quit normally afterward and verify the process and leases
+have closed before admitting other native work. A launch or focus failure
+does not require rebuilding unchanged inputs.
+
 For version-only package verification, dispatch `scope=rust-package` with
 `package_crate=chat-protocol` or `core`. This runs locked package verification
 with two build jobs and retains the archive, checksum, logs and exact source;
