@@ -140,13 +140,17 @@ fn legacy_group_ingress_is_quarantined_once_without_retiring_outgoing_work() {
         .chain(session.receiving_chain_key)
         .chain(session.sending_chain_key)
     {
-        let secret = hex::encode(secret);
+        use std::fmt::Write;
+        let mut encoded = String::with_capacity(secret.len() * 2);
+        for byte in secret {
+            write!(&mut encoded, "{byte:02x}").unwrap();
+        }
         assert!(
-            raw.contains(&secret),
+            raw.contains(&encoded),
             "fixture must contain session secrets"
         );
         assert!(
-            !archive.contains(&secret),
+            !archive.contains(&encoded),
             "quarantine retained a session secret"
         );
     }
