@@ -6,21 +6,40 @@ fn private_block_mobile_push_uses_committed_open_interval_before_preferences_sav
     let target = peer.public_key().to_hex();
     let (mut core, _, dir) = logged_in_test_core_with_updates("block-push-atomic", &owner, &device);
     core.app_store.bind_account(owner.public_key()).unwrap();
-    let event = EventBuilder::new(Kind::from(MESSAGE_EVENT_KIND as u16), "encrypted wrapper")
-        .sign_with_keys(&peer)
+    let invite = core
+        .protocol_engine
+        .as_ref()
+        .unwrap()
+        .local_invite()
+        .unwrap();
+    let (mut session, response) = invite
+        .accept_with_owner(
+            peer.public_key(),
+            peer.secret_key().to_secret_bytes(),
+            Some(peer.public_key().to_hex()),
+            Some(peer.public_key()),
+        )
+        .unwrap();
+    core.protocol_engine
+        .as_mut()
+        .unwrap()
+        .observe_invite_response_event(&invite_response_event(&response).unwrap())
         .unwrap();
     // A delayed group message may predate the block. The production SQLite
-    // fallback must still suppress its notification while the author is blocked.
-    core.push_incoming_message_from(
-        "group:shared",
-        Some("old-group-context".into()),
-        "older shared context".into(),
+    // fallback must still suppress its authenticated private carrier while the
+    // author is blocked.
+    let (rumor, _) = runtime_rumor_json(
+        peer.public_key(),
+        CHAT_MESSAGE_KIND,
+        "older shared context",
         50,
-        None,
-        None,
-        Some(target.clone()),
-        Some(event.id.to_hex()),
+        vec![vec!["l".into(), "shared".into()]],
     );
+    let plan = session
+        .plan_send(rumor.as_bytes(), NdrUnixSeconds(unix_now().get()))
+        .unwrap();
+    let event = message_event(&session.apply_send(plan).envelope).unwrap();
+    core.handle_relay_event(event.clone());
     core.persist_best_effort_inner();
     let payload = serde_json::json!({"event":event}).to_string();
     let resolve = || {

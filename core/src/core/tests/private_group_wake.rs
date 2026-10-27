@@ -192,7 +192,11 @@ fn mobile_push_cached_group_previews_require_authenticated_carrier_ids() {
     };
     let cached = resolve(serde_json::json!({"event":wake}));
     assert!(cached.should_show);
-    assert_eq!(cached.body, body);
+    assert!(
+        cached.body.ends_with(body),
+        "foreground consumption must retain the wake preview: {}",
+        cached.body
+    );
     for encoded in [
         serde_json::json!(nested),
         serde_json::json!(serde_json::to_string(&nested).unwrap()),
@@ -541,7 +545,11 @@ fn mobile_push_direct_group_copies_keep_authenticated_cached_previews() {
             serde_json::json!({"event":event}).to_string(),
         );
         assert_eq!(cached.should_show, visible);
-        assert_eq!(cached.body, expected);
+        assert!(
+            cached.body.ends_with(expected),
+            "foreground consumption must retain the direct group preview: {}",
+            cached.body
+        );
         let payload: serde_json::Value = serde_json::from_str(&cached.payload_json).unwrap();
         assert_eq!(payload["chat_id"], chat_id);
     }

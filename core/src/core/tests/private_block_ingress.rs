@@ -134,7 +134,7 @@ fn private_block_mobile_push_decryption_and_cache_suppress_blocked_period() {
             CHAT_MESSAGE_KIND,
             "blocked notification body",
             now,
-            tags,
+            tags.clone(),
         );
         let plan = session
             .plan_send(rumor.as_bytes(), NdrUnixSeconds(now))
@@ -152,31 +152,29 @@ fn private_block_mobile_push_decryption_and_cache_suppress_blocked_period() {
         let before = resolve();
         assert!(before.should_show, "positive decrypt control: {before:?}");
         assert_eq!(before.body, "blocked notification body");
-        // A lagging sibling can already have this post in its SQLite cache.
-        // Prove that cache is readable before introducing the block policy.
-        let chat_id = if group {
-            "group:shared".to_string()
-        } else {
-            peer.public_key().to_hex()
-        };
-        core.push_incoming_message_from(
-            &chat_id,
-            Some("lagging-copy".into()),
-            "blocked cached body".into(),
+        // Authenticate the cached copy through the actual ratchet ingress so
+        // group cache lookup has proof of its private carrier.
+        let (cached_rumor, _) = runtime_rumor_json(
+            peer.public_key(),
+            CHAT_MESSAGE_KIND,
+            "blocked cached body",
             now,
-            None,
-            None,
-            Some(peer.public_key().to_hex()),
-            Some(event.id.to_hex()),
+            tags,
         );
+        let plan = session
+            .plan_send(cached_rumor.as_bytes(), NdrUnixSeconds(now))
+            .unwrap();
+        let cached_event = message_event(&session.apply_send(plan).envelope).unwrap();
+        core.handle_relay_event(cached_event.clone());
         core.persist_best_effort_inner();
+        let cached_payload = serde_json::json!({"event":cached_event}).to_string();
         let unavailable_device = Keys::generate();
         let resolve_cache = || {
             decrypt_mobile_push_notification(
                 dir.path().to_string_lossy().into_owned(),
                 owner.public_key().to_hex(),
                 unavailable_device.secret_key().to_secret_hex(),
-                payload.clone(),
+                cached_payload.clone(),
             )
         };
         let cached_before = resolve_cache();
