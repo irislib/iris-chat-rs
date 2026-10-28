@@ -53,10 +53,10 @@ base64 = "0.22"
 clap = { version = "4", features = ["derive", "env"] }
 futures-util = "0.3"
 flume = "0.11"
-nvpn-fips-core = { version = "=0.4.114", features = ["webrtc-transport", "host-ble-transport"] }
-nvpn-fips-endpoint = { version = "=0.4.114" }
+nvpn-fips-core = { version = "=0.4.115", features = ["webrtc-transport", "host-ble-transport"] }
+nvpn-fips-endpoint = { version = "=0.4.115" }
 nvpn-fips-tcp = { version = "=0.2.6" }
-nvpn-fips-tcp-endpoint = { version = "=0.2.49" }
+nvpn-fips-tcp-endpoint = { version = "=0.2.50" }
 hashtree-blossom = { version = "=0.2.83", default-features = false, features = ["store"] }
 hashtree-config = "=0.2.83"
 hashtree-core = "=0.2.91"
@@ -72,11 +72,11 @@ nostr = { version = "0.44.7", default-features = false, features = ["std", "nip4
 nostr-sdk = { version = "0.44.1", default-features = false, features = ["nip44"] }
 nostr-pubsub = "=0.1.18"
 nostr-pubsub-reconcile = "=0.1.1"
-nostr-pubsub-fips = "=0.5.45"
+nostr-pubsub-fips = "=0.5.46"
 nostr-pubsub-relay = "=0.1.13"
 nostr-social-graph = "=0.1.4"
 nostr-identity = "=0.6.0"
-nostr-double-ratchet = "0.0.175"
+nostr-double-ratchet = "0.0.176"
 nostr-double-ratchet-pairwise-codec = "0.0.168"
 qrcode = { version = "0.14", default-features = false }
 rand = "0.8"

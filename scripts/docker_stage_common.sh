@@ -12,11 +12,11 @@ docker_default_platform() {
 }
 
 docker_cli_runtime_image() {
-  printf '%s\n' "${IRIS_CLI_DOCKER_IMAGE:-debian:bookworm-slim}"
+  printf '%s\n' "${IRIS_CLI_DOCKER_IMAGE:-debian:bookworm-slim@sha256:99c0b25c46d0214d5a2091092e7908907dcaecd6a962cde0ac700acee222b6f3}"
 }
 
 docker_rust_build_image() {
-  printf '%s\n' "${IRIS_RUST_DOCKER_IMAGE:-rust:1-bookworm}"
+  printf '%s\n' "${IRIS_RUST_DOCKER_IMAGE:-rust:1.99.0-bookworm@sha256:114c7a4425406451c2866b6aafe69fe29b1b298832db1277d411ac73c82d04d6}"
 }
 
 docker_linux_dev_image() {
@@ -96,9 +96,7 @@ docker_stage_build_iris_cli() {
       export DEBIAN_FRONTEND=noninteractive
       export PATH="/usr/local/cargo/bin:$PATH"
       export RUSTUP_HOME="${RUSTUP_HOME:-/usr/local/rustup}"
-      apt-get update >/dev/null
-      apt-get install -y --no-install-recommends libclang-dev libdbus-1-dev pkg-config >/dev/null
-      rm -rf /var/lib/apt/lists/*
+      bash /work/iris-chat-rs/linux/scripts/pinned-apt.sh debian libclang-dev libdbus-1-dev pkg-config
       cargo build --manifest-path /work/iris-chat-rs/core/Cargo.toml --bin iris --locked
       cp /stage/target/debug/iris /stage/iris
     '

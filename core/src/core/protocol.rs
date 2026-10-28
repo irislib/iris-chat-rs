@@ -297,7 +297,7 @@ impl AppCore {
         owners
     }
 
-    pub(super) fn protocol_owner_hexes(&self) -> HashSet<String> {
+    fn protocol_owner_hexes(&self, snapshot: Option<&SessionManagerSnapshot>) -> HashSet<String> {
         let mut owners = self.tracked_peer_owner_hexes();
         owners.extend(
             self.recent_handshake_peers
@@ -325,7 +325,22 @@ impl AppCore {
         if let Some(pending) = self.pending_outgoing_invite_acceptance.as_ref() {
             owners.insert(pending.claimed_owner.to_hex());
         }
-        owners.extend(self.app_keys.keys().cloned());
+        // Cached public metadata is not ongoing communication demand. Keep
+        // restored ratchets even before a conversation has its first message,
+        // including inactive sessions needed for delayed delivery and recovery.
+        if let Some(snapshot) = snapshot {
+            owners.extend(
+                snapshot
+                    .users
+                    .iter()
+                    .filter(|user| {
+                        user.devices.iter().any(|device| {
+                            device.active_session.is_some() || !device.inactive_sessions.is_empty()
+                        })
+                    })
+                    .map(|user| user.owner_pubkey.to_string()),
+            );
+        }
         if let Some(logged_in) = self.logged_in.as_ref() {
             owners.insert(logged_in.owner_pubkey.to_hex());
         }
@@ -667,13 +682,12 @@ impl AppCore {
         filters
     }
 
-    fn protocol_invite_author_pubkeys(&self, owners: &[PublicKey]) -> Vec<PublicKey> {
+    fn protocol_invite_author_pubkeys(
+        &self,
+        owners: &[PublicKey],
+        snapshot: Option<&SessionManagerSnapshot>,
+    ) -> Vec<PublicKey> {
         let mut authors = Vec::new();
-        // Snapshots clone every session's ratchet state; reuse one for all owners.
-        let engine_snapshot = self
-            .protocol_engine
-            .as_ref()
-            .map(|engine| (engine, engine.session_manager_snapshot()));
         for owner in owners {
             if let Some(known) = self.app_keys.get(&owner.to_hex()) {
                 for device in &known.devices {
@@ -682,7 +696,7 @@ impl AppCore {
                     }
                 }
             }
-            if let Some((engine, snapshot)) = engine_snapshot.as_ref() {
+            if let (Some(engine), Some(snapshot)) = (self.protocol_engine.as_ref(), snapshot) {
                 authors.extend(
                     engine.known_device_identity_pubkeys_for_owner_with_snapshot(snapshot, *owner),
                 );
@@ -1148,8 +1162,14 @@ impl AppCore {
     }
 
     pub(super) fn compute_protocol_subscription_plan(&self) -> Option<ProtocolSubscriptionPlan> {
+        // Owner demand and device discovery share this snapshot; never clone
+        // the complete ratchet state once per cached owner.
+        let snapshot = self
+            .protocol_engine
+            .as_ref()
+            .map(ProtocolEngine::session_manager_snapshot);
         let roster_authors = self
-            .protocol_owner_hexes()
+            .protocol_owner_hexes(snapshot.as_ref())
             .into_iter()
             .collect::<HashSet<_>>();
         let roster_authors = sorted_hexes(roster_authors);
@@ -1158,7 +1178,7 @@ impl AppCore {
             .filter_map(|hex| PublicKey::parse(hex).ok())
             .collect::<Vec<_>>();
         let invite_authors = self
-            .protocol_invite_author_pubkeys(&protocol_owners)
+            .protocol_invite_author_pubkeys(&protocol_owners, snapshot.as_ref())
             .into_iter()
             .map(|pubkey| pubkey.to_hex())
             .collect::<HashSet<_>>();

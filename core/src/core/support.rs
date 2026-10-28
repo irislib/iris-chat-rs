@@ -67,6 +67,7 @@ impl AppCore {
             relay_transport: self.relay_transport_debug_snapshot(),
             current_protocol_plan,
             protocol_subscription,
+            anonymous_discovery: protocol::anonymous_reads::diagnostics::snapshot(),
             protocol_engine: self
                 .protocol_engine
                 .as_ref()
@@ -198,6 +199,7 @@ impl AppCore {
             current_screen: format!("{current_screen:?}"),
             relay_transport: runtime.relay_transport,
             protocol_subscription: runtime.protocol_subscription,
+            anonymous_discovery: runtime.anonymous_discovery,
             chat_count: self.threads.len(),
             direct_chat_count,
             group_chat_count,

@@ -1,0 +1,10 @@
+# distribution	suite	URI	InRelease SHA256	components
+ubuntu	resolute	https://snapshot.ubuntu.com/ubuntu/20261028T000000Z	45f95ce276cdba3e41870516a130e03c58b8b7a79e9546b0efe9e526d255740c	main restricted universe multiverse
+ubuntu	resolute-updates	https://snapshot.ubuntu.com/ubuntu/20261028T000000Z	a1830fbb730dd7714124254a6f10f5c49dc259b29a651b9c05ff43661cdec71a	main restricted universe multiverse
+ubuntu	resolute-security	https://snapshot.ubuntu.com/ubuntu/20261028T000000Z	b27e5690bb333faf562eb693c6c9629c35b79dc7d8d7d670bdb45ca000294389	main restricted universe multiverse
+ubuntu-noble	noble	https://snapshot.ubuntu.com/ubuntu/20261028T000000Z	cdb2f31d809f589719a53c6ad15f255b27569c4059542ada282aaa21b8e164b0	main restricted universe multiverse
+ubuntu-noble	noble-updates	https://snapshot.ubuntu.com/ubuntu/20261028T000000Z	a964cb3f7cec2624aafb2c0d954cf51b4c83a26e8c59bec693b06864c71930e2	main restricted universe multiverse
+ubuntu-noble	noble-security	https://snapshot.ubuntu.com/ubuntu/20261028T000000Z	03b4a340344bee27fe5de728cf9060b9a30a102a85ca30f25c209980c0d4f184	main restricted universe multiverse
+debian	bookworm	http://snapshot.debian.org/archive/debian/20261028T000000Z	77737fa4b34f2693e982cc9ee35736816c35a7778fc2d326cc1bbf5b301fe1aa	main
+debian	bookworm-updates	http://snapshot.debian.org/archive/debian/20261028T000000Z	0cba94cecd653bd3bbb910e593d3e6991553fbab00ae3ac5a8b7356c567b6613	main
+debian	bookworm-security	http://snapshot.debian.org/archive/debian-security/20261028T000000Z	6ca56d4ff02224bc5c7dd1dadae095f5519eed31962f1efbba763f201dc3edba	main

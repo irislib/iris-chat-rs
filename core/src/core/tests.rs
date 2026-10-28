@@ -129,6 +129,7 @@ include!("tests/retry_publish_ordering.rs");
 include!("tests/nearby_publish_burst.rs");
 include!("tests/publish_drain_progress.rs");
 include!("tests/protocol_filters_push.rs");
+include!("tests/protocol_discovery_demand.rs");
 include!("tests/device_approval.rs");
 include!("tests/app_keys_roster.rs");
 include!("tests/app_keys_device_labels.rs");
@@ -210,6 +211,7 @@ include!("tests/contact_identity.rs");
 include!("tests/public_follow.rs");
 
 include!("tests/synthetic_history_scale.rs");
+include!("tests/synthetic_vm_profile.rs");
 include!("tests/populated_discovery_idle.rs");
 include!("tests/foreground_discovery.rs");
 include!("tests/synthetic_protocol_checkpoint.rs");

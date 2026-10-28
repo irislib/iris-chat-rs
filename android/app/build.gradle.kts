@@ -37,7 +37,8 @@ val androidSdkDir =
         ?: error("Android SDK path was not found. Define sdk.dir in android/local.properties.")
 val androidAppId = "to.iris.chat"
 val androidNdkDir = file("$androidSdkDir/ndk/$ndkVersionValue")
-val cargoBinary = file("${System.getProperty("user.home")}/.cargo/bin/cargo")
+val cargoBinary = file(System.getenv("CARGO")?.takeIf { it.isNotBlank() }
+    ?: "${System.getProperty("user.home")}/.cargo/bin/cargo")
 
 // Keep Rust artifacts out of the repo tree even when a long-lived Gradle daemon
 // started without the user's shell environment. Override with -Pcargo.targetDir
@@ -328,6 +329,7 @@ val buildRustHostDebug by tasks.registering(Exec::class) {
     commandLine(
         cargoBinary.absolutePath,
         "build",
+        "--locked",
         "--manifest-path",
         rustManifestPath.absolutePath,
     )
@@ -359,6 +361,7 @@ val generateRustBindings by tasks.registering(Exec::class) {
     commandLine(
         cargoBinary.absolutePath,
         "run",
+        "--locked",
         "-q",
         "--manifest-path",
         rustAppDir.resolve("uniffi-bindgen/Cargo.toml").absolutePath,
@@ -421,6 +424,7 @@ fun registerRustAndroidTask(
                 "--manifest-path",
                 rustManifestPath.absolutePath,
                 "build",
+                "--locked",
             )
         if (releaseMode) {
             command += "--release"

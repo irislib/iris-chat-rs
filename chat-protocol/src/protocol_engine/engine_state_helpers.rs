@@ -112,21 +112,6 @@ fn roster_device_pubkeys(user: &UserRecordSnapshot) -> Option<Vec<NdrDevicePubke
     })
 }
 
-fn user_can_send_to_device(user: &UserRecordSnapshot, device: NdrDevicePubkey) -> bool {
-    user.devices
-        .iter()
-        .find(|record| record.device_pubkey == device)
-        .is_some_and(device_record_can_send)
-}
-
-fn device_record_can_send(record: &DeviceRecordSnapshot) -> bool {
-    record.authorized
-        && !record.is_stale
-        && (record.active_session.is_some()
-            || !record.inactive_sessions.is_empty()
-            || record.public_invite.is_some())
-}
-
 impl ProtocolEngine {
     /// Original signed evidence for authenticated own-device reconciliation.
     pub fn authorization_events(&self) -> Vec<Event> {

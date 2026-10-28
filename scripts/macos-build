@@ -97,7 +97,7 @@ build_host() {
   (
     cd "$CORE_DIR"
     if [[ "$PROFILE" == "release" ]]; then
-      cargo build --release
+      cargo build --release --locked
     else
       cargo build
     fi
@@ -112,7 +112,7 @@ run_macos_gen_swift() {
   mkdir -p "$IOS_BINDINGS_DIR"
   (
     cd "$CORE_DIR"
-    cargo run -q --manifest-path "$CORE_DIR/uniffi-bindgen/Cargo.toml" -- generate \
+    cargo run -q --locked --manifest-path "$CORE_DIR/uniffi-bindgen/Cargo.toml" -- generate \
       --library "$lib_path" \
       --language swift \
       --out-dir "$IOS_BINDINGS_DIR" \
@@ -179,7 +179,7 @@ run_macos_rust() {
           IRIS_APP_VERSION="${IRIS_APP_VERSION_NAME:-}" \
           IRIS_BUILD_GIT_SHA="${IRIS_BUILD_GIT_SHA:-}" \
           IRIS_BUILD_TIMESTAMP_UTC="${IRIS_BUILD_TIMESTAMP_UTC:-}" \
-          cargo build --release --target "$target"
+          cargo build --release --locked --target "$target"
       else
         env \
           SDKROOT="$sdkroot" \

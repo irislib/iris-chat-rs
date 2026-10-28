@@ -75,7 +75,7 @@ jobs:
         working-directory: ${{ env.APP_DIR }}
     steps:
       - name: Checkout requested ref
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           path: ${{ env.APP_DIR }}
           ref: ${{ inputs.ref }}
@@ -129,30 +129,21 @@ jobs:
     steps:
       - &checkout_build
         name: Checkout immutable build commit
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           path: ${{ env.APP_DIR }}
           ref: ${{ needs.metadata.outputs.commit }}
-      - name: Set up JDK
-        uses: actions/setup-java@v5
+      - name: Install checksum-verified Rust
+        run: python3 scripts/release-build-inputs.py --install --work "$RUNNER_TEMP/iris-release-rust" --target aarch64-linux-android
+      - name: Retain reviewed build inputs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          distribution: temurin
-          java-version: "17"
-      - name: Install Rust and Android components
-        run: |
-          set -Eeuo pipefail
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends cmake libdbus-1-dev pkg-config
-          rustup toolchain install stable --profile minimal
-          rustup default stable
-          rustup target add aarch64-linux-android
-          cargo install cargo-ndk --locked
-          sdk_root="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
-          sdkmanager="$sdk_root/cmdline-tools/latest/bin/sdkmanager"
-          yes | "$sdkmanager" --licenses >/dev/null || true
-          "$sdkmanager" "platforms;android-36" "build-tools;36.0.0" "ndk;28.2.13676358"
+          name: build-inputs-android-${{ needs.metadata.outputs.version_name }}-${{ needs.metadata.outputs.short_sha }}
+          path: ${{ runner.temp }}/iris-release-rust/receipt.json
+          if-no-files-found: warn
       - name: Cache Cargo and Gradle
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
             ~/.cargo/registry
@@ -160,9 +151,21 @@ jobs:
             ~/.gradle/caches
             ~/.gradle/wrapper
             ${{ github.workspace }}/cargo-target
-          key: android-${{ runner.os }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock', 'iris-chat-rs/android/**/*.gradle*', 'iris-chat-rs/android/gradle/**/*.toml') }}
-          restore-keys: |
-            android-${{ runner.os }}-
+          key: android-${{ runner.os }}-${{ hashFiles('iris-chat-rs/scripts/release-build-inputs.py', 'iris-chat-rs/scripts/release-build-inputs.json', 'iris-chat-rs/scripts/android-release-inputs.py', 'iris-chat-rs/scripts/android-release-inputs.json', 'iris-chat-rs/linux/scripts/pinned-apt.sh', 'iris-chat-rs/linux/build-inputs/apt-snapshots.tsv') }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock', 'iris-chat-rs/android/**/*gradle.lockfile', 'iris-chat-rs/android/gradle/verification-metadata.xml', 'iris-chat-rs/android/gradle/wrapper/gradle-wrapper.properties', 'iris-chat-rs/android/gradle/wrapper/gradle-wrapper.jar', 'iris-chat-rs/android/**/*.gradle*', 'iris-chat-rs/android/gradle/**/*.toml') }}
+          restore-keys: android-${{ runner.os }}-${{ hashFiles('iris-chat-rs/scripts/release-build-inputs.py', 'iris-chat-rs/scripts/release-build-inputs.json', 'iris-chat-rs/scripts/android-release-inputs.py', 'iris-chat-rs/scripts/android-release-inputs.json', 'iris-chat-rs/linux/scripts/pinned-apt.sh', 'iris-chat-rs/linux/build-inputs/apt-snapshots.tsv') }}-
+      - name: Install checksum-verified Android components
+        run: |
+          set -Eeuo pipefail
+          sudo bash linux/scripts/pinned-apt.sh ubuntu-noble cmake libdbus-1-dev pkg-config pkgconf pkgconf-bin
+          python3 scripts/android-release-inputs.py --install \
+            --work "$RUNNER_TEMP/iris-release-android" --rust-work "$RUNNER_TEMP/iris-release-rust"
+      - name: Retain reviewed Android inputs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: android-inputs-${{ needs.metadata.outputs.version_name }}-${{ needs.metadata.outputs.short_sha }}
+          path: ${{ runner.temp }}/iris-release-android/receipt.json
+          if-no-files-found: warn
       - name: Configure Android signing
         env:
           KEYSTORE_BASE64: ${{ secrets.IRIS_RELEASE_KEYSTORE_BASE64 }}
@@ -197,7 +200,7 @@ jobs:
           mv "$apk" "dist/android/iris-chat-v${IRIS_APP_VERSION_NAME}-android-arm64.apk"
           mv "$aab" "dist/android/iris-chat-v${IRIS_APP_VERSION_NAME}-android-arm64.aab"
       - name: Upload Android build
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: iris-android-${{ needs.metadata.outputs.version_name }}-${{ needs.metadata.outputs.short_sha }}
           path: |
@@ -222,20 +225,23 @@ jobs:
       - name: Install build tools
         run: |
           set -Eeuo pipefail
-          brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
-          brew list cmake >/dev/null 2>&1 || brew install cmake
-          rustup toolchain install stable --profile minimal
-          rustup default stable
-          rustup target add aarch64-apple-ios aarch64-apple-ios-sim
+          python3 scripts/release-build-inputs.py --install --work "$RUNNER_TEMP/iris-release-rust" --target aarch64-apple-ios --target aarch64-apple-ios-sim --tools ios
+      - name: Retain reviewed build inputs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: build-inputs-ios-${{ needs.metadata.outputs.version_name }}-${{ needs.metadata.outputs.short_sha }}
+          path: ${{ runner.temp }}/iris-release-rust/receipt.json
+          if-no-files-found: warn
       - name: Cache Cargo
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             ${{ github.workspace }}/cargo-target
-          key: all-builds-ios-${{ runner.arch }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock', 'iris-chat-rs/ios/project.yml') }}
-          restore-keys: all-builds-ios-${{ runner.arch }}-
+          key: all-builds-ios-${{ runner.arch }}-${{ hashFiles('iris-chat-rs/scripts/release-build-inputs.py', 'iris-chat-rs/scripts/release-build-inputs.json') }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock', 'iris-chat-rs/ios/project.yml') }}
+          restore-keys: all-builds-ios-${{ runner.arch }}-${{ hashFiles('iris-chat-rs/scripts/release-build-inputs.py', 'iris-chat-rs/scripts/release-build-inputs.json') }}-
       - name: Configure iOS distribution signing
         env:
           IOS_CERTIFICATE_P12_BASE64: ${{ secrets.IOS_CERTIFICATE_P12_BASE64 }}
@@ -367,7 +373,7 @@ jobs:
           archive_zip="dist/ios/iris-chat-v${IRIS_APP_VERSION_NAME}-ios.xcarchive.zip"
           ditto -c -k --sequesterRsrc --keepParent "$archive" "$archive_zip"
       - name: Upload iOS build
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: iris-ios-${{ needs.metadata.outputs.version_name }}-${{ needs.metadata.outputs.short_sha }}
           path: |
@@ -404,22 +410,24 @@ jobs:
       - name: Install build tools
         run: |
           set -Eeuo pipefail
-          brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
-          brew list cmake >/dev/null 2>&1 || brew install cmake
-          rustup toolchain install stable --profile minimal
-          rustup default stable
-          rustup target add aarch64-apple-darwin
+          python3 scripts/release-build-inputs.py --install --work "$RUNNER_TEMP/iris-release-rust" --target aarch64-apple-darwin --tools macos
+      - name: Retain reviewed build inputs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: build-inputs-macos-${{ needs.metadata.outputs.version_name }}-${{ needs.metadata.outputs.short_sha }}
+          path: ${{ runner.temp }}/iris-release-rust/receipt.json
+          if-no-files-found: warn
       - name: Cache Cargo
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             ${{ github.workspace }}/cargo-target
             ${{ github.workspace }}/iris-chat-rs/macos/.build/cargo-target
-          key: macos-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock', 'iris-chat-rs/macos/project.yml') }}
-          restore-keys: |
-            macos-${{ runner.os }}-${{ runner.arch }}-
+          key: macos-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('iris-chat-rs/scripts/release-build-inputs.py', 'iris-chat-rs/scripts/release-build-inputs.json') }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock', 'iris-chat-rs/macos/project.yml') }}
+          restore-keys: macos-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('iris-chat-rs/scripts/release-build-inputs.py', 'iris-chat-rs/scripts/release-build-inputs.json') }}-
       - name: Verify local FIPS calls without internet
         run: ./scripts/test_calls_offline.sh
       - name: Configure macOS signing and notarization
@@ -516,7 +524,7 @@ jobs:
           fi
           IRIS_MACOS_APP_SMOKE_PATH="$app" ./scripts/macos-app-launch-smoke.sh
       - name: Upload macOS build
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: iris-macos-${{ needs.metadata.outputs.version_name }}-${{ needs.metadata.outputs.short_sha }}
           path: |
@@ -548,21 +556,25 @@ jobs:
         working-directory: ${{ env.APP_DIR }}
     steps:
       - *checkout_build
-      - name: Install build tools
-        run: |
-          rustup toolchain install stable --profile minimal
-          rustup default stable
-          rustup target add x86_64-pc-windows-msvc
-          choco install nsis cmake nasm --no-progress -y
+      - name: Install checksum-verified Rust
+        shell: bash
+        run: python scripts/release-build-inputs.py --install --work "$RUNNER_TEMP/iris-release-rust" --target x86_64-pc-windows-msvc --bash "$(cygpath -w "$BASH")" --tools windows
+      - name: Retain reviewed build inputs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: build-inputs-windows-${{ needs.metadata.outputs.version_name }}-${{ needs.metadata.outputs.short_sha }}
+          path: ${{ runner.temp }}/iris-release-rust/receipt.json
+          if-no-files-found: warn
       - name: Cache Cargo
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             ${{ github.workspace }}/cargo-target
-          key: all-builds-windows-${{ hashFiles('iris-chat-rs/**/Cargo.lock', 'iris-chat-rs/windows/**/*.csproj') }}
-          restore-keys: all-builds-windows-
+          key: all-builds-windows-${{ hashFiles('iris-chat-rs/scripts/release-build-inputs.py', 'iris-chat-rs/scripts/release-build-inputs.json', 'iris-chat-rs/global.json') }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock', 'iris-chat-rs/windows/**/*.csproj') }}
+          restore-keys: all-builds-windows-${{ hashFiles('iris-chat-rs/scripts/release-build-inputs.py', 'iris-chat-rs/scripts/release-build-inputs.json', 'iris-chat-rs/global.json') }}-
       - name: Build and verify Windows artifacts
         run: |
           ./scripts/windows-build-local.ps1 artifacts
@@ -577,7 +589,7 @@ jobs:
           }
           & ./scripts/windows-installer-smoke.ps1 -InstallerPath $installer
       - name: Upload Windows build
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: iris-windows-${{ needs.metadata.outputs.version_name }}-${{ needs.metadata.outputs.short_sha }}
           path: |
@@ -621,11 +633,11 @@ jobs:
       # The container writes through the checkout bind mount, not the job's
       # host CARGO_TARGET_DIR. Always rebuild/verify the tagged app after restore.
       - name: Cache Linux release dependencies
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ${{ env.APP_DIR }}/linux/target/release
-          key: linux-release-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.linux-cache.outputs.toolchain }}-${{ hashFiles('iris-chat-rs/**/Cargo.toml', 'iris-chat-rs/**/build.rs', 'iris-chat-rs/**/.cargo/config*', 'iris-chat-rs/**/rust-toolchain*', 'iris-chat-rs/linux/Dockerfile', 'iris-chat-rs/linux/.dockerignore', 'iris-chat-rs/linux/scripts/**', 'iris-chat-rs/scripts/linux-release', 'iris-chat-rs/scripts/build_common.sh', 'iris-chat-rs/scripts/docker_stage_common.sh') }}-${{ hashFiles('iris-chat-rs/linux/Cargo.lock') }}
-          restore-keys: linux-release-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.linux-cache.outputs.toolchain }}-${{ hashFiles('iris-chat-rs/**/Cargo.toml', 'iris-chat-rs/**/build.rs', 'iris-chat-rs/**/.cargo/config*', 'iris-chat-rs/**/rust-toolchain*', 'iris-chat-rs/linux/Dockerfile', 'iris-chat-rs/linux/.dockerignore', 'iris-chat-rs/linux/scripts/**', 'iris-chat-rs/scripts/linux-release', 'iris-chat-rs/scripts/build_common.sh', 'iris-chat-rs/scripts/docker_stage_common.sh') }}-
+          key: linux-release-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.linux-cache.outputs.toolchain }}-${{ hashFiles('iris-chat-rs/**/Cargo.toml', 'iris-chat-rs/**/build.rs', 'iris-chat-rs/**/.cargo/config*', 'iris-chat-rs/**/rust-toolchain*', 'iris-chat-rs/linux/Dockerfile', 'iris-chat-rs/linux/.dockerignore', 'iris-chat-rs/linux/scripts/**', 'iris-chat-rs/linux/build-inputs/**', 'iris-chat-rs/scripts/linux-release', 'iris-chat-rs/scripts/build_common.sh', 'iris-chat-rs/scripts/docker_stage_common.sh') }}-${{ hashFiles('iris-chat-rs/linux/Cargo.lock') }}
+          restore-keys: linux-release-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.linux-cache.outputs.toolchain }}-${{ hashFiles('iris-chat-rs/**/Cargo.toml', 'iris-chat-rs/**/build.rs', 'iris-chat-rs/**/.cargo/config*', 'iris-chat-rs/**/rust-toolchain*', 'iris-chat-rs/linux/Dockerfile', 'iris-chat-rs/linux/.dockerignore', 'iris-chat-rs/linux/scripts/**', 'iris-chat-rs/linux/build-inputs/**', 'iris-chat-rs/scripts/linux-release', 'iris-chat-rs/scripts/build_common.sh', 'iris-chat-rs/scripts/docker_stage_common.sh') }}-
       - name: Build and verify Linux artifacts
         run: |
           set -Eeuo pipefail
@@ -635,7 +647,7 @@ jobs:
           dpkg-deb --info "$deb" >/dev/null
           tar -tzf "$archive" | grep '/iris-chat$' >/dev/null
       - name: Upload Linux build
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: iris-linux-${{ needs.metadata.outputs.version_name }}-${{ needs.metadata.outputs.short_sha }}
           path: |
@@ -672,26 +684,29 @@ jobs:
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends cmake libdbus-1-dev pkg-config
-      - name: Install macOS dependencies
-        if: runner.os == 'macOS'
-        run: brew list cmake >/dev/null 2>&1 || brew install cmake
-      - name: Install Rust target
+          sudo bash linux/scripts/pinned-apt.sh ubuntu-noble cmake libdbus-1-dev pkg-config
+      - name: Install checksum-verified Rust target
         run: |
-          rustup toolchain install stable --profile minimal
-          rustup default stable
-          rustup target add "${{ matrix.target }}"
+          tools=()
+          if [[ "$RUNNER_OS" == macOS ]]; then tools=(--tools macos-cli); fi
+          python3 scripts/release-build-inputs.py --install --work "$RUNNER_TEMP/iris-release-rust" --target "${{ matrix.target }}" "${tools[@]}"
+      - name: Retain reviewed build inputs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: build-inputs-${{ matrix.platform }}-${{ needs.metadata.outputs.version_name }}-${{ needs.metadata.outputs.short_sha }}
+          path: ${{ runner.temp }}/iris-release-rust/receipt.json
+          if-no-files-found: warn
       - name: Cache Cargo
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             ${{ github.workspace }}/cargo-target
             ${{ github.workspace }}/${{ env.APP_DIR }}/target/cli-release
-          key: all-builds-${{ matrix.platform }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock') }}
-          restore-keys: all-builds-${{ matrix.platform }}-
+          key: all-builds-${{ matrix.platform }}-${{ hashFiles('iris-chat-rs/scripts/release-build-inputs.py', 'iris-chat-rs/scripts/release-build-inputs.json', 'iris-chat-rs/scripts/docker_stage_common.sh', 'iris-chat-rs/linux/scripts/pinned-apt.sh', 'iris-chat-rs/linux/build-inputs/**') }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock') }}
+          restore-keys: all-builds-${{ matrix.platform }}-${{ hashFiles('iris-chat-rs/scripts/release-build-inputs.py', 'iris-chat-rs/scripts/release-build-inputs.json', 'iris-chat-rs/scripts/docker_stage_common.sh', 'iris-chat-rs/linux/scripts/pinned-apt.sh', 'iris-chat-rs/linux/build-inputs/**') }}-
       - name: Build and verify CLI archive
         run: |
           set -Eeuo pipefail
@@ -716,7 +731,7 @@ jobs:
           fi
           mv "$archive" "dist/cli/iris-v${IRIS_APP_VERSION_NAME}-${target}.tar.gz"
       - name: Upload CLI build
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: iris-${{ matrix.platform }}-${{ needs.metadata.outputs.version_name }}-${{ needs.metadata.outputs.short_sha }}
           path: ${{ env.APP_DIR }}/dist/cli/iris-v${{ needs.metadata.outputs.version_name }}-${{ matrix.target }}.tar.gz

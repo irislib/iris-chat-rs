@@ -4,7 +4,13 @@
 # Runs Xvfb + fluxbox + x11vnc so the app window is reachable from the host on
 # vnc://localhost:5900 (no password).
 
-FROM ubuntu:26.04
+FROM ubuntu:26.04@sha256:c098726dd9b9733f3e885f8de0ef375206a311b0a317eadc40d347b1115fb944
+
+# The minimal image needs CA trust before HTTPS APT bootstrap. BuildKit verifies
+# this dated Mozilla bundle before use; Ubuntu ca-certificates supplies normal
+# trust below. Use existing /tmp so ADD's file mode cannot restrict parent dirs.
+ADD --checksum=sha256:796f1389bfea13c0ed78f663b765baaff54a508e5483786bd6ece73c5e3e3cbe --chmod=0644 \
+    https://curl.se/ca/cacert-2026-10-20.pem /tmp/iris-bootstrap-ca.pem
 
 ENV DEBIAN_FRONTEND=noninteractive \
     LANG=C.UTF-8 \
@@ -14,13 +20,16 @@ ENV DEBIAN_FRONTEND=noninteractive \
     CARGO_HOME=/usr/local/cargo \
     PATH=/usr/local/cargo/bin:$PATH
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+COPY scripts/pinned-apt.sh /opt/iris-build/scripts/pinned-apt.sh
+COPY build-inputs/apt-snapshots.tsv /opt/iris-build/build-inputs/apt-snapshots.tsv
+RUN SSL_CERT_FILE=/tmp/iris-bootstrap-ca.pem bash /opt/iris-build/scripts/pinned-apt.sh ubuntu \
         build-essential \
         cmake \
         pkg-config \
         ca-certificates \
         curl \
         git \
+        python3 \
         rustc \
         cargo \
         libgtk-4-dev \
@@ -48,8 +57,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         imagemagick \
         fonts-noto-core \
         fonts-noto-color-emoji \
-        adwaita-icon-theme \
-    && rm -rf /var/lib/apt/lists/*
+        adwaita-icon-theme
 
 ARG INSTALL_CARGO_WATCH=1
 RUN mkdir -p "$CARGO_HOME" \

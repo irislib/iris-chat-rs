@@ -1,3 +1,4 @@
+use super::anonymous_reads::diagnostics;
 use super::*;
 
 const MAX_PRIVATE_DISCOVERY_SCOPES: usize = 512;
@@ -131,6 +132,8 @@ impl PrivateDiscoveryClient {
         let mut verification = super::anonymous_reads::VerificationCache::default();
         #[cfg(test)]
         let signature_calls = verification.signature_calls.clone();
+        // Construct before spawning so dropping an unpolled task still balances it.
+        let mut diagnostic_scope = diagnostics::Scope::new();
         let task = runtime.spawn(async move {
             let mut seen = HashSet::new();
             let mut order = std::collections::VecDeque::new();
@@ -154,6 +157,7 @@ impl PrivateDiscoveryClient {
                 // Bind retained tickets and signature results to the actual
                 // configuration, including the ordering of relay indices.
                 if tls_config.as_ref() != Some(&current) {
+                    diagnostic_scope.configured();
                     verification.clear();
                     tls_connectors = current
                         .relays
@@ -243,7 +247,10 @@ impl PrivateDiscoveryClient {
                     false
                 };
                 tokio::select! {
-                    stopped = cycle => if stopped { break; },
+                    stopped = cycle => {
+                        if stopped { break; }
+                        diagnostic_scope.sweep_completed();
+                    },
                     result = updates.changed() => {
                         if result.is_err() { break; }
                         cadence.reset();
@@ -298,6 +305,7 @@ impl PrivateDiscoveryClient {
 
     fn refresh(&self) {
         if !self.cancelled.load(std::sync::atomic::Ordering::Acquire) {
+            diagnostics::refresh_requested();
             self.refresh.notify_one();
         }
     }

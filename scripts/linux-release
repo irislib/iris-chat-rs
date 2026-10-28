@@ -112,16 +112,12 @@ docker run \
     cd "/workspace/$IRIS_REPO_BASENAME/linux"
 
     if ! dpkg -s libclang-dev >/dev/null 2>&1; then
-      apt-get update >/dev/null
-      DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-        libclang-dev clang >/dev/null
+      bash scripts/pinned-apt.sh ubuntu libclang-dev clang
     fi
 
-    cargo build --release
+    cargo build --release --locked
 
-    if ! command -v cargo-deb >/dev/null 2>&1; then
-      cargo install cargo-deb --locked
-    fi
+    bash scripts/install-cargo-deb.sh
 
     OUT="/workspace/$IRIS_REPO_BASENAME/dist/linux"
     mkdir -p "$OUT"

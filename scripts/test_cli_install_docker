@@ -55,7 +55,9 @@ if ! command -v docker >/dev/null 2>&1; then
   exit 1
 fi
 
-docker_args=(--rm --platform "$PLATFORM" -e INSTALL_URL="$INSTALL_URL")
+docker_args=(--rm --platform "$PLATFORM" -e INSTALL_URL="$INSTALL_URL"
+  -v "$ROOT/linux/scripts/pinned-apt.sh:/opt/iris-build/scripts/pinned-apt.sh:ro"
+  -v "$ROOT/linux/build-inputs/apt-snapshots.tsv:/opt/iris-build/build-inputs/apt-snapshots.tsv:ro")
 if [[ -n "$ARCHIVE" ]]; then
   [[ -f "$ARCHIVE" ]] || { echo "Archive not found: $ARCHIVE" >&2; exit 1; }
   ARCHIVE="$(cd "$(dirname "$ARCHIVE")" && pwd)/$(basename "$ARCHIVE")"
@@ -68,8 +70,7 @@ docker run "${docker_args[@]}" \
     set -eu
 
     export DEBIAN_FRONTEND=noninteractive
-    apt-get update
-    apt-get install -y --no-install-recommends ca-certificates curl tar
+    bash /opt/iris-build/scripts/pinned-apt.sh debian ca-certificates curl tar
 
     if [ -f /tmp/iris-cli.tar.gz ]; then
       mkdir /tmp/iris-cli-candidate

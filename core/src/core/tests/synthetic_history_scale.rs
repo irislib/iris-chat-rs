@@ -61,6 +61,35 @@ fn synthetic_history_fixture_with_devices(
     groups: usize,
     devices_per_contact: usize,
 ) -> (SyntheticHistory, Vec<Event>) {
+    synthetic_history_fixture_with_devices_at(mib, contacts, groups, devices_per_contact, 0)
+}
+
+fn synthetic_discovery_event(
+    mut unsigned: UnsignedEvent,
+    keys: &Keys,
+    discovery_epoch: u64,
+) -> Event {
+    if discovery_epoch != 0 {
+        unsigned
+            .tags
+            .push(nostr::Tag::expiration(Timestamp::from_secs(
+                discovery_epoch + 24 * 60 * 60,
+            )));
+        unsigned.id = None;
+    }
+    unsigned.sign_with_keys(keys).unwrap()
+}
+
+// Native VM exports may publish their generated discovery corpus. Keep the
+// original zero-based timestamps for existing offline fixtures, while letting
+// that export use recent, relay-admissible signed events without rewriting them.
+fn synthetic_history_fixture_with_devices_at(
+    mib: u64,
+    contacts: usize,
+    groups: usize,
+    devices_per_contact: usize,
+    discovery_epoch: u64,
+) -> (SyntheticHistory, Vec<Event>) {
     assert!((1..=3).contains(&devices_per_contact));
     let mut discovery_events = Vec::new();
     let owner = Keys::generate();
@@ -94,10 +123,11 @@ fn synthetic_history_fixture_with_devices(
                 .map(|key| DeviceEntry::new(key, created_at))
                 .collect(),
         );
-        let event = own_roster
-            .get_event_at(owner.public_key(), created_at)
-            .sign_with_keys(&owner)
-            .unwrap();
+        let event = synthetic_discovery_event(
+            own_roster.get_event_at(owner.public_key(), created_at),
+            &owner,
+            discovery_epoch,
+        );
         engine.ingest_app_keys_event(&event).unwrap();
         core.capture_authorization_event(&event).unwrap();
         core.app_keys.insert(
@@ -113,13 +143,13 @@ fn synthetic_history_fixture_with_devices(
             // A real old signed roster/invite followed by exclusion leaves a
             // revoked, stale record in the durable protocol checkpoint.
             let revoked = Keys::generate();
-            observe_peer_device_invite_for_test(&mut engine, peer, &revoked, 1);
+            observe_peer_device_invite_for_test(&mut engine, peer, &revoked, discovery_epoch + 1);
         }
-        observe_peer_device_invite_for_test(&mut engine, peer, &peer_device, 2);
+        observe_peer_device_invite_for_test(&mut engine, peer, &peer_device, discovery_epoch + 2);
         let devices = std::iter::once(peer_device.clone())
             .chain((1..devices_per_contact).map(|_| Keys::generate()))
             .collect::<Vec<_>>();
-        let roster_created_at = if devices_per_contact == 1 { 2 } else { 5 };
+        let roster_created_at = discovery_epoch + if devices_per_contact == 1 { 2 } else { 5 };
         let roster = AppKeys::new(
             devices
                 .iter()
@@ -127,22 +157,22 @@ fn synthetic_history_fixture_with_devices(
                 .collect(),
         );
         if devices_per_contact > 1 {
-            let event = roster
-                .get_event_at(peer.public_key(), 5)
-                .sign_with_keys(peer)
-                .unwrap();
+            let event = synthetic_discovery_event(
+                roster.get_event_at(peer.public_key(), discovery_epoch + 5),
+                peer,
+                discovery_epoch,
+            );
             engine.ingest_app_keys_event(&event).unwrap();
             core.capture_authorization_event(&event).unwrap();
             discovery_events.push(event);
             if index == 0 {
                 // Withheld by the wire fixture until a real proof demand. This
                 // is signed by the same owner; no fabricated metadata bypass.
-                discovery_events.push(
-                    roster
-                        .get_event_at(peer.public_key(), 6)
-                        .sign_with_keys(peer)
-                        .unwrap(),
-                );
+                discovery_events.push(synthetic_discovery_event(
+                    roster.get_event_at(peer.public_key(), discovery_epoch + 6),
+                    peer,
+                    discovery_epoch,
+                ));
             }
             discovery_events.push(
                 EventBuilder::new(
@@ -161,7 +191,7 @@ fn synthetic_history_fixture_with_devices(
                 let created_at = if device_index == 0 {
                     unix_now().get()
                 } else {
-                    2
+                    discovery_epoch + 2
                 };
                 let invite =
                     Invite::create_new(key.public_key(), Some(key.public_key().to_hex()), None)
@@ -169,7 +199,7 @@ fn synthetic_history_fixture_with_devices(
                 let mut unsigned = nostr_double_ratchet::invite_unsigned_event(&invite).unwrap();
                 unsigned.created_at = Timestamp::from_secs(created_at);
                 unsigned.id = None;
-                let event = unsigned.sign_with_keys(key).unwrap();
+                let event = synthetic_discovery_event(unsigned, key, discovery_epoch);
                 engine.observe_invite_event(&event).unwrap();
                 discovery_events.push(event);
             }

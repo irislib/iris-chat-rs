@@ -1,0 +1,159 @@
+{
+  "schema": 1,
+  "gradle": {
+    "version": "9.3.1",
+    "distribution_url": "https://services.gradle.org/distributions/gradle-9.3.1-bin.zip",
+    "distribution_sha256": "b266d5ff6b90eada6dc3b20cb090e3731302e553a27c5d3e4df1f0d76beaff06",
+    "wrapper_jar_sha256": "b3a875ddc1f044746e1b1a55f645584505f4a10438c1afea9f15e92a7c42ec13",
+    "checksum_source": "https://gradle.org/release-checksums/",
+    "java_major": 17,
+    "tasks": [
+      ":irisReleaseInputs"
+    ],
+    "release_input_scope": {
+      "release_tasks": [
+        ":app:bundleRelease",
+        ":app:assembleSelfHosted"
+      ],
+      "buildscript_projects": [
+        ":",
+        ":app",
+        ":fips-ble",
+        ":test-signer"
+      ],
+      "configurations": {
+        ":app": [
+          "coreLibraryDesugaring",
+          "lintChecks",
+          "androidJdkImage",
+          "kotlinBuildToolsApiClasspath",
+          "kotlinCompilerClasspath",
+          "kotlinCompilerPluginClasspath",
+          "releaseCompileClasspath",
+          "releaseRuntimeClasspath",
+          "releaseAnnotationProcessorClasspath",
+          "releaseLintChecksClasspath",
+          "selfHostedCompileClasspath",
+          "selfHostedRuntimeClasspath",
+          "selfHostedAnnotationProcessorClasspath",
+          "selfHostedLintChecksClasspath",
+          "kotlinCompilerPluginClasspathRelease",
+          "kotlinCompilerPluginClasspathSelfHosted"
+        ],
+        ":fips-ble": [
+          "coreLibraryDesugaring",
+          "lintChecks",
+          "androidJdkImage",
+          "kotlinBuildToolsApiClasspath",
+          "kotlinCompilerClasspath",
+          "kotlinCompilerPluginClasspath",
+          "releaseCompileClasspath",
+          "releaseRuntimeClasspath",
+          "releaseAnnotationProcessorClasspath",
+          "releaseLintChecksClasspath",
+          "kotlinCompilerPluginClasspathRelease"
+        ]
+      },
+      "tools": {
+        "irisReleaseAapt2Linux": [
+          "com.android.tools.build:aapt2:9.1.0-14792394:linux"
+        ],
+        "irisReleaseLint": [
+          "com.android.tools.lint:lint-gradle:32.1.0"
+        ]
+      },
+      "agp_version": "9.1.0",
+      "tool_version_evidence": "AGP 9.1.0 embedded com/android/build/api/extension/impl/version.properties (baseVersion=32.1.0) and com/android/build/gradle/internal/res/aapt2_version.properties (aapt2Version=14792394). Linux AAPT2 is selected for the tagged hosted build; no tool is executed by this phase.",
+      "excluded": "Debug/beta/test-signer application variants and UTP/Jacoco test configurations are outside the tagged Android release tasks; their buildscript plugin inputs are still resolved."
+    }
+  },
+  "cargo_ndk": {
+    "version": "4.1.2",
+    "url": "https://static.crates.io/crates/cargo-ndk/cargo-ndk-4.1.2.crate",
+    "bytes": 47589,
+    "sha256": "903cc87cda6ab7a2ff82a74065e1c2ae5baa869546b32eb4aacabcc6ed5a670f",
+    "metadata_source": "https://crates.io/api/v1/crates/cargo-ndk/4.1.2",
+    "bundled_lock": {
+      "path": "cargo-ndk-4.1.2/Cargo.lock",
+      "bytes": 31350,
+      "sha256": "94c8fd9b0269546b838bc75bc62308d8cdc51e8b8dbfc652b12c84615a54984e",
+      "package_count": 134,
+      "registry_dependencies_have_checksums": true,
+      "git_dependencies": []
+    },
+    "installer_plan": [
+      "Download this exact bounded archive; verify size and committed SHA-256 before extraction.",
+      "Reject links, special files and escaping paths; verify the included Cargo.lock against its committed SHA-256.",
+      "Use the separately pinned release Rust installer CARGO, RUSTC and RUSTDOC; do not use an unrelated PATH compiler.",
+      "Run CARGO install --path <verified-crate-directory> --locked --root <owned-tool-prefix> --jobs 2 with the existing compatible Cargo cache and an admitted finite build limit.",
+      "Require cargo-ndk --version to report 4.1.2; keep the archive and lock checksums with the build receipt. This records a local helper build, not a reproduced upstream binary."
+    ],
+    "installer_executed": false
+  },
+  "sdk_metadata_source": "https://dl.google.com/android/repository/repository2-3.xml",
+  "sdk_metadata_sha256_at_review": "d3678697ece7b7c3df6e3eed8363bf3944176931728af251268268a2d0d7d900",
+  "sdk_status": "Pinned SHA-256: complete archives streamed once and matched the reviewed official SHA-1 and exact size; no archive was retained, parsed or executed during pin acquisition.",
+  "dependency_metadata_status": "Reviewed checksums are required before strict acquisition. Acquire writes dependency locks without changing checksums; a separate strict offline artifact replay must pass before release.",
+  "sdk_linux": [
+    {
+      "package": "platforms;android-36",
+      "revision": "2",
+      "url": "https://dl.google.com/android/repository/platform-36_r02.zip",
+      "bytes": 65878410,
+      "official_sha1": "2c1a80dd4d9f7d0e6dd336ec603d9b5c55a6f576",
+      "sha256": "37607369a28c5b640b3a7998868d45898ebcb777565a0e85f9acf36f29631d2e",
+      "format": "zip",
+      "source_properties": {
+        "Pkg.Revision": "2",
+        "AndroidVersion.ApiLevel": "36"
+      }
+    },
+    {
+      "package": "build-tools;36.0.0",
+      "url": "https://dl.google.com/android/repository/build-tools_r36_linux.zip",
+      "bytes": 63737259,
+      "official_sha1": "b0b6376977657e8ad9b969bacf4093601da2c6fb",
+      "sha256": "5d9ac77fb6ff43d9da518a337b4fcf8f9097113df531d99ccefe80ef7ce8250b",
+      "format": "zip",
+      "source_properties": {
+        "Pkg.Revision": "36.0.0"
+      }
+    },
+    {
+      "package": "ndk;28.2.13676358",
+      "url": "https://dl.google.com/android/repository/android-ndk-r28c-linux.zip",
+      "bytes": 722261334,
+      "official_sha1": "a7b54a5de87fecd125a17d54f73c446199e72a64",
+      "sha256": "dfb20d396df28ca02a8c708314b814a4d961dc9074f9a161932746f815aa552f",
+      "format": "zip",
+      "source_properties": {
+        "Pkg.Revision": "28.2.13676358"
+      }
+    }
+  ],
+  "jdk": {
+    "version": "17.0.20+8",
+    "url": "https://github.com/adoptium/temurin17-binaries/releases/download/jdk-17.0.20%2B8/OpenJDK17U-jdk_x64_linux_hotspot_17.0.20_8.tar.gz",
+    "sha256": "be7668bc030d578b83d6d5ef9221d6d6729bbbca8cf94a7d52e16ac68b5a5a35",
+    "bytes": 193273593,
+    "format": "tar.gz",
+    "root": "jdk-17.0.20+8",
+    "binary": "jdk-17.0.20+8/bin/java",
+    "metadata_source": "https://api.github.com/repos/adoptium/temurin17-binaries/releases/tags/jdk-17.0.20%2B8",
+    "checksum_source": "https://github.com/adoptium/temurin17-binaries/releases/download/jdk-17.0.20%2B8/OpenJDK17U-jdk_x64_linux_hotspot_17.0.20_8.tar.gz.sha256.txt"
+  },
+  "external_assumptions": {
+    "host": "Ubuntu 24.04 x86_64 provides Python with tarfile.data_filter, its C/C++ compiler and linker, shell, Git and CA roots. CMake, DBus headers, pkg-config and its pkgconf/pkgconf-bin providers use the source-pinned noble APT snapshot. CMAKE=/usr/bin/cmake and PKG_CONFIG=/usr/bin/pkg-config bind the installed tools; exact package versions and executable probes are retained.",
+    "jdk_correction": "The accepted earlier workflow identified cached Temurin as 17.0.20+1, which has no matching official archive. The release now selects the official Temurin 17.0.20+8 archive and requires hosted qualification; prior binaries are not claimed to use this archive.",
+    "qualification": "Archive pins and source controls are verified. SDK extraction/layout, installed JDK execution, cargo-ndk compilation and the full Android release still require hosted qualification. No installer or compiler ran during pin preparation."
+  },
+  "dependency_phase_limits": {
+    "timeout_seconds": 180,
+    "heap_mib": 2048,
+    "workers": 1,
+    "reserved_growth_bytes": 536870912,
+    "protected_free_floor_bytes": 9126805504,
+    "sample_seconds": 2,
+    "entry_cushion_bytes": 536870912
+  }
+}

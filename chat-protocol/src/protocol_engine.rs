@@ -11,6 +11,7 @@ include!("protocol_engine/group_ingress_migration.rs");
 include!("protocol_engine/engine_test_support.rs");
 include!("protocol_engine/engine_state_helpers.rs");
 include!("protocol_engine/engine_fact_ingest.rs");
+include!("protocol_engine/engine_app_keys.rs");
 include!("protocol_engine/engine_sends.rs");
 include!("protocol_engine/engine_group_wakes.rs");
 include!("protocol_engine/engine_local_sibling_sends.rs");

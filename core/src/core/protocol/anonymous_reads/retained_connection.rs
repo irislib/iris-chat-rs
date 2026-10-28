@@ -78,6 +78,7 @@ impl ScopedReadConnection {
             &self.relay,
             connector,
             relay_addresses::connect(&self.relay),
+            permit.is_some(),
         )
         .await?;
         Ok(Session {
@@ -112,7 +113,10 @@ impl ScopedReadConnection {
         // Take ownership during the transaction. A timeout or cancellation
         // drops a partially consumed connection instead of reusing it later.
         let mut session = match self.session.take() {
-            Some(session) => session,
+            Some(session) => {
+                diagnostics::retained_reused();
+                session
+            }
             None => self.open(connector.clone()).await?,
         };
         let mut result = read_query(

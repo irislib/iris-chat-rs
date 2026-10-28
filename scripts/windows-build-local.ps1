@@ -61,7 +61,8 @@ function Add-ToolPaths {
         'C:\Program Files (x86)\NSIS',
         'C:\Program Files\NSIS'
     )
-    $env:PATH = (($paths + @($env:PATH)) -join ';')
+    # Verified CI inputs keep priority; local developer fallbacks remain available.
+    $env:PATH = ((@($env:PATH) + $paths) -join ';')
 }
 
 function Get-CargoTargetDirectory {
@@ -111,10 +112,14 @@ function Invoke-Doctor {
 function Build-Rust {
     Import-VisualStudioEnvironment
     Add-ToolPaths
-    $installedTargets = @(rustup target list --installed)
-    if ($LASTEXITCODE -ne 0) { throw 'Could not read installed Rust targets.' }
-    if ($Target -notin $installedTargets) {
-        throw "Rust target $Target is required. Install it before building with: rustup target add $Target"
+    if (-not (Get-Command clang.exe -ErrorAction SilentlyContinue)) {
+        throw 'The preinstalled LLVM clang.exe is required for native Rust dependencies.'
+    }
+    $compiler = if ($env:RUSTC) { $env:RUSTC } else { 'rustc' }
+    $targetLib = & $compiler --print target-libdir --target $Target
+    if ($LASTEXITCODE -ne 0 -or -not $targetLib -or
+        -not (Test-Path (Join-Path $targetLib 'libstd-*.rlib'))) {
+        throw "The selected Rust compiler has no installed standard library for $Target."
     }
     Push-Location $Core
     try {

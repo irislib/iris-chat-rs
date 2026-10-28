@@ -210,7 +210,7 @@ jobs:
         working-directory: iris-chat-rs
     steps:
       - name: Checkout selected source
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           path: ${{ env.APP_DIR }}
           ref: ${{ github.sha }}
@@ -228,36 +228,47 @@ jobs:
           record["command"] = ["cargo", "package", "--manifest-path", os.environ["PACKAGE_CRATE"] + "/Cargo.toml", "--locked"]
           pathlib.Path("work/rust-package/ci-source.json").write_text(json.dumps(record, indent=2) + "\n")
           PY
-          git ls-files -z -- "$PACKAGE_CRATE" chat-protocol .cargo .github/workflows/ci.yml |
+          git ls-files -z -- "$PACKAGE_CRATE" chat-protocol .cargo .github/workflows/ci.yml \
+            scripts/release-build-inputs.py scripts/release-build-inputs.json \
+            linux/scripts/pinned-apt.sh linux/build-inputs/apt-snapshots.tsv |
             xargs -0 sha256sum > work/rust-package/source-sha256.txt
 
-      - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libdbus-1-dev pkg-config
+      - name: Install checksum-verified package compiler
+        run: python3 scripts/release-build-inputs.py --install --work "$RUNNER_TEMP/iris-package-rust"
 
-      - name: Install Rust and identify compiler cache
+      - name: Retain reviewed package compiler inputs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: package-build-inputs-${{ inputs.package_crate }}
+          path: ${{ runner.temp }}/iris-package-rust/receipt.json
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Install package dependencies and identify compiler cache
         id: toolchain
         run: |
-          rustup toolchain install stable --profile minimal
-          rustup default stable
+          set -Eeuo pipefail
+          sudo bash linux/scripts/pinned-apt.sh ubuntu-noble cmake libdbus-1-dev pkg-config pkgconf pkgconf-bin
+          echo "CMAKE=/usr/bin/cmake" >> "$GITHUB_ENV"
+          echo "PKG_CONFIG=/usr/bin/pkg-config" >> "$GITHUB_ENV"
           rustc -Vv | tee work/rust-package/rustc.txt
           cargo -V | tee work/rust-package/cargo.txt
           echo "identity=$(sha256sum work/rust-package/rustc.txt | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
 
       - name: Restore package compiler cache
         id: cargo-cache
-        uses: actions/cache/restore@v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             ${{ github.workspace }}/cargo-target
-          key: rust-package-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.identity }}-${{ inputs.package_crate }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock') }}-${{ github.sha }}
+          key: rust-package-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.identity }}-${{ hashFiles('iris-chat-rs/scripts/release-build-inputs.py', 'iris-chat-rs/scripts/release-build-inputs.json', 'iris-chat-rs/linux/scripts/pinned-apt.sh', 'iris-chat-rs/linux/build-inputs/apt-snapshots.tsv') }}-${{ inputs.package_crate }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock') }}-${{ github.sha }}
           restore-keys: |
-            rust-package-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.identity }}-${{ inputs.package_crate }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock') }}-
-            rust-package-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.identity }}-
-            rust-focused-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.identity }}-
-            rust-${{ runner.os }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock') }}
-            rust-${{ runner.os }}-
+            rust-package-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.identity }}-${{ hashFiles('iris-chat-rs/scripts/release-build-inputs.py', 'iris-chat-rs/scripts/release-build-inputs.json', 'iris-chat-rs/linux/scripts/pinned-apt.sh', 'iris-chat-rs/linux/build-inputs/apt-snapshots.tsv') }}-${{ inputs.package_crate }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock') }}-
+            rust-package-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.identity }}-${{ hashFiles('iris-chat-rs/scripts/release-build-inputs.py', 'iris-chat-rs/scripts/release-build-inputs.json', 'iris-chat-rs/linux/scripts/pinned-apt.sh', 'iris-chat-rs/linux/build-inputs/apt-snapshots.tsv') }}-${{ inputs.package_crate }}-
+            rust-package-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.identity }}-${{ hashFiles('iris-chat-rs/scripts/release-build-inputs.py', 'iris-chat-rs/scripts/release-build-inputs.json', 'iris-chat-rs/linux/scripts/pinned-apt.sh', 'iris-chat-rs/linux/build-inputs/apt-snapshots.tsv') }}-
 
       - name: Verify selected package without publishing
         id: package
@@ -283,7 +294,7 @@ jobs:
 
       - name: Preserve compiled package dependencies after failure
         if: ${{ !cancelled() && (steps.package.outcome == 'success' || steps.package.outcome == 'failure') && steps.cargo-cache.outputs.cache-hit != 'true' }}
-        uses: actions/cache/save@v6
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
             ~/.cargo/registry
@@ -293,7 +304,7 @@ jobs:
 
       - name: Upload verified selected package
         if: ${{ !cancelled() && steps.package.outcome == 'success' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: verified-${{ inputs.package_crate }}-package
           path: |
@@ -304,7 +315,7 @@ jobs:
 
       - name: Retain full package verification evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: rust-package-${{ inputs.package_crate }}
           path: iris-chat-rs/work/rust-package/

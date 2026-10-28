@@ -34,7 +34,7 @@ jobs:
       sha: ${{ steps.release_commit.outputs.sha }}
     steps:
       - name: Checkout release tag
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ env.RELEASE_TAG }}
           fetch-depth: 0
@@ -84,15 +84,25 @@ jobs:
           }
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
+      - name: Install checksum-verified formatting compiler
+        run: python3 scripts/release-build-inputs.py --install --work "$RUNNER_TEMP/iris-release-rust" --component rustfmt
+
+      - name: Retain reviewed compiler inputs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: release-build-inputs-formatting-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/iris-release-rust/receipt.json
+          if-no-files-found: warn
+
       - name: Check shared Rust formatting before builds
         env:
           CARGO_NET_OFFLINE: "true"
         run: |
           set -Eeuo pipefail
-          rustup toolchain install stable --profile minimal --component rustfmt
-          cargo +stable fmt --manifest-path chat-protocol/Cargo.toml --check
-          cargo +stable fmt --manifest-path core/Cargo.toml --check
-          cargo +stable fmt --manifest-path protocol-ffi/Cargo.toml --check
+          cargo fmt --manifest-path chat-protocol/Cargo.toml --check
+          cargo fmt --manifest-path core/Cargo.toml --check
+          cargo fmt --manifest-path protocol-ffi/Cargo.toml --check
 
   verify:
     name: Verify release core gate
@@ -106,35 +116,44 @@ jobs:
         working-directory: iris-chat-rs
     steps:
       - name: Checkout validated release commit
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ needs.validate.outputs.sha }}
           path: iris-chat-rs
 
-      - name: Install Rust and native dependencies
+      - name: Install checksum-verified release compiler
+        run: python3 scripts/release-build-inputs.py --install --work "$RUNNER_TEMP/iris-release-rust" --component rustfmt --component clippy
+
+      - name: Retain reviewed compiler inputs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: release-build-inputs-core-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/iris-release-rust/receipt.json
+          if-no-files-found: warn
+
+      - name: Install native dependencies and identify compiler
         id: toolchain
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends cmake libdbus-1-dev pkg-config
-          rustup toolchain install stable --profile minimal --component rustfmt --component clippy
-          rustup default stable
+          set -Eeuo pipefail
+          sudo bash linux/scripts/pinned-apt.sh ubuntu-noble cmake libdbus-1-dev pkg-config pkgconf pkgconf-bin
+          echo "CMAKE=/usr/bin/cmake" >> "$GITHUB_ENV"
+          echo "PKG_CONFIG=/usr/bin/pkg-config" >> "$GITHUB_ENV"
           echo "identity=$(rustc -Vv | sha256sum | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
 
       - name: Restore release compiler cache
         id: cargo-cache
-        uses: actions/cache/restore@v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             ${{ github.workspace }}/cargo-target
-          key: rust-release-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.identity }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock') }}-${{ needs.validate.outputs.sha }}-complete
+          key: rust-release-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.identity }}-${{ hashFiles('iris-chat-rs/scripts/release-build-inputs.py', 'iris-chat-rs/scripts/release-build-inputs.json', 'iris-chat-rs/linux/scripts/pinned-apt.sh', 'iris-chat-rs/linux/build-inputs/apt-snapshots.tsv') }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock') }}-${{ needs.validate.outputs.sha }}-complete
           restore-keys: |
-            rust-release-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.identity }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock') }}-${{ needs.validate.outputs.sha }}-
-            rust-release-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.identity }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock') }}-
-            rust-${{ runner.os }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock') }}
-            rust-release-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.identity }}-
-            rust-${{ runner.os }}-
+            rust-release-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.identity }}-${{ hashFiles('iris-chat-rs/scripts/release-build-inputs.py', 'iris-chat-rs/scripts/release-build-inputs.json', 'iris-chat-rs/linux/scripts/pinned-apt.sh', 'iris-chat-rs/linux/build-inputs/apt-snapshots.tsv') }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock') }}-${{ needs.validate.outputs.sha }}-
+            rust-release-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.identity }}-${{ hashFiles('iris-chat-rs/scripts/release-build-inputs.py', 'iris-chat-rs/scripts/release-build-inputs.json', 'iris-chat-rs/linux/scripts/pinned-apt.sh', 'iris-chat-rs/linux/build-inputs/apt-snapshots.tsv') }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock') }}-
+            rust-release-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.identity }}-${{ hashFiles('iris-chat-rs/scripts/release-build-inputs.py', 'iris-chat-rs/scripts/release-build-inputs.json', 'iris-chat-rs/linux/scripts/pinned-apt.sh', 'iris-chat-rs/linux/build-inputs/apt-snapshots.tsv') }}-
 
       - name: Run hosted release gate
         id: release-gate
@@ -148,7 +167,7 @@ jobs:
 
       - name: Upload populated discovery CPU and privacy evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: populated-discovery-cpu-and-privacy
           path: iris-chat-rs/work/private-controls/
@@ -156,13 +175,13 @@ jobs:
           retention-days: 14
       - name: Preserve release compiler cache after tests
         if: ${{ !cancelled() && steps.cargo-cache.outcome == 'success' && (steps.release-gate.outcome == 'success' || steps.release-gate.outcome == 'failure') && steps.cargo-cache.outputs.cache-hit != 'true' && (steps.release-gate.outcome == 'success' || !endsWith(steps.cargo-cache.outputs.cache-matched-key, format('-{0}-partial', needs.validate.outputs.sha))) }}
-        uses: actions/cache/save@v6
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             ${{ github.workspace }}/cargo-target
-          key: rust-release-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.identity }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock') }}-${{ needs.validate.outputs.sha }}-${{ steps.release-gate.outcome == 'success' && 'complete' || 'partial' }}
+          key: rust-release-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.identity }}-${{ hashFiles('iris-chat-rs/scripts/release-build-inputs.py', 'iris-chat-rs/scripts/release-build-inputs.json', 'iris-chat-rs/linux/scripts/pinned-apt.sh', 'iris-chat-rs/linux/build-inputs/apt-snapshots.tsv') }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock') }}-${{ needs.validate.outputs.sha }}-${{ steps.release-gate.outcome == 'success' && 'complete' || 'partial' }}
 
 
   mesh-resource:
@@ -200,13 +219,13 @@ jobs:
       id-token: write
     steps:
       - name: Checkout release tag
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ env.RELEASE_TAG }}
           persist-credentials: false
 
       - name: Download build artifacts
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           pattern: iris-*-${{ needs.build.outputs.artifact_suffix }}
           path: artifacts
@@ -233,7 +252,7 @@ jobs:
             --out release-notes.md
 
       - name: Checkout pinned public-source verifier
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: mmalmi/haps
           ref: cc6c5d441c0b4a836634ccb8f6379c33fd608b46
@@ -261,7 +280,7 @@ jobs:
             --helpers "$RUNNER_TEMP/source-tools/libexec"
 
       - name: Attest release build provenance
-        uses: actions/attest@v4
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
         with:
           subject-path: artifacts/*
 
@@ -285,7 +304,7 @@ jobs:
 
       - name: Create GitHub release
         if: steps.existing.outputs.exists != 'true'
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           tag_name: ${{ env.RELEASE_TAG }}
           name: Iris Chat ${{ env.RELEASE_TAG }}

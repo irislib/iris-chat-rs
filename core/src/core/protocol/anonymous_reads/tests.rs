@@ -352,6 +352,68 @@ fn capacity_experiment_in_child(test: &str) -> bool {
 }
 
 #[tokio::test]
+async fn anonymous_reads_diagnostics_preserve_wire_and_count_tls_reuse() {
+    if capacity_experiment_in_child("anonymous_reads_diagnostics_preserve_wire_and_count_tls_reuse")
+    {
+        return;
+    }
+    tokio::time::timeout(Duration::from_secs(10), async {
+        let relay = tls_tests::persistent_relay(vec![]).await;
+        let author = Keys::generate().public_key();
+        let filters = vec![Filter::new().author(author).kind(Kind::Metadata)];
+        let connector =
+            ScopedTlsConnector::new_with_roots(&relay.url, &filters, tls_tests::roots()).unwrap();
+        let mut connection = ScopedReadConnection::new(&relay.url, &filters);
+        let mut verification = VerificationCache::default();
+        let before = diagnostics::snapshot();
+        for _ in 0..2 {
+            assert!(poll_retained(
+                &relay.url,
+                filters.clone(),
+                Some(&connector),
+                verification.relay(0),
+                Some(&mut connection),
+            )
+            .await
+            .unwrap()
+            .is_empty());
+        }
+        // A disposable read keeps the exact TLS scope, but uses fresh anonymous
+        // AUTH. Diagnostics must neither force an extra connection nor share it.
+        assert!(poll(&relay.url, filters, Some(&connector))
+            .await
+            .unwrap()
+            .is_empty());
+        let after = diagnostics::snapshot();
+        assert_eq!(after.retained_opens - before.retained_opens, 1);
+        assert_eq!(after.retained_reuses - before.retained_reuses, 1);
+        assert_eq!(after.disposable_opens - before.disposable_opens, 1);
+        assert_eq!(after.failed_opens - before.failed_opens, 0);
+        assert_eq!(after.tls_full - before.tls_full, 1);
+        assert_eq!(after.tls_resumed - before.tls_resumed, 1);
+        assert_eq!(relay.handshakes.lock().unwrap().len(), 2);
+        // Observe the server receiving the final CLOSE before checking totals.
+        while relay
+            .wire
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(_, row)| row[0] == "CLOSE")
+            .count()
+            < 3
+        {
+            tokio::task::yield_now().await;
+        }
+        tls_tests::assert_wire(&relay, &[author], 2);
+        let wire = relay.wire.lock().unwrap();
+        assert_eq!(wire.iter().filter(|(_, row)| row[0] == "REQ").count(), 5);
+        assert_eq!(wire.iter().filter(|(_, row)| row[0] == "CLOSE").count(), 3);
+    })
+    .await
+    .expect("aggregate discovery diagnostics wire test timed out");
+}
+
+#[tokio::test]
 async fn anonymous_reads_background_admission_services_current_retained_controls() {
     if capacity_experiment_in_child(
         "anonymous_reads_background_admission_services_current_retained_controls",

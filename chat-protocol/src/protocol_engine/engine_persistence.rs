@@ -4,11 +4,7 @@ impl ProtocolEngine {
             return true;
         }
         self.session_manager
-            .snapshot()
-            .users
-            .into_iter()
-            .find(|user| user.owner_pubkey == self.local_owner)
-            .and_then(|user| user.roster)
+            .roster(self.local_owner)
             .is_some_and(|roster| {
                 let devices = roster.devices();
                 !devices.is_empty()

@@ -17,6 +17,24 @@ on:
       - "scripts/check-release-updater.py"
       - "scripts/render-release-notes.py"
       - "scripts/test_release_*.py"
+      - "scripts/release_input_checks.py"
+      - ".github/workflows/release-contract.yml"
+      - "scripts/release-build-inputs.*"
+      - "global.json"
+      - "linux/Dockerfile"
+      - "linux/build-inputs/**"
+      - "linux/scripts/**"
+      - "scripts/docker_stage_common.sh"
+      - "scripts/cli-release"
+      - "scripts/linux-release"
+      - "scripts/test_cli_install_docker"
+      - "scripts/windows-build-local.ps1"
+      - "scripts/ios-build"
+      - "scripts/macos-build"
+      - "scripts/android-dependency-phase*"
+      - "scripts/android-release-inputs.*"
+      - "scripts/test_android_dependency_inputs.py"
+      - "scripts/test_android_release_inputs.py"
       - "scripts/test_release_publish_guard"
       - ".github/workflows/build-artifacts.yml"
       - ".github/workflows/release.yml"
@@ -40,6 +58,24 @@ on:
       - "scripts/check-release-updater.py"
       - "scripts/render-release-notes.py"
       - "scripts/test_release_*.py"
+      - "scripts/release_input_checks.py"
+      - ".github/workflows/release-contract.yml"
+      - "scripts/release-build-inputs.*"
+      - "global.json"
+      - "linux/Dockerfile"
+      - "linux/build-inputs/**"
+      - "linux/scripts/**"
+      - "scripts/docker_stage_common.sh"
+      - "scripts/cli-release"
+      - "scripts/linux-release"
+      - "scripts/test_cli_install_docker"
+      - "scripts/windows-build-local.ps1"
+      - "scripts/ios-build"
+      - "scripts/macos-build"
+      - "scripts/android-dependency-phase*"
+      - "scripts/android-release-inputs.*"
+      - "scripts/test_android_dependency_inputs.py"
+      - "scripts/test_android_release_inputs.py"
       - "scripts/test_release_publish_guard"
       - ".github/workflows/build-artifacts.yml"
       - ".github/workflows/release.yml"
@@ -56,7 +92,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Validate notes, manifests, workflows, and packaging
         run: |
           scripts/render-release-notes.py \

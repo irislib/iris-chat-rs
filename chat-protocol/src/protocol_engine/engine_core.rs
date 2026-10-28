@@ -417,7 +417,6 @@ impl ProtocolEngine {
     }
 
     pub fn direct_send_readiness(&self, peer_pubkey: PublicKey) -> DirectSendReadiness {
-        let snapshot = self.session_manager.snapshot();
         // Possessing the account key locally does not give recipients proof
         // that this device belongs to it. Restores must finish signing their
         // approval before a send can create the first handshake.
@@ -428,30 +427,31 @@ impl ProtocolEngine {
         }
 
         let peer_owner = ndr_owner(peer_pubkey);
-        let Some(peer_user) = user_record_snapshot(&snapshot, peer_owner) else {
+        let Some(roster) = self.session_manager.roster(peer_owner) else {
             return DirectSendReadiness::MissingPeerAppKeys;
         };
-        let Some(peer_devices) = roster_device_pubkeys(peer_user) else {
-            return DirectSendReadiness::MissingPeerAppKeys;
-        };
+        let peer_devices = roster.devices();
         if peer_devices.is_empty() {
             return DirectSendReadiness::MissingPeerAppKeys;
         }
         if peer_owner == self.local_owner {
             return if peer_devices
-                .into_iter()
-                .filter(|device| *device != self.local_device)
-                .any(|device| !user_can_send_to_device(peer_user, device))
-            {
+                .iter()
+                .filter(|device| device.device_pubkey != self.local_device)
+                .any(|device| {
+                    !self
+                        .session_manager
+                        .can_send_to_device(peer_owner, device.device_pubkey)
+                }) {
                 DirectSendReadiness::MissingLocalSiblingInviteOrSession
             } else {
                 DirectSendReadiness::Ready
             };
         }
-        if !peer_devices
-            .iter()
-            .any(|device| user_can_send_to_device(peer_user, *device))
-        {
+        if !peer_devices.iter().any(|device| {
+            self.session_manager
+                .can_send_to_device(peer_owner, device.device_pubkey)
+        }) {
             return DirectSendReadiness::MissingPeerInviteOrSession;
         }
 

@@ -11,6 +11,7 @@ use tokio_tungstenite::{
     Connector, MaybeTlsStream, WebSocketStream,
 };
 
+pub(in crate::core) mod diagnostics;
 mod retained_connection;
 pub(in crate::core) use retained_connection::{idle_connections, ScopedReadConnection};
 mod relay_addresses;
@@ -425,7 +426,9 @@ async fn open_read_socket(
     relay: &RelayUrl,
     connector: Option<Connector>,
     transport: impl std::future::Future<Output = std::io::Result<tokio::net::TcpStream>>,
+    retained: bool,
 ) -> anyhow::Result<ReadSocket> {
+    let attempt = diagnostics::OpenAttempt::new(retained);
     let config = WebSocketConfig {
         write_buffer_size: 0,
         max_write_buffer_size: MAX_FRAME_BYTES * 2,
@@ -438,6 +441,11 @@ async fn open_read_socket(
     // verification. Only DNS answers are shared; every read owns a fresh socket.
     let (socket, _) =
         client_async_tls_with_config(relay.as_str(), transport, Some(config), connector).await?;
+    let handshake = match socket.get_ref() {
+        MaybeTlsStream::Rustls(stream) => stream.get_ref().1.handshake_kind(),
+        _ => None,
+    };
+    attempt.completed(handshake);
     Ok(socket)
 }
 
@@ -450,7 +458,7 @@ async fn read_socket_with_transport(
     verification: Option<RelayVerification<'_>>,
 ) -> anyhow::Result<()> {
     validate_read_filters(filters)?;
-    let mut socket = open_read_socket(relay, connector, transport).await?;
+    let mut socket = open_read_socket(relay, connector, transport, false).await?;
     let result = read_query(
         relay,
         filters,

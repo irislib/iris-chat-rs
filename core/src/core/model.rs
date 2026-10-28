@@ -383,6 +383,8 @@ pub(super) struct RuntimeDebugSnapshot {
     pub(super) relay_transport: RuntimeRelayTransportDebug,
     pub(super) current_protocol_plan: Option<RuntimeProtocolPlanDebug>,
     pub(super) protocol_subscription: RuntimeProtocolSubscriptionDebug,
+    #[serde(default)]
+    pub(super) anonymous_discovery: protocol::anonymous_reads::diagnostics::Snapshot,
     pub(super) protocol_engine: Option<ProtocolEngineDebugSnapshot>,
     pub(super) pending_relay_publishes: Vec<RuntimePendingRelayPublishDebug>,
     pub(super) tracked_owner_hexes: Vec<String>,
@@ -415,6 +417,7 @@ pub(super) struct SupportBundle {
     pub(super) current_screen: String,
     pub(super) relay_transport: RuntimeRelayTransportDebug,
     pub(super) protocol_subscription: RuntimeProtocolSubscriptionDebug,
+    pub(super) anonymous_discovery: protocol::anonymous_reads::diagnostics::Snapshot,
     pub(super) chat_count: usize,
     pub(super) direct_chat_count: usize,
     pub(super) group_chat_count: usize,

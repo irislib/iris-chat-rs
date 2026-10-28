@@ -68,6 +68,38 @@ exact archive in a fresh Debian 12 container as root and as a regular user,
 then runs `iris --version` and `iris --help` for both installations. Test the
 public website installer with `./scripts/test_cli_install_docker`.
 
+Linux container inputs are fixed by OCI digests in `linux/Dockerfile` and
+`scripts/docker_stage_common.sh`. Desktop releases use Ubuntu 26.04's packaged
+Rust (previous qualification: package 1.93.1ubuntu1), GTK4/libadwaita and GStreamer;
+the separate Debian 12 CLI builder uses Rust 1.99.0. Both build their existing
+default features with `--locked` for Linux x86_64; the desktop retains distro
+Rust because the rustup compiler crashes under the supported amd64 emulation.
+`linux/build-inputs/apt-snapshots.tsv` fixes the 20261028T000000Z repository roots.
+Its `ubuntu-noble` profile covers hosted Ubuntu 24.04 CMake/DBus/pkg-config
+installation for Android, CLI and the core release gate; `debian` also provisions the CLI installer
+smoke test. Requested package versions are selected with installed status
+excluded, reinstalled explicitly from the snapshot, and checked afterward.
+An installed newer version is rejected rather than silently retained or
+downgraded. Android and the core release gate bind CMake and pkg-config to their `/usr/bin` executables;
+other preinstalled/transitive OS packages remain runner inputs.
+The APT helper uses isolated sources and lists, requires signatures from the
+base image's archive keyring, and checks every InRelease SHA256 before installing
+anything. Those roots bind the Packages indexes and downloaded .deb hashes.
+The Ubuntu Dockerfile bootstraps normal TLS with the dated 2026-10-20 official
+curl/Mozilla CA bundle, verified by `ADD --checksum` before use. The bundle goes
+in the existing `/tmp` directory and `SSL_CERT_FILE` selects it only for the
+initial APT command; the pinned Ubuntu certificate package then supplies normal
+trust. This requires a BuildKit Dockerfile frontend
+supporting `ADD --checksum` and `--chmod`. Debian's snapshot also supports HTTP,
+with the same signature and fixed-hash checks. Only historical snapshot expiry
+is disabled; TLS verification, signatures and package integrity remain on.
+`linux/build-inputs/cargo-deb.sha256` fixes cargo-deb 3.8.0 and its bundled lockfile;
+the helper verifies the archive before extraction and installs from that path
+with `--locked`. Release builds disable the optional, unpinned cargo-watch
+development installer. Image overrides, native Linux system packages, the host
+kernel/Docker/QEMU versions, and byte-for-byte output reproducibility are outside
+these input pins; `--skip-docker-build` also requires a previously qualified image.
+
 ## Publisher Identities
 
 Public identities are fixed in the repository and checked before publication:
@@ -133,6 +165,48 @@ The release tag is the actual release date: `vYYYY.M.D`. If another immutable
 build is needed on the same date, use `.1`, `.2`, and so on. Never move or
 replace a published tag.
 
+Hosted Rust inputs and Mac/Windows tools are pinned in
+`scripts/release-build-inputs.json`; the installer checks every archive before
+extracting it and retains a source-bound input receipt. Rust 1.99.0 is intentional
+(older hosted builds used 1.99.1); the new tag runs every existing build gate.
+Windows uses the explicit Git Bash executable and .NET SDK from `global.json`.
+On macOS, the installer links the compiler's bundled LLVM library into the
+location used by `rust-objcopy` and requires that helper to run without dynamic
+loader overrides before exporting the toolchain. The layout repair is part of
+the checked-in installer and uses no additional downloaded input.
+Xcode/Apple SDKs, MSVC/Windows SDK and LLVM remain runner-provided requirements;
+their selection is checked by the existing platform build scripts. Linux
+containers and Android SDK/Gradle inputs have their separate input controls.
+
+Android's `scripts/android-release-inputs.json` pins Temurin JDK 17.0.20+8,
+platform 36 revision 2, build-tools 36.0.0, NDK 28.2.13676358 and cargo-ndk 4.1.2.
+The hosted installer verifies each archive before parsing it, checks installed
+SDK properties and the bundled cargo-ndk lockfile, then uses the pinned Rust
+toolchain for `cargo install --path --locked`. It installs into an owned SDK/JDK
+directory and records host package/tool versions. Ubuntu 24.04's compiler and
+linker remain runner assumptions; CMake, DBus headers and pkg-config use the
+reviewed noble snapshot. The earlier runner reported cached Java 17.0.20+1;
+there is no matching official archive, so 17.0.20+8 requires fresh hosted
+qualification. These pins do not establish a match to earlier release binaries.
+
+Android release builds also require committed Gradle lockfiles and SHA-256
+dependency verification metadata. The wrapper pins Gradle 9.3.1's distribution
+checksum. Review and pin missing artifacts before running
+`scripts/android-dependency-phase.py plan --phase acquire`. This bounded phase
+fetches inputs with strict checksum verification and writes dependency locks;
+it never generates trusted checksums. It resolves the release and self-hosted
+application classpaths, their library variant, plugin and Kotlin inputs, and
+the Linux AAPT2 and lint tools without running application build tasks.
+Review the resulting locks and artifact coverage, then require a separate
+`--phase verify` run with strict verification and offline resolution. That
+replay must preserve the locks and checksums. These local input checks are not
+release builds or proof of the installed SDK and JDK payloads.
+Before local execution, `certify-gradle` must compare the installed Gradle files
+and executable modes with the exact checksum-pinned distribution archive, then
+the plan must bind that receipt. A cache marker alone is insufficient. Hosted
+releases use a fresh wrapper distribution directory and reuse only dependency
+caches through an owned Gradle user home.
+
 Update both package versions and every build version argument in `haps.toml`
 for the same tag. Check all six source package variants with
 `python3 scripts/validate-haps-manifest.py --tag <tag>` before dispatching CI.
@@ -186,13 +260,16 @@ and `focused_tests` (whitespace-separated exact names), with optional
 after a test failure and reuses them across source revisions. These focused
 checks leave the full validation and tagged release gates unchanged.
 The tagged core gate also retains compiled outputs after a test failure, using
-the existing target paths and default-branch cache fallbacks. It keeps at most
-one partial and one complete cache per source, compiler, architecture and lock
-set. Repeated failures reuse the first partial cache; a later passing gate saves
-the complete cache without creating a new multi-gigabyte entry for every retry.
+the existing target paths and restore prefixes bound to reviewed installer and
+input-pin hashes. Every native release cache preserves that input boundary;
+OS-only and legacy cross-input fallbacks are rejected. The core gate keeps at
+most one partial and one complete cache per source, compiler, architecture,
+input set and lock set. Repeated failures reuse the first partial cache; a later
+passing gate saves the complete cache without creating a new multi-gigabyte entry
+for every retry.
 
-For an optimized local Mac development build, reserve the native host and one
-writer for the selected caches, set `CARGO_TARGET_DIR` to the existing absolute
+For an optimized local Mac development build, reserve one writer for the selected
+caches, set `CARGO_TARGET_DIR` to the existing absolute
 core cache, and run `scripts/macos-build macos-dev`. Select the existing bindgen
 cache with `IRIS_MACOS_BINDGEN_TARGET_DIR` and optionally a stable Xcode cache
 with `IRIS_MACOS_DEV_DERIVED_DATA`. This builds only the native Rust library,
@@ -202,7 +279,10 @@ Unchanged bindings and the Xcode cache survive
 repeated builds. The printed app path is for development verification: this
 command does not sign for distribution, install, launch, or publish it. A first
 optimized build may need a cold cache; keep bounded time and disk limits around
-it. Local performance evidence does not replace required acceptance of the
+it. Independent builds may run in parallel when combined CPU, memory, disk and
+I/O capacity permit; readiness checks do not reserve the machine. Coordinate
+shared writable caches, devices, UI sessions and constrained VM capacity.
+Local performance evidence does not replace required acceptance of the
 unchanged tagged GitHub release artifact.
 
 After a newer release or development build has opened a profile, do not launch
@@ -210,15 +290,15 @@ an older build against that profile to create a pre-upgrade witness. Record the
 actual last-opening build and upgrade directly from that state. Older-version
 tests must use a separately owned profile created under that version.
 
-Run local CPU checks separately from compilation, using the same verified app
-bundle and a bounded runtime lease. Open that exact bundle through Finder's
+Reserve an explicit quiet scope for local CPU checks, separate from compilation,
+using the same verified app bundle and a bounded runtime lease. Open that exact bundle through Finder's
 normal Open action, then confirm its executable, process start identity, and
 foreground status before starting the settling period. Accessibility window
 raises and clicks can reach a background app without activating it. A visible
 window alone does not establish foreground readiness. Keep the Mac unlocked
 and foreground checks active throughout measurement; if focus changes, retain
 the failed result. Quit normally afterward and verify the process and leases
-have closed before admitting other native work. A launch or focus failure
+have closed before releasing the quiet scope. A launch or focus failure
 does not require rebuilding unchanged inputs.
 
 For version-only package verification, dispatch `scope=rust-package` with

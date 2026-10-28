@@ -1,0 +1,251 @@
+{
+  "schema": 1,
+  "rust": {
+    "version": "1.99.0",
+    "date": "2026-10-01",
+    "manifest": {
+      "url": "https://static.rust-lang.org/dist/channel-rust-1.99.0.toml",
+      "sha256": "ce6dddc886364f8d786514771212cebe9b731ba82d6b859951c6b0ccc516b6a2"
+    },
+    "hosts": {
+      "x86_64-unknown-linux-gnu": {
+        "rustc": {
+          "url": "https://static.rust-lang.org/dist/2026-10-01/rustc-1.99.0-x86_64-unknown-linux-gnu.tar.xz",
+          "sha256": "77171ba2a0345fdf2abc4fedda55d6de078dae7a68527c28be8c77dcc9604bd5",
+          "root": "rustc-1.99.0-x86_64-unknown-linux-gnu"
+        },
+        "cargo": {
+          "url": "https://static.rust-lang.org/dist/2026-10-01/cargo-1.99.0-x86_64-unknown-linux-gnu.tar.xz",
+          "sha256": "d7674918d28093097614cd9728b6ca60db9ea3038f640f0bd1e9a4188c7568ce",
+          "root": "cargo-1.99.0-x86_64-unknown-linux-gnu"
+        },
+        "rustfmt-preview": {
+          "url": "https://static.rust-lang.org/dist/2026-10-01/rustfmt-1.99.0-x86_64-unknown-linux-gnu.tar.xz",
+          "sha256": "b22c09ab9e258ec5571da170d88bd1624a4ea602e6d70d95720c5b47494cadce",
+          "root": "rustfmt-1.99.0-x86_64-unknown-linux-gnu"
+        },
+        "clippy-preview": {
+          "url": "https://static.rust-lang.org/dist/2026-10-01/clippy-1.99.0-x86_64-unknown-linux-gnu.tar.xz",
+          "sha256": "982442e32ad8dd3f0bb3a30db74038da5f71fd9bf1a865cc71da8ea5d4ec71ec",
+          "root": "clippy-1.99.0-x86_64-unknown-linux-gnu"
+        }
+      },
+      "aarch64-apple-darwin": {
+        "rustc": {
+          "url": "https://static.rust-lang.org/dist/2026-10-01/rustc-1.99.0-aarch64-apple-darwin.tar.xz",
+          "sha256": "334a66714ca316d71bbe5efe44f71762d0b276cea73be2987374693a837f7450",
+          "root": "rustc-1.99.0-aarch64-apple-darwin"
+        },
+        "cargo": {
+          "url": "https://static.rust-lang.org/dist/2026-10-01/cargo-1.99.0-aarch64-apple-darwin.tar.xz",
+          "sha256": "76abff0ad79a10a3152dff640ea0d8b3c37637d9300bf55da41b95c3ddc069c1",
+          "root": "cargo-1.99.0-aarch64-apple-darwin"
+        },
+        "rustfmt-preview": {
+          "url": "https://static.rust-lang.org/dist/2026-10-01/rustfmt-1.99.0-aarch64-apple-darwin.tar.xz",
+          "sha256": "8b1436085c081e5efa88febadf667171a7a107073d168cd32b249a8eb70800da",
+          "root": "rustfmt-1.99.0-aarch64-apple-darwin"
+        },
+        "clippy-preview": {
+          "url": "https://static.rust-lang.org/dist/2026-10-01/clippy-1.99.0-aarch64-apple-darwin.tar.xz",
+          "sha256": "c31a0765ed31d98515a09a13b44486048873d90ac75bb1e6690a17fb36a5d4e2",
+          "root": "clippy-1.99.0-aarch64-apple-darwin"
+        }
+      },
+      "x86_64-apple-darwin": {
+        "rustc": {
+          "url": "https://static.rust-lang.org/dist/2026-10-01/rustc-1.99.0-x86_64-apple-darwin.tar.xz",
+          "sha256": "7460910254f059b49b99ee3ddbcf7197d16b9505b59c166e14a1465ee323a81d",
+          "root": "rustc-1.99.0-x86_64-apple-darwin"
+        },
+        "cargo": {
+          "url": "https://static.rust-lang.org/dist/2026-10-01/cargo-1.99.0-x86_64-apple-darwin.tar.xz",
+          "sha256": "939b71952afd63ae73bc00f3517c19f0dd7ac54884b5fac16a813ee50985d14d",
+          "root": "cargo-1.99.0-x86_64-apple-darwin"
+        },
+        "rustfmt-preview": {
+          "url": "https://static.rust-lang.org/dist/2026-10-01/rustfmt-1.99.0-x86_64-apple-darwin.tar.xz",
+          "sha256": "e5e59e6910aa6e716fbb8a53950e109fb675ead428688f3ba2d1702b50928f92",
+          "root": "rustfmt-1.99.0-x86_64-apple-darwin"
+        },
+        "clippy-preview": {
+          "url": "https://static.rust-lang.org/dist/2026-10-01/clippy-1.99.0-x86_64-apple-darwin.tar.xz",
+          "sha256": "cd93518193f16b21cfa7147a42cb03cd2d9ca9b3d0c2daf46dcae44c88a696df",
+          "root": "clippy-1.99.0-x86_64-apple-darwin"
+        }
+      },
+      "x86_64-pc-windows-msvc": {
+        "rustc": {
+          "url": "https://static.rust-lang.org/dist/2026-10-01/rustc-1.99.0-x86_64-pc-windows-msvc.tar.xz",
+          "sha256": "20fed82e629c1ed145f9e9bdee9aad65e790d4237a49bcfc61221eda69e35b14",
+          "root": "rustc-1.99.0-x86_64-pc-windows-msvc"
+        },
+        "cargo": {
+          "url": "https://static.rust-lang.org/dist/2026-10-01/cargo-1.99.0-x86_64-pc-windows-msvc.tar.xz",
+          "sha256": "6201b8dcea8cc55ccfa12e842adf1b2c2aa96490a6cb4f129bf03f2df08c80c9",
+          "root": "cargo-1.99.0-x86_64-pc-windows-msvc"
+        },
+        "rustfmt-preview": {
+          "url": "https://static.rust-lang.org/dist/2026-10-01/rustfmt-1.99.0-x86_64-pc-windows-msvc.tar.xz",
+          "sha256": "6aa039ed3de3bb9cc46ea7412d16463c700f4a31c3a1849ce818e84cd350ec81",
+          "root": "rustfmt-1.99.0-x86_64-pc-windows-msvc"
+        },
+        "clippy-preview": {
+          "url": "https://static.rust-lang.org/dist/2026-10-01/clippy-1.99.0-x86_64-pc-windows-msvc.tar.xz",
+          "sha256": "b1b94d7d7717f42727eec41e70952100d865d25ebb7b1dd08041f6971237cfa9",
+          "root": "clippy-1.99.0-x86_64-pc-windows-msvc"
+        }
+      }
+    },
+    "std": {
+      "x86_64-unknown-linux-gnu": {
+        "url": "https://static.rust-lang.org/dist/2026-10-01/rust-std-1.99.0-x86_64-unknown-linux-gnu.tar.xz",
+        "sha256": "3e58dff2d0b72196b5ea4e90536e174d400de88564a52694686b81e091169933",
+        "root": "rust-std-1.99.0-x86_64-unknown-linux-gnu"
+      },
+      "aarch64-apple-darwin": {
+        "url": "https://static.rust-lang.org/dist/2026-10-01/rust-std-1.99.0-aarch64-apple-darwin.tar.xz",
+        "sha256": "a7c6de8aa21e7c31163a7656295b321bb85f5dce55ed8ea95ac9ac561202bb5b",
+        "root": "rust-std-1.99.0-aarch64-apple-darwin"
+      },
+      "x86_64-apple-darwin": {
+        "url": "https://static.rust-lang.org/dist/2026-10-01/rust-std-1.99.0-x86_64-apple-darwin.tar.xz",
+        "sha256": "18ee81961a73c3ae966ecb1e8f6096438c90aeefece8856201a6ecc17f5bc850",
+        "root": "rust-std-1.99.0-x86_64-apple-darwin"
+      },
+      "x86_64-pc-windows-msvc": {
+        "url": "https://static.rust-lang.org/dist/2026-10-01/rust-std-1.99.0-x86_64-pc-windows-msvc.tar.xz",
+        "sha256": "adadeafff137a7610884696912b853d4de259c4299ab035b66661e2e0f923ff0",
+        "root": "rust-std-1.99.0-x86_64-pc-windows-msvc"
+      },
+      "aarch64-apple-ios": {
+        "url": "https://static.rust-lang.org/dist/2026-10-01/rust-std-1.99.0-aarch64-apple-ios.tar.xz",
+        "sha256": "1d566dbc70edab923310f9579aa1ca2563703e154c3217ff049b7021ff080a94",
+        "root": "rust-std-1.99.0-aarch64-apple-ios"
+      },
+      "aarch64-apple-ios-sim": {
+        "url": "https://static.rust-lang.org/dist/2026-10-01/rust-std-1.99.0-aarch64-apple-ios-sim.tar.xz",
+        "sha256": "3f8d01bdbcdccfc708e7c93faa658895a6e79729a8cf0b2f747477fe23c43e91",
+        "root": "rust-std-1.99.0-aarch64-apple-ios-sim"
+      },
+      "aarch64-linux-android": {
+        "url": "https://static.rust-lang.org/dist/2026-10-01/rust-std-1.99.0-aarch64-linux-android.tar.xz",
+        "sha256": "41201595138e99645ac1db279719958ad3ca9d379f33576497f8cc644d885163",
+        "root": "rust-std-1.99.0-aarch64-linux-android"
+      }
+    }
+  },
+  "external_assumptions": {
+    "bootstrap": "Hosted runner provides Python with tarfile.data_filter, HTTPS CA roots and an existing POSIX shell; Windows requires an explicit Git Bash executable with cygpath. No rustup download or installation is used.",
+    "macos": "Runner macos-15/macOS-26 supplies the selected Xcode SDKs, clang, linker, codesign and notarization tools. Their runner image and installed Xcode version are recorded; Xcode is not installed or changed here. XcodeGen and CMake archives are verified here (Mac app/CLI CMake4.4.3; iOS CMake4.4.4).",
+    "android": "Ubuntu 24.04 supplies C/C++ tools. Android JDK, SDK, NDK and cargo-ndk have separate fixed archive pins in scripts/android-release-inputs.json; Gradle uses its checksum-pinned wrapper and reviewed dependency metadata. CMake, DBus headers and pkg-config use the fixed noble APT snapshot.",
+    "windows": "windows-2025 supplies Visual Studio/MSVC, Windows SDK, LLVM clang and Git Bash. windows-build-local.ps1 validates the installed MSVC environment; this helper installs verified .NET10.0.402, NSIS3.13, CMake4.4.4 and NASM3.02 archives without Chocolatey. No Visual Studio or SDK installer is fetched.",
+    "linux": "Host Rust here covers Ubuntu24.04 Rust gates and Android host tools. Linux desktop uses separately pinned Ubuntu26.04 distro Rust; Linux CLI uses its separately pinned Debian/Rust container. This installer does not replace either container compiler."
+  },
+  "tools": {
+    "xcodegen": {
+      "version": "2.46.0",
+      "url": "https://github.com/yonaskolb/XcodeGen/releases/download/2.46.0/xcodegen.zip",
+      "sha256": "4d9e34b62172d645eed6457cac13fc222569974098ef4ee9c3368bedf0196806",
+      "size": 4278764,
+      "format": "zip",
+      "root": "xcodegen",
+      "binary": "xcodegen/bin/xcodegen",
+      "version_args": [
+        "--version"
+      ],
+      "version_pattern": "^Version: 2\\.46\\.0$"
+    },
+    "cmake-macos": {
+      "version": "4.4.3",
+      "url": "https://github.com/Kitware/CMake/releases/download/v4.4.3/cmake-4.4.3-macos-universal.tar.gz",
+      "sha256": "0c5d65251c14cc884bfa16bdbed3c263ce5bffe2e21c0d0d00962cb0610464fa",
+      "size": 89445170,
+      "format": "tar.gz",
+      "root": "cmake-4.4.3-macos-universal",
+      "binary": "cmake-4.4.3-macos-universal/CMake.app/Contents/bin/cmake",
+      "version_args": [
+        "--version"
+      ],
+      "version_pattern": "^cmake version 4\\.4\\.3(?:\\n|$)"
+    },
+    "cmake-ios": {
+      "version": "4.4.4",
+      "url": "https://github.com/Kitware/CMake/releases/download/v4.4.4/cmake-4.4.4-macos-universal.tar.gz",
+      "sha256": "4b7b73704b1db9b374e5c9ab8e17ac6148b817b6396ee75cd94a852cbac9d305",
+      "size": 89454352,
+      "format": "tar.gz",
+      "root": "cmake-4.4.4-macos-universal",
+      "binary": "cmake-4.4.4-macos-universal/CMake.app/Contents/bin/cmake",
+      "version_args": [
+        "--version"
+      ],
+      "version_pattern": "^cmake version 4\\.4\\.4(?:\\n|$)"
+    },
+    "cmake-windows": {
+      "version": "4.4.4",
+      "url": "https://github.com/Kitware/CMake/releases/download/v4.4.4/cmake-4.4.4-windows-x86_64.zip",
+      "sha256": "bace36e94b31c68ab6fa295f26dfa11219e0701cf7c94b0284a7d1cb13dac536",
+      "size": 54400562,
+      "format": "zip",
+      "root": "cmake-4.4.4-windows-x86_64",
+      "binary": "cmake-4.4.4-windows-x86_64/bin/cmake.exe",
+      "version_args": [
+        "--version"
+      ],
+      "version_pattern": "^cmake version 4\\.4\\.4(?:\\n|$)"
+    },
+    "dotnet": {
+      "version": "10.0.402",
+      "url": "https://builds.dotnet.microsoft.com/dotnet/Sdk/10.0.402/dotnet-sdk-10.0.402-win-x64.zip",
+      "sha512": "ae4fd528cb7e9f6af6aaf7de36715a69f761f183744f1bb3025d19f5a92447090ec561410e46266c1d10a63781ed6f3de771760bc76c876d87daabc367b898cd",
+      "size": 300755826,
+      "format": "zip",
+      "root": "",
+      "binary": "dotnet.exe",
+      "version_args": [
+        "--version"
+      ],
+      "version_pattern": "^10\\.0\\.402$"
+    },
+    "nasm": {
+      "version": "3.02",
+      "url": "https://www.nasm.us/pub/nasm/releasebuilds/3.02/win64/nasm-3.02-win64.zip",
+      "sha256": "161d0bfaff53c2f9e9f3e69fd0672323ebabafd1268976a5cec11be92a19aee7",
+      "size": 641314,
+      "format": "zip",
+      "root": "nasm-3.02",
+      "binary": "nasm-3.02/nasm.exe",
+      "version_args": [
+        "-v"
+      ],
+      "version_pattern": "^NASM version 3\\.02(?: |$)"
+    },
+    "nsis": {
+      "version": "3.13",
+      "url": "https://downloads.sourceforge.net/project/nsis/NSIS%203/3.13/nsis-3.13.zip",
+      "sha256": "ba63dffc4410ee89193e1cb5a41989991bd77c61068da17e3156d136b7b0b3d8",
+      "size": 2363925,
+      "format": "zip",
+      "root": "nsis-3.13",
+      "binary": "nsis-3.13/makensis.exe",
+      "version_args": [
+        "/VERSION"
+      ],
+      "version_pattern": "^v3\\.13$"
+    }
+  },
+  "input_provenance": {
+    "xcodegen": "https://api.github.com/repos/yonaskolb/XcodeGen/releases/tags/2.46.0",
+    "cmake": [
+      "https://api.github.com/repos/Kitware/CMake/releases/tags/v4.4.3",
+      "https://api.github.com/repos/Kitware/CMake/releases/tags/v4.4.4"
+    ],
+    "dotnet": "https://builds.dotnet.microsoft.com/dotnet/release-metadata/10.0/releases.json",
+    "nasm_nsis": "SHA256 of the exact versioned official portable archives, reviewed without execution; NSIS setup was independently compared with the historical Chocolatey package. NASM 3.02 is Chocolatey package version 3.2.0.",
+    "historical_native_cmake": [
+      "https://github.com/actions/runner-images/blob/macos-15-arm64/20260907.0337/images/macos/macos-15-arm64-Readme.md",
+      "https://github.com/actions/runner-images/blob/macos-26-arm64/20261013.0424/images/macos/macos-26-arm64-Readme.md"
+    ]
+  }
+}

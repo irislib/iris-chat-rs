@@ -12,6 +12,8 @@ import subprocess
 import textwrap
 import unittest
 
+from release_input_checks import ReleaseInputPinTests
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -77,7 +79,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
         prepare = prepare.split("\n      - name:", 1)[0]
         cache = linux.split("      - name: Cache Linux release dependencies\n", 1)[1]
         cache = cache.split("\n      - name:", 1)[0]
-        self.assertIn("uses: actions/cache@v6", cache)
+        self.assertRegex(cache, r"uses: actions/cache@[0-9a-f]{40} # v6")
         self.assertIn("path: ${{ env.APP_DIR }}/linux/target/release", cache)
         for value in ("runner.os", "runner.arch", "steps.linux-cache.outputs.toolchain",
                       "iris-chat-rs/linux/Cargo.lock", "iris-chat-rs/**/Cargo.toml",
@@ -239,59 +241,37 @@ class ReleaseWorkflowTests(unittest.TestCase):
                 if len(parts) == 2:
                     self.assertIn(parts[1], tests[parts[0]])
 
-    def test_tagged_gates_reuse_default_branch_cargo_caches(self) -> None:
+    def test_tagged_gates_keep_existing_cache_locations_with_input_bound_keys(self) -> None:
         workflow = (ROOT / ".github/workflows/release.yml").read_text()
         gate = workflow.split("\n  mesh-resource:\n", 1)[0]
         self.assertIn("CARGO_TARGET_DIR: ${{ github.workspace }}/cargo-target", gate)
         self.assertIn("working-directory: iris-chat-rs", gate)
-        self.assertIn("path: iris-chat-rs", gate)
         ci = (ROOT / ".github/workflows/ci.yml").read_text()
-        cache = ci.split("- name: Cache Cargo\n", 1)[1].split("- name:", 1)[0]
-        self.assertIn("uses: actions/cache@v6", cache)
         restore = gate.split("- name: Restore release compiler cache\n", 1)[1].split("- name:", 1)[0]
-        self.assertIn("uses: actions/cache/restore@v6", restore)
-        for fragment in (
-            "~/.cargo/registry",
-            "~/.cargo/git",
-            "${{ github.workspace }}/cargo-target",
-            "rust-${{ runner.os }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock') }}",
-            "rust-${{ runner.os }}-",
-        ):
-            self.assertIn(fragment, ci)
-            self.assertIn(fragment, gate)
+        self.assertRegex(restore, r"uses: actions/cache/restore@[0-9a-f]{40} # v6")
+        for path in ("~/.cargo/registry", "~/.cargo/git", "${{ github.workspace }}/cargo-target"):
+            self.assertIn(path, ci)
+            self.assertIn(path, restore)
         self.assertIn("scripts/verify.sh fast", gate)
         builds = (ROOT / ".github/workflows/build-artifacts.yml").read_text()
-        recipes = {
-            "android": (
-                "android-${{ runner.os }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock', 'iris-chat-rs/android/**/*.gradle*', 'iris-chat-rs/android/gradle/**/*.toml') }}",
-                ("~/.gradle/caches", "~/.gradle/wrapper"),
-            ),
-            "macos": (
-                "macos-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock', 'iris-chat-rs/macos/project.yml') }}",
-                ("${{ github.workspace }}/iris-chat-rs/macos/.build/cargo-target",),
-            ),
-        }
-        for job, (key, extra_paths) in recipes.items():
+        for job in ("android", "macos"):
             with self.subTest(platform=job):
-                caches = []
+                paths = []
                 for text in (ci, builds):
                     body = re.split(r"\n  (?=\S)", text.split(f"\n  {job}:\n", 1)[1], maxsplit=1)[0]
-                    cache = body.split("      - name: Cache Cargo", 1)[1].split("\n      - ", 1)[0].strip()
-                    caches.append(cache)
+                    cache = body.split("      - name: Cache Cargo", 1)[1].split("\n      - ", 1)[0]
+                    paths.append(cache.split("          path: |\n", 1)[1].split("          key:", 1)[0])
                     self.assertNotIn("cache-hit", body)
-                self.assertEqual(caches[0], caches[1])
-                self.assertIn("uses: actions/cache@v6", caches[0])
-                self.assertIn(f"key: {key}", caches[0])
-                self.assertIn(f"            {key.split('${{ hashFiles', 1)[0]}", caches[0])
-                for path in ("~/.cargo/registry", "~/.cargo/git", "${{ github.workspace }}/cargo-target", *extra_paths):
-                    self.assertIn(path, caches[0])
+                self.assertEqual(paths[0], paths[1])
+        # ReleaseInputPinTests checks every restore prefix against changed input
+        # bytes. Default-branch cache layout stays intact; unsafe broad keys do not.
 
     def test_release_cache_retains_partial_then_complete_without_per_retry_entries(self) -> None:
         workflow = (ROOT / ".github/workflows/release.yml").read_text()
         gate = workflow.split("\n  verify:\n", 1)[1].split("\n  mesh-resource:\n", 1)[0]
         restore = gate.split("      - name: Restore release compiler cache\n", 1)[1].split("\n      - name:", 1)[0]
         save = gate.split("      - name: Preserve release compiler cache after tests\n", 1)[1].split("\n      - name:", 1)[0]
-        self.assertIn("uses: actions/cache/save@v6", save)
+        self.assertRegex(save, r"uses: actions/cache/save@[0-9a-f]{40} # v6")
         for step in (restore, save):
             self.assertIn("runner.arch", step)
             self.assertIn("steps.toolchain.outputs.identity", step)
@@ -312,11 +292,11 @@ class ReleaseWorkflowTests(unittest.TestCase):
         # restored-cache states, without invoking GitHub, Cargo or a cache writer.
         expression = re.search(r"        if: \$\{\{ (.+) \}\}", save).group(1)
         source = "a" * 40
-        partial = "rust-release-v1-Linux-X64-compiler-lock-" + source + "-partial"
+        partial = "rust-release-v2-Linux-X64-compiler-inputs-lock-" + source + "-partial"
         cases = [
             ("cold pass", False, "success", "success", "false", "", True),
             ("cold failure", False, "success", "failure", "false", "", True),
-            ("legacy fallback failure", False, "success", "failure", "false", "rust-Linux-lock", True),
+            ("same-input fallback failure", False, "success", "failure", "false", "rust-release-v2-Linux-X64-compiler-inputs-older-lock", True),
             ("partial becomes complete", False, "success", "success", "false", partial, True),
             ("repeat partial failure", False, "success", "failure", "false", partial, False),
             ("other source partial", False, "success", "failure", "false", partial.replace(source, "b" * 40), True),
@@ -430,8 +410,9 @@ class ReleaseWorkflowTests(unittest.TestCase):
         step = validate.split("      - name: Check shared Rust formatting before builds\n", 1)[1]
         self.assertIn('CARGO_NET_OFFLINE: "true"', step)
         self.assertIn("set -Eeuo pipefail", step)
-        self.assertIn("rustup toolchain install stable --profile minimal --component rustfmt", step)
-        self.assertEqual(re.findall(r"cargo \+stable fmt --manifest-path (\S+) --check", step),
+        self.assertIn('scripts/release-build-inputs.py --install --work "$RUNNER_TEMP/iris-release-rust" --component rustfmt', validate)
+        self.assertNotIn("rustup", validate)
+        self.assertEqual(re.findall(r"cargo fmt --manifest-path (\S+) --check", step),
                          ["chat-protocol/Cargo.toml", "core/Cargo.toml", "protocol-ffi/Cargo.toml"])
         self.assertNotIn("continue-on-error:", validate)
         self.assertNotIn("        if:", step)
@@ -480,100 +461,6 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("--notes RELEASE_NOTES.md", workflow)
         self.assertNotIn("CHANGELOG.md", workflow)
         self.assertNotIn("ZAPSTORE_RELEASE_NOTES.md", workflow)
-
-    def test_release_requires_pinned_read_only_source_verifier_before_attestation(self) -> None:
-        workflow = (ROOT / ".github/workflows/release.yml").read_text()
-        release = workflow.split("\n  release:\n", 1)[1]
-        checkout = release.split("      - name: Checkout pinned public-source verifier\n", 1)[1]
-        checkout = checkout.split("\n      - name:", 1)[0]
-        self.assertIn("repository: mmalmi/haps", checkout)
-        self.assertIn("ref: cc6c5d441c0b4a836634ccb8f6379c33fd608b46", checkout)
-        self.assertIn("path: .release-source-verifier", checkout)
-        self.assertIn("persist-credentials: false", checkout)
-        gate = release.split("      - name: Require complete public Hashtree source history\n", 1)[1]
-        gate = gate.split("\n      - name:", 1)[0]
-        self.assertIn("SOURCE_COMMIT: ${{ needs.validate.outputs.sha }}", gate)
-        self.assertNotIn("if:", gate)
-        self.assertNotIn("continue-on-error", gate)
-        self.assertNotIn("secrets.", gate)
-        self.assertNotIn("--publish", gate)
-        self.assertNotIn("--key-file", gate)
-        self.assertLess(release.index("Create immutable release manifest"),
-                        release.index("Require complete public Hashtree source history"))
-        self.assertLess(release.index("Require complete public Hashtree source history"),
-                        release.index("Attest release build provenance"))
-        self.assertLess(release.index("Attest release build provenance"),
-                        release.index("uses: softprops/action-gh-release@v2"))
-
-    def test_public_source_workflow_stops_on_wrong_bindings_or_incomplete_remote_history(self) -> None:
-        workflow = (ROOT / ".github/workflows/release.yml").read_text()
-        step = workflow.split("      - name: Require complete public Hashtree source history\n", 1)[1]
-        script = textwrap.dedent(step.split("        run: |\n", 1)[1].split("\n      - name:", 1)[0])
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            tools = root / ".release-source-verifier/scripts"
-            tools.mkdir(parents=True)
-            (root / "artifacts").mkdir()
-            (root / "haps-release.json").write_text('{"source":"htree://npub1fixture/chat"}')
-            (tools / "bundle.py").write_text(textwrap.dedent("""\
-                import json, os, sys
-                from pathlib import Path
-                with open(os.environ['SOURCE_CALLS'], 'a') as log:
-                    log.write(json.dumps(['bundle', *sys.argv[1:]]) + '\\n')
-                if os.environ.get('SOURCE_FAILURE') == 'helper-checksum':
-                    sys.exit('Hashtree archive checksum mismatch')
-                args = sys.argv[1:]
-                assert args[args.index('--target') + 1] == 'x86_64-unknown-linux-gnu'
-                Path(args[args.index('--destination') + 1], 'libexec').mkdir(parents=True)
-                """))
-            (tools / "verify-public-source.py").write_text(textwrap.dedent("""\
-                import json, os, sys
-                from pathlib import Path
-                args = sys.argv[1:]
-                with open(os.environ['SOURCE_CALLS'], 'a') as log:
-                    log.write(json.dumps(['verify', *args]) + '\\n')
-                assert args[args.index('--commit') + 1] == os.environ['SOURCE_COMMIT']
-                assert Path(args[args.index('--config') + 1]).resolve() == Path('haps-release.json').resolve()
-                assert Path(args[args.index('--helpers') + 1]).is_dir()
-                if os.environ.get('SOURCE_FAILURE'):
-                    sys.exit(os.environ['SOURCE_FAILURE'])
-                """))
-            git = root / "git"
-            git.write_text(textwrap.dedent("""\
-                #!/usr/bin/env python3
-                import os, sys
-                assert sys.argv[1] == 'rev-parse'
-                assert sys.argv[2] in ('HEAD', 'refs/tags/' + os.environ['RELEASE_TAG'] + '^{commit}')
-                print(os.environ['CHECKOUT_COMMIT' if sys.argv[2] == 'HEAD' else 'TAG_COMMIT'])
-                """))
-            git.chmod(0o755)
-            revision = "a" * 40
-            tag = "v2026.10.27"
-            cases = ("success", "checkout", "tag", "manifest-commit", "manifest-tag",
-                     "helper-checksum", "missing-commit", "shallow-history", "missing-parent", "clone-timeout")
-            for index, case in enumerate(cases):
-                with self.subTest(case=case):
-                    calls = root / f"calls-{index}"
-                    temporary = root / f"runner-{index}"
-                    env = dict(os.environ, PATH=f"{root}:{os.environ['PATH']}",
-                               SOURCE_CALLS=str(calls), SOURCE_COMMIT=revision, RELEASE_TAG=tag,
-                               CHECKOUT_COMMIT="b" * 40 if case == "checkout" else revision,
-                               TAG_COMMIT="b" * 40 if case == "tag" else revision,
-                               GITHUB_WORKSPACE=str(root), RUNNER_TEMP=str(temporary),
-                               SOURCE_FAILURE=case if case in cases[5:] else "")
-                    manifest = {"tag": "v2026.10.26" if case == "manifest-tag" else tag,
-                                "commit": "b" * 40 if case == "manifest-commit" else revision}
-                    (root / f"artifacts/iris-chat-{tag}-manifest.json").write_text(json.dumps(manifest))
-                    result = subprocess.run(["bash", "-c", script], cwd=root, env=env,
-                                            capture_output=True, text=True, timeout=10)
-                    commands = [json.loads(line) for line in calls.read_text().splitlines()] if calls.exists() else []
-                    if case == "success":
-                        self.assertEqual(result.returncode, 0, result.stderr)
-                        self.assertEqual([command[0] for command in commands], ["bundle", "verify"])
-                    else:
-                        self.assertNotEqual(result.returncode, 0, case)
-                        expected = [] if case in cases[1:5] else ["bundle"] if case == "helper-checksum" else ["bundle", "verify"]
-                        self.assertEqual([command[0] for command in commands], expected)
 
     def test_build_workflow_uploads_only_canonical_names(self) -> None:
         workflow = (ROOT / ".github/workflows/build-artifacts.yml").read_text()

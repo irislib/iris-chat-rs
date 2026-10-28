@@ -1,0 +1,160 @@
+// Resolve the tagged release's external inputs without executing project tasks.
+import groovy.json.JsonOutput
+import groovy.json.JsonSlurper
+import java.security.MessageDigest
+import org.gradle.api.artifacts.component.ModuleComponentIdentifier
+import org.gradle.api.artifacts.component.ProjectComponentIdentifier
+import org.gradle.api.artifacts.result.UnresolvedDependencyResult
+import org.gradle.api.attributes.Bundling
+import org.gradle.api.attributes.Category
+import org.gradle.api.attributes.LibraryElements
+import org.gradle.api.attributes.Usage
+import org.gradle.api.attributes.java.TargetJvmEnvironment
+
+// Gradle's top-level resolution message can hide a missing checksum or an
+// ambiguous variant. Keep bounded causes, including multi-cause failures.
+def describeFailure(Throwable error) {
+    def pending = new ArrayDeque([error])
+    def seen = Collections.newSetFromMap(new IdentityHashMap())
+    def messages = []
+    while (!pending.isEmpty() && messages.size() < 8) {
+        def current = pending.removeFirst()
+        if (seen.add(current)) {
+            messages.add((current.class.name + ': ' + (current.message ?: '')).take(2048))
+            if (current.cause) pending.add(current.cause)
+            if (current.metaClass.hasProperty(current, 'causes')) {
+                current.causes.findAll { it instanceof Throwable }.take(8).each { pending.add(it) }
+            }
+            current.suppressed.take(4).each { pending.add(it) }
+        }
+    }
+    return messages.join('\nCaused by: ') + (pending.isEmpty() ? '' : '\n[additional causes omitted]')
+}
+
+def phase = System.getenv('IRIS_ANDROID_DEPENDENCY_PHASE')
+if (!(phase in ['acquire', 'verify']) || gradle.startParameter.offline != (phase == 'verify') ||
+    gradle.startParameter.writeDependencyLocks != (phase == 'acquire') ||
+    !gradle.startParameter.writeDependencyVerifications.isEmpty() ||
+    gradle.startParameter.dependencyVerificationMode.name() != 'STRICT') {
+    throw new GradleException('Explicit strict acquisition or offline verification is required; checksum writes are forbidden')
+}
+gradle.projectsEvaluated {
+    def root = gradle.rootProject
+    def pins = new JsonSlurper().parse(new File(root.projectDir.parentFile, 'scripts/android-release-inputs.json'))
+    def scope = pins.gradle.release_input_scope
+    def selected = [:]
+    scope.buildscript_projects.each { path ->
+        selected["${path}:buildscript:classpath".toString()] = root.project(path).buildscript.configurations.getByName('classpath')
+    }
+    scope.configurations.each { path, names ->
+        names.each { name -> selected["${path}:${name}".toString()] = root.project(path).configurations.getByName(name) }
+    }
+    // AGP resolves these tools in detached, lazy configurations. Dependency
+    // reports never visit them, so retain separate named/locked equivalents.
+    scope.tools.each { name, coordinates ->
+        def configuration = root.configurations.create(name) {
+            canBeConsumed = false
+            canBeResolved = true
+            resolutionStrategy.activateDependencyLocking()
+            attributes {
+                attribute(Usage.USAGE_ATTRIBUTE, root.objects.named(Usage, Usage.JAVA_RUNTIME))
+                attribute(Category.CATEGORY_ATTRIBUTE, root.objects.named(Category, Category.LIBRARY))
+                attribute(LibraryElements.LIBRARY_ELEMENTS_ATTRIBUTE, root.objects.named(LibraryElements, LibraryElements.JAR))
+                attribute(Bundling.BUNDLING_ATTRIBUTE, root.objects.named(Bundling, Bundling.EXTERNAL))
+                attribute(TargetJvmEnvironment.TARGET_JVM_ENVIRONMENT_ATTRIBUTE,
+                          root.objects.named(TargetJvmEnvironment, TargetJvmEnvironment.STANDARD_JVM))
+            }
+        }
+        coordinates.each { root.dependencies.add(name, it) }
+        selected[":${name}".toString()] = configuration
+    }
+    def task = root.tasks.register('irisReleaseInputs') {
+        doLast {
+            def reportPath = System.getenv('IRIS_ANDROID_DEPENDENCY_REPORT')
+            if (!reportPath || !new File(reportPath).isAbsolute()) {
+                throw new GradleException('An absolute owned dependency report path is required')
+            }
+            def reportFile = new File(reportPath)
+            if (reportFile.exists() || !reportFile.parentFile.isDirectory()) {
+                throw new GradleException('Dependency report must be new with an existing parent')
+            }
+            def report = [schema: 1, phase: phase, releaseTasks: scope.release_tasks, configurations: [:], failures: [:]]
+            def hashes = [:]
+            selected.each { name, configuration ->
+                try {
+                    if (!configuration.canBeResolved) {
+                        throw new GradleException("Required configuration is not resolvable: ${name}")
+                    }
+                    def graph = configuration.incoming.resolutionResult
+                    def missing = graph.allDependencies.findAll { it instanceof UnresolvedDependencyResult }
+                    if (missing) {
+                        report.failures[name] = missing.take(8).collect {
+                            it.attempted.displayName + ': ' + describeFailure(it.failure)
+                        }.join('\n') + (missing.size() > 8 ? '\n[additional unresolved dependencies omitted]' : '')
+                        return // The nonempty failure map makes the entire phase fail.
+                    }
+                    def projects = graph.allComponents.findAll {
+                        it.id instanceof ProjectComponentIdentifier
+                    }.collect { component ->
+                        [path: component.id.projectPath, variants: component.variants.collect { variant ->
+                            variant.attributes.keySet().collectEntries { key -> [key.name, variant.attributes.getAttribute(key).toString()] }
+                        }]
+                    }
+                    // Strict artifact access is deliberate. --write-verification-
+                    // metadata resolves artifacts leniently and cannot prove that
+                    // every selected binary was present. Exclude project outputs
+                    // before file access so Cargo/Kotlin/Android builds cannot run.
+                    def resolved = configuration.incoming.artifactView {
+                        lenient = false
+                        componentFilter { it instanceof ModuleComponentIdentifier }
+                    }.artifacts.artifacts
+                    def artifacts = resolved.collect { artifact ->
+                        def id = artifact.id.componentIdentifier
+                        def file = artifact.file
+                        if (!file.isFile()) {
+                            throw new GradleException("Missing external artifact: ${artifact.id}")
+                        }
+                        def stamp = [bytes: file.length(), modified: file.lastModified()]
+                        def cached = hashes[file.absolutePath]
+                        if (cached && cached.stamp != stamp) {
+                            throw new GradleException("Artifact changed during resolution: ${artifact.id}")
+                        }
+                        if (!cached) {
+                            def hash = MessageDigest.getInstance('SHA-256')
+                            file.withInputStream { stream ->
+                                byte[] block = new byte[1024 * 1024]
+                                for (int count = stream.read(block); count != -1; count = stream.read(block)) {
+                                    hash.update(block, 0, count)
+                                }
+                            }
+                            if (stamp != [bytes: file.length(), modified: file.lastModified()]) {
+                                throw new GradleException("Artifact changed while hashing: ${artifact.id}")
+                            }
+                            cached = [stamp: stamp, sha256: hash.digest().encodeHex().toString()]
+                            hashes[file.absolutePath] = cached
+                        }
+                        [group: id.group, module: id.module, version: id.version,
+                         file: file.name, bytes: stamp.bytes, sha256: cached.sha256]
+                    }.sort { left, right -> (left.group + ':' + left.module + ':' + left.version + ':' + left.file) <=>
+                                             (right.group + ':' + right.module + ':' + right.version + ':' + right.file) }
+                    def attributes = configuration.attributes.keySet().collectEntries { key ->
+                        [key.name, configuration.attributes.getAttribute(key).toString()]
+                    }
+                    report.configurations[name] = [artifacts: artifacts, projects: projects, attributes: attributes]
+                } catch (Exception error) {
+                    report.failures[name] = describeFailure(error)
+                }
+            }
+            report.complete = report.failures.isEmpty() && report.configurations.keySet() == selected.keySet()
+            reportFile.setText(JsonOutput.prettyPrint(JsonOutput.toJson(report)) + '\n', 'UTF-8')
+            if (!report.complete) {
+                throw new GradleException('Unresolved release inputs; inspect the owned dependency report: ' + report.failures.keySet())
+            }
+        }
+    }
+    gradle.taskGraph.whenReady { graph ->
+        if (graph.allTasks.size() != 1 || graph.allTasks[0] != task.get()) {
+            throw new GradleException('Only irisReleaseInputs is admitted; application, test and Exec tasks are forbidden')
+        }
+    }
+}
