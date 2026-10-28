@@ -95,15 +95,18 @@ jobs:
           work.mkdir(exist_ok=False)
           archive = inputs.download_native(pin, work / 'dotnet-sdk.zip')
           binary = inputs.unpack_native(archive, pin, work / 'dotnet')
+          nuget_config = work / 'NuGet.Config'
+          nuget_config.write_text('<configuration><packageSources><clear/><add key="nuget.org" value="https://api.nuget.org/v3/index.json"/></packageSources><fallbackPackageFolders><clear/></fallbackPackageFolders></configuration>\n')
           exports = {'DOTNET_ROOT': str(binary.parent), 'DOTNET_MULTILEVEL_LOOKUP': '0',
                      'DOTNET_SKIP_FIRST_TIME_EXPERIENCE': '1', 'DOTNET_CLI_TELEMETRY_OPTOUT': '1',
                      'DOTNET_CLI_HOME': str(work / 'home'), 'DOTNET_PROCESSOR_COUNT': '2',
-                     'NUGET_PACKAGES': str(work / 'packages'), 'NUGET_HTTP_CACHE_PATH': str(work / 'http-cache')}
+                     'NUGET_PACKAGES': str(work / 'packages'), 'NUGET_HTTP_CACHE_PATH': str(work / 'http-cache'),
+                     'RestoreConfigFile': str(nuget_config)}
           version = subprocess.check_output([str(binary), '--version'], env={**os.environ, **exports}, text=True, timeout=30).strip()
           inputs.require(re.search(pin['version_pattern'], version) is not None, 'Installed SDK version mismatch')
           (work / 'receipt.json').write_text(json.dumps({'source': inputs.checkout_commit(), 'input': pin, 'version': version,
               'installerSHA256': inputs.digest(Path('scripts/release-build-inputs.py')),
-              'pinsSHA256': inputs.digest(inputs.PINS)}, indent=2) + '\n')
+              'pinsSHA256': inputs.digest(inputs.PINS), 'nugetConfigSHA256': inputs.digest(nuget_config)}, indent=2) + '\n')
           with open(os.environ['GITHUB_PATH'], 'a') as stream:
               stream.write(str(binary.parent) + '\n')
           with open(os.environ['GITHUB_ENV'], 'a') as stream:

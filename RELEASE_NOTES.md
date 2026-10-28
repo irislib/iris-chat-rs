@@ -2,6 +2,33 @@
 
 Each release has channel-specific notes. The release tag must match the `##` heading exactly.
 
+## v2026.10.28.1
+
+### GitHub
+
+- Correct clean-build dependency setup and retain strict verification of release inputs.
+- Recover safely when legacy group state appears again after switching app versions. Preserve previous archives and outgoing work, keep quarantined traffic inactive, and retry interrupted saves without overwriting preserved data.
+- Avoid repetitive peer-key validation and keep idle connections responsive while preserving anonymous discovery and recipient-specific ratchet delivery.
+- Avoid copying saved session state when signed device lists are replayed unchanged or when checking whether a chat is ready to send. Preserve authorization checks and rollback for real changes.
+- Stop polling peers whose public device lists are only cached. Keep discovery for conversations, groups, pending handshakes and restored sessions, with separate anonymous connections for each public author.
+- Update FIPS core and endpoint to 0.4.115, TCP endpoint to 0.2.50, the message provider to 0.5.46, socialgraph to 0.2.4 and the Rust double-ratchet library to 0.0.176, including WebRTC 0.17.4 with patched DTLS key agreement.
+- Update the protocol source package to 0.3.13 and the CLI source package to 0.1.58.
+
+### Apple
+
+- Improve chat recovery after switching app versions.
+- Reduce repeated background work when checking contacts and devices and preparing chats to send.
+- Improve connection responsiveness.
+- Update connection security.
+
+### Zapstore
+
+- Improve chat recovery after switching app versions.
+- Reduce repeated background work when checking contacts and devices and preparing chats to send.
+- Improve connection responsiveness.
+- Update connection security.
+
+
 ## v2026.10.28
 
 ### GitHub

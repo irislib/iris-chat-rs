@@ -232,9 +232,13 @@ def install(pins, work, rust_work):
         # without its original ZIP proof. The checked wrapper verifies its fresh ZIP.
         gradle_home = work / "gradle-home"
         gradle_home.mkdir()
-        dependency_cache = Path.home() / ".gradle/caches"
+        # A symlinked cache root breaks version-catalog accessors on a cold
+        # Gradle 9.3.1 start. Share only downloaded dependency modules; keep
+        # generated catalog/Kotlin DSL state under this real cache directory.
+        (gradle_home / "caches").mkdir()
+        dependency_cache = Path.home() / ".gradle/caches/modules-2"
         dependency_cache.mkdir(parents=True, exist_ok=True)
-        (gradle_home / "caches").symlink_to(dependency_cache, target_is_directory=True)
+        (gradle_home / "caches/modules-2").symlink_to(dependency_cache, target_is_directory=True)
         exports = {"JAVA_HOME": str(java_home), "ANDROID_HOME": str(sdk), "ANDROID_SDK_ROOT": str(sdk),
                    **HOST_TOOL_EXPORTS,
                    "GRADLE_USER_HOME": str(gradle_home),

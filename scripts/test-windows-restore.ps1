@@ -59,6 +59,19 @@ function Restore-Fixture([string] $Name, [string] $Directory) {
         '-p:RestoreForceEvaluate=false', '-p:Configuration=Release', '--source', 'https://api.nuget.org/v3/index.json')
 }
 
+function Assert-ColdPackageFolders([string] $AssetsPath) {
+    if (-not $RequireColdReferencePacks) { return }
+    $assets = Get-Content -Raw $AssetsPath | ConvertFrom-Json
+    $folders = @($assets.packageFolders.PSObject.Properties.Name)
+    if ($folders.Count -ne 1 -or [IO.Path]::GetFullPath($folders[0]).TrimEnd('\') -ne [IO.Path]::GetFullPath($env:NUGET_PACKAGES).TrimEnd('\')) {
+        throw 'Cold restore used a package folder outside the initially empty cache.'
+    }
+    $configs = @($assets.project.restore.configFilePaths)
+    if ($configs.Count -ne 1 -or [IO.Path]::GetFullPath($configs[0]) -ne [IO.Path]::GetFullPath($env:RestoreConfigFile)) {
+        throw 'Cold restore did not use only its explicit NuGet configuration.'
+    }
+}
+
 try {
     Push-Location $work
     $actualSdk = (& dotnet --version).Trim()
@@ -67,7 +80,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Could not record the exact .NET toolchain.' }
     $referencePacks = @('Microsoft.AspNetCore.App.Ref', 'Microsoft.NETCore.App.Ref', 'Microsoft.WindowsDesktop.App.Ref')
     if ($RequireColdReferencePacks) {
-        if ($SdkVersion -ne '10.0.402' -or -not $env:DOTNET_ROOT -or -not $env:NUGET_PACKAGES) {
+        if ($SdkVersion -ne '10.0.402' -or -not $env:DOTNET_ROOT -or -not $env:NUGET_PACKAGES -or -not $env:RestoreConfigFile) {
             throw 'Cold reference-pack verification requires the isolated release SDK and package cache.'
         }
         $expectedDotnet = [IO.Path]::GetFullPath((Join-Path $env:DOTNET_ROOT 'dotnet.exe'))
@@ -112,6 +125,7 @@ try {
         } else {
             if ($restore.exitCode -ne 0) { throw "$name locked restore failed; inspect its original output." }
             Assert-PinnedDownloadPackages (Join-Path $fixture 'obj\project.assets.json') (Join-Path $fixture 'sdk-packages.json')
+            Assert-ColdPackageFolders (Join-Path $fixture 'obj\project.assets.json')
             if ($RequireColdReferencePacks -and $name -eq 'current') {
                 $assets = Get-Content -Raw (Join-Path $fixture 'obj\project.assets.json') | ConvertFrom-Json
                 $downloadNames = @($assets.project.frameworks.PSObject.Properties | ForEach-Object { $_.Value.downloadDependencies.name })
@@ -155,6 +169,7 @@ try {
     }
     & (Join-Path $PSScriptRoot 'windows-build-local.ps1') restore *> (Join-Path $OutputDirectory 'production-restore.log')
     if ($LASTEXITCODE -ne 0) { throw 'The production restore-only command failed.' }
+    Assert-ColdPackageFolders (Join-Path $projectSource 'obj\project.assets.json')
     $production = Join-Path $OutputDirectory 'production-restore'
     New-Item -ItemType Directory $production | Out-Null
     Copy-Item (Join-Path $projectSource 'obj') $production -Recurse

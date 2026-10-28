@@ -187,9 +187,9 @@ impl PrivateDiscoveryClient {
                         .enumerate()
                     {
                         let (before, remaining) = connections.split_at_mut(relay_index);
-                        let (connection, after) = remaining
-                            .split_first_mut()
-                            .expect("one retained connection per configured relay");
+                        let Some((connection, after)) = remaining.split_first_mut() else {
+                            break;
+                        };
                         // Other exact scopes may already have healthy sockets.
                         // Keep their bounded control handling alive while this
                         // read waits for admission or a relay response. Cancelling

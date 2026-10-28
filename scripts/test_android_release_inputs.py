@@ -171,6 +171,12 @@ class AndroidReleaseInputTests(unittest.TestCase):
     def test_install_uses_verified_path_locked_cargo_and_exports_only_after_success(self):
         work = self.root / "work"
         envfile, pathfile = self.root / "env", self.root / "path"
+        cached_artifact = self.root / "home/.gradle/caches/modules-2/fixture.jar"
+        cached_artifact.parent.mkdir(parents=True)
+        cached_artifact.write_bytes(b"retained dependency")
+        generated_state = self.root / "home/.gradle/caches/9.3.1/kotlin-dsl/stale"
+        generated_state.parent.mkdir(parents=True)
+        generated_state.write_bytes(b"previous generated state")
         pins = copy.deepcopy(PINS)
         pins["sdk_linux"] = [pins["sdk_linux"][0]]
         path, crate = self.crate_fixture()
@@ -221,7 +227,13 @@ class AndroidReleaseInputTests(unittest.TestCase):
         self.assertIn("GRADLE_USER_HOME=" + str(work / "gradle-home"), envfile.read_text())
         self.assertIn("CMAKE=/usr/bin/cmake\n", envfile.read_text())
         self.assertIn("PKG_CONFIG=/usr/bin/pkg-config\n", envfile.read_text())
-        self.assertTrue((work / "gradle-home/caches").is_symlink())
+        cache = work / "gradle-home/caches"
+        self.assertTrue(cache.is_dir())
+        self.assertFalse(cache.is_symlink())
+        self.assertTrue((cache / "modules-2").is_symlink())
+        self.assertTrue((cache / "modules-2/fixture.jar").samefile(cached_artifact))
+        self.assertFalse((cache / "9.3.1").exists())
+        self.assertEqual(generated_state.read_bytes(), b"previous generated state")
         self.assertFalse((work / "gradle-home/wrapper").exists())
         self.assertTrue(json.loads((work / "receipt.json").read_text())["passed"])
 
