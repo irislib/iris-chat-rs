@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][ValidateSet('8.0.420', '10.0.402')][string] $SdkVersion,
-    [Parameter(Mandatory)][string] $OutputDirectory
+    [Parameter(Mandatory)][string] $OutputDirectory,
+    [switch] $RequireColdReferencePacks
 )
 
 $ErrorActionPreference = 'Stop'
@@ -64,12 +65,30 @@ try {
     if ($LASTEXITCODE -ne 0 -or $actualSdk -ne $SdkVersion) { throw "Selected SDK $actualSdk differs from $SdkVersion." }
     & dotnet --info *> (Join-Path $OutputDirectory 'dotnet-info.log')
     if ($LASTEXITCODE -ne 0) { throw 'Could not record the exact .NET toolchain.' }
+    $referencePacks = @('Microsoft.AspNetCore.App.Ref', 'Microsoft.NETCore.App.Ref', 'Microsoft.WindowsDesktop.App.Ref')
+    if ($RequireColdReferencePacks) {
+        if ($SdkVersion -ne '10.0.402' -or -not $env:DOTNET_ROOT -or -not $env:NUGET_PACKAGES) {
+            throw 'Cold reference-pack verification requires the isolated release SDK and package cache.'
+        }
+        $expectedDotnet = [IO.Path]::GetFullPath((Join-Path $env:DOTNET_ROOT 'dotnet.exe'))
+        if ((Get-Command dotnet).Source -ne $expectedDotnet) { throw 'The isolated release SDK is not first on PATH.' }
+        if (Test-Path $env:NUGET_PACKAGES) {
+            if (@(Get-ChildItem -Force $env:NUGET_PACKAGES).Count -ne 0) { throw 'The package cache must start empty.' }
+        }
+        foreach ($name in $referencePacks) {
+            $packRoot = Join-Path $env:DOTNET_ROOT "packs\$name"
+            if ((Test-Path $packRoot) -and @(Get-ChildItem -Directory $packRoot | Where-Object Name -Like '8.*').Count -ne 0) {
+                throw "The isolated SDK already contains a .NET 8 reference pack: $name"
+            }
+        }
+    }
     $inputs = @('IrisChat.csproj', 'packages.lock.json', 'sdk-packages.json') | ForEach-Object {
         $path = Join-Path $projectSource $_
         @{name = $_; sha256 = (Get-FileHash $path -Algorithm SHA256).Hash}
     }
     $inputs | ConvertTo-Json | Set-Content (Join-Path $OutputDirectory 'source-inputs.json')
-    foreach ($name in @('legacy-update', 'current')) {
+    $fixtures = if ($RequireColdReferencePacks) { @('current', 'legacy-update') } else { @('legacy-update', 'current') }
+    foreach ($name in $fixtures) {
         $fixture = New-Fixture $name ($name -eq 'legacy-update')
         $project = Join-Path $fixture 'IrisChat.csproj'
         $evaluation = Invoke-RecordedDotnet "$name-evaluation" @('msbuild', $project, '-nologo',
@@ -93,6 +112,14 @@ try {
         } else {
             if ($restore.exitCode -ne 0) { throw "$name locked restore failed; inspect its original output." }
             Assert-PinnedDownloadPackages (Join-Path $fixture 'obj\project.assets.json') (Join-Path $fixture 'sdk-packages.json')
+            if ($RequireColdReferencePacks -and $name -eq 'current') {
+                $assets = Get-Content -Raw (Join-Path $fixture 'obj\project.assets.json') | ConvertFrom-Json
+                $downloadNames = @($assets.project.frameworks.PSObject.Properties | ForEach-Object { $_.Value.downloadDependencies.name })
+                foreach ($reference in $referencePacks) {
+                    if ($reference -notin $downloadNames) { throw "Cold restore did not download the reference pack: $reference" }
+                }
+                $results.Add(@{name = 'cold-reference-packs'; packages = $referencePacks; passed = $true})
+            }
         }
     }
     $fixed = Join-Path $work 'current'
@@ -116,6 +143,16 @@ try {
     catch { $rejected = $_.Exception.Message -like '*content hash mismatch*' }
     if (-not $rejected) { throw 'SDK package verification failed to reject changed content hashes.' }
     $results.Add(@{name = 'changed-sdk-hashes-negative'; expectedFailure = $true; rejected = $true})
+    if ($RequireColdReferencePacks) {
+        $missingPin = Join-Path $work 'missing-reference-pin.json'
+        Get-Content -Raw (Join-Path $fixed 'sdk-packages.json') | ConvertFrom-Json |
+            Where-Object id -NE 'Microsoft.AspNetCore.App.Ref' | ConvertTo-Json | Set-Content $missingPin
+        $rejected = $false
+        try { Assert-PinnedDownloadPackages (Join-Path $OutputDirectory 'current\obj\project.assets.json') $missingPin }
+        catch { $rejected = $_.Exception.Message -like '*no exact reviewed pin: Microsoft.AspNetCore.App.Ref*' }
+        if (-not $rejected) { throw 'SDK package verification accepted a missing reference-pack pin.' }
+        $results.Add(@{name = 'missing-reference-pin-negative'; expectedFailure = $true; rejected = $true})
+    }
     & (Join-Path $PSScriptRoot 'windows-build-local.ps1') restore *> (Join-Path $OutputDirectory 'production-restore.log')
     if ($LASTEXITCODE -ne 0) { throw 'The production restore-only command failed.' }
     $production = Join-Path $OutputDirectory 'production-restore'
@@ -128,7 +165,7 @@ try {
     throw
 } finally {
     Pop-Location
-    @{passed = $passed; requestedSdk = $SdkVersion; results = @($results.ToArray());
+    @{passed = $passed; requestedSdk = $SdkVersion; coldReferencePacksRequired = [bool]$RequireColdReferencePacks; results = @($results.ToArray());
       sourceCommit = $env:GITHUB_SHA; compilerOrAppExecuted = $false; fixtureDirectory = $work; failure = $failure} |
         ConvertTo-Json -Depth 12 | Set-Content (Join-Path $OutputDirectory 'result.json')
 }

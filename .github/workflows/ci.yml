@@ -72,27 +72,54 @@ env:
 jobs:
   windows-restore:
     if: ${{ inputs.scope == 'windows-restore' }}
-    name: Windows restore evaluation (.NET ${{ matrix.sdk }})
+    name: Windows restore with isolated release SDK
     runs-on: windows-2025
     timeout-minutes: 10
-    strategy:
-      fail-fast: false
-      matrix:
-        sdk: ['8.0.420', '10.0.402']
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: ${{ matrix.sdk }}
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: Install only the checksum-verified release SDK
+        shell: python
+        run: |
+          import importlib.util, json, os, re, shutil, subprocess
+          from pathlib import Path
+          spec = importlib.util.spec_from_file_location('inputs', 'scripts/release-build-inputs.py')
+          inputs = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(inputs)
+          inputs.require(os.environ.get('GITHUB_ACTIONS') == 'true' and os.environ.get('RUNNER_OS') == 'Windows', 'Hosted Windows runner required')
+          inputs.require(inputs.checkout_commit() == os.environ['GITHUB_SHA'], 'Checkout differs from selected source')
+          pins = json.loads(inputs.PINS.read_text())
+          inputs.check_native_pins(pins)
+          pin = pins['tools']['dotnet']
+          work = Path(os.environ['RUNNER_TEMP']) / 'iris-windows-restore'
+          inputs.require(shutil.disk_usage(work.parent).free >= 4 * 1024**3, 'Insufficient space for isolated SDK restore')
+          work.mkdir(exist_ok=False)
+          archive = inputs.download_native(pin, work / 'dotnet-sdk.zip')
+          binary = inputs.unpack_native(archive, pin, work / 'dotnet')
+          exports = {'DOTNET_ROOT': str(binary.parent), 'DOTNET_MULTILEVEL_LOOKUP': '0',
+                     'DOTNET_SKIP_FIRST_TIME_EXPERIENCE': '1', 'DOTNET_CLI_TELEMETRY_OPTOUT': '1',
+                     'DOTNET_CLI_HOME': str(work / 'home'), 'DOTNET_PROCESSOR_COUNT': '2',
+                     'NUGET_PACKAGES': str(work / 'packages'), 'NUGET_HTTP_CACHE_PATH': str(work / 'http-cache')}
+          version = subprocess.check_output([str(binary), '--version'], env={**os.environ, **exports}, text=True, timeout=30).strip()
+          inputs.require(re.search(pin['version_pattern'], version) is not None, 'Installed SDK version mismatch')
+          (work / 'receipt.json').write_text(json.dumps({'source': inputs.checkout_commit(), 'input': pin, 'version': version,
+              'installerSHA256': inputs.digest(Path('scripts/release-build-inputs.py')),
+              'pinsSHA256': inputs.digest(inputs.PINS)}, indent=2) + '\n')
+          with open(os.environ['GITHUB_PATH'], 'a') as stream:
+              stream.write(str(binary.parent) + '\n')
+          with open(os.environ['GITHUB_ENV'], 'a') as stream:
+              for key, value in exports.items():
+                  stream.write(key + '=' + value + '\n')
       - name: Evaluate and test locked Windows restore
         shell: pwsh
-        run: ./scripts/test-windows-restore.ps1 -SdkVersion '${{ matrix.sdk }}' -OutputDirectory 'work/windows-restore-${{ matrix.sdk }}'
+        run: ./scripts/test-windows-restore.ps1 -SdkVersion '10.0.402' -RequireColdReferencePacks -OutputDirectory 'work/windows-restore-10.0.402'
       - name: Retain restore evaluation and original outputs
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: windows-restore-${{ matrix.sdk }}
-          path: work/windows-restore-${{ matrix.sdk }}/
+          name: windows-restore-10.0.402
+          path: |
+            work/windows-restore-10.0.402/
+            ${{ runner.temp }}/iris-windows-restore/receipt.json
           retention-days: 14
 
   apple-validation-products:
