@@ -11,6 +11,7 @@ resolve_shared_build_metadata "$ROOT"
 
 ANDROID_DIR="$ROOT/android"
 ANDROID_DIST_DIR="$ROOT/dist/android"
+RELEASE_TASKS=(:app:bundleRelease :app:assembleSelfHosted)
 
 usage() {
   cat <<'EOF'
@@ -127,7 +128,7 @@ release_gradle() {
     ./gradlew --max-workers=2 \
       '-Dorg.gradle.jvmargs=-Xmx4g -Dfile.encoding=UTF-8' \
       --dependency-verification strict \
-      "$@" :app:bundleRelease :app:assembleSelfHosted
+      "$@"
   )
 }
 
@@ -138,13 +139,23 @@ preflight_release_artifacts() {
   require_var IRIS_RELEASE_KEY_PASSWORD
 
   ensure_local_properties
-  # Configure the full app and both release task graphs without compiling or signing.
-  release_gradle --dry-run
+  local report_dir
+  mkdir -p "$ANDROID_DIR/build/reports"
+  report_dir="$(mktemp -d "$ANDROID_DIR/build/reports/release-preflight.XXXXXX")"
+  # Resolve real external artifacts and lazy SDK inputs before native compilation.
+  IRIS_ANDROID_DEPENDENCY_PHASE=preflight \
+    IRIS_ANDROID_DEPENDENCY_REPORT="$report_dir/release-inputs.json" \
+    release_gradle --no-parallel --init-script "$ROOT/scripts/android-dependency-phase.init.gradle" :irisReleaseInputs
+  # Exercise resource transforms for both variants. Generated Rust bindings are
+  # Kotlin inputs, unnecessary here; the real build retains that dependency.
+  release_gradle -x :app:generateRustBindings \
+    :app:processReleaseResources :app:processSelfHostedResources
+  release_gradle --dry-run "${RELEASE_TASKS[@]}"
 }
 
 build_release_artifacts() {
   preflight_release_artifacts
-  release_gradle
+  release_gradle "${RELEASE_TASKS[@]}"
 
   copy_artifact "$(latest_artifact bundle/release aab)" release aab
   copy_artifact "$(latest_artifact apk/selfHosted apk)" release apk

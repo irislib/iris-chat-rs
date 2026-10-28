@@ -32,11 +32,12 @@ def describeFailure(Throwable error) {
 }
 
 def phase = System.getenv('IRIS_ANDROID_DEPENDENCY_PHASE')
-if (!(phase in ['acquire', 'verify']) || gradle.startParameter.offline != (phase == 'verify') ||
+if (!(phase in ['acquire', 'verify', 'preflight']) || gradle.startParameter.offline != (phase == 'verify') ||
     gradle.startParameter.writeDependencyLocks != (phase == 'acquire') ||
+    gradle.startParameter.parallelProjectExecutionEnabled ||
     !gradle.startParameter.writeDependencyVerifications.isEmpty() ||
     gradle.startParameter.dependencyVerificationMode.name() != 'STRICT') {
-    throw new GradleException('Explicit strict acquisition or offline verification is required; checksum writes are forbidden')
+    throw new GradleException('Serial strict acquisition, offline verification or read-only preflight is required; checksum writes are forbidden')
 }
 gradle.projectsEvaluated {
     def root = gradle.rootProject
@@ -47,6 +48,11 @@ gradle.projectsEvaluated {
         selected["${path}:buildscript:classpath".toString()] = root.project(path).buildscript.configurations.getByName('classpath')
     }
     scope.configurations.each { path, names ->
+        // AGP 9.1 creates androidApis lazily from the resource parser's SDK
+        // attribute input. A task-graph dry run never reads this file collection.
+        if (names.contains('androidApis')) {
+            root.project(path).tasks.named('parseReleaseLocalResources').get().platformAttrRTxt.get()
+        }
         names.each { name -> selected["${path}:${name}".toString()] = root.project(path).configurations.getByName(name) }
     }
     // AGP resolves these tools in detached, lazy configurations. Dependency
@@ -150,6 +156,7 @@ gradle.projectsEvaluated {
             if (!report.complete) {
                 throw new GradleException('Unresolved release inputs; inspect the owned dependency report: ' + report.failures.keySet())
             }
+            println('Resolved release inputs: ' + report.configurations.size() + ' configurations')
         }
     }
     gradle.taskGraph.whenReady { graph ->

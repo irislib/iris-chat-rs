@@ -209,9 +209,12 @@ caches through an owned Gradle user home. The hosted cache stores only
 `~/.cache/iris-android-gradle/caches/modules-2` at its real path; symlinked
 caches break cold Gradle plugin classpaths. The installer rejects restored
 wrapper distributions or generated state. With the same release environment,
-`scripts/android-release release-preflight` checks the full app and both release
-task graphs without compiling or signing. The release build runs this check
-first and stops on failure.
+`scripts/android-release release-preflight` resolves strict dependency inputs,
+including Android's lazy SDK resource configuration, then processes resources
+for both release variants and checks their full task graphs. It skips Rust
+binding generation only during resource processing; it does not compile Rust
+or Kotlin or sign the app. The release build runs this check first, stops on
+failure, and then executes the complete release tasks without exclusions.
 
 Update both package versions and every build version argument in `haps.toml`
 for the same tag. Check all six source package variants with

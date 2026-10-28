@@ -23,6 +23,7 @@
       ],
       "configurations": {
         ":app": [
+          "androidApis",
           "coreLibraryDesugaring",
           "lintChecks",
           "androidJdkImage",
@@ -41,6 +42,7 @@
           "kotlinCompilerPluginClasspathSelfHosted"
         ],
         ":fips-ble": [
+          "androidApis",
           "coreLibraryDesugaring",
           "lintChecks",
           "androidJdkImage",
