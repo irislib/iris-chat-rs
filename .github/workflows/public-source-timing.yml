@@ -1,0 +1,50 @@
+name: Public source HTTP timing
+
+on:
+  workflow_dispatch:
+    inputs:
+      sample_1_sha256:
+        description: First known public ciphertext leaf SHA-256 (lowercase hex)
+        required: true
+        type: string
+      sample_1_bytes:
+        description: First leaf exact size in bytes (1–81920)
+        required: true
+        type: string
+      sample_2_sha256:
+        description: Second known public ciphertext leaf SHA-256 (lowercase hex)
+        required: true
+        type: string
+      sample_2_bytes:
+        description: Second leaf exact size in bytes (1–81920)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  timing:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Check input and output boundaries
+        run: python3 -B -m unittest discover -s scripts -p test_public_source_timing.py
+      - name: Time public leaves
+        env:
+          SAMPLE_1_SHA256: ${{ inputs.sample_1_sha256 }}
+          SAMPLE_1_BYTES: ${{ inputs.sample_1_bytes }}
+          SAMPLE_2_SHA256: ${{ inputs.sample_2_sha256 }}
+          SAMPLE_2_BYTES: ${{ inputs.sample_2_bytes }}
+        run: python3 -B scripts/public_source_timing.py
+      - name: Retain measurements including failures
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: public-source-http-timing
+          path: public-source-timing.json
+          if-no-files-found: error
+          retention-days: 7
