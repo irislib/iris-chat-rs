@@ -181,6 +181,22 @@ def host_prerequisites():
     return versions
 
 
+def prepare_gradle_home():
+    # Cache only downloaded modules at their real paths. Even a modules-2
+    # symlink breaks cold Kotlin DSL plugin classpaths in Gradle 9.3.1.
+    home = Path.home().resolve() / ".cache/iris-android-gradle"
+    modules = home / "caches/modules-2"
+    require(modules.resolve() == modules, "Android Gradle cache paths must not be symlinked")
+    home.mkdir(parents=True, exist_ok=True)
+    require({p.name for p in home.iterdir()} <= {"caches"},
+            "Android Gradle home contains restored wrapper or generated state")
+    (home / "caches").mkdir(exist_ok=True)
+    require({p.name for p in (home / "caches").iterdir()} <= {"modules-2"},
+            "Android Gradle cache contains restored generated state")
+    modules.mkdir(exist_ok=True)
+    return home
+
+
 def install(pins, work, rust_work):
     check_pins(pins)
     require(os.environ.get("GITHUB_ACTIONS") == "true" and platform.system() == "Linux" and
@@ -199,6 +215,7 @@ def install(pins, work, rust_work):
                "sourceCommit": SHARED.checkout_commit(), "rustReceiptSHA256": rust_receipt_sha,
                "sdk": [], "externalAssumptions": pins["external_assumptions"]}
     try:
+        gradle_home = prepare_gradle_home()
         receipt["hostPrerequisites"] = host_prerequisites()
         env.update(HOST_TOOL_EXPORTS)
         jdk_pin = archive_pin(pins["jdk"])
@@ -228,17 +245,8 @@ def install(pins, work, rust_work):
         ndk_version = subprocess.check_output([str(cargo_ndk), "--version"], env=env, text=True, timeout=30).strip()
         require(ndk_version == "cargo-ndk " + crate_pin["version"], "cargo-ndk executable version mismatch")
         receipt["cargoNdk"] = {"input": crate_pin, "version": ndk_version, "binarySHA256": digest(cargo_ndk)}
-        # Reuse dependency artifacts, but never execute a restored wrapper distribution
-        # without its original ZIP proof. The checked wrapper verifies its fresh ZIP.
-        gradle_home = work / "gradle-home"
-        gradle_home.mkdir()
-        # A symlinked cache root breaks version-catalog accessors on a cold
-        # Gradle 9.3.1 start. Share only downloaded dependency modules; keep
-        # generated catalog/Kotlin DSL state under this real cache directory.
-        (gradle_home / "caches").mkdir()
-        dependency_cache = Path.home() / ".gradle/caches/modules-2"
-        dependency_cache.mkdir(parents=True, exist_ok=True)
-        (gradle_home / "caches/modules-2").symlink_to(dependency_cache, target_is_directory=True)
+        # The cache action restores only modules-2. The checked wrapper verifies
+        # its fresh ZIP; wrapper distributions and generated state are not reused.
         exports = {"JAVA_HOME": str(java_home), "ANDROID_HOME": str(sdk), "ANDROID_SDK_ROOT": str(sdk),
                    **HOST_TOOL_EXPORTS,
                    "GRADLE_USER_HOME": str(gradle_home),

@@ -148,8 +148,7 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            ~/.gradle/caches
-            ~/.gradle/wrapper
+            ~/.cache/iris-android-gradle/caches/modules-2
             ${{ github.workspace }}/cargo-target
           key: android-${{ runner.os }}-${{ hashFiles('iris-chat-rs/scripts/release-build-inputs.py', 'iris-chat-rs/scripts/release-build-inputs.json', 'iris-chat-rs/scripts/android-release-inputs.py', 'iris-chat-rs/scripts/android-release-inputs.json', 'iris-chat-rs/linux/scripts/pinned-apt.sh', 'iris-chat-rs/linux/build-inputs/apt-snapshots.tsv') }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock', 'iris-chat-rs/android/**/*gradle.lockfile', 'iris-chat-rs/android/gradle/verification-metadata.xml', 'iris-chat-rs/android/gradle/wrapper/gradle-wrapper.properties', 'iris-chat-rs/android/gradle/wrapper/gradle-wrapper.jar', 'iris-chat-rs/android/**/*.gradle*', 'iris-chat-rs/android/gradle/**/*.toml') }}
           restore-keys: android-${{ runner.os }}-${{ hashFiles('iris-chat-rs/scripts/release-build-inputs.py', 'iris-chat-rs/scripts/release-build-inputs.json', 'iris-chat-rs/scripts/android-release-inputs.py', 'iris-chat-rs/scripts/android-release-inputs.json', 'iris-chat-rs/linux/scripts/pinned-apt.sh', 'iris-chat-rs/linux/build-inputs/apt-snapshots.tsv') }}-

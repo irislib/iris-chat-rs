@@ -205,7 +205,13 @@ Before local execution, `certify-gradle` must compare the installed Gradle files
 and executable modes with the exact checksum-pinned distribution archive, then
 the plan must bind that receipt. A cache marker alone is insufficient. Hosted
 releases use a fresh wrapper distribution directory and reuse only dependency
-caches through an owned Gradle user home.
+caches through an owned Gradle user home. The hosted cache stores only
+`~/.cache/iris-android-gradle/caches/modules-2` at its real path; symlinked
+caches break cold Gradle plugin classpaths. The installer rejects restored
+wrapper distributions or generated state. With the same release environment,
+`scripts/android-release release-preflight` checks the full app and both release
+task graphs without compiling or signing. The release build runs this check
+first and stops on failure.
 
 Update both package versions and every build version argument in `haps.toml`
 for the same tag. Check all six source package variants with

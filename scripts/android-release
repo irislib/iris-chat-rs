@@ -14,7 +14,7 @@ ANDROID_DIST_DIR="$ROOT/dist/android"
 
 usage() {
   cat <<'EOF'
-usage: ./scripts/android-release <print-config|beta-apk|beta-bundle|release-apk|release-bundle|release-artifacts>
+usage: ./scripts/android-release <print-config|beta-apk|beta-bundle|release-apk|release-bundle|release-preflight|release-artifacts>
 EOF
 }
 
@@ -120,20 +120,31 @@ latest_artifact() {
   printf '%s\n' "$artifact_source"
 }
 
-build_release_artifacts() {
+release_gradle() {
+  (
+    cd "$ANDROID_DIR"
+    # Keep configuration checks and the real build on the same launch settings.
+    ./gradlew --max-workers=2 \
+      '-Dorg.gradle.jvmargs=-Xmx4g -Dfile.encoding=UTF-8' \
+      --dependency-verification strict \
+      "$@" :app:bundleRelease :app:assembleSelfHosted
+  )
+}
+
+preflight_release_artifacts() {
   require_var IRIS_RELEASE_KEYSTORE_PATH
   require_var IRIS_RELEASE_KEYSTORE_PASSWORD
   require_var IRIS_RELEASE_KEY_ALIAS
   require_var IRIS_RELEASE_KEY_PASSWORD
 
   ensure_local_properties
-  (
-    cd "$ANDROID_DIR"
-    # The two release variants can exceed the default 2 GiB heap during dexing.
-    ./gradlew --max-workers=2 \
-      '-Dorg.gradle.jvmargs=-Xmx4g -Dfile.encoding=UTF-8' \
-      :app:bundleRelease :app:assembleSelfHosted
-  )
+  # Configure the full app and both release task graphs without compiling or signing.
+  release_gradle --dry-run
+}
+
+build_release_artifacts() {
+  preflight_release_artifacts
+  release_gradle
 
   copy_artifact "$(latest_artifact bundle/release aab)" release aab
   copy_artifact "$(latest_artifact apk/selfHosted apk)" release apk
@@ -157,6 +168,9 @@ case "${1:-}" in
     ;;
   release-artifacts)
     build_release_artifacts
+    ;;
+  release-preflight)
+    preflight_release_artifacts
     ;;
   -h|--help|help)
     usage

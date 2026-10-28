@@ -25,7 +25,7 @@ class AndroidReleaseInputTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
-        self.root = Path(self.temporary.name)
+        self.root = Path(self.temporary.name).resolve()
 
     def zip_fixture(self, extras=(), source_properties="Pkg.Revision=2\nAndroidVersion.ApiLevel=36\n"):
         path = self.root / "sdk.zip"
@@ -171,7 +171,8 @@ class AndroidReleaseInputTests(unittest.TestCase):
     def test_install_uses_verified_path_locked_cargo_and_exports_only_after_success(self):
         work = self.root / "work"
         envfile, pathfile = self.root / "env", self.root / "path"
-        cached_artifact = self.root / "home/.gradle/caches/modules-2/fixture.jar"
+        gradle_home = self.root / "home/.cache/iris-android-gradle"
+        cached_artifact = gradle_home / "caches/modules-2/fixture.jar"
         cached_artifact.parent.mkdir(parents=True)
         cached_artifact.write_bytes(b"retained dependency")
         generated_state = self.root / "home/.gradle/caches/9.3.1/kotlin-dsl/stale"
@@ -224,18 +225,35 @@ class AndroidReleaseInputTests(unittest.TestCase):
         self.assertEqual(cargo_command, ["/verified/bin/cargo", "install", "--path", str(work / "cargo-ndk-source/cargo-ndk-4.1.2"),
                                          "--locked", "--root", str(work / "cargo-ndk"), "--jobs", "2"])
         self.assertIn("ANDROID_HOME=" + str(work / "sdk"), envfile.read_text())
-        self.assertIn("GRADLE_USER_HOME=" + str(work / "gradle-home"), envfile.read_text())
+        self.assertIn("GRADLE_USER_HOME=" + str(gradle_home), envfile.read_text())
         self.assertIn("CMAKE=/usr/bin/cmake\n", envfile.read_text())
         self.assertIn("PKG_CONFIG=/usr/bin/pkg-config\n", envfile.read_text())
-        cache = work / "gradle-home/caches"
+        cache = gradle_home / "caches"
         self.assertTrue(cache.is_dir())
         self.assertFalse(cache.is_symlink())
-        self.assertTrue((cache / "modules-2").is_symlink())
+        self.assertFalse((cache / "modules-2").is_symlink())
         self.assertTrue((cache / "modules-2/fixture.jar").samefile(cached_artifact))
         self.assertFalse((cache / "9.3.1").exists())
         self.assertEqual(generated_state.read_bytes(), b"previous generated state")
-        self.assertFalse((work / "gradle-home/wrapper").exists())
+        self.assertFalse((gradle_home / "wrapper").exists())
         self.assertTrue(json.loads((work / "receipt.json").read_text())["passed"])
+
+    def test_gradle_home_rejects_symlinks_and_restored_generated_state(self):
+        for entry in ("wrapper", "caches/9.3.1", "caches", "caches/modules-2"):
+            with self.subTest(entry=entry):
+                user_home = self.root / entry.replace("/", "-")
+                gradle_home = user_home / ".cache/iris-android-gradle"
+                path = gradle_home / entry
+                path.parent.mkdir(parents=True)
+                if entry in ("caches", "caches/modules-2"):
+                    target = user_home / "external"
+                    target.mkdir()
+                    path.symlink_to(target, target_is_directory=True)
+                else:
+                    path.mkdir()
+                with patch.object(MODULE.Path, "home", return_value=user_home):
+                    with self.assertRaises(ValueError):
+                        MODULE.prepare_gradle_home()
 
     def test_workflow_uses_one_pinned_installer_after_cache_and_keeps_receipts(self):
         workflow = (ROOT / ".github/workflows/build-artifacts.yml").read_text()
@@ -249,6 +267,10 @@ class AndroidReleaseInputTests(unittest.TestCase):
         self.assertIn("android/gradle/verification-metadata.xml", android)
         self.assertIn("android/gradle/wrapper/gradle-wrapper.properties", android)
         self.assertIn("android/gradle/wrapper/gradle-wrapper.jar", android)
+        cache_paths = android.split("name: Cache Cargo and Gradle", 1)[1].split("key:", 1)[0]
+        self.assertIn("~/.cache/iris-android-gradle/caches/modules-2", cache_paths)
+        self.assertNotIn("~/.gradle/caches", cache_paths)
+        self.assertNotIn("~/.gradle/wrapper", cache_paths)
 
 
 if __name__ == "__main__":
