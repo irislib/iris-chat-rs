@@ -12,18 +12,18 @@ EXPECTED = {
     "hashtree-blossom": "0.2.83",
     "hashtree-resolver": "0.2.86",
     "hashtree-updater": "0.2.89",
-    "nvpn-fips-core": "0.4.108",
-    "nvpn-fips-endpoint": "0.4.108",
+    "nvpn-fips-core": "0.4.115",
+    "nvpn-fips-endpoint": "0.4.115",
     "nvpn-fips-tcp": "0.2.6",
-    "nvpn-fips-tcp-endpoint": "0.2.43",
+    "nvpn-fips-tcp-endpoint": "0.2.50",
     "hashtree-config": "0.2.83",
     "hashtree-core": "0.2.91",
     "hashtree-fips-transport": "0.4.29",
     "hashtree-network": "0.2.88",
     "nostr-pubsub": "0.1.18",
-    "nostr-pubsub-fips": "0.5.38",
+    "nostr-pubsub-fips": "0.5.46",
     "nostr-pubsub-relay": "0.1.13",
-    "nostr-pubsub-social-graph": "0.2.3",
+    "nostr-pubsub-social-graph": "0.2.4",
     "nostr-social-graph": "0.1.4",
 }
 
@@ -76,7 +76,7 @@ class DependencyLockConsistencyTests(unittest.TestCase):
                 versions = package_versions(lock)
                 self.assertNotIn("webrtc-ice", versions, "Do not ship a second ICE implementation")
                 self.assertEqual(versions.get("nvpn-webrtc-ice"), {"0.17.3"})
-                self.assertEqual(versions.get("nvpn-webrtc"), {"0.17.3"})
+                self.assertEqual(versions.get("nvpn-webrtc"), {"0.17.4"})
                 self.assertEqual(versions.get("nvpn-mdns-sd"), {"0.19.2"})
                 entries = [block for block in lock.read_text().split("[[package]]")
                            if re.search(r'(?m)^name = "nvpn-webrtc-ice"$', block)]
@@ -142,17 +142,17 @@ class DependencyLockConsistencyTests(unittest.TestCase):
 
     def test_core_manifest_pins_gated_fips_stack_exactly(self):
         manifest = (ROOT / "core" / "Cargo.toml").read_text(encoding="utf-8")
-        self.assertRegex(manifest, r'(?m)^nvpn-fips-core = \{ version = "=0\.4\.108",', "fips-core must stay on the gated release")
-        self.assertRegex(manifest, r'(?m)^nvpn-fips-endpoint = \{ version = "=0\.4\.108" \}$', "fips-endpoint must stay on the gated release")
+        self.assertRegex(manifest, r'(?m)^nvpn-fips-core = \{ version = "=0\.4\.115",', "fips-core must stay on the gated release")
+        self.assertRegex(manifest, r'(?m)^nvpn-fips-endpoint = \{ version = "=0\.4\.115" \}$', "fips-endpoint must stay on the gated release")
         self.assertRegex(manifest, r'(?m)^nvpn-fips-tcp = \{ version = "=0\.2\.6" \}$', "fips-tcp must stay on the gated release")
-        self.assertRegex(manifest, r'(?m)^nvpn-fips-tcp-endpoint = \{ version = "=0\.2\.43" \}$', "fips-tcp-endpoint must stay on the gated release")
+        self.assertRegex(manifest, r'(?m)^nvpn-fips-tcp-endpoint = \{ version = "=0\.2\.50" \}$', "fips-tcp-endpoint must stay on the gated release")
         self.assertRegex(manifest, r'(?m)^hashtree-config = "=0\.2\.83"$', "Hashtree config must stay on the gated release")
         self.assertRegex(manifest, r'(?m)^hashtree-core = "=0\.2\.91"$', "Hashtree core must stay on the gated release")
         self.assertRegex(manifest, r'(?m)^hashtree-fips-transport = "=0\.4\.29"$', "Hashtree/FIPS transport must stay on the gated release")
         self.assertRegex(manifest, r'(?m)^hashtree-network = "=0\.2\.88"$', "Hashtree network must stay on the gated release")
         self.assertRegex(manifest, r'(?m)^nostr-identity = "=0\.6\.0"$', "nostr-identity must stay on the gated release")
         self.assertRegex(manifest, r'(?m)^nostr-pubsub = "=0\.1\.18"$', "nostr-pubsub must stay on the gated release")
-        self.assertRegex(manifest, r'(?m)^nostr-pubsub-fips = "=0\.5\.38"$', "nostr-pubsub-fips must stay on the gated release")
+        self.assertRegex(manifest, r'(?m)^nostr-pubsub-fips = "=0\.5\.46"$', "nostr-pubsub-fips must stay on the gated release")
         self.assertRegex(manifest, r'(?m)^nostr-pubsub-relay = "=0\.1\.13"$', "nostr-pubsub-relay must stay on the gated release")
 
     def test_linux_build_inherits_the_pinned_core_manifest(self):
