@@ -10,6 +10,7 @@ import tempfile
 import time
 import unittest
 from unittest.mock import patch
+from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location('timing', ROOT / 'scripts/public_source_timing.py')
@@ -55,7 +56,7 @@ class Connection:
         if isinstance(self.reply, Exception):
             raise self.reply
         body = next(b for b, s in zip(BODIES, SAMPLES)
-                    if self.requests[-1][1] == '/' + s['sha256'])
+                    if self.requests[-1][1] == '/' + s['sha256'] + '.bin')
         response = M.TimedResponse(Socket(self.reply or wire(body)), budget=self.budget)
         response.begin()
         return response
@@ -97,8 +98,9 @@ class PublicSourceTimingTests(unittest.TestCase):
         self.assertTrue(all(r['expected_hash_match'] for r in rows))
         self.assertEqual(size, 6 * sum(len(wire(b)) for b in BODIES))
         self.assertEqual([r['connection_reused'] for r in rows], [False, True, True, True] * 3)
+        self.assertTrue(all(r['request_path_suffix'] == '.bin' for r in rows))
         for c in connections:
-            self.assertEqual([r[1] for r in c.requests], ['/' + s['sha256'] for s in SAMPLES] * 2)
+            self.assertEqual([r[1] for r in c.requests], ['/' + s['sha256'] + '.bin' for s in SAMPLES] * 2)
             self.assertTrue(all(r[0] == 'GET' and r[2] == {'Accept-Encoding': 'identity'} for r in c.requests))
         with self.assertRaises(ValueError):
             M.TimedConnection('127.0.0.1', {'bytes': 0})
@@ -118,8 +120,50 @@ class PublicSourceTimingTests(unittest.TestCase):
         self.assertEqual(row['http_code'], 302)
         self.assertEqual(row['error'], 'http_status')
         self.assertEqual(row['body_bytes'], 0)
+        self.assertIsNone(row['redirect_destination'])
         self.assertEqual(row['cache_headers'], {'age': '20', 'cache-control': 'public, max-age=60'})
         self.assertNotIn('secret', json.dumps(row)); self.assertNotIn('10.1.2.3', json.dumps(row))
+
+    def test_redirect_summary_accepts_only_fixed_hosts_exact_hash_and_safe_suffix(self):
+        digest = SAMPLES[0]['sha256']
+        for status in (301, 302, 303, 307, 308):
+            for host in M.HOSTS:
+                for suffix in ('', '.bin'):
+                    location = f'https://{host}/{digest}{suffix}'
+                    response = SimpleNamespace(status=status, getheader=lambda *_: location)
+                    self.assertEqual(M.redirect_destination(response, digest),
+                                     dict(same_hash=True, host=host, suffix=suffix or 'none'))
+        location = f'https://cdn.iris.to/{digest}.bin'
+        response = wire(status=308, headers=f'Location: {location}\r\n'.encode())
+        connection = Connection(M.HOSTS[1], {'bytes': 0}, response)
+        row = M.request(connection, M.HOSTS[1], SAMPLES[0], 1, 1, connection.budget)
+        self.assertEqual(row['redirect_destination'], dict(same_hash=True, host='cdn.iris.to', suffix='.bin'))
+        self.assertEqual(len(connection.requests), 1)
+        self.assertEqual(row['error'], 'http_status')
+        self.assertNotIn(location, json.dumps(row))
+
+    def test_redirect_summary_discards_unsafe_or_unrecognized_locations(self):
+        digest = SAMPLES[0]['sha256']
+        safe = f'https://cdn.iris.to/{digest}.bin'
+        unsafe = [
+            '', '/'+digest+'.bin', '//cdn.iris.to/'+digest+'.bin',
+            safe.replace('https:', 'http:'), safe.replace('cdn.iris.to', 'private.example'),
+            safe.replace('cdn.iris.to', '10.1.2.3'), safe.replace('cdn.iris.to', 'cdn.iris.to.private.example'),
+            safe.replace('cdn.iris.to', 'account:secret@cdn.iris.to'),
+            safe.replace('cdn.iris.to', 'cdn.iris.to@private.example'),
+            safe.replace('cdn.iris.to', 'cdn.iris.to:443'), safe.replace('cdn.iris.to', 'cdn.iris.to.'),
+            safe.replace(digest, SAMPLES[1]['sha256']), safe.replace('/'+digest, '/private/'+digest),
+            safe.replace('/'+digest, '/%2e%2e/'+digest), safe.replace('.bin', '.secret'),
+            safe.replace('.bin', '.bin/secret'), safe.replace('.bin', '%2ebin'),
+            safe+'?account=secret', safe+'#secret', safe+'?', safe+'#', safe+'\n',
+            ' '+safe, safe+'\r\nX-Private: secret', safe+', '+safe,
+        ]
+        for location in unsafe:
+            with self.subTest(location=location):
+                response = SimpleNamespace(status=308, getheader=lambda *_: location)
+                self.assertIsNone(M.redirect_destination(response, digest))
+        response = SimpleNamespace(status=200, getheader=lambda *_: safe)
+        self.assertIsNone(M.redirect_destination(response, digest))
 
     def test_wrong_size_or_hash_is_not_a_pass(self):
         for body in [b'x' * len(BODIES[0]), b'x', BODIES[0] + b'excess']:

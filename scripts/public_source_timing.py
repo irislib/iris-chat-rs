@@ -19,6 +19,7 @@ import time
 from contextlib import contextmanager
 
 HOSTS = ('blossom.primal.net', 'cdn.iris.to', 'upload.iris.to')
+REQUEST_PATH_SUFFIX = '.bin'
 ROUNDS = 2
 MAX_SAMPLE_BYTES = 80 * 1024
 MAX_RESPONSE_BYTES = 1024 * 1024
@@ -163,11 +164,24 @@ def cache_headers(response):
     return result
 
 
+def redirect_destination(response, expected_hash):
+    """Describe only an exact public leaf URL; never retain raw Location text."""
+    if response.status not in (301, 302, 303, 307, 308):
+        return None
+    hosts = '|'.join(re.escape(host) for host in HOSTS)
+    match = re.fullmatch(r'https://(' + hosts + r')/' + re.escape(expected_hash) + r'(\.bin)?',
+                         response.getheader('Location', ''))
+    if match:
+        return dict(same_hash=True, host=match.group(1), suffix=match.group(2) or 'none')
+    return None
+
+
 def request(connection, host, sample, sample_number, round_number, budget):
     started = time.monotonic()
     before = budget['bytes']
     connection.connect_seconds = connection.tls_seconds = 0.0
     row = dict(host=host, sample=sample_number, round=round_number,
+               request_path_suffix=REQUEST_PATH_SUFFIX, redirect_destination=None,
                connection_reused=connection.sock is not None, http_code=None,
                connect_seconds=0.0, tls_seconds=0.0, ttfb_seconds=None,
                total_seconds=None, body_bytes=0, response_bytes=0,
@@ -175,11 +189,13 @@ def request(connection, host, sample, sample_number, round_number, budget):
     response = None
     try:
         with deadline():
-            connection.request('GET', '/' + sample['sha256'], headers={'Accept-Encoding': 'identity'})
+            connection.request('GET', '/' + sample['sha256'] + REQUEST_PATH_SUFFIX,
+                               headers={'Accept-Encoding': 'identity'})
             response = connection.getresponse()
             row['http_code'] = response.status
             row['ttfb_seconds'] = round(response.first_byte_at - started, 6)
             row['cache_headers'] = cache_headers(response)
+            row['redirect_destination'] = redirect_destination(response, sample['sha256'])
             if response.status != 200:
                 row['error'] = 'http_status'
             elif response.getheader('Content-Encoding', 'identity') != 'identity':
