@@ -331,4 +331,3 @@ class ReleaseInputPinTests(unittest.TestCase):
                         self.assertNotEqual(result.returncode, 0, case)
                         expected = [] if case in cases[1:5] else ["bundle"] if case == "helper-checksum" else ["bundle", "verify"]
                         self.assertEqual([command[0] for command in commands], expected)
-
