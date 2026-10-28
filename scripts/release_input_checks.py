@@ -240,15 +240,20 @@ class ReleaseInputPinTests(unittest.TestCase):
     def test_release_requires_pinned_read_only_source_verifier_before_attestation(self) -> None:
         workflow = (ROOT / ".github/workflows/release.yml").read_text()
         release = workflow.split("\n  release:\n", 1)[1]
+        self.assertIn("    timeout-minutes: 45\n", release)
         checkout = release.split("      - name: Checkout pinned public-source verifier\n", 1)[1]
         checkout = checkout.split("\n      - name:", 1)[0]
         self.assertIn("repository: mmalmi/haps", checkout)
-        self.assertIn("ref: cc6c5d441c0b4a836634ccb8f6379c33fd608b46", checkout)
+        self.assertIn("ref: 3f70a6e71c579045ebc38006c27df9851bd7dde8", checkout)
         self.assertIn("path: .release-source-verifier", checkout)
         self.assertIn("persist-credentials: false", checkout)
         gate = release.split("      - name: Require complete public Hashtree source history\n", 1)[1]
         gate = gate.split("\n      - name:", 1)[0]
         self.assertIn("SOURCE_COMMIT: ${{ needs.validate.outputs.sha }}", gate)
+        self.assertIn("--read-server https://cdn.iris.to", gate)
+        self.assertIn("--read-server https://upload.iris.to", gate)
+        self.assertEqual(gate.count("--read-server"), 2)
+        self.assertIn("--clone-timeout 1800", gate)
         self.assertNotIn("if:", gate)
         self.assertNotIn("continue-on-error", gate)
         self.assertNotIn("secrets.", gate)
@@ -292,6 +297,8 @@ class ReleaseInputPinTests(unittest.TestCase):
                 assert args[args.index('--commit') + 1] == os.environ['SOURCE_COMMIT']
                 assert Path(args[args.index('--config') + 1]).resolve() == Path('haps-release.json').resolve()
                 assert Path(args[args.index('--helpers') + 1]).is_dir()
+                assert [args[i + 1] for i, value in enumerate(args) if value == '--read-server'] == ['https://cdn.iris.to', 'https://upload.iris.to']
+                assert args[args.index('--clone-timeout') + 1] == '1800'
                 if os.environ.get('SOURCE_FAILURE'):
                     sys.exit(os.environ['SOURCE_FAILURE'])
                 """))

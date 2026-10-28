@@ -335,6 +335,13 @@ checksum-pinned helpers for a fresh fetch and complete-history traversal.
 Missing commits, shallow or incomplete history, and verification failures stop
 publication. No signing key is added to CI.
 
+The verifier explicitly reads from `https://cdn.iris.to` and
+`https://upload.iris.to`, starting with empty local clone and cache storage.
+The clone deadline is 1800 seconds, within a 45-minute publishing job.
+Complete ancestry traversal and every hash check remain required; timeouts
+still stop publication. These route and deadline settings do not establish
+faster cold verification.
+
 Bluetooth changes also require a physical iPhone/Android check before release.
 `--on-device` checks LAN visibility; it does not exercise Bluetooth, and the
 opt-in `FipsBlePhysicalUITests` skip without `IRIS_FIPS_PHYSICAL_PEER_NPUB`.

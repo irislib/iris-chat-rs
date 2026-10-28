@@ -212,7 +212,7 @@ jobs:
       - build
       - mesh-resource
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 45
     permissions:
       attestations: write
       contents: write
@@ -255,7 +255,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: mmalmi/haps
-          ref: cc6c5d441c0b4a836634ccb8f6379c33fd608b46
+          ref: 3f70a6e71c579045ebc38006c27df9851bd7dde8
           path: .release-source-verifier
           persist-credentials: false
 
@@ -277,7 +277,10 @@ jobs:
           python3 .release-source-verifier/scripts/verify-public-source.py \
             --config "$GITHUB_WORKSPACE/haps-release.json" \
             --commit "$SOURCE_COMMIT" \
-            --helpers "$RUNNER_TEMP/source-tools/libexec"
+            --helpers "$RUNNER_TEMP/source-tools/libexec" \
+            --read-server https://cdn.iris.to \
+            --read-server https://upload.iris.to \
+            --clone-timeout 1800
 
       - name: Attest release build provenance
         uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
