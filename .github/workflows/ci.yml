@@ -359,24 +359,42 @@ jobs:
     timeout-minutes: 60
     env:
       CARGO_TARGET_DIR: ${{ github.workspace }}/cargo-target
+      RELEASE_CACHE_TRUSTED: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && inputs.scope != 'protocol' }}
     defaults:
       run:
         working-directory: iris-chat-rs
     steps:
       - name: Checkout app
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           path: ${{ env.APP_DIR }}
 
+      - name: Install checksum-verified release compiler
+        if: env.RELEASE_CACHE_TRUSTED == 'true'
+        run: python3 scripts/release-build-inputs.py --install --work "$RUNNER_TEMP/iris-release-rust" --component rustfmt --component clippy
+
+      - name: Install native dependencies and identify compiler
+        if: env.RELEASE_CACHE_TRUSTED == 'true'
+        id: toolchain
+        run: |
+          set -Eeuo pipefail
+          sudo bash linux/scripts/pinned-apt.sh ubuntu-noble cmake libdbus-1-dev pkg-config pkgconf pkgconf-bin
+          echo "CMAKE=/usr/bin/cmake" >> "$GITHUB_ENV"
+          echo "PKG_CONFIG=/usr/bin/pkg-config" >> "$GITHUB_ENV"
+          echo "identity=$(rustc -Vv | sha256sum | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+
       - name: Install system dependencies
+        if: env.RELEASE_CACHE_TRUSTED != 'true'
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libdbus-1-dev pkg-config
 
       - name: Install Rust
+        if: env.RELEASE_CACHE_TRUSTED != 'true'
         run: |
           rustup toolchain install stable --profile minimal --component rustfmt --component clippy
           rustup default stable
 
       - name: Cache Cargo
+        if: env.RELEASE_CACHE_TRUSTED != 'true'
         uses: actions/cache@v6
         with:
           path: |
@@ -387,6 +405,21 @@ jobs:
           restore-keys: |
             rust-${{ runner.os }}-
 
+      # Main-scoped caches are visible to later tags; tag caches cannot cross tag refs.
+      - name: Restore release compiler cache
+        if: env.RELEASE_CACHE_TRUSTED == 'true'
+        id: release-cargo-cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ${{ github.workspace }}/cargo-target
+          key: rust-release-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.identity }}-${{ hashFiles('iris-chat-rs/scripts/release-build-inputs.py', 'iris-chat-rs/scripts/release-build-inputs.json', 'iris-chat-rs/linux/scripts/pinned-apt.sh', 'iris-chat-rs/linux/build-inputs/apt-snapshots.tsv') }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock') }}-${{ github.sha }}-complete
+          restore-keys: |
+            rust-release-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.identity }}-${{ hashFiles('iris-chat-rs/scripts/release-build-inputs.py', 'iris-chat-rs/scripts/release-build-inputs.json', 'iris-chat-rs/linux/scripts/pinned-apt.sh', 'iris-chat-rs/linux/build-inputs/apt-snapshots.tsv') }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock') }}-${{ github.sha }}-
+            rust-release-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.identity }}-${{ hashFiles('iris-chat-rs/scripts/release-build-inputs.py', 'iris-chat-rs/scripts/release-build-inputs.json', 'iris-chat-rs/linux/scripts/pinned-apt.sh', 'iris-chat-rs/linux/build-inputs/apt-snapshots.tsv') }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock') }}-
+
       - name: Static checks
         run: |
           ./scripts/check-palettes
@@ -394,6 +427,7 @@ jobs:
           ./scripts/check-source-file-sizes
           python3 scripts/test_dependency_lock_consistency.py
           python3 scripts/test_rust_focused.py
+          python3 scripts/ci_release_cache_checks.py
           ./scripts/check-rust-panics
           ./scripts/test_release_publish_guard
           ./scripts/test_homebrew_tap
@@ -477,6 +511,16 @@ jobs:
             ${{ github.workspace }}/cargo-target/package/protocol-package.sha256
           if-no-files-found: error
           retention-days: 14
+
+      - name: Preserve release compiler cache after tests
+        if: ${{ !cancelled() && env.RELEASE_CACHE_TRUSTED == 'true' && steps.release-cargo-cache.outcome == 'success' && steps.release-cargo-cache.outputs.cache-hit != 'true' && (job.status == 'success' || !endsWith(steps.release-cargo-cache.outputs.cache-matched-key, format('-{0}-partial', github.sha))) }}
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ${{ github.workspace }}/cargo-target
+          key: rust-release-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.identity }}-${{ hashFiles('iris-chat-rs/scripts/release-build-inputs.py', 'iris-chat-rs/scripts/release-build-inputs.json', 'iris-chat-rs/linux/scripts/pinned-apt.sh', 'iris-chat-rs/linux/build-inputs/apt-snapshots.tsv') }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock') }}-${{ github.sha }}-${{ job.status == 'success' && 'complete' || 'partial' }}
 
   android:
     if: ${{ inputs.scope == '' || inputs.scope == 'all' || inputs.scope == 'android' }}

@@ -13,6 +13,7 @@ import textwrap
 import unittest
 
 from release_input_checks import ReleaseInputPinTests
+from ci_release_cache_checks import MainReleaseCacheTests
 
 
 ROOT = Path(__file__).resolve().parents[1]
