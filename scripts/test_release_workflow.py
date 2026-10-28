@@ -262,9 +262,20 @@ class ReleaseWorkflowTests(unittest.TestCase):
                     cache = body.split("      - name: Cache Cargo", 1)[1].split("\n      - ", 1)[0]
                     paths.append(cache.split("          path: |\n", 1)[1].split("          key:", 1)[0])
                     self.assertNotIn("cache-hit", body)
-                self.assertEqual(paths[0], paths[1])
+                if job == "android":
+                    # Tagged Android builds isolate generated Gradle state and
+                    # restore only the real dependency cache, never symlinks.
+                    self.assertIn("~/.gradle/caches\n", paths[0])
+                    self.assertIn("~/.gradle/wrapper\n", paths[0])
+                    self.assertEqual(
+                        paths[1],
+                        paths[0].replace("~/.gradle/caches", "~/.cache/iris-android-gradle/caches/modules-2")
+                        .replace("            ~/.gradle/wrapper\n", ""),
+                    )
+                else:
+                    self.assertEqual(paths[0], paths[1])
         # ReleaseInputPinTests checks every restore prefix against changed input
-        # bytes. Default-branch cache layout stays intact; unsafe broad keys do not.
+        # bytes. Cargo cache locations stay intact; unsafe broad keys do not.
 
     def test_release_cache_retains_partial_then_complete_without_per_retry_entries(self) -> None:
         workflow = (ROOT / ".github/workflows/release.yml").read_text()
