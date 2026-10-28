@@ -356,7 +356,7 @@ jobs:
     if: ${{ inputs.scope == '' || inputs.scope == 'all' || inputs.scope == 'core' || inputs.scope == 'protocol' }}
     name: Rust and repo checks
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 75
     env:
       CARGO_TARGET_DIR: ${{ github.workspace }}/cargo-target
       RELEASE_CACHE_TRUSTED: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && inputs.scope != 'protocol' }}

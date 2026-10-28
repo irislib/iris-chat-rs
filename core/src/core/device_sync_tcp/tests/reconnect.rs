@@ -489,10 +489,9 @@ async fn crossing_converges(observe_outbound_before_probe: bool, browser_steps_f
         {
             pair.pump().await;
         }
-        pair.pump().await;
     })
     .await
-    .expect("both crossing handshakes complete before probe admission");
+    .expect("both outgoing handshakes reach Established");
     if browser_steps_first {
         browser_app
             .step(&pair.peer, &pair.local, &mut pair.browser_tcp, pair.now)
@@ -501,6 +500,31 @@ async fn crossing_converges(observe_outbound_before_probe: bool, browser_steps_f
     native_app
         .step(&pair.local, &pair.peer, &mut pair.native_tcp, pair.now)
         .await;
+    if observe_outbound_before_probe {
+        // pump receives native before browser. The probe's SYN+ACK therefore
+        // establishes the browser last, leaving its final ACK unprocessed at
+        // native. Exercise that gap instead of assuming one pump closes it.
+        assert_eq!(
+            native_app.connections,
+            HashMap::from([(pair.peer.npub(), native_outbound)]),
+            "the original canonical stream remains until the probe's final ACK is received"
+        );
+    }
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !native_app.connections.is_empty() {
+            assert_eq!(
+                native_app.connections,
+                HashMap::from([(pair.peer.npub(), native_outbound)]),
+                "waiting for probe admission must never install a noncanonical stream"
+            );
+            pair.pump().await;
+            native_app
+                .step(&pair.local, &pair.peer, &mut pair.native_tcp, pair.now)
+                .await;
+        }
+    })
+    .await
+    .expect("native processes the probe's final ACK and retires the old canonical stream");
     assert!(
         native_app.connections.is_empty(),
         "the higher-key probe wakes the canonical dialer without becoming an app stream"

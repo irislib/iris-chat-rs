@@ -105,6 +105,9 @@ class MainReleaseCacheTests(unittest.TestCase):
         self.assertNotIn("continue-on-error:", self.ci)
 
     def test_main_compiles_the_same_expensive_release_profiles(self):
+        # A cold release gate has taken 58m29s including cache save. Main also
+        # verifies the package, so retain finite headroom before cache closure.
+        self.assertIn('    timeout-minutes: 75\n', self.ci)
         fixture = 'IRIS_PRIVATE_CONTROL_FIXTURE_OUTPUT="$PWD/work/private-controls/native-private-controls.json"'
         self.assertIn(fixture + ' ./scripts/test_rust.sh', step(self.ci, 'Rust tests'))
         self.assertIn(fixture + ' scripts/verify.sh fast', step(self.release, 'Run hosted release gate'))
