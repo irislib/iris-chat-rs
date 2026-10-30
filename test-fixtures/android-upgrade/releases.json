@@ -1,0 +1,15 @@
+{
+  "schema": 1,
+  "releases": {
+    "v2026.10.28.4": {
+      "commit": "7a8f6d53b273af98ce4451ab3b3b429f5fdfe6d6",
+      "apk_sha256": "7403e0af84e6bbbd0ae6dc1607196e71e277185ad59535a06a96edef277d35f3",
+      "manifest_sha256": "e5d718924dc5c081f68704552b2f1dfb5755021f4cc9c45e95c7af13d0cd9902"
+    },
+    "v2026.10.30": {
+      "commit": "2cd169b51b969ea7132fa45b1bc7ac7e2dc6ff97",
+      "apk_sha256": "b63d48724b3f660695520e758f729bb01cb87e07e3c5d4ccfcb10508f5f686df",
+      "manifest_sha256": "35f034c27646318a1eb970ee7ed88c132fcf79526a53859f872ffdc0a31b9370"
+    }
+  }
+}
