@@ -232,7 +232,7 @@ def evaluate_early_background(*, startup_text, lifecycle_text, bundle_id, proces
             ["restore_enqueued", "backgrounded", "restore_result_observed"],
             "Need exactly one ordered enqueue, background entry and successful restoration result")
     enqueue, entry, result = startup
-    require(enqueue["pending"] and not enqueue["backgrounded"], "Restoration did not start in the foreground")
+    require(enqueue["pending"], "Restoration enqueue is not pending")
     require(entry["pending"] and entry["native"] and entry["backgrounded"], "No actual native restoration at background entry")
     require(not result["pending"], "Restoration is still pending")
     require(enqueue["stamp"] < entry["stamp"] < result["stamp"], "Restoration timestamps are not ordered")
@@ -240,7 +240,7 @@ def evaluate_early_background(*, startup_text, lifecycle_text, bundle_id, proces
     target_states, activated = [], False
     for row in states:
         if row["pid"] != pid:
-            require(row["pid"] == old_pid and not activated and row["state"] in {"not-running", "terminated", "exited"},
+            require(row["pid"] == old_pid and not activated and row["state"] in {"not-running", "terminated", "exited", "none-NotVisible"},
                     "Another instance changed target lifecycle state")
             continue
         require(row["state"] in {ACTIVE, SUSPENDED, "running-active-NotVisible"}, "Unexpected new-process lifecycle state")
@@ -249,7 +249,11 @@ def evaluate_early_background(*, startup_text, lifecycle_text, bundle_id, proces
             activated = True
         target_states.append(row)
     require(target_states, "Missing OS foreground evidence")
-    require(target_states[0]["stamp"] <= entry["stamp"], "Foreground evidence follows background entry")
+    # AppManager's startup background flag may precede the first scene-active
+    # callback. Require actual OS foreground before enqueue, never that cache.
+    before_enqueue = [row for row in target_states if row["stamp"] <= enqueue["stamp"]]
+    require(before_enqueue and all(row["state"] == ACTIVE for row in before_enqueue),
+            "Restoration did not enqueue during actual OS foreground")
     suspended = [row for row in target_states if row["state"] == SUSPENDED]
     require(suspended and entry["stamp"] <= suspended[0]["stamp"], "No OS suspension after restoration overlap")
     transition = next((row for row in target_states[target_states.index(suspended[0]) + 1:]

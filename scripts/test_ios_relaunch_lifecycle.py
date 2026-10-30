@@ -128,14 +128,41 @@ class LifecycleTests(unittest.TestCase):
             replace_capture(value, "startup", old, old.replace(field + "=true", field + "=false"))
             self.reject(value)
 
-    def test_cold_background_start_does_not_qualify(self):
+    def test_cached_background_flag_with_actual_foreground_and_native_overlap(self):
         value = fixture()
         replace_capture(value, "startup", startup("restore_enqueued", 0.1, pending=True),
                         startup("restore_enqueued", 0.1, pending=True, background=True))
+        self.assertTrue(lifecycle.evaluate_early_background(**value)['restore_in_flight'])
+
+    def test_cold_background_start_does_not_qualify(self):
+        for cached in (False, True):
+            value = fixture()
+            replace_capture(value, "startup", startup("restore_enqueued", 0.1, pending=True),
+                            startup("restore_enqueued", 0.1, pending=True, background=cached))
+            replace_capture(value, "lifecycle", state(lifecycle.ACTIVE, 0), state("running-active-NotVisible", 0))
+            self.reject(value)
+
+    def test_os_foreground_must_already_span_enqueue(self):
+        value = fixture()
+        replace_capture(value, "lifecycle", state(lifecycle.ACTIVE, 0), state(lifecycle.ACTIVE, .2))
         self.reject(value)
         value = fixture()
-        replace_capture(value, "lifecycle", state(lifecycle.ACTIVE, 0), state("running-active-NotVisible", 0))
+        replace_capture(value, "lifecycle", state(lifecycle.ACTIVE, 0),
+                        state(lifecycle.ACTIVE, 0)+state("running-active-NotVisible", .05)+state(lifecycle.ACTIVE,.06))
         self.reject(value)
+
+    def test_old_none_notvisible_is_only_a_departure_before_new_activation(self):
+        value = fixture()
+        replace_capture(value, "lifecycle", state(lifecycle.ACTIVE, 0),
+                        state("none-NotVisible", -.1, pid=101)+state(lifecycle.ACTIVE, 0))
+        self.assertEqual(lifecycle.evaluate_early_background(**value)['pid'], PID)
+        for old_state, old_pid, when in (("none-NotVisible",101,.2),(lifecycle.ACTIVE,101,-.1),
+                                       ("none-NotVisible",999,-.1)):
+            value = fixture()
+            replacement=(state(old_state,when,pid=old_pid)+state(lifecycle.ACTIVE,0) if when<0 else
+                         state(lifecycle.ACTIVE,0)+state(old_state,when,pid=old_pid))
+            replace_capture(value, "lifecycle", state(lifecycle.ACTIVE,0),replacement)
+            self.reject(value)
 
     def test_resign_active_is_not_background_entry(self):
         value = fixture()

@@ -79,9 +79,34 @@ class MarkerTests(unittest.TestCase):
         with self.assertRaises(relaunch.EvidenceError):self.w._eligible(102)
         self.assertEqual(self.calls,[])
 
-    def test_restore_already_backgrounded_never_qualifies(self):
+    def test_cached_background_flag_does_not_override_actual_os_foreground(self):
         self.feed(self.startup(background=True),self.state());self.read_synchronously()
+        self.assertTrue(self.w._eligible(102)['pending'])
+        self.assertEqual(self.calls, [])
+
+    def test_os_background_rejects_even_with_false_cached_flag(self):
+        self.feed(self.startup(),self.state('running-active-NotVisible'));self.read_synchronously()
         with self.assertRaises(relaunch.EvidenceError):self.w._eligible(102)
+
+    def test_foreground_return_does_not_hide_intervening_background_or_suspension(self):
+        for state in ('running-active-NotVisible', lifecycle.SUSPENDED):
+            self.w.record['records'] = [
+                {'pid':102,'stream':'startup','phase':'restore_enqueued','pending':True,'backgrounded':True,'device_stamp':.1},
+                {'pid':102,'stream':'lifecycle','state':lifecycle.ACTIVE,'device_stamp':0},
+                {'pid':102,'stream':'lifecycle','state':state,'device_stamp':.2},
+                {'pid':102,'stream':'lifecycle','state':lifecycle.ACTIVE,'device_stamp':.3}]
+            with self.assertRaises(relaunch.EvidenceError):self.w._eligible(102)
+        self.assertEqual(self.calls, [])
+
+    def test_visible_only_after_enqueue_does_not_prove_foreground_enqueue(self):
+        self.feed(self.startup(background=True),self.state(t=.2));self.read_synchronously()
+        self.assertIsNone(self.w._eligible(102));self.assertEqual(self.calls, [])
+
+    def test_cached_flag_cannot_allow_already_completed_restore(self):
+        self.feed(self.startup(background=True)+self.startup('restore_result_observed',False,t=.2),self.state())
+        self.read_synchronously()
+        with self.assertRaises(relaunch.EvidenceError):self.w._eligible(102)
+        self.assertEqual(self.calls, [])
 
     def test_no_foreground_evidence_waits(self):
         self.feed(self.startup());self.read_synchronously();self.assertIsNone(self.w._eligible(102))

@@ -177,11 +177,13 @@ class ObservedRestorationHome:
         require(len(startup) == 1 and startup[0]['phase'] == 'restore_enqueued',
                 'Restoration completed, changed or was coalesced before Home')
         enqueue = startup[0]
-        require(enqueue['pending'] and not enqueue['backgrounded'], 'Restore did not enqueue in foreground')
+        require(enqueue['pending'], 'Restore enqueue is no longer pending')
+        # The shell's cached background flag can predate its first scene-active
+        # callback. Native state establishes visibility throughout this window.
         states = [x for x in rows if x['stream'] == 'lifecycle']
         if not states:
             return None
-        require(states[-1]['state'] == lifecycle.ACTIVE, 'New process already left foreground')
+        require(all(x['state'] == lifecycle.ACTIVE for x in states), 'New process left foreground before Home')
         if not any(x['state'] == lifecycle.ACTIVE and x['device_stamp'] <= enqueue['device_stamp'] for x in states):
             return None
         return enqueue
