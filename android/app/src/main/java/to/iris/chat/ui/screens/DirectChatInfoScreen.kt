@@ -434,7 +434,7 @@ private fun linkHighlightedText(
     }
 
 @Composable
-private fun ContactNicknameCard(
+internal fun ContactNicknameCard(
     chat: to.iris.chat.rust.CurrentChatSnapshot,
     nicknameDraft: String,
     onNicknameChange: (String) -> Unit,
@@ -446,8 +446,9 @@ private fun ContactNicknameCard(
     onToggleEditing: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val storedNickname = chat.nickname?.trim().orEmpty()
-    val normalizedNickname = nicknameDraft.trim().split(Regex("(?U)\\s+")).joinToString(" ")
+    // Core already normalized this value; Kotlin trim also removes non-whitespace controls.
+    val storedNickname = chat.nickname.orEmpty()
+    val normalizedNickname = normalizeContactNickname(nicknameDraft)
     val normalizedNote = noteDraft.replace("\r\n", "\n").replace('\r', '\n').trim()
     val noteLength = normalizedNote.codePointCount(0, normalizedNote.length)
     val valid = normalizedNickname.codePointCount(0, normalizedNickname.length) <= 80 && noteLength <= 240
