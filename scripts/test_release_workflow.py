@@ -354,6 +354,22 @@ class ReleaseWorkflowTests(unittest.TestCase):
             '      - "scripts/test_android_release_upgrade.py"',
             '      - "scripts/test_android_upgrade_harness.py"',
             '      - "test-fixtures/android-upgrade/releases.json"',
+            '      - "scripts/ios_adhoc_prepare.py"',
+            '      - "scripts/test_ios_adhoc_prepare.py"',
+            '      - "scripts/ios_ordinary_relaunch.py"',
+            '      - "scripts/qualify_ios_ordinary_relaunch.py"',
+            '      - "scripts/test_ios_ordinary_relaunch.py"',
+            '      - "scripts/ios_relaunch_adapters.py"',
+            '      - "scripts/test_ios_relaunch_adapters.py"',
+            '      - "scripts/ios_relaunch_lifecycle.py"',
+            '      - "scripts/test_ios_relaunch_lifecycle.py"',
+            '      - "scripts/ios_quality_observer.py"',
+            '      - "scripts/ios_quality_trace.py"',
+            '      - "scripts/qualify_ios_quality_observer.py"',
+            '      - "scripts/test_ios_quality_observer.py"',
+            '      - "scripts/ios_runtime_acceptance.py"',
+            '      - "scripts/test_ios_runtime_acceptance.py"',
+            '      - "scripts/test_ios_runtime_workflow.py"',
         ]
         # Haps recipes have dedicated checks below. Changes to any native app or
         # build input must still trigger the original full platform checks.
@@ -377,6 +393,52 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("node --version", quick)
         self.assertIn('"scripts/render-release-notes.py"', quick)
         self.assertIn('"--channel", "validate"', quick)
+
+    def test_standalone_apple_helpers_run_contract_without_native_builds(self) -> None:
+        import fnmatch
+        native = (ROOT / ".github/workflows/ci.yml").read_text()
+        contract = (ROOT / ".github/workflows/release-contract.yml").read_text()
+        standalone = (
+            "scripts/ios_adhoc_prepare.py", "scripts/test_ios_adhoc_prepare.py",
+            "scripts/ios_ordinary_relaunch.py", "scripts/qualify_ios_ordinary_relaunch.py",
+            "scripts/test_ios_ordinary_relaunch.py", "scripts/ios_relaunch_adapters.py",
+            "scripts/test_ios_relaunch_adapters.py", "scripts/ios_relaunch_lifecycle.py",
+            "scripts/test_ios_relaunch_lifecycle.py", "scripts/ios_quality_observer.py",
+            "scripts/ios_quality_trace.py", "scripts/qualify_ios_quality_observer.py",
+            "scripts/test_ios_quality_observer.py", "scripts/ios_runtime_acceptance.py",
+            "scripts/test_ios_runtime_acceptance.py", "scripts/test_ios_runtime_workflow.py",
+        )
+        native_inputs = (
+            "scripts/native_lab.py", "scripts/test_native_lab.py", "scripts/test_fast.sh",
+            "scripts/test_native_contract.sh", "scripts/ios-build", "scripts/macos-build",
+            "ios/Sources/IrisApp.swift", "ios/UITests/FipsBlePhysicalUITests.swift",
+            "macos/Sources/IrisApp.swift", "core/src/lib.rs", "protocol-ffi/src/lib.rs",
+            "android/app/src/main/java/to/iris/chat/MainActivity.kt", "linux/src/main.rs",
+            "windows/IrisChat/MainWindow.xaml.cs", ".github/workflows/ci.yml",
+        )
+
+        def patterns(workflow, event, key):
+            body = re.search(rf"^  {event}:\n(.*?)(?=^  \S|\Z)", workflow, re.M | re.S).group(1)
+            block = re.search(rf"^    {key}:\n((?:      - .+\n)+)", body, re.M).group(1)
+            return [json.loads(line.removeprefix("      - ")) for line in block.splitlines()]
+
+        for event in ("push", "pull_request"):
+            ignored, included = patterns(native, event, "paths-ignore"), patterns(contract, event, "paths")
+            for path in standalone:
+                with self.subTest(event=event, helper=path):
+                    self.assertTrue((ROOT / path).is_file())
+                    self.assertIn(path, ignored)
+                    self.assertIn(path, included)
+            for path in native_inputs:
+                with self.subTest(event=event, native_input=path):
+                    self.assertFalse(any(fnmatch.fnmatchcase(path, rule) for rule in ignored))
+                    changed = ["scripts/ios_quality_observer.py", path]
+                    self.assertTrue(any(not any(fnmatch.fnmatchcase(item, rule) for rule in ignored)
+                                        for item in changed))
+        self.assertIn("scripts/test_release_publish_guard", contract)
+        guard = (ROOT / "scripts/test_release_publish_guard").read_text()
+        self.assertIn("unittest discover", guard)
+        self.assertIn("-p 'test_*.py'", guard)
 
     def test_release_metadata_and_mixed_changes_select_the_required_workflows(self) -> None:
         ci = (ROOT / ".github/workflows/ci.yml").read_text()
