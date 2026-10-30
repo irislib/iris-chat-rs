@@ -299,7 +299,12 @@ save/reload alone does not establish previous-version continuity.
 Before Hashtree or Zapstore checks/publication, set
 `IRIS_ANDROID_UPGRADE_RECEIPT` to the passing `receipt.json`. Both channels reject
 missing, failed, incomplete, changed or wrong-release evidence. The validator
-is read-only and can be run independently without repeating a successful test:
+reads the original SQLite/WAL snapshots in a temporary read-only copy and checks
+both their contents and the recorded summaries. It binds the previous version
+to its committed release pins, checks retained APK/attestation verification,
+and requires the recorded runner and baseline hashes to match committed inputs.
+Validator-only corrections do not relabel the runner that actually executed.
+It can be run independently without repeating a successful device test:
 
 ```bash
 python3 scripts/check_android_upgrade_receipt.py \

@@ -1,17 +1,20 @@
 #!/usr/bin/env python3
 """Small negative tests for release continuity acceptance; no build or device."""
 import copy
+import base64
 import json
+import sqlite3
+import shutil
 from pathlib import Path
 import tempfile
 import unittest
 import xml.etree.ElementTree as ET
 from unittest.mock import patch
 from android_upgrade_ui import bounds, clickable, matching, Bridge
-from android_upgrade_state import compare, sha256
+from android_upgrade_state import compare, sha256, inspect, PEER
 from android_upgrade_release import pair
 from test_android_release_upgrade import preflight, offline, launch
-from check_android_upgrade_receipt import validate, CHECKS
+from check_android_upgrade_receipt import validate, CHECKS, reviewed_inputs, database_state
 
 
 def state():
@@ -20,32 +23,65 @@ def state():
                 seeded=dict(message=True, group_message=True, draft=True, setting=True, group=True, profile=True, contact=True), edited=False)
 
 
+def database_fixture(path, edited=False):
+    """Real SQLite with synthetic rows, only for validator unit tests."""
+    path.unlink(missing_ok=True)
+    with sqlite3.connect(path) as db:
+        db.executescript("""
+          CREATE TABLE app_meta(key TEXT, value TEXT);
+          CREATE TABLE preferences(id INTEGER, send_typing_indicators INTEGER);
+          CREATE TABLE owner_profiles(owner_pubkey_hex TEXT, name TEXT, display_name TEXT, picture TEXT, about TEXT, nickname TEXT, contact_note TEXT);
+          CREATE TABLE ndr_kv(owner_pubkey_hex TEXT, device_pubkey_hex TEXT);
+          CREATE TABLE pending_relay_publishes(event_id TEXT, owner_pubkey_hex TEXT, label TEXT, event_json TEXT, inner_event_id TEXT, chat_id TEXT, created_at_secs INTEGER);
+          CREATE TABLE threads(chat_id TEXT, draft TEXT);
+          CREATE TABLE messages(chat_id TEXT, id TEXT, kind TEXT, author TEXT, body TEXT, is_outgoing INTEGER, created_at_secs INTEGER, attachments_json TEXT);
+          CREATE TABLE groups(group_id TEXT, name TEXT, picture TEXT, created_at_ms INTEGER, group_json TEXT);
+          INSERT INTO app_meta VALUES('account_owner_pubkey_hex','fixture-owner');
+          INSERT INTO preferences VALUES(1,0);
+          INSERT INTO owner_profiles VALUES('fixture-owner','Upgrade fixture',NULL,NULL,NULL,NULL,NULL);
+          INSERT INTO ndr_kv VALUES('fixture-owner','fixture-device');
+          INSERT INTO threads VALUES('fixture-owner','Upgrade draft retained');
+          INSERT INTO messages VALUES('fixture-owner','message', 'text','fixture-owner','Upgrade message one',1,1,'[]');
+          INSERT INTO messages VALUES('group','group-message','text','fixture-owner','Upgrade group message',1,2,'[]');
+          INSERT INTO groups VALUES('group','Upgrade continuity group',NULL,1,'{}');
+        """)
+        db.execute('INSERT INTO threads VALUES(?,?)', (PEER, ''))
+        db.execute('INSERT INTO owner_profiles VALUES(?,NULL,NULL,NULL,NULL,?,?)',
+                   (PEER, 'Upgrade saved nickname' if edited else None, 'Upgrade saved note' if edited else None))
+        return inspect(db)
+
+
 def receipt_fixture(folder, manifest_path):
     """Deliberately fake runtime evidence for acceptance/distributor unit tests."""
     folder = Path(folder); folder.mkdir(exist_ok=True)
     manifest = json.loads(Path(manifest_path).read_text()); tag = manifest['tag']
     apk = next(a for a in manifest['assets'] if a['name'].endswith('-android-arm64.apk'))
-    previous = dict(tag='v2026.1.1', commit='a' * 40, apk_sha256='b' * 64, manifest_sha256='c' * 64,
+    runner_hashes, baseline_hash, pins = reviewed_inputs()
+    previous = dict(tag='v2026.10.28.4', **pins['v2026.10.28.4'],
                     version_code=1, signer_sha256='d' * 64, attested=True)
     candidate = dict(tag=tag, commit=manifest['commit'], apk_sha256=apk['sha256'], manifest_sha256=sha256(manifest_path),
                      version_code=2, signer_sha256='d' * 64, attested=True)
     for stage in ('previous', 'upgraded', 'edited', 'reopened'):
         directory = folder / (stage + '-state'); directory.mkdir(exist_ok=True)
-        saved = state()
-        if stage in ('edited', 'reopened'):
-            saved['profiles']['b'] = 'edited'; saved['edited'] = True
+        saved = database_fixture(directory / 'core.sqlite3', stage in ('edited', 'reopened'))
         (directory / 'state.json').write_text(json.dumps(saved))
-        (directory / 'core.sqlite3').write_bytes(b'fake database for validator unit test')
-    for label in ('previous', 'candidate'):
-        for kind in ('apk', 'manifest'):
-            (folder / (label + '-' + kind + '-attestation.json')).write_text('{}')
+    for label, record in (('previous', previous), ('candidate', candidate)):
+        (folder / (label + '-badging.txt')).write_text("package: name='to.iris.chat' versionCode='" + str(record['version_code']) + "' versionName='" + record['tag'][1:] + "'\n")
+        (folder / (label + '-signature.txt')).write_text('Signer #1 certificate SHA-256 digest: ' + record['signer_sha256'] + '\n')
+        for kind, suffix in (('apk', '-android-arm64.apk'), ('manifest', '-manifest.json')):
+            statement = dict(predicateType='https://in-toto.io/attestation/release/v0.2',
+                             predicate=dict(repository='irislib/iris-chat-rs', tag=record['tag']),
+                             subject=[dict(name='iris-chat-' + record['tag'] + suffix, digest=dict(sha256=record[kind + '_sha256']))])
+            result = dict(verificationResult=dict(statement=statement, signature=dict(certificate=dict(subjectAlternativeName='https://dotcom.releases.github.com'))),
+                          attestation=dict(bundle=dict(dsseEnvelope=dict(payload=base64.b64encode(json.dumps(statement).encode()).decode()))))
+            (folder / (label + '-' + kind + '-attestation.json')).write_text(json.dumps(result))
     (folder / 'crash.log').write_text('')
     (folder / 'exit-info.log').write_text('reason=10 (USER REQUESTED)')
     (folder / 'candidate-restarted-contact.png').write_bytes(b'unit test image')
-    commands = [['install', '--no-streaming', 'iris-chat-v2026.1.1-android-arm64.apk'],
+    commands = [['install', '--no-streaming', 'iris-chat-v2026.10.28.4-android-arm64.apk'],
                 ['install', '--no-streaming', '-r', apk['name']]]
     (folder / 'commands.jsonl').write_text(''.join(json.dumps(dict(args=row)) + '\n' for row in commands))
-    data = dict(schema=1, status='passed', checks={key: True for key in CHECKS}, previous=previous, candidate=candidate,
+    data = dict(schema=1, status='passed', runner_sha256=runner_hashes, baseline_sha256=baseline_hash, checks={key: True for key in CHECKS}, previous=previous, candidate=candidate,
                 evidence={str(p.relative_to(folder)): sha256(p) for p in folder.rglob('*') if p.is_file() and p.name != 'receipt.json'})
     data['snapshots'] = {stage: {'core.sqlite3': sha256(folder / (stage + '-state/core.sqlite3'))} for stage in ('previous', 'upgraded', 'edited', 'reopened')}
     path = folder / 'receipt.json'; path.write_text(json.dumps(data))
@@ -190,11 +226,78 @@ class ReceiptEvidence(unittest.TestCase):
 
     def test_content_loss_rejected_even_with_matching_state_hash(self):
         path = self.receipt.parent / 'upgraded-state/state.json'
-        state_data = json.loads(path.read_text()); state_data['history']['messages']['m']['content'] = 'lost original body'
+        state_data = json.loads(path.read_text()); next(iter(state_data['history']['messages'].values()))['content'] = 'lost original body'
         path.write_text(json.dumps(state_data))
         data = json.loads(self.receipt.read_text()); data['evidence']['upgraded-state/state.json'] = sha256(path)
         self.receipt.write_text(json.dumps(data))
         with self.assertRaises(ValueError): validate(self.receipt, self.manifest, 'v2026.10.30')
+
+    def replace_database_digest(self, stage):
+        data = json.loads(self.receipt.read_text())
+        name = stage + '-state/core.sqlite3'
+        digest = sha256(self.receipt.parent / name)
+        data['evidence'][name] = digest; data['snapshots'][stage]['core.sqlite3'] = digest
+        self.receipt.write_text(json.dumps(data))
+
+    def test_snapshot_content_is_checked_independently_of_summary(self):
+        with sqlite3.connect(self.receipt.parent / 'upgraded-state/core.sqlite3') as db:
+            db.execute("UPDATE messages SET body='replacement body' WHERE id='message'")
+        self.replace_database_digest('upgraded')
+        with self.assertRaises(ValueError): validate(self.receipt, self.manifest, 'v2026.10.30')
+
+    def test_non_sqlite_bytes_rejected_even_with_matching_digest(self):
+        (self.receipt.parent / 'previous-state/core.sqlite3').write_bytes(b'not a database')
+        self.replace_database_digest('previous')
+        with self.assertRaises(ValueError): validate(self.receipt, self.manifest, 'v2026.10.30')
+
+    def test_validation_does_not_modify_any_retained_evidence(self):
+        before = {str(p): sha256(p) for p in self.receipt.parent.rglob('*') if p.is_file()}
+        validate(self.receipt, self.manifest, 'v2026.10.30')
+        self.assertEqual(before, {str(p): sha256(p) for p in self.receipt.parent.rglob('*') if p.is_file()})
+
+    def test_changed_runner_baseline_or_previous_pin_rejected(self):
+        original = json.loads(self.receipt.read_text())
+        changes = [('runner_sha256', {}), ('baseline_sha256', 'wrong'), ('previous', dict(original['previous'], commit='wrong'))]
+        for key, value in changes:
+            data = copy.deepcopy(original); data[key] = value; self.receipt.write_text(json.dumps(data))
+            with self.assertRaises(ValueError): validate(self.receipt, self.manifest, 'v2026.10.30')
+
+    def test_unbound_attestation_or_signer_rejected_even_with_matching_digest(self):
+        for name, text in (('previous-apk-attestation.json', '{}'), ('candidate-signature.txt', 'Signer #1 certificate SHA-256 digest: changed')):
+            self.receipt = receipt_fixture(self.folder / 'runtime', self.manifest)
+            path = self.receipt.parent / name; path.write_text(text)
+            data = json.loads(self.receipt.read_text()); data['evidence'][name] = sha256(path)
+            self.receipt.write_text(json.dumps(data))
+            with self.assertRaises((ValueError, KeyError)): validate(self.receipt, self.manifest, 'v2026.10.30')
+
+    def test_attestation_must_bind_repository_tag_and_asset(self):
+        for field in ('repository', 'tag', 'digest'):
+            self.receipt = receipt_fixture(self.folder / 'runtime', self.manifest)
+            name = 'previous-apk-attestation.json'; path = self.receipt.parent / name
+            result = json.loads(path.read_text()); statement = result['verificationResult']['statement']
+            if field == 'digest': statement['subject'][0]['digest']['sha256'] = 'wrong'
+            else: statement['predicate'][field] = 'wrong'
+            result['attestation']['bundle']['dsseEnvelope']['payload'] = base64.b64encode(json.dumps(statement).encode()).decode()
+            path.write_text(json.dumps(result))
+            data = json.loads(self.receipt.read_text()); data['evidence'][name] = sha256(path)
+            self.receipt.write_text(json.dumps(data))
+            with self.assertRaises(ValueError): validate(self.receipt, self.manifest, 'v2026.10.30')
+
+    def test_reads_wal_without_modifying_originals(self):
+        original = self.folder / 'original.db'; database_fixture(original)
+        destination = self.folder / 'wal-state'; destination.mkdir()
+        with sqlite3.connect(original) as db:
+            db.execute('PRAGMA journal_mode=WAL'); db.execute('PRAGMA wal_autocheckpoint=0')
+            db.execute("UPDATE preferences SET send_typing_indicators=1"); db.commit()
+            # Copy while the connection is open, so the committed update exists
+            # only in the WAL rather than in the main database.
+            for suffix in ('', '-wal'):
+                shutil.copyfile(str(original) + suffix, destination / ('core.sqlite3' + suffix))
+        files = {p.name: sha256(p) for p in destination.iterdir()}
+        self.assertFalse(database_state(destination, files)['seeded']['setting'])
+        self.assertEqual(files, {p.name: sha256(p) for p in destination.iterdir()})
+        with self.assertRaisesRegex(ValueError, 'Unrecorded SQLite WAL'):
+            database_state(destination, {'core.sqlite3': files['core.sqlite3']})
 
     def test_evidence_path_escape_rejected(self):
         data = json.loads(self.receipt.read_text()); data['evidence']['../manifest.json'] = sha256(self.manifest)
