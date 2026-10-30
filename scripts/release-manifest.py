@@ -5,10 +5,13 @@
 from __future__ import annotations
 
 import argparse
+import errno
 import hashlib
 import json
+import os
 import re
 import shutil
+import stat
 import sys
 from datetime import date, datetime
 from pathlib import Path
@@ -134,8 +137,20 @@ def verify_manifest(
     asset_dir: Path,
     required_names: list[str],
     expected_commit: str | None = None,
+    complete_directory: bool = False,
 ) -> None:
     require_tag(tag)
+    if complete_directory:
+        require_asset_directory(asset_dir)
+        manifest_name = f"iris-chat-{tag}-manifest.json"
+        expected_names = {*asset_specs(tag), manifest_name}
+        if {p.name for p in asset_dir.iterdir()} != expected_names:
+            raise ValueError("local directory must contain the complete canonical asset set and manifest only")
+        if manifest_path.name != manifest_name or manifest_path.parent.resolve() != asset_dir.resolve():
+            raise ValueError("manifest must be in the supplied asset directory")
+        for name in expected_names:
+            require_regular_file(asset_dir / name)
+        required_names = sorted(asset_specs(tag))
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     if manifest.get("schema_version") != 1:
         raise ValueError("unsupported release manifest schema")
@@ -181,6 +196,16 @@ def verify_manifest(
             raise ValueError(f"release asset digest mismatch: {name}")
 
 
+def require_asset_directory(path: Path) -> None:
+    if not stat.S_ISDIR(path.lstat().st_mode):
+        raise ValueError(f"asset directory must be a real directory, not a symlink: {path}")
+
+
+def require_regular_file(path: Path) -> None:
+    if not stat.S_ISREG(path.lstat().st_mode):
+        raise ValueError(f"release asset must be a regular file, not a symlink: {path}")
+
+
 def stage_hashtree(
     tag: str,
     manifest_path: Path,
@@ -188,18 +213,38 @@ def stage_hashtree(
     notes_path: Path,
     output_dir: Path,
     published_at: str,
+    link_assets: bool = False,
 ) -> None:
+    if link_assets:
+        require_asset_directory(asset_dir)
+        for path in [manifest_path, *(asset_dir / name for name in asset_specs(tag))]:
+            require_regular_file(path)
     verify_manifest(tag, manifest_path, asset_dir, list(asset_specs(tag)))
+    manifest_digest = sha256(manifest_path)
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     timestamp = int(
         datetime.fromisoformat(published_at.replace("Z", "+00:00")).timestamp()
     )
     output_assets = output_dir / "assets"
     output_assets.mkdir(parents=True, exist_ok=False)
+
+    def stage_asset(source: Path) -> None:
+        destination = output_assets / source.name
+        if not link_assets:
+            shutil.copy2(source, destination)
+            return
+        try:
+            os.link(source, destination, follow_symlinks=False)
+        except OSError as error:
+            if error.errno == errno.EXDEV:
+                raise ValueError("hard-link staging requires assets and staging on the same filesystem; no copy fallback") from error
+            raise
+        require_regular_file(destination)
+
     staged_assets = []
     for entry in manifest["assets"]:
         source = asset_dir / entry["name"]
-        shutil.copy2(source, output_assets / entry["name"])
+        stage_asset(source)
         staged = dict(entry)
         # The attested inventory describes file formats; the updater's `kind`
         # describes how to install them. Keep the immutable inventory intact
@@ -214,7 +259,12 @@ def stage_hashtree(
             staged["executable"] = "iris/iris"
         staged_assets.append(staged)
     manifest_name = manifest_path.name
-    shutil.copy2(manifest_path, output_assets / manifest_name)
+    stage_asset(manifest_path)
+    if link_assets:
+        # Check the linked inodes before any consumer can publish this stage.
+        if sha256(output_assets / manifest_name) != manifest_digest:
+            raise ValueError("release manifest changed while staging")
+        verify_manifest(tag, output_assets / manifest_name, output_assets, list(asset_specs(tag)))
     staged_assets.append(
         {
             "name": manifest_name,
@@ -277,6 +327,8 @@ def parse_args() -> argparse.Namespace:
     verify.add_argument("--asset-dir", required=True, type=Path)
     verify.add_argument("--require-name", action="append", default=[])
     verify.add_argument("--commit")
+    verify.add_argument("--complete-directory", action="store_true",
+                        help="Require exactly the canonical regular assets and manifest; verify every payload.")
 
     stage = subparsers.add_parser("stage-hashtree")
     stage.add_argument("--tag", required=True)
@@ -285,6 +337,8 @@ def parse_args() -> argparse.Namespace:
     stage.add_argument("--notes", required=True, type=Path)
     stage.add_argument("--out-dir", required=True, type=Path)
     stage.add_argument("--published-at", required=True)
+    stage.add_argument("--link-assets", action="store_true",
+                       help="Hard-link immutable assets on the same filesystem; never fall back to copying.")
     return parser.parse_args()
 
 
@@ -309,6 +363,7 @@ def main() -> int:
             args.asset_dir,
             args.require_name,
             args.commit,
+            args.complete_directory,
         )
     else:
         stage_hashtree(
@@ -318,6 +373,7 @@ def main() -> int:
             args.notes,
             args.out_dir,
             args.published_at,
+            args.link_assets,
         )
     return 0
 

@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
 
 import json
+import errno
+import os
+import runpy
 import subprocess
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 
@@ -206,6 +210,66 @@ class ReleaseManifestTests(unittest.TestCase):
         release = json.loads((stage / "release.json").read_text())
         staged_names = {entry["name"] for entry in release["assets"]}
         self.assertEqual(staged_names, {*names(TAG), manifest_name})
+
+    def stage_with_links(self, stage):
+        module = runpy.run_path(str(MANIFEST))
+        module["stage_hashtree"](TAG, self.manifest, self.assets, self.root / "notes.md",
+                                 stage, "2026-07-28T10:00:00Z", link_assets=True)
+
+    def test_hardlink_stage_preserves_bytes_modes_and_uses_original_inodes(self) -> None:
+        self.assertEqual(self.create().returncode, 0)
+        (self.root / "notes.md").write_text("- Change.\n")
+        sources = [self.manifest, *self.assets.iterdir()]
+        before = {p: (p.read_bytes(), p.stat().st_mode) for p in sources}
+        stage = self.root / "linked"
+        self.stage_with_links(stage)
+        for source in sources:
+            linked = stage / "assets" / source.name
+            self.assertTrue(linked.samefile(source))
+            self.assertEqual((source.read_bytes(), source.stat().st_mode), before[source])
+
+    def test_hardlink_stage_fails_on_cross_device_without_copy_fallback(self) -> None:
+        self.assertEqual(self.create().returncode, 0)
+        (self.root / "notes.md").write_text("- Change.\n")
+        with mock.patch("os.link", side_effect=OSError(errno.EXDEV, "different filesystem")), \
+             mock.patch("shutil.copy2") as copy:
+            with self.assertRaisesRegex(ValueError, "same filesystem"):
+                self.stage_with_links(self.root / "cross-device")
+            copy.assert_not_called()
+        self.assertTrue(all(p.is_file() and p.stat().st_nlink == 1 for p in self.assets.iterdir()))
+
+    def test_hardlink_stage_rejects_asset_and_manifest_symlinks_before_staging(self) -> None:
+        self.assertEqual(self.create().returncode, 0)
+        (self.root / "notes.md").write_text("- Change.\n")
+        for source in (self.assets / names(TAG)[0], self.manifest):
+            with self.subTest(source=source.name):
+                original = source.read_bytes()
+                outside = self.root / "outside"
+                outside.write_bytes(original)
+                source.unlink()
+                source.symlink_to(outside)
+                stage = self.root / "unsafe"
+                with self.assertRaisesRegex(ValueError, "regular file"):
+                    self.stage_with_links(stage)
+                self.assertFalse(stage.exists())
+                source.unlink()
+                source.write_bytes(original)
+
+    def test_hardlink_stage_rechecks_linked_bytes_before_writing_release_metadata(self) -> None:
+        self.assertEqual(self.create().returncode, 0)
+        (self.root / "notes.md").write_text("- Change.\n")
+        real_link = os.link
+
+        def changed_link(source, destination, **kwargs):
+            real_link(source, destination, **kwargs)
+            if source.name == names(TAG)[0]:
+                destination.write_bytes(b"x" * destination.stat().st_size)
+
+        stage = self.root / "changed"
+        with mock.patch("os.link", side_effect=changed_link):
+            with self.assertRaisesRegex(ValueError, "digest mismatch"):
+                self.stage_with_links(stage)
+        self.assertFalse((stage / "release.json").exists())
 
 
 class IOSExcludedManifestTests(unittest.TestCase):

@@ -492,6 +492,16 @@ root stops publication; verify and capture the current root again before retryin
 ./scripts/distribute hashtree --tag v2026.7.28
 ```
 
+To reuse downloaded assets, add `--asset-dir /absolute/path/to/assets` to either
+command. Supply the complete canonical asset set and its manifest, with no
+extra files or symlinks. The distributor rechecks every payload, the immutable
+GitHub Release and the required attestations; missing files fail without a
+download fallback. Hashtree staging uses hard links, so `TMPDIR` must be on the
+same filesystem. Keep the supplied files unchanged until the command exits.
+Cleanup removes only temporary links and generated files, preserving the inputs.
+This avoids two additional archive copies; extraction, catalog/provider storage
+and the existing resource-admission gates still require their own allowance.
+
 Hashtree distribution also publishes the same desktop/CLI bytes through Haps,
 using `haps-release.json` and the existing dedicated Hashtree signing identity.
 The Haps checksum/layout/signer check runs before publication, including with

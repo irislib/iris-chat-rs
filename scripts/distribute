@@ -13,12 +13,14 @@ fi
 TAG=""
 CHECK_ONLY=0
 DOWNLOAD_DIR=""
+ASSET_DIR=""
+LOCAL_ASSETS=0
 RELEASE_URL=""
 PUBLISHED_AT=""
 
 usage() {
   cat <<'EOF'
-usage: ./scripts/distribute <hashtree|homebrew|zapstore> --tag <vYYYY.M.D[.N]> [--check]
+usage: ./scripts/distribute <hashtree|homebrew|zapstore> --tag <vYYYY.M.D[.N]> [--check] [--asset-dir <directory>]
 
 Promote exact, attested assets from an existing stable GitHub Release.
 The command never builds artifacts and never chooses a tag implicitly.
@@ -26,6 +28,8 @@ The command never builds artifacts and never chooses a tag implicitly.
 Options:
   --tag <tag>  Required immutable GitHub release tag.
   --check      Validate the release, assets, and local signer without publishing.
+  --asset-dir  Use a complete local release asset set without downloading assets.
+               All verification still runs. Keep these inputs unchanged until exit.
   -h, --help   Show this help.
 
 Local publishing paths:
@@ -47,6 +51,15 @@ while [[ $# -gt 0 ]]; do
     --check)
       CHECK_ONLY=1
       shift
+      ;;
+    --asset-dir)
+      if [[ $# -lt 2 || -z "$2" ]]; then
+        echo "--asset-dir requires a directory." >&2
+        exit 2
+      fi
+      ASSET_DIR="$2"
+      LOCAL_ASSETS=1
+      shift 2
       ;;
     -h|--help)
       usage
@@ -135,25 +148,28 @@ release_preflight() {
   RELEASE_URL="$(jq -r '.url' <<<"$release_json")"
   PUBLISHED_AT="$(jq -r '.publishedAt' <<<"$release_json")"
   DOWNLOAD_DIR="$(mktemp -d "${TMPDIR:-/tmp}/iris-distribute.XXXXXX")"
-  gh release download "$TAG" \
-    --repo "$IRIS_GITHUB_REPOSITORY" \
-    --pattern "$manifest_name" \
-    --dir "$DOWNLOAD_DIR"
-  gh attestation verify "$DOWNLOAD_DIR/$manifest_name" \
-    --repo "$IRIS_GITHUB_REPOSITORY" >/dev/null
-  gh release verify-asset "$TAG" "$DOWNLOAD_DIR/$manifest_name" \
-    --repo "$IRIS_GITHUB_REPOSITORY" >/dev/null
+  if [[ "$LOCAL_ASSETS" -eq 1 ]]; then
+    "$ROOT/scripts/release-manifest.py" verify --tag "$TAG" \
+      --manifest "$ASSET_DIR/$manifest_name" --asset-dir "$ASSET_DIR" \
+      --complete-directory
+    ASSET_DIR="$(cd "$ASSET_DIR" && pwd -P)"
+  else
+    ASSET_DIR="$DOWNLOAD_DIR"
+  fi
+  prepare_asset "$manifest_name"
 }
 
-download_asset() {
+prepare_asset() {
   local name="$1"
-  gh release download "$TAG" \
-    --repo "$IRIS_GITHUB_REPOSITORY" \
-    --pattern "$name" \
-    --dir "$DOWNLOAD_DIR"
-  gh attestation verify "$DOWNLOAD_DIR/$name" \
+  if [[ "$LOCAL_ASSETS" -eq 0 ]]; then
+    gh release download "$TAG" \
+      --repo "$IRIS_GITHUB_REPOSITORY" \
+      --pattern "$name" \
+      --dir "$ASSET_DIR"
+  fi
+  gh attestation verify "$ASSET_DIR/$name" \
     --repo "$IRIS_GITHUB_REPOSITORY" >/dev/null
-  gh release verify-asset "$TAG" "$DOWNLOAD_DIR/$name" \
+  gh release verify-asset "$TAG" "$ASSET_DIR/$name" \
     --repo "$IRIS_GITHUB_REPOSITORY" >/dev/null
 }
 
@@ -162,13 +178,16 @@ verify_downloads() {
   local args=(
     verify
     --tag "$TAG"
-    --manifest "$DOWNLOAD_DIR/$manifest_name"
-    --asset-dir "$DOWNLOAD_DIR"
+    --manifest "$ASSET_DIR/$manifest_name"
+    --asset-dir "$ASSET_DIR"
   )
   local name
   for name in "$@"; do
     args+=(--require-name "$name")
   done
+  if [[ "$LOCAL_ASSETS" -eq 1 ]]; then
+    args+=(--complete-directory)
+  fi
   "$ROOT/scripts/release-manifest.py" "${args[@]}"
 }
 
@@ -196,7 +215,7 @@ verify_hashtree_publication() {
     -o /dev/null
   curl -fsS --connect-timeout 10 --max-time 30 \
     "$(hashtree_gateway_base_url "$TAG")/release.json" -o "$public_release"
-  if ! jq -e --slurpfile manifest "$DOWNLOAD_DIR/iris-chat-${TAG}-manifest.json" \
+  if ! jq -e --slurpfile manifest "$ASSET_DIR/iris-chat-${TAG}-manifest.json" \
     '.tag == $manifest[0].tag and .commit == $manifest[0].commit' \
     "$public_release" >/dev/null; then
     echo "Hashtree gateway readback does not match the verified release $TAG." >&2
@@ -208,12 +227,13 @@ verify_hashtree_publication() {
 
 publish_hashtree() {
   local assets=()
+  local stage_args=()
   local name stage_dir add_output cid cli_target
   require_command haps
   require_hashtree_identity
   while IFS= read -r name; do
     assets+=("$name")
-    download_asset "$name"
+    prepare_asset "$name"
   done < <(all_asset_names)
   verify_downloads "${assets[@]}"
   require_command curl
@@ -225,7 +245,7 @@ publish_hashtree() {
     *) echo "No released CLI for signed update verification on this host." >&2; return 1 ;;
   esac
   mkdir "$DOWNLOAD_DIR/updater-check"
-  tar -xzf "$DOWNLOAD_DIR/iris-${TAG}-${cli_target}.tar.gz" \
+  tar -xzf "$ASSET_DIR/iris-${TAG}-${cli_target}.tar.gz" \
     -C "$DOWNLOAD_DIR/updater-check" iris/iris
 
   gh release view "$TAG" \
@@ -233,13 +253,18 @@ publish_hashtree() {
     --json body \
     --jq .body > "$DOWNLOAD_DIR/notes.md"
   stage_dir="$DOWNLOAD_DIR/htree/$TAG"
-  "$ROOT/scripts/release-manifest.py" stage-hashtree \
-    --tag "$TAG" \
-    --manifest "$DOWNLOAD_DIR/iris-chat-${TAG}-manifest.json" \
-    --asset-dir "$DOWNLOAD_DIR" \
-    --notes "$DOWNLOAD_DIR/notes.md" \
-    --out-dir "$stage_dir" \
+  stage_args=(stage-hashtree
+    --tag "$TAG"
+    --manifest "$ASSET_DIR/iris-chat-${TAG}-manifest.json"
+    --asset-dir "$ASSET_DIR"
+    --notes "$DOWNLOAD_DIR/notes.md"
+    --out-dir "$stage_dir"
     --published-at "$PUBLISHED_AT"
+  )
+  if [[ "$LOCAL_ASSETS" -eq 1 ]]; then
+    stage_args+=(--link-assets)
+  fi
+  "$ROOT/scripts/release-manifest.py" "${stage_args[@]}"
   write_cli_installer "$stage_dir/install.sh" "$(hashtree_gateway_base_url "$TAG")" "$TAG"
   local haps_args=(import-release "$stage_dir" --config "$ROOT/haps-release.json" --tag "$TAG" --key-file "$IRIS_HASHTREE_NSEC_PATH")
   HAPS_HOME="$IRIS_HASHTREE_DATA_DIR/haps" haps "${haps_args[@]}" --check
@@ -296,7 +321,7 @@ publish_homebrew() {
     exit 1
   fi
   for name in "${assets[@]}"; do
-    download_asset "$name"
+    prepare_asset "$name"
   done
   verify_downloads "${assets[@]}"
   if [[ "$CHECK_ONLY" -eq 1 ]]; then
@@ -308,7 +333,7 @@ publish_homebrew() {
     "$ROOT/packaging/homebrew/publish_tap.sh" \
       --version "$TAG" \
       --release-base-url "$(hashtree_gateway_base_url "$TAG")/assets" \
-      --assets-dir "$DOWNLOAD_DIR" \
+      --assets-dir "$ASSET_DIR" \
       --npub "$IRIS_HASHTREE_PUBLISHER_NPUB"
 }
 
@@ -316,9 +341,8 @@ publish_zapstore() {
   local apk_name="iris-chat-${TAG}-android-arm64.apk"
   local config icon_path notes nsec
   require_command base64
-  require_command sed
   require_zapstore_identity
-  download_asset "$apk_name"
+  prepare_asset "$apk_name"
   verify_downloads "$apk_name"
 
   icon_path="$ROOT/android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png"
@@ -336,12 +360,29 @@ publish_zapstore() {
     --notes "$DOWNLOAD_DIR/RELEASE_NOTES.md" \
     --out "$notes"
   config="$DOWNLOAD_DIR/zapstore.yaml"
-  sed \
-    -e "s|^pubkey: .*|pubkey: $IRIS_ZAPSTORE_PUBLISHER_NPUB|" \
-    -e "s|^release_source: .*|release_source: $DOWNLOAD_DIR/$apk_name|" \
-    -e "s|^icon: .*|icon: $icon_path|" \
-    -e "s|^release_notes: .*|release_notes: $notes|" \
-    "$ROOT/zapstore.yaml" > "$config"
+  python3 - "$ROOT/zapstore.yaml" "$config" "$IRIS_ZAPSTORE_PUBLISHER_NPUB" \
+    "$ASSET_DIR/$apk_name" "$icon_path" "$notes" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+template, output, pubkey, release_source, icon, release_notes = sys.argv[1:]
+values = dict(pubkey=pubkey, release_source=release_source, icon=icon, release_notes=release_notes)
+seen = set()
+lines = []
+for line in Path(template).read_text(encoding="utf-8").splitlines(keepends=True):
+    key = line.partition(":")[0]
+    if key in values:
+        if key in seen:
+            raise SystemExit(f"Duplicate Zapstore config key: {key}")
+        seen.add(key)
+        # JSON strings are YAML quoted scalars; paths remain literal values.
+        line = f"{key}: {json.dumps(values[key], ensure_ascii=False)}\n"
+    lines.append(line)
+if seen != values.keys():
+    raise SystemExit("Zapstore config is missing a required key")
+Path(output).write_text("".join(lines), encoding="utf-8")
+PY
 
   if [[ "$CHECK_ONLY" -eq 1 ]]; then
     zsp publish --check "$config"
@@ -351,7 +392,7 @@ publish_zapstore() {
   nsec="$(read_nsec "$IRIS_ZAPSTORE_NSEC_PATH")"
   SIGN_WITH="$nsec" python3 "$ROOT/scripts/zapstore_publish.py" \
     --config "$config" \
-    --manifest "$DOWNLOAD_DIR/iris-chat-${TAG}-manifest.json" \
+    --manifest "$ASSET_DIR/iris-chat-${TAG}-manifest.json" \
     --tag "$TAG"
   unset nsec
   echo "Published $TAG to Zapstore."
