@@ -172,7 +172,14 @@ class WindowTests(unittest.TestCase):
             stdout.write_bytes(b''); stderr.write_bytes(b'')
             child = Mock(); child.poll.return_value = None
             return {'process': child, 'stdout': stdout, 'stderr': stderr}
-        with patch.object(window, 'spawn', side_effect=spawn): capture.start()
+        with patch.object(window, 'spawn', side_effect=spawn) as started: capture.start()
+        # Startup cannot pre-resolve the currently running app PID; replacement
+        # records remain narrowed to the exact marker, then validated by PID.
+        prefix = [str(window.tools['syslog']), '-u', self.config['device'], '--no-colors']
+        self.assertEqual([call.args for call in started.call_args_list], [
+            (prefix + ['-m', 'iris.startup ', '-o', str(window.out / 'startup.log')], 'startup'),
+            (prefix + ['-p', '1', '-m', self.config['bundle_id'], '-o', str(window.out / 'lifecycle.log')], 'lifecycle'),
+        ])
         self.assertEqual(set(capture.prefixes()), {'startup_text', 'lifecycle_text'})
         capture.streams['startup']['stderr'].write_text('logger error')
         with self.assertRaises(EvidenceError): capture.prefixes()

@@ -227,11 +227,15 @@ class Capture:
         found = [r for r in rows if r.get('executable', '').endswith('/SpringBoard.app/SpringBoard')]
         require(len(found) == 1, 'Missing unique SpringBoard process')
         self.os_process = found[0]
-        for name, process_filter, message in (('startup', c['process_name'], 'iris.startup '),
+        # A single name selector in pinned idevicesyslog resolves to the old PID.
+        # Startup must span replacement; its evaluator still requires the new PID.
+        for name, process_filter, message in (('startup', None, 'iris.startup '),
                                               ('lifecycle', str(self.os_process['processIdentifier']), c['bundle_id'])):
             path = self.window.out / (name + '.log')
-            args = [str(self.window.tools['syslog']), '-u', c['device'], '--no-colors', '-p', process_filter,
-                    '-m', message, '-o', str(path)]
+            args = [str(self.window.tools['syslog']), '-u', c['device'], '--no-colors']
+            if process_filter is not None:
+                args += ['-p', process_filter]
+            args += ['-m', message, '-o', str(path)]
             item = self.window.spawn(args, name)
             item['capture'] = path
             item['capture_name'] = name
