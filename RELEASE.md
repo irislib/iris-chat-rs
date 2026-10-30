@@ -246,6 +246,37 @@ repeating unchanged device-link, web, and protocol checks. Shared-core changes
 need coverage for their affected consumers and physical paths. Preserve failed
 results; skipped checks and infrastructure failures do not count as passes.
 
+Android UI fixes require executing the affected screen tests on Android before
+tagging. JVM tests and compilation of instrumentation are not runtime evidence.
+The native contract gate (`scripts/test_native_contract.sh`) includes the six
+`ContactNicknameCardTest` regressions and checks fresh Gradle XML for complete
+execution without failures or skips. It stops on a failed run without silently
+retrying it. Use an explicitly selected, task-owned isolated emulator with
+synthetic data: this existing gate resets its test application's storage.
+Retain the original failure, successful runtime output, tested source and APK
+hashes. The v2026.10.30 contact fix retains adb instrumentation logs instead of
+Gradle XML; do not manufacture XML or relabel those results as a new run.
+
+For future Android releases, include a previous-release in-place upgrade check
+using a synthetic populated test account. Preserve the app's data while updating
+the APK, then launch, open a chat and contact details, edit a nickname, background
+and reopen the app, and verify saved messages, drafts, settings and account
+identity. Record both release tags, APK hashes, Android version, before/after
+checks and any crashes. A fresh installation or a current-version save/reload
+does not establish previous-version continuity. This upgrade check is not yet
+automated by the contact-editor gate; collect its evidence separately.
+
+When account or storage formats change, retain small immutable synthetic fixtures
+created by the released implementation, with at least one per supported stored
+format. Record the producing tag, full source commit, binary checksum, fixture
+checksum and expected contents. Commit safe synthetic fixtures and their tests;
+keep real accounts, messages, keys and device backups out of the repository.
+Load, migrate and reopen these fixtures with the candidate, checking contents
+rather than only row counts, including pending delivery state where affected.
+Add fixtures for new formats without replacing old ones. Constructing an old
+schema from today's code is useful unit coverage, but does not replace a fixture
+produced by a released version or the Android in-place upgrade check.
+
 For quick Rust iteration, set `CARGO_TARGET_DIR` to the established compatible
 cache (explicitly in a worktree), reserve one writer for that cache throughout
 the run, then use
