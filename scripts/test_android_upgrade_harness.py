@@ -306,6 +306,31 @@ class ReceiptEvidence(unittest.TestCase):
         with self.assertRaises(ValueError): validate(self.receipt, self.manifest, 'v2026.10.30')
 
 
+class HostedSelection(unittest.TestCase):
+    def test_each_upgrade_or_smoke_input_triggers_release_contract(self):
+        import fnmatch
+        import re
+        root = Path(__file__).resolve().parents[1]
+        workflow = (root / '.github/workflows/release-contract.yml').read_text()
+        changed_inputs = ['scripts/android_upgrade_release.py', 'scripts/android_upgrade_state.py',
+                          'scripts/android_upgrade_ui.py', 'scripts/android_saved_history.py',
+                          'scripts/check_android_upgrade_receipt.py', 'scripts/test_android_release_upgrade.py',
+                          'scripts/test_android_upgrade_harness.py', 'test-fixtures/android-upgrade/releases.json',
+                          'scripts/android_runtime_smoke.py', 'scripts/test_android_runtime_smoke.py',
+                          'scripts/test_native_contract.sh']
+        for event in ('push', 'pull_request'):
+            body = re.search(r'^  ' + event + r':\n(.*?)(?=^  \S|\Z)', workflow, re.M | re.S).group(1)
+            block = re.search(r'^    paths:\n((?:      - .+\n)+)', body, re.M).group(1)
+            paths = [json.loads(line.removeprefix('      - ')) for line in block.splitlines()]
+            for changed in changed_inputs:
+                with self.subTest(event=event, changed=changed):
+                    self.assertTrue(any(fnmatch.fnmatchcase(changed, pattern) for pattern in paths))
+        self.assertIn('scripts/test_release_publish_guard', workflow)
+        guard = (root / 'scripts/test_release_publish_guard').read_text()
+        self.assertIn('unittest discover', guard)
+        self.assertIn("-p 'test_*.py'", guard)
+
+
 class Selectors(unittest.TestCase):
     def test_ambiguous_or_foreign_controls_rejected(self):
         root = ET.fromstring('<hierarchy><node package="to.iris.chat" text="Save" clickable="true" enabled="true" bounds="[0,0][20,20]"/><node package="to.iris.chat" text="Save" clickable="true" enabled="true" bounds="[30,0][50,20]"/><node package="other" text="Private"/></hierarchy>')
