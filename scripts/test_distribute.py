@@ -105,9 +105,16 @@ class DistributeTests(unittest.TestCase):
               exit 0
             fi
             if [[ "$1 $2" == "release verify" || "$1 $2" == "release verify-asset" ]]; then
+              if [[ "$1 $2" == "release verify-asset" && "${FAKE_RELEASE_ASSET_FAIL:-0}" == "1" ]]; then
+                exit 1
+              fi
+              if [[ "$1 $2" == "release verify-asset" && "${FAKE_MUTATE_VERIFIED_ASSET:-}" == "$4" ]]; then
+                printf 'changed after verification' >> "$4"
+              fi
               exit 0
             fi
             if [[ "$1 $2" == "release download" ]]; then
+              [[ "${FAKE_FORBID_DOWNLOAD:-0}" != "1" ]] || exit 81
               pattern=""
               directory=""
               while [[ $# -gt 0 ]]; do
@@ -141,6 +148,11 @@ class DistributeTests(unittest.TestCase):
             assert args[args.index('--tag') + 1] == os.environ['FAKE_TAG']
             assert args[args.index('--key-file') + 1] == os.environ['IRIS_HASHTREE_NSEC_PATH']
             assert os.environ['HAPS_HOME'] == os.environ['IRIS_HASHTREE_DATA_DIR'] + '/haps'
+            if os.environ.get('FAKE_REQUIRE_ASSET_LINKS') == '1':
+                supplied = pathlib.Path(os.environ['FAKE_RELEASE_DIR'])
+                staged = pathlib.Path(args[1], 'assets')
+                assert {p.name for p in staged.iterdir()} == {p.name for p in supplied.iterdir()}
+                assert all(p.samefile(supplied / p.name) for p in staged.iterdir())
             if args[-1] in ('--publish-source', '--publish') and os.environ.get('FAKE_REQUIRE_PUBLIC_HAPS') == '1':
                 assert os.environ['HTREE_CONFIG_DIR'] == os.environ['IRIS_HASHTREE_CONFIG_DIR']
                 assert os.environ['HTREE_DATA_DIR'] == os.environ['IRIS_HASHTREE_DATA_DIR']
@@ -388,7 +400,8 @@ class DistributeTests(unittest.TestCase):
         config = self.zapstore_config.read_text()
         icon_path = ROOT / "android/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png"
         self.assertTrue(icon_path.is_file())
-        self.assertIn(f"icon: {icon_path}\n", config)
+        icon = next(line.removeprefix("icon: ") for line in config.splitlines() if line.startswith("icon: "))
+        self.assertEqual(json.loads(icon), str(icon_path))
 
     def test_zapstore_exit_zero_without_publication_proof_is_not_success(self) -> None:
         env = self.environment()
@@ -409,6 +422,154 @@ class DistributeTests(unittest.TestCase):
         self.assertNotIn("htree add", log)
         self.assertNotIn("htree release publish", log)
         self.assertNotIn("curl", log)
+
+    def local_asset_environment(self):
+        env = self.environment()
+        env.update(FAKE_FORBID_DOWNLOAD="1", FAKE_REQUIRE_ASSET_LINKS="1", TMPDIR=str(self.root))
+        return env
+
+    def supplied_snapshot(self):
+        return {p.name: (p.read_bytes(), p.stat().st_mode, p.stat().st_ino, p.stat().st_nlink)
+                for p in self.release.iterdir()}
+
+    def test_local_assets_check_every_channel_without_downloads_or_input_changes(self) -> None:
+        self.release = self.release.rename(self.root / "release assets")
+        self.manifest = self.release / self.manifest.name
+        before = self.supplied_snapshot()
+        for channel in ("hashtree", "homebrew", "zapstore"):
+            with self.subTest(channel=channel):
+                result = self.run_distribution(channel, "--check", "--asset-dir", str(self.release),
+                                               env=self.local_asset_environment())
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(self.supplied_snapshot(), before)
+                self.assertEqual(list(self.root.glob("iris-distribute.*")), [])
+        log = self.log.read_text()
+        self.assertNotIn("gh release download", log)
+        self.assertIn("gh release verify ", log)
+        for name in (*names(TAG), self.manifest.name):
+            self.assertIn(f"gh attestation verify {self.release.resolve() / name}", log)
+            self.assertIn(f"gh release verify-asset {TAG} {self.release.resolve() / name}", log)
+        self.assertNotIn("--publish", log)
+
+    def test_local_assets_preserve_source_gate_order_and_inputs_on_publish_failure(self) -> None:
+        before = self.supplied_snapshot()
+        for failure in (None, "--check", "--publish-source", "--publish"):
+            with self.subTest(failure=failure):
+                self.log.unlink(missing_ok=True)
+                env = self.local_asset_environment()
+                if failure:
+                    env["FAKE_HAPS_FAIL"] = failure
+                result = self.run_distribution("hashtree", "--asset-dir", str(self.release), env=env)
+                self.assertEqual(result.returncode == 0, failure is None, result.stderr)
+                self.assertEqual(self.supplied_snapshot(), before)
+                self.assertEqual(list(self.root.glob("iris-distribute.*")), [])
+                lines = self.log.read_text().splitlines()
+                self.assertFalse(any(line.startswith("gh release download") for line in lines))
+                if failure in ("--check", "--publish-source"):
+                    self.assertFalse(any(line.startswith("htree add") for line in lines))
+                else:
+                    source = next(i for i, line in enumerate(lines) if line.endswith(" --publish-source"))
+                    add = next(i for i, line in enumerate(lines) if line.startswith("htree add"))
+                    updater = next(i for i, line in enumerate(lines) if line.startswith("signed-updater"))
+                    publish = next(i for i, line in enumerate(lines) if line.endswith(" --publish"))
+                    self.assertLess(source, add)
+                    self.assertLess(add, updater)
+                    self.assertLess(updater, publish)
+
+    def test_local_assets_reject_incomplete_extra_modified_and_linked_inputs(self) -> None:
+        original = self.supplied_snapshot()
+        asset = self.release / names(TAG)[0]
+        for mutation in ("missing", "extra", "modified", "symlink", "manifest-link", "wrong-tag"):
+            with self.subTest(mutation=mutation):
+                self.log.unlink(missing_ok=True)
+                for p in self.release.iterdir():
+                    p.unlink()
+                for name, (content, mode, _, _) in original.items():
+                    p = self.release / name
+                    p.write_bytes(content)
+                    p.chmod(mode)
+                if mutation == "missing":
+                    asset.unlink()
+                elif mutation == "extra":
+                    (self.release / "acceptance.json").write_text('{"passed":true}')
+                elif mutation == "modified":
+                    asset.write_bytes(b"x" * asset.stat().st_size)
+                elif mutation in ("symlink", "manifest-link"):
+                    target = self.manifest if mutation == "manifest-link" else asset
+                    outside = self.root / "outside"
+                    outside.write_bytes(target.read_bytes())
+                    target.unlink()
+                    target.symlink_to(outside)
+                else:
+                    manifest = json.loads(self.manifest.read_text())
+                    manifest["tag"] = "v2026.7.29"
+                    self.manifest.write_text(json.dumps(manifest))
+                result = self.run_distribution("hashtree", "--check", "--asset-dir", str(self.release),
+                                               env=self.local_asset_environment())
+                self.assertNotEqual(result.returncode, 0)
+                log = self.log.read_text() if self.log.exists() else ""
+                self.assertNotIn("gh release download", log)
+                self.assertNotIn("haps import-release", log)
+                self.assertNotIn("htree add", log)
+                self.assertEqual(list(self.root.glob("iris-distribute.*")), [])
+
+    def test_local_assets_still_require_attestation_and_immutable_release(self) -> None:
+        before = self.supplied_snapshot()
+        for failure in ("attestation", "release-asset", "mutable"):
+            with self.subTest(failure=failure):
+                env = self.local_asset_environment()
+                if failure == "attestation":
+                    env["FAKE_ATTESTATION_FAIL"] = "1"
+                elif failure == "release-asset":
+                    env["FAKE_RELEASE_ASSET_FAIL"] = "1"
+                else:
+                    metadata = json.loads(env["FAKE_RELEASE_VIEW_JSON"])
+                    metadata["isImmutable"] = False
+                    env["FAKE_RELEASE_VIEW_JSON"] = json.dumps(metadata)
+                result = self.run_distribution("hashtree", "--check", "--asset-dir", str(self.release), env=env)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(self.supplied_snapshot(), before)
+                self.assertNotIn("haps import-release", self.log.read_text())
+
+    def test_local_asset_changed_after_attestation_fails_before_use(self) -> None:
+        env = self.local_asset_environment()
+        env["FAKE_MUTATE_VERIFIED_ASSET"] = str(self.release.resolve() / names(TAG)[0])
+        result = self.run_distribution("hashtree", "--check", "--asset-dir", str(self.release), env=env)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("mismatch", result.stderr)
+        self.assertNotIn("haps import-release", self.log.read_text())
+        self.assertNotIn("gh release download", self.log.read_text())
+        self.assertEqual(list(self.root.glob("iris-distribute.*")), [])
+
+    def test_local_asset_directory_symlink_is_rejected(self) -> None:
+        linked = self.root / "linked-assets"
+        linked.symlink_to(self.release, target_is_directory=True)
+        result = self.run_distribution("hashtree", "--check", "--asset-dir", str(linked),
+                                       env=self.local_asset_environment())
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("real directory", result.stderr)
+        self.assertNotIn("haps import-release", self.log.read_text())
+
+    def test_local_zapstore_paths_are_literal_and_preserve_exact_apk(self) -> None:
+        self.release = self.release.rename(self.root / 'release & | # : \\ " ü')
+        self.manifest = self.release / self.manifest.name
+        before = self.supplied_snapshot()
+        result = self.run_distribution("zapstore", "--check", "--asset-dir", str(self.release),
+                                       env=self.local_asset_environment())
+        self.assertEqual(result.returncode, 0, result.stderr)
+        keys = {"pubkey", "release_source", "icon", "release_notes"}
+        fields = {key: json.loads(value.strip())
+                  for line in self.zapstore_config.read_text().splitlines()
+                  for key, separator, value in [line.partition(":")]
+                  if separator and key in keys}
+        self.assertEqual(set(fields), keys)
+        apk = self.release / f"iris-chat-{TAG}-android-arm64.apk"
+        self.assertEqual(fields["release_source"], str(apk.resolve()))
+        self.assertEqual(fields["pubkey"], ZAPSTORE_NPUB)
+        self.assertEqual(Path(fields["release_source"]).read_bytes(), before[apk.name][0])
+        self.assertEqual(self.supplied_snapshot(), before)
+        self.assertNotIn("gh release download", self.log.read_text())
+        self.assertEqual(list(self.root.glob("iris-distribute.*")), [])
 
     def test_haps_publication_bypasses_local_daemon(self) -> None:
         for inherited in [None, "true"]:
