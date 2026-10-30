@@ -337,7 +337,8 @@ class PreparationTests(unittest.TestCase):
     def fake_run(self, commands, tool, *args):
         self.calls.append((tool, args))
         if tool == 'security' and args[0] == 'find-identity':
-            return hashlib.sha1(self.fixture.cert).hexdigest().upper().encode(), b''
+            fingerprint = hashlib.sha1(self.fixture.cert).hexdigest().upper()
+            return f'  1) {fingerprint} "Synthetic distribution identity"\n     1 valid identities found\n'.encode(), b''
         if tool == 'security' and args[0] == 'cms':
             return Path(args[-1]).read_bytes(), b''
         if tool == 'codesign' and args[:2] == ('-d', '--entitlements'):
@@ -406,6 +407,45 @@ class PreparationTests(unittest.TestCase):
             with self.assertRaisesRegex(subject.PreparationError, 'private key'):
                 subject.prepare(self.config_binding, self.root / 'output', execute=True)
         self.assertFalse(self.signed)
+
+    def test_duplicate_keychain_entries_for_exact_certificate_are_accepted(self):
+        run = self.fake_run
+        fingerprint = hashlib.sha1(self.fixture.cert).hexdigest().upper()
+        def duplicate_identities(commands, tool, *args):
+            if tool == 'security' and args[0] == 'find-identity':
+                rows = [f'  {n}) {fingerprint} "Synthetic distribution identity"' for n in range(1, 5)]
+                rows += [f'  5) {"B" * 40} "Unrelated valid identity"', '     5 valid identities found']
+                return ('\n'.join(rows) + '\n').encode(), b''
+            return run(commands, tool, *args)
+        with patch.object(subject.sys, 'platform', 'darwin'), patch.object(subject.Commands, 'run', duplicate_identities):
+            receipt = subject.prepare(self.config_binding, self.root / 'output', execute=True)
+        self.assertTrue(receipt['passed'])
+        selections = [args[args.index('--sign') + 1] for tool, args in self.calls
+                      if tool == 'codesign' and '--sign' in args]
+        self.assertEqual(selections, [fingerprint] * 3)
+
+    def test_missing_wrong_and_label_only_fingerprints_are_rejected(self):
+        fingerprint = hashlib.sha1(self.fixture.cert).hexdigest().upper()
+        cases = [b'     0 valid identities found\n',
+                 f'  1) {"B" * 40} "Wrong identity"\n'.encode(),
+                 f'  1) {"B" * 40} "Label mentions {fingerprint}"\n'.encode(),
+                 f'  1) {fingerprint} "Invalid identity" (CSSMERR_TP_CERT_EXPIRED)\n'.encode()]
+        for identities in cases:
+            with self.subTest(identities=identities), self.assertRaisesRegex(subject.PreparationError, 'private key'):
+                subject.require_local_identity(identities, self.fixture.cert)
+
+    def test_actual_signed_leaf_still_must_match_selected_certificate(self):
+        run = self.fake_run
+        def wrong_signed_leaf(commands, tool, *args):
+            result = run(commands, tool, *args)
+            if (tool == 'codesign' and args[:2] == ('-d', '--extract-certificates')
+                    and '-original-certificate-' not in str(args[2])):
+                Path(str(args[2]) + '0').write_bytes(b'wrong actual signed leaf')
+            return result
+        with patch.object(subject.sys, 'platform', 'darwin'), patch.object(subject.Commands, 'run', wrong_signed_leaf):
+            with self.assertRaisesRegex(subject.PreparationError, 'actual signing certificate'):
+                subject.prepare(self.config_binding, self.root / 'output', execute=True)
+        self.assertFalse(json.loads((self.root / 'output/preparation.json').read_text())['passed'])
 
     def test_profile_api_mutation_during_signing_fails_final_validation(self):
         run = self.fake_run

@@ -293,6 +293,22 @@ def production_entitlements(original):
     return result
 
 
+def require_local_identity(identities, certificate):
+    """Select the exact leaf fingerprint, allowing duplicate keychain entries.
+
+    ``find-identity -v`` can list one certificate in several keychains. These
+    are the same signing selection, not competing certificate identities. Only
+    the fingerprint column of a valid numbered row counts; labels and summary
+    text cannot advertise a missing certificate. The SHA-256/profile checks and
+    exact actual signed-leaf comparison remain separate requirements.
+    """
+    fingerprint = hashlib.sha1(certificate).hexdigest().upper()
+    rows = re.findall(rb'(?m)^[ \t]*[0-9]+\)[ \t]+([0-9A-Fa-f]{40})[ \t]+"[^\r\n]*"[ \t]*$', identities)
+    fingerprints = {row.decode('ascii').upper() for row in rows}
+    require(fingerprint in fingerprints, 'Exact distribution private key is unavailable')
+    return fingerprint
+
+
 def validate_profile(profile, api, raw, *, device, bundle_id, entitlements, certificate, now):
     rows = api['data'] if isinstance(api['data'], list) else [api['data']]
     selected = [row for row in rows if row['attributes']['uuid'] == profile['UUID']]
@@ -430,10 +446,8 @@ def prepare(config_binding, output, *, execute=False):
         extract(ipa, extracted)
         records = bundles(extracted, config['candidate'])
         certificate = bound(config['certificate']).read_bytes()
-        fingerprint = hashlib.sha1(certificate).hexdigest().upper()
         identities, _ = commands.run('security', 'find-identity', '-v', '-p', 'codesigning')
-        require(len(re.findall(rb'\b' + fingerprint.encode() + rb'\b', identities)) == 1,
-                'Exact distribution private key is unavailable or ambiguous')
+        fingerprint = require_local_identity(identities, certificate)
         commands.run('security', 'verify-cert', '-c', bound(config['certificate']), '-p', 'codeSign', '-L', '-R', 'offline')
         before_resources = inventory(extracted, records)
         original, profiles, entitlements = {}, {}, {}

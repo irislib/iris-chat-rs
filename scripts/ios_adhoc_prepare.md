@@ -49,6 +49,10 @@ Preparation verifies the immutable accepted manifest and IPA, captures original
 signature verification, entitlement and certificate results, and checks current
 profiles against the exact device, bundle, team, certificate and retained
 entitlements. The selected private key must be locally available and valid.
+Repeated valid keychain entries with the same exact certificate fingerprint are
+one signing selection; unrelated fingerprints and text in identity labels do
+not satisfy it. The actual re-signed leaf must still equal the selected DER
+certificate exactly.
 Certificate-chain checks use system code-signing trust with local certificates
 and cached revocation information only; their outputs do not claim a fresh
 online revocation check. The exact current Apple profile response remains a
