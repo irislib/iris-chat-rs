@@ -252,6 +252,11 @@ def evaluate_early_background(*, startup_text, lifecycle_text, bundle_id, proces
     require(target_states[0]["stamp"] <= entry["stamp"], "Foreground evidence follows background entry")
     suspended = [row for row in target_states if row["state"] == SUSPENDED]
     require(suspended and entry["stamp"] <= suspended[0]["stamp"], "No OS suspension after restoration overlap")
+    transition = next((row for row in target_states[target_states.index(suspended[0]) + 1:]
+                       if row["state"] != SUSPENDED), None)
+    require(transition is not None and transition["state"] in {ACTIVE, "running-active-NotVisible"}
+            and transition["stamp"] - suspended[0]["stamp"] >= 135,
+            "Device suspension ended before 135 seconds")
     resumed = [row for row in target_states
                if row["state"] == ACTIVE and row["stamp"] > suspended[0]["stamp"]]
     require(resumed and resumed[0]["stamp"] - suspended[0]["stamp"] >= 135,
@@ -261,6 +266,7 @@ def evaluate_early_background(*, startup_text, lifecycle_text, bundle_id, proces
     previous_time, previous_sizes = None, dict(initial)
     suspended_start = suspended_last = resumed_start = resumed_last = None
     suspended_seconds = None
+    resume_transition = None
     seen_state_count = 0
     stage = "foreground"
     for sample in samples:
@@ -284,10 +290,18 @@ def evaluate_early_background(*, startup_text, lifecycle_text, bundle_id, proces
                 stage = "suspended"
                 suspended_start = now
             elif stage == "suspended" and state != SUSPENDED:
-                require(state == ACTIVE and suspended_last is not None and suspended_last - suspended_start >= 135,
+                require(state in {ACTIVE, "running-active-NotVisible"} and suspended_last is not None
+                        and suspended_last - suspended_start >= 135,
                         "Suspension ended before 135 observed seconds")
                 suspended_seconds = suspended_last - suspended_start
-                stage, resumed_start = "resumed", now
+                resume_transition = now
+                stage = "resuming"
+                if state == ACTIVE:
+                    stage, resumed_start = "resumed", now
+            elif stage == "resuming":
+                require(state in {ACTIVE, "running-active-NotVisible"}, "Resume returned to suspension or exited")
+                if state == ACTIVE:
+                    stage, resumed_start = "resumed", now
             elif stage == "resumed":
                 require(state == ACTIVE, "Resumed process left the foreground")
         seen_state_count = len(visible_states)
@@ -304,6 +318,7 @@ def evaluate_early_background(*, startup_text, lifecycle_text, bundle_id, proces
     return {"restore_in_flight": True, "suspended_seconds": suspended_seconds,
             "resumed_seconds": resumed_last - resumed_start, "process_samples": len(samples),
             "suspended_started_monotonic": suspended_start, "suspended_last_monotonic": suspended_last,
+            "resume_transition_monotonic": resume_transition,
             "resumed_started_monotonic": resumed_start, "resumed_last_monotonic": resumed_last,
             "pid": pid, "executable": executable, "process_replacements": 0, "unexpected_exits": 0,
             "startup_sha256": hashlib.sha256(raw_captures["startup"]).hexdigest(),

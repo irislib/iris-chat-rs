@@ -323,5 +323,42 @@ class LifecycleTests(unittest.TestCase):
         self.reject(value, rebind=False)
 
 
+BACKGROUND='running-active-NotVisible'
+
+def transition_fixture():
+    value=fixture()
+    replace_capture(value,'lifecycle',state(lifecycle.ACTIVE,137),state(BACKGROUND,136.9)+state(lifecycle.ACTIVE,137))
+    return value
+
+class TransitionTests(unittest.TestCase):
+    def test_normal_resume_activation_does_not_count_as_suspension_or_visible_time(self):
+        result=lifecycle.evaluate_early_background(**transition_fixture())
+        self.assertEqual((result['suspended_seconds'],result['resumed_seconds']), (135,15))
+        self.assertEqual(result['resume_transition_monotonic'],137)
+    def test_repeated_activation_records_before_visible_are_allowed(self):
+        value=transition_fixture();replace_capture(value,'lifecycle',state(BACKGROUND,136.9),state(BACKGROUND,136.9)+state(BACKGROUND,136.95))
+        self.assertEqual(lifecycle.evaluate_early_background(**value)['resumed_seconds'],15)
+    def test_short_device_suspension_cannot_be_hidden_by_delayed_visible_record(self):
+        value=transition_fixture();replace_capture(value,'lifecycle',state(BACKGROUND,136.9),state(BACKGROUND,132))
+        with self.assertRaises(lifecycle.LifecycleError):lifecycle.evaluate_early_background(**value)
+    def test_return_to_suspension_after_activation_fails(self):
+        value=transition_fixture();replace_capture(value,'lifecycle',state(BACKGROUND,136.9),state(BACKGROUND,136.9)+state(lifecycle.SUSPENDED,136.95))
+        with self.assertRaises(lifecycle.LifecycleError):lifecycle.evaluate_early_background(**value)
+    def test_background_after_first_visible_remains_a_failure(self):
+        value=transition_fixture();replace_capture(value,'lifecycle',state(lifecycle.ACTIVE,137),state(lifecycle.ACTIVE,137)+state(BACKGROUND,138))
+        with self.assertRaises(lifecycle.LifecycleError):lifecycle.evaluate_early_background(**value)
+    def test_activation_without_visible_resume_fails(self):
+        value=transition_fixture();replace_capture(value,'lifecycle',state(lifecycle.ACTIVE,137),'')
+        with self.assertRaises(lifecycle.LifecycleError):lifecycle.evaluate_early_background(**value)
+    def test_pending_activation_does_not_supply_fifteen_visible_seconds(self):
+        value=transition_fixture();old=value['lifecycle_text'];replace_capture(value,'lifecycle',state(lifecycle.ACTIVE,137),state(lifecycle.ACTIVE,142))
+        for row in value['samples']:
+            if row['observed_monotonic']==137:
+                prefix=value['lifecycle_text'].split(state(lifecycle.ACTIVE,142))[0]
+                row.update({'lifecycle_'+k:v for k,v in binding(prefix).items()})
+        bind_cutoff(value)
+        with self.assertRaises(lifecycle.LifecycleError):lifecycle.evaluate_early_background(**value)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -370,6 +370,17 @@ class ReleaseWorkflowTests(unittest.TestCase):
             '      - "scripts/ios_runtime_acceptance.py"',
             '      - "scripts/test_ios_runtime_acceptance.py"',
             '      - "scripts/test_ios_runtime_workflow.py"',
+            '      - "scripts/ios_early_background_observer.py"',
+            '      - "scripts/test_ios_early_background_observer.py"',
+            '      - "scripts/ios_notification_subscription_reader.py"',
+            '      - "scripts/test_ios_notification_subscription_reader.py"',
+            '      - "scripts/ios_ostrace_capture.py"',
+            '      - "scripts/ios_ostrace_logger.py"',
+            '      - "scripts/test_ios_ostrace_capture.py"',
+            '      - "scripts/ios_voip_background_wake.py"',
+            '      - "scripts/test_ios_voip_background_wake.py"',
+            '      - "scripts/ios_warm_lifecycle.py"',
+            '      - "scripts/test_ios_warm_lifecycle.py"',
         ]
         # Haps recipes have dedicated checks below. Changes to any native app or
         # build input must still trigger the original full platform checks.
@@ -407,6 +418,17 @@ class ReleaseWorkflowTests(unittest.TestCase):
             "scripts/ios_quality_trace.py", "scripts/qualify_ios_quality_observer.py",
             "scripts/test_ios_quality_observer.py", "scripts/ios_runtime_acceptance.py",
             "scripts/test_ios_runtime_acceptance.py", "scripts/test_ios_runtime_workflow.py",
+            "scripts/ios_early_background_observer.py",
+            "scripts/test_ios_early_background_observer.py",
+            "scripts/ios_notification_subscription_reader.py",
+            "scripts/test_ios_notification_subscription_reader.py",
+            "scripts/ios_ostrace_capture.py",
+            "scripts/ios_ostrace_logger.py",
+            "scripts/test_ios_ostrace_capture.py",
+            "scripts/ios_voip_background_wake.py",
+            "scripts/test_ios_voip_background_wake.py",
+            "scripts/ios_warm_lifecycle.py",
+            "scripts/test_ios_warm_lifecycle.py",
         )
         native_inputs = (
             "scripts/native_lab.py", "scripts/test_native_lab.py", "scripts/test_fast.sh",

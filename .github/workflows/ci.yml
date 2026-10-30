@@ -38,6 +38,17 @@ on:
       - "scripts/ios_runtime_acceptance.py"
       - "scripts/test_ios_runtime_acceptance.py"
       - "scripts/test_ios_runtime_workflow.py"
+      - "scripts/ios_early_background_observer.py"
+      - "scripts/test_ios_early_background_observer.py"
+      - "scripts/ios_notification_subscription_reader.py"
+      - "scripts/test_ios_notification_subscription_reader.py"
+      - "scripts/ios_ostrace_capture.py"
+      - "scripts/ios_ostrace_logger.py"
+      - "scripts/test_ios_ostrace_capture.py"
+      - "scripts/ios_voip_background_wake.py"
+      - "scripts/test_ios_voip_background_wake.py"
+      - "scripts/ios_warm_lifecycle.py"
+      - "scripts/test_ios_warm_lifecycle.py"
   pull_request:
     paths-ignore:
       - "**/*.md"
@@ -72,6 +83,17 @@ on:
       - "scripts/ios_runtime_acceptance.py"
       - "scripts/test_ios_runtime_acceptance.py"
       - "scripts/test_ios_runtime_workflow.py"
+      - "scripts/ios_early_background_observer.py"
+      - "scripts/test_ios_early_background_observer.py"
+      - "scripts/ios_notification_subscription_reader.py"
+      - "scripts/test_ios_notification_subscription_reader.py"
+      - "scripts/ios_ostrace_capture.py"
+      - "scripts/ios_ostrace_logger.py"
+      - "scripts/test_ios_ostrace_capture.py"
+      - "scripts/ios_voip_background_wake.py"
+      - "scripts/test_ios_voip_background_wake.py"
+      - "scripts/ios_warm_lifecycle.py"
+      - "scripts/test_ios_warm_lifecycle.py"
   workflow_dispatch:
     inputs:
       scope:

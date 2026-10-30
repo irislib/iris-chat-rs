@@ -390,4 +390,29 @@ class RelaunchTests(unittest.TestCase):
             with self.assertRaises(contract.ValidationError): contract.validate_receipt(invalid, **self.fixture.candidate)
 
 
+BACKGROUND='running-active-NotVisible'
+
+class CommandBoundaryTests(unittest.TestCase):
+    def setUp(self):
+        self.contract=RelaunchTests();self.contract.setUp();self.addCleanup(self.contract.doCleanups)
+    def test_background_transition_before_command_return_cannot_be_hidden_until_visibility(self):
+        f=self.contract.fixture;attempt,resume,capture=self.contract.runtime_fixture()
+        active=lifecycle_fixture.state(relaunch.lifecycle.ACTIVE,137).replace(lifecycle_fixture.BUNDLE,f.config['bundle_id'])
+        background=lifecycle_fixture.state(BACKGROUND,136.9).replace(lifecycle_fixture.BUNDLE,f.config['bundle_id'])
+        delayed=lifecycle_fixture.state(relaunch.lifecycle.ACTIVE,142).replace(lifecycle_fixture.BUNDLE,f.config['bundle_id'])
+        lifecycle_fixture.replace_capture(capture,'lifecycle',active,background+delayed)
+        for row in capture['samples']:
+            if row['observed_monotonic']==137:
+                prefix=capture['lifecycle_text'].split(delayed)[0]
+                row.update({'lifecycle_'+k:v for k,v in lifecycle_fixture.binding(prefix).items()})
+        last=copy.deepcopy(capture['samples'][-1]);last['observed_monotonic']=157;capture['samples'].append(last)
+        lifecycle_fixture.bind_cutoff(capture)
+        closure=relaunch.read_bound(capture['closure_binding']);closure['measurement_cutoff_sha256']=relaunch.lifecycle.evidence_sha256(capture['measurement_cutoff']);capture['closure_binding']=f.write('new-closure',closure)
+        # Valid ordinary command returned before the observed activation.
+        self.assertEqual(relaunch.evaluate_runtime(f.config_binding,f.candidate,attempt,resume,capture)['lifecycle']['resumed_seconds'],15)
+        resume.update(started_monotonic=137.1,returned_monotonic=137.4,started_utc=148.1,returned_utc=148.4,validated_utc=148.6,snapshot=f.snapshot(102,148.5))
+        with self.assertRaisesRegex(relaunch.EvidenceError,'Resume command was not between'):
+            relaunch.evaluate_runtime(f.config_binding,f.candidate,attempt,resume,capture)
+
+
 if __name__ == '__main__': unittest.main()

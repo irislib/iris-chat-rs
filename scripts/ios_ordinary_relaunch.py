@@ -343,7 +343,8 @@ def evaluate_runtime(distribution_binding, candidate, attempt, resume, capture):
     require(finite(attempt['started_monotonic']) <= finite(attempt['returned_monotonic'])
             <= capture['samples'][0]['observed_monotonic'], 'Capture preceded launch return')
     require(evidence['suspended_last_monotonic'] <= finite(resume['started_monotonic'])
-            <= finite(resume['returned_monotonic']) <= evidence['resumed_started_monotonic'],
+            <= finite(resume['returned_monotonic']) <= evidence['resume_transition_monotonic']
+            <= evidence['resumed_started_monotonic'],
             'Resume command was not between suspension and observed resumption')
     offset = finite(attempt['started_utc']) - finite(attempt['started_monotonic'])
     for record, boundary in ((attempt, 'returned'), (resume, 'started'), (resume, 'returned')):

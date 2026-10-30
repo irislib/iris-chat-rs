@@ -4,6 +4,24 @@ set -Eeuo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
+python3 - <<'PY'
+import sys
+import tarfile
+
+if sys.version_info < (3, 11) or not hasattr(tarfile, "data_filter"):
+    sys.exit("Release contract tests require Python 3.11+ with tarfile.data_filter; select the development Python on PATH.")
+PY
+
+# Offline APNs sender tests use Node's built-in modules and fake transport.
+# Preserve an explicitly qualified executable when the release owner supplies it.
+if [[ -z "${IRIS_VOIP_TEST_NODE:-}" ]]; then
+  IRIS_VOIP_TEST_NODE="$(command -v node)" || {
+    echo "Release contract tests require an existing Node executable." >&2
+    exit 1
+  }
+fi
+export IRIS_VOIP_TEST_NODE
+
 python3 -m unittest discover -s "$ROOT_DIR/scripts" -p 'test_*.py'
 
 if "$ROOT_DIR/scripts/distribute" hashtree >/dev/null 2>&1; then
