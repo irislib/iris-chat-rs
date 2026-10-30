@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Offline fake-process tests; no CoreDevice, USB, logging or signals executed."""
 import copy
+import hashlib
 import io
 import json
 import os
@@ -214,9 +215,12 @@ class WindowTests(unittest.TestCase):
                 samples.append(capture.sample(102))
         return window, capture, samples, source
 
-    def close_capture(self, window, capture, *, extra='', logger_error=False):
+    def close_capture(self, window, capture, *, extra='', logger_error=False, stderr=b'',
+                      signal_missing=False, group_remains=False, returncode=0):
         def signal(group, signum):
-            if signum == 0: raise ProcessLookupError()
+            if signum == 0:
+                if group_remains: return
+                raise ProcessLookupError()
             self.assertEqual(signum, adapters.signal.SIGTERM)
             self.assertIsNotNone(capture.cutoff['closing_started_monotonic'])
             item = next(row for row in window.children if row['group'] == group)
@@ -224,10 +228,17 @@ class WindowTests(unittest.TestCase):
                 if item['capture_name'] == 'lifecycle': stream.write(extra.encode())
                 # Exact syntax observed in the retained physical idevicesyslog log.
                 stream.write(b'[disconnected:synthetic-device]\n')
-            item['process'].alive = False; item['process'].returncode = 0
+            item['process'].alive = False; item['process'].returncode = returncode
+            item['stderr'].write_bytes(stderr)
             if logger_error: item['stderr'].write_text('logger reported shutdown error')
             self.clock += 0.05
+            if signal_missing: raise ProcessLookupError()
         with patch.object(adapters.os, 'killpg', side_effect=signal): window.close()
+
+    def qualified_shutdown(self):
+        # Fake processes use the same exact pin boundary as the physical tool;
+        # no installed logger or device is invoked by these tests.
+        return patch.object(adapters, 'SYSLOG_SIGTERM_SHA256', self.tools['syslog']['sha256'])
 
     def test_live_cutoff_precedes_shutdown_and_preserves_terminal_disconnect(self):
         window, capture, samples, source = self.measured_capture()
@@ -277,6 +288,85 @@ class WindowTests(unittest.TestCase):
         capture.mark_measurement_cutoff(samples)
         with self.assertRaises(EvidenceError): self.close_capture(window, capture, logger_error=True)
         self.assertFalse(json.loads((window.out / 'closure.json').read_text())['closed'])
+
+    def test_exact_pinned_sigterm_stderr_is_retained_after_live_cutoff(self):
+        # Exact bytes/hash from both retained physical logger stderr files.
+        terminal = b'\nExiting...\n'
+        self.assertEqual(hashlib.sha256(terminal).hexdigest(),
+                         '359e8f7fdd3ccfcfb1e6cbd8673371df921d6e11d4438ef2e0c9179f48198bdb')
+        window, capture, samples, source = self.measured_capture()
+        original_samples = copy.deepcopy(samples)
+        capture.mark_measurement_cutoff(samples)
+        with self.qualified_shutdown():
+            self.close_capture(window, capture, stderr=terminal)
+            final = capture.final_capture(samples)
+        self.assertEqual(samples, original_samples)
+        for name, item in capture.streams.items():
+            self.assertEqual(item['stderr'].read_bytes(), terminal)
+            self.assertEqual(capture.closed_diagnostics[name]['stderr'], binding(item['stderr']))
+            self.assertTrue(final[name + '_text'].endswith('[disconnected:synthetic-device]\n'))
+        evidence = adapters.lifecycle.evaluate_early_background(
+            **{k: v for k, v in final.items() if k != 'closure_binding'}, bundle_id=self.config['bundle_id'],
+            pid=102, executable=self.config['executable'], device=self.config['device'],
+            initial_prefixes=source['initial_prefixes'], old_pid=101)
+        self.assertEqual((evidence['suspended_seconds'], evidence['resumed_seconds']), (135, 15))
+        self.assertEqual(evidence['process_samples'], len(original_samples))
+
+    def test_terminal_stderr_before_cutoff_is_still_a_live_error(self):
+        _, capture, samples, _ = self.measured_capture()
+        capture.streams['startup']['stderr'].write_bytes(b'\nExiting...\n')
+        with self.qualified_shutdown(), self.assertRaises(EvidenceError): capture.mark_measurement_cutoff(samples)
+        self.assertIsNone(capture.cutoff)
+
+    def test_terminal_stderr_between_cutoff_and_signal_invalidates_closure(self):
+        window, capture, samples, _ = self.measured_capture()
+        capture.mark_measurement_cutoff(samples)
+        capture.streams['startup']['stderr'].write_bytes(b'\nExiting...\n')
+        with self.qualified_shutdown(), self.assertRaises(EvidenceError):
+            self.close_capture(window, capture, stderr=b'\nExiting...\n')
+        self.assertFalse(json.loads((window.out / 'closure.json').read_text())['closed'])
+
+    def test_terminal_stderr_from_an_unqualified_logger_is_rejected(self):
+        window, capture, samples, _ = self.measured_capture()
+        capture.mark_measurement_cutoff(samples)
+        with self.assertRaises(EvidenceError): self.close_capture(window, capture, stderr=b'\nExiting...\n')
+        self.assertFalse(json.loads((window.out / 'closure.json').read_text())['closed'])
+
+    def test_terminal_stderr_requires_actual_signal_delivery(self):
+        window, capture, samples, _ = self.measured_capture()
+        capture.mark_measurement_cutoff(samples)
+        with self.qualified_shutdown(), self.assertRaises(EvidenceError):
+            self.close_capture(window, capture, stderr=b'\nExiting...\n', signal_missing=True)
+        with self.assertRaises(EvidenceError): capture.final_capture(samples)
+
+    def test_terminal_stderr_does_not_hide_a_remaining_process_group(self):
+        window, capture, samples, _ = self.measured_capture()
+        capture.mark_measurement_cutoff(samples)
+        with self.qualified_shutdown():
+            with self.assertRaises(EvidenceError):
+                self.close_capture(window, capture, stderr=b'\nExiting...\n', group_remains=True)
+            with self.assertRaises(EvidenceError): capture.final_capture(samples)
+
+    def test_terminal_stderr_requires_the_clean_handler_exit(self):
+        window, capture, samples, _ = self.measured_capture()
+        capture.mark_measurement_cutoff(samples)
+        with self.qualified_shutdown(), self.assertRaises(EvidenceError):
+            self.close_capture(window, capture, stderr=b'\nExiting...\n', returncode=-15)
+
+    def test_final_diagnostics_cannot_change_even_to_another_allowed_value(self):
+        window, capture, samples, _ = self.measured_capture()
+        capture.mark_measurement_cutoff(samples)
+        with self.qualified_shutdown():
+            self.close_capture(window, capture, stderr=b'\nExiting...\n')
+            item = capture.streams['startup']
+            for value in (b'', b'Exiting...\n', b'\nExiting...\n\nExiting...\n',
+                          b'error\nExiting...\n', b'\nExiting...\nerror'):
+                with self.subTest(stderr=value):
+                    item['stderr'].write_bytes(value)
+                    with self.assertRaises(EvidenceError): capture.final_capture(samples)
+            item['stderr'].write_bytes(b'\nExiting...\n')
+            item['stdout'].write_bytes(b'\nExiting...\n')
+            with self.assertRaises(EvidenceError): capture.final_capture(samples)
 
     def test_home_adapter_accepts_only_complete_bound_local_protocol(self):
         window = self.admit(); home = adapters.PrearmedHome(window)

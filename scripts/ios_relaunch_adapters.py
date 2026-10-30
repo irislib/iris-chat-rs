@@ -26,6 +26,10 @@ from ios_ordinary_relaunch import EvidenceError, binding, exact, finite, read_bo
 
 HOME_DISABLED_SHA256 = '74a9a77fef0b4a5ad3699eb17a390a59e1d16247f1a920fe3e1f881a7c79f6c4'
 HOME_QUALIFICATION_SHA256 = '708b4c79ccbcea27a1152a64177cec0ce86c6b010a27c2534e57c23c1e0b1809'
+# This pinned idevicesyslog writes these exact bytes on its intentional SIGTERM
+# path. They are never permitted while measuring or before the owned signal.
+SYSLOG_SIGTERM_SHA256 = '5a2c3f11644b926c1829010c93274f919097e52a77dab442e0a9e477791f8f1b'
+SYSLOG_SIGTERM_STDERR = b'\nExiting...\n'
 MAX_OUTPUT = 100 * 1024 * 1024
 HOME_EVENTS = ['ARMED', 'FIRE', 'home_down_requested', 'home_down_written', 'home_up_written',
                'home_write_complete', 'host_transport_close']
@@ -215,6 +219,7 @@ class Capture:
         require(window.capture is None, 'One measured capture per owned window')
         window.capture = self
         self.samples, self.cutoff = [], None
+        self.closed_diagnostics = None
 
     def start(self):
         c = self.window.config
@@ -344,21 +349,38 @@ class Capture:
         self.cutoff['closing_finished_monotonic'] = now
         texts = {}
         for name, item in self.streams.items():
-            require(not item['stdout'].read_bytes() and not item['stderr'].read_bytes(), 'Final logger error')
             data = self._raw(name)
             require(name in self.cutoff['streams'], 'Logger was not intentionally stopped')
             self.cutoff['streams'][name].update(raw_bytes=len(data), raw_sha256=hashlib.sha256(data).hexdigest())
             texts[name + '_text'] = data.decode('utf-8')
         lifecycle.measurement_captures(**texts, device=self.window.config['device'],
                                       samples=self.samples, measurement_cutoff=self.cutoff)
+        self.closed_diagnostics = self._diagnostic_bindings(allow_shutdown=True)
         return lifecycle.evidence_sha256(self.cutoff)
+
+    def _diagnostic_bindings(self, *, allow_shutdown=False):
+        result = {}
+        for name, item in self.streams.items():
+            require(not item['stdout'].read_bytes(), 'Final logger output')
+            errors = item['stderr'].read_bytes()
+            if errors:
+                stop = (self.cutoff or {}).get('streams', {}).get(name, {})
+                require(allow_shutdown and errors == SYSLOG_SIGTERM_STDERR
+                        and self.window.config['tools']['syslog']['sha256'] == SYSLOG_SIGTERM_SHA256
+                        and stop.get('signal') == 'SIGTERM' and stop.get('signal_delivered') is True
+                        and type(stop.get('returncode')) is int and stop['returncode'] == 0,
+                        'Final logger error')
+            result[name] = {key: binding(item[key]) for key in ('stdout', 'stderr')}
+        return result
 
     def final_texts(self):
         require(self.window.closed, 'Close every owned process before final capture')
         closure = json.loads((self.window.out / 'closure.json').read_text())
         require(closure['closed'] is True, 'Process-group closure failed')
-        for item in self.streams.values():
-            require(not item['stdout'].read_bytes() and not item['stderr'].read_bytes(), 'Final logger error')
+        diagnostics = self._diagnostic_bindings(allow_shutdown=self.cutoff is not None)
+        if self.cutoff is not None:
+            require(self.closed_diagnostics is not None and diagnostics == self.closed_diagnostics,
+                    'Logger diagnostics changed after closure')
         # Do not trim the final tail: incomplete final records must fail parsing.
         return {name + '_text': self._raw(name).decode('utf-8') for name in self.streams}
 
