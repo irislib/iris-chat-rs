@@ -231,6 +231,26 @@ class ProfileTests(unittest.TestCase):
         with self.assertRaisesRegex(subject.PreparationError, 'ambiguous'):
             self.validate()
 
+    def test_associated_domains_scalar_wildcard_authorizes_unchanged_string_array(self):
+        domains = ['applinks:example.invalid']
+        self.entitlements['com.apple.developer.associated-domains'] = domains
+        self.profile['Entitlements']['com.apple.developer.associated-domains'] = '*'
+        self.assertEqual(self.validate()['bundleID'], 'example.app')
+        self.assertEqual(self.entitlements['com.apple.developer.associated-domains'], domains)
+
+    def test_associated_domains_wildcard_does_not_authorize_other_shapes_or_keys(self):
+        key = 'com.apple.developer.associated-domains'
+        self.profile['Entitlements'][key] = '*'
+        for value in [True, 'applinks:example.invalid', {'domain': 'example.invalid'}, [True], ['']]:
+            with self.subTest(value=value):
+                self.entitlements[key] = value
+                with self.assertRaises(subject.PreparationError):
+                    self.validate()
+        self.entitlements.pop(key)
+        self.profile['Entitlements']['keychain-access-groups'] = '*'
+        with self.assertRaises(subject.PreparationError):
+            self.validate()
+
 
 class ArchiveAndInputTests(unittest.TestCase):
     def setUp(self):

@@ -293,6 +293,19 @@ def production_entitlements(original):
     return result
 
 
+def entitlement_permitted(key, value, permission):
+    # Apple's profile is an allowlist, not a copy of signed entitlements
+    # (TN2415/TN3125). Associated Domains specifically uses a scalar "*" grant
+    # for the app's concrete array of domain strings. Do not generalize this
+    # cross-type exception to other capabilities or change the app's values.
+    if key == 'com.apple.developer.associated-domains':
+        if not isinstance(value, list) or not all(type(item) is str and item for item in value):
+            return False
+        if permission == '*':
+            return True
+    return permitted(value, permission)
+
+
 def require_local_identity(identities, certificate):
     """Select the exact leaf fingerprint, allowing duplicate keychain entries.
 
@@ -333,7 +346,8 @@ def validate_profile(profile, api, raw, *, device, bundle_id, entitlements, cert
             and entitlements.get('application-identifier') == permissions['application-identifier']
             and permissions.get('get-task-allow') is False
             and entitlements.get('com.apple.developer.team-identifier') == team[0], 'Profile target or debugging mismatch')
-    require(permitted(entitlements, permissions), 'Profile does not authorize exact retained entitlements')
+    require(all(key in permissions and entitlement_permitted(key, value, permissions[key])
+                for key, value in entitlements.items()), 'Profile does not authorize exact retained entitlements')
     return {'uuid': profile['UUID'], 'team': team[0], 'expiresUTC': expiry.isoformat(),
             'certificateSHA256': sha(certificate), 'bundleID': bundle_id, 'device': device}
 

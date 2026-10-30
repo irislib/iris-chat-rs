@@ -49,6 +49,11 @@ Preparation verifies the immutable accepted manifest and IPA, captures original
 signature verification, entitlement and certificate results, and checks current
 profiles against the exact device, bundle, team, certificate and retained
 entitlements. The selected private key must be locally available and valid.
+For Associated Domains, the profile's scalar `*` allowlist grant authorizes the
+app's unchanged array of domain strings. This narrow type exception does not
+apply to other capabilities; every signed entitlement remains exact. See
+[Apple's profile allowlist explanation](https://developer.apple.com/documentation/technotes/tn3125-inside-code-signing-provisioning-profiles)
+and [entitlement wildcard guidance](https://developer.apple.com/library/archive/technotes/tn2415/).
 Repeated valid keychain entries with the same exact certificate fingerprint are
 one signing selection; unrelated fingerprints and text in identity labels do
 not satisfy it. The actual re-signed leaf must still equal the selected DER
