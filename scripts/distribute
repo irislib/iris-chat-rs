@@ -39,6 +39,7 @@ Local publishing paths:
   IRIS_HASHTREE_DATA_DIR    ~/.config/iris-chat/htree-release-data
   IRIS_HASHTREE_EXPECTED_ROOT  Verified current release-tree CID (required to publish)
   IRIS_ZAPSTORE_NSEC_PATH   ~/.config/iris-chat/zapstore-nsec
+  IRIS_ANDROID_UPGRADE_RECEIPT  Passing previous-release upgrade receipt (Hashtree/Zapstore)
 EOF
 }
 
@@ -399,6 +400,15 @@ PY
 }
 
 release_preflight
+if [[ "$CHANNEL" == "hashtree" || "$CHANNEL" == "zapstore" ]]; then
+  if [[ -z "${IRIS_ANDROID_UPGRADE_RECEIPT:-}" ]]; then
+    echo "Set IRIS_ANDROID_UPGRADE_RECEIPT to the passing upgrade evidence for this exact Android release." >&2
+    exit 1
+  fi
+  python3 "$ROOT/scripts/check_android_upgrade_receipt.py" \
+    --receipt "$IRIS_ANDROID_UPGRADE_RECEIPT" \
+    --manifest "$ASSET_DIR/iris-chat-${TAG}-manifest.json" --tag "$TAG"
+fi
 case "$CHANNEL" in
   hashtree) publish_hashtree ;;
   homebrew) publish_homebrew ;;

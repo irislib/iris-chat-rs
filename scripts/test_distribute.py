@@ -11,6 +11,7 @@ import unittest
 from pathlib import Path
 
 from test_release_manifest import IOS_EXCLUDED_TAG, TAG, names
+from test_android_upgrade_harness import receipt_fixture
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -309,6 +310,7 @@ class DistributeTests(unittest.TestCase):
                 "IRIS_HASHTREE_DATA_DIR": str(self.root / "htree-data"),
                 "IRIS_HASHTREE_EXPECTED_ROOT": "verified-previous-root",
                 "IRIS_ZAPSTORE_NSEC_PATH": str(self.zapstore_nsec),
+                "IRIS_ANDROID_UPGRADE_RECEIPT": str(receipt_fixture(self.root / "upgrade-evidence", self.manifest)),
             }
         )
         return env
@@ -346,6 +348,23 @@ class DistributeTests(unittest.TestCase):
         env["FAKE_RELEASE_VIEW_JSON"] = json.dumps(metadata)
         env["FAKE_TAG"] = IOS_EXCLUDED_TAG
         return env
+
+    def test_android_channels_require_upgrade_receipt(self) -> None:
+        for channel in ('hashtree', 'zapstore'):
+            with self.subTest(channel=channel):
+                env = self.environment(); env.pop('IRIS_ANDROID_UPGRADE_RECEIPT')
+                result = self.run_distribution(channel, '--check', env=env)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('IRIS_ANDROID_UPGRADE_RECEIPT', result.stderr)
+
+    def test_android_channels_reject_changed_upgrade_evidence(self) -> None:
+        env = self.environment()
+        receipt = Path(env['IRIS_ANDROID_UPGRADE_RECEIPT'])
+        (receipt.parent / 'crash.log').write_text('FATAL EXCEPTION')
+        for channel in ('hashtree', 'zapstore'):
+            result = self.run_distribution(channel, '--check', env=env)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn('changed runtime evidence', result.stderr)
 
     def test_ios_excluded_release_promotes_every_remaining_channel(self) -> None:
         env = self.prepare_ios_excluded_release()
