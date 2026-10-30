@@ -2,6 +2,21 @@
 
 Each release has channel-specific notes. The release tag must match the `##` heading exactly.
 
+## v2026.10.30
+
+### GitHub
+
+- Fix the Android contact-details crash by replacing an unsupported regular expression with Unicode whitespace normalization matching the shared core. Add regression tests for nickname and note editing, character limits, and clearing saved details.
+- Pin the macOS Android resource compiler artifact for strict dependency verification.
+
+### Apple
+
+- No Apple app changes in this release.
+
+### Zapstore
+
+- Fix a crash when opening contact details to edit a nickname or note.
+
 ## v2026.10.28.4
 
 ### GitHub
