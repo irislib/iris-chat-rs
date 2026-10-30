@@ -8,6 +8,10 @@ on:
       - ".github/workflows/release.yml"
       - ".github/workflows/release-checks.yml"
       - "RELEASE_NOTES.md"
+      - "haps.toml"
+      - "haps-release.json"
+      - "scripts/validate-haps-manifest.py"
+      - "scripts/test_haps_manifest.py"
       - "scripts/test_release_workflow.py"
       - "scripts/test_release_notes.py"
       - "scripts/render-release-notes.py"
@@ -23,6 +27,10 @@ on:
       - ".github/workflows/release.yml"
       - ".github/workflows/release-checks.yml"
       - "RELEASE_NOTES.md"
+      - "haps.toml"
+      - "haps-release.json"
+      - "scripts/validate-haps-manifest.py"
+      - "scripts/test_haps_manifest.py"
       - "scripts/test_release_workflow.py"
       - "scripts/test_release_notes.py"
       - "scripts/render-release-notes.py"
@@ -57,6 +65,7 @@ jobs:
           python3 scripts/test_build_common.py
           python3 scripts/test_apple_connect_api.py
           python3 scripts/test_ios_harness_retry_contract.py
+          python3 scripts/test_haps_manifest.py
           python3 - <<'PY'
           from pathlib import Path
           import re
@@ -65,4 +74,6 @@ jobs:
           tag = re.search(r"^## (.+)$", Path("RELEASE_NOTES.md").read_text(), re.MULTILINE).group(1)
           subprocess.run([sys.executable, "scripts/render-release-notes.py",
                           "--channel", "validate", "--tag", tag], check=True)
+          subprocess.run([sys.executable, "scripts/validate-haps-manifest.py",
+                          "--tag", tag], check=True)
           PY

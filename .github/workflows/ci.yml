@@ -7,6 +7,7 @@ on:
       - dev
     paths-ignore:
       - "**/*.md"
+      - "haps.toml"
       - ".github/workflows/release.yml"
       - ".github/workflows/release-checks.yml"
       - "scripts/test_release_workflow.py"
@@ -17,6 +18,7 @@ on:
   pull_request:
     paths-ignore:
       - "**/*.md"
+      - "haps.toml"
       - ".github/workflows/release.yml"
       - ".github/workflows/release-checks.yml"
       - "scripts/test_release_workflow.py"

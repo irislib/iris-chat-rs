@@ -339,6 +339,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
         ci = (ROOT / ".github/workflows/ci.yml").read_text()
         expected = [
             '      - "**/*.md"',
+            '      - "haps.toml"',
             '      - ".github/workflows/release.yml"',
             '      - ".github/workflows/release-checks.yml"',
             '      - "scripts/test_release_workflow.py"',
@@ -347,8 +348,8 @@ class ReleaseWorkflowTests(unittest.TestCase):
             '      - "scripts/run_public_link_phone.py"',
             '      - "scripts/test_ios_harness_retry_contract.py"',
         ]
-        # Keep this exclusion narrow: changing any app/build input must still
-        # trigger the original full platform checks.
+        # Haps recipes have dedicated checks below. Changes to any native app or
+        # build input must still trigger the original full platform checks.
         for block in ci.split("    paths-ignore:\n")[1:]:
             lines = []
             for line in block.splitlines():
@@ -359,15 +360,81 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertEqual(ci.count("    paths-ignore:\n"), 2)
         quick = (ROOT / ".github/workflows/release-checks.yml").read_text()
         for path in (".github/workflows/ci.yml", ".github/workflows/release.yml", ".github/workflows/release-checks.yml",
+                     "haps.toml", "haps-release.json", "scripts/validate-haps-manifest.py", "scripts/test_haps_manifest.py",
                      "scripts/test_release_workflow.py", "scripts/apple_connect_api.py", "scripts/test_apple_connect_api.py",
                      "scripts/run_public_link_phone.py", "scripts/test_ios_harness_retry_contract.py"):
             self.assertEqual(quick.count(f'      - "{path}"'), 2)
         for script in ("test_release_workflow.py", "test_release_notes.py", "test_build_common.py", "test_apple_connect_api.py",
-                       "test_ios_harness_retry_contract.py"):
+                       "test_ios_harness_retry_contract.py", "test_haps_manifest.py"):
             self.assertIn(f"python3 scripts/{script}", quick)
         self.assertIn("node --version", quick)
         self.assertIn('"scripts/render-release-notes.py"', quick)
         self.assertIn('"--channel", "validate"', quick)
+
+    def test_release_metadata_and_mixed_changes_select_the_required_workflows(self) -> None:
+        ci = (ROOT / ".github/workflows/ci.yml").read_text()
+        quick = (ROOT / ".github/workflows/release-checks.yml").read_text()
+
+        def paths(workflow, event, key):
+            body = re.search(rf"^  {event}:\n(.*?)(?=^  \S|\Z)", workflow, re.M | re.S).group(1)
+            block = re.search(rf"^    {key}:\n((?:      - .+\n)+)", body, re.M).group(1)
+            return [json.loads(line.removeprefix("      - ")) for line in block.splitlines()]
+
+        def matches(path, pattern):
+            # These trigger lists contain exact paths and one recursive Markdown
+            # pattern; reject a newly broadened pattern instead of guessing it.
+            if pattern == "**/*.md":
+                return path.endswith(".md")
+            self.assertNotRegex(pattern, r"[*?\[!]")
+            return path == pattern
+
+        cases = [
+            (["RELEASE_NOTES.md", "haps.toml"], False, True),
+            (["haps.toml"], False, True),
+            (["haps-release.json"], True, True),
+            (["scripts/validate-haps-manifest.py"], True, True),
+            (["scripts/test_haps_manifest.py"], True, True),
+            (["haps.toml", "core/src/lib.rs"], True, True),
+            (["haps.toml", "ios/Sources/IrisApp.swift"], True, True),
+            (["android/app/src/main/java/to/iris/chat/MainActivity.kt"], True, False),
+            (["scripts/linux-release"], True, False),
+            ([".github/workflows/ci.yml"], True, True),
+        ]
+        for event in ("push", "pull_request"):
+            ignored = paths(ci, event, "paths-ignore")
+            included = paths(quick, event, "paths")
+            for changed, native, metadata in cases:
+                with self.subTest(event=event, changed=changed):
+                    self.assertEqual(any(not any(matches(path, pattern) for pattern in ignored)
+                                         for path in changed), native)
+                    self.assertEqual(any(matches(path, pattern) for path in changed for pattern in included), metadata)
+
+    @unittest.skipUnless(sys.version_info >= (3, 11), "Haps TOML checks require Python 3.11+")
+    def test_release_metadata_step_rejects_stale_versions_and_unlocked_recipes(self) -> None:
+        quick = (ROOT / ".github/workflows/release-checks.yml").read_text()
+        script = textwrap.dedent(re.search(r"          python3 - <<'PY'\n(.*?)          PY", quick, re.S).group(1))
+        original = (ROOT / "haps.toml").read_text()
+        locked_recipe = '"--manifest-path", "linux/Cargo.toml", "--locked"'
+        self.assertIn(locked_recipe, original)
+        variants = [
+            ("current", original, 0, "Validated 6 Haps package variants"),
+            ("stale", original.replace('version = "', 'version = "9', 1), 1, "version"),
+            ("unlocked", original.replace(locked_recipe, '"--manifest-path", "linux/Cargo.toml"', 1),
+             1, "native locked Cargo"),
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "scripts").mkdir()
+            for name in ("haps-release.json", "RELEASE_NOTES.md", "scripts/render-release-notes.py",
+                         "scripts/validate-haps-manifest.py"):
+                shutil.copyfile(ROOT / name, root / name)
+            for name, manifest, code, message in variants:
+                with self.subTest(manifest=name):
+                    (root / "haps.toml").write_text(manifest)
+                    result = subprocess.run([sys.executable, "-c", script], cwd=root,
+                                            capture_output=True, text=True, timeout=15)
+                    self.assertEqual(result.returncode, code, result.stdout + result.stderr)
+                    self.assertIn(message, result.stdout + result.stderr)
 
     def test_resource_gate_binds_tag_commit_and_blocks_publication(self) -> None:
         workflow = (ROOT / ".github/workflows/release.yml").read_text()
