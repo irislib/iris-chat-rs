@@ -257,14 +257,59 @@ Retain the original failure, successful runtime output, tested source and APK
 hashes. The v2026.10.30 contact fix retains adb instrumentation logs instead of
 Gradle XML; do not manufacture XML or relabel those results as a new run.
 
-For future Android releases, include a previous-release in-place upgrade check
-using a synthetic populated test account. Preserve the app's data while updating
-the APK, then launch, open a chat and contact details, edit a nickname, background
-and reopen the app, and verify saved messages, drafts, settings and account
-identity. Record both release tags, APK hashes, Android version, before/after
-checks and any crashes. A fresh installation or a current-version save/reload
-does not establish previous-version continuity. This upgrade check is not yet
-automated by the contact-editor gate; collect its evidence separately.
+Android releases require the automated previous-release upgrade check below.
+Use unchanged APKs and manifests from the tagged GitHub workflows. The runner
+verifies release attestations, APK signatures, package identity and increasing
+version codes before installing anything. Retain baseline pins in
+`test-fixtures/android-upgrade/releases.json`; append new released versions
+without removing historical pins.
+
+Select an explicitly owned, disposable, rooted, English Android emulator with
+no Iris installation. Disable all network interfaces, including emulator
+Ethernet, before creating the synthetic profile. The runner refuses physical
+devices, existing installations, a mismatched AVD name or active interfaces.
+It does not reset storage, uninstall apps, restore snapshots, or modify APKs.
+Do not run another test against the selected emulator concurrently.
+
+```bash
+python3 scripts/test_android_release_upgrade.py \
+  --adb "$ANDROID_HOME/platform-tools/adb" --serial "$UPGRADE_SERIAL" \
+  --avd-name "$UPGRADE_AVD_NAME" --build-tools "$ANDROID_HOME/build-tools/36.0.0" \
+  --previous-apk "$PREVIOUS_APK" --previous-manifest "$PREVIOUS_MANIFEST" \
+  --candidate-apk "$CANDIDATE_APK" --candidate-manifest "$CANDIDATE_MANIFEST" \
+  --output "$NEW_UPGRADE_EVIDENCE_DIRECTORY"
+```
+
+The previous app creates a profile, self-message, draft, group/message, contact
+and changed preference through its visible UI. The candidate is installed with
+`adb install -r`. The test checks saved account/device identity and database
+contents, opens the contact editor, saves a nickname/note, backgrounds the app,
+then cold-starts it and checks again. Crash/ANR records fail acceptance. It does
+not claim peer delivery, an established peer ratchet migration, physical-device
+coverage, or every Android version; extend fixtures when affected changes need
+that coverage. This release gate complements the six Android editor tests.
+
+Keep the output directory private: it contains generated synthetic credentials
+and original stopped-app databases, alongside hashes, screenshots, provenance
+and a machine-readable receipt. The original old-version database is retained,
+not reconstructed with current code. Failed runs remain failures; preserve them
+and fix their cause before a new run. A fresh install or current-version
+save/reload alone does not establish previous-version continuity.
+
+Before Hashtree or Zapstore checks/publication, set
+`IRIS_ANDROID_UPGRADE_RECEIPT` to the passing `receipt.json`. Both channels reject
+missing, failed, incomplete, changed or wrong-release evidence. The validator
+is read-only and can be run independently without repeating a successful test:
+
+```bash
+python3 scripts/check_android_upgrade_receipt.py \
+  --receipt "$IRIS_ANDROID_UPGRADE_RECEIPT" \
+  --manifest "$CANDIDATE_MANIFEST" --tag "$TAG"
+```
+
+Stop the task-owned emulator after preserving evidence. Retire only its
+explicitly owned regenerable AVD storage when no longer needed; retain the
+receipt and all referenced evidence for release-owner acceptance.
 
 When account or storage formats change, retain small immutable synthetic fixtures
 created by the released implementation, with at least one per supported stored
