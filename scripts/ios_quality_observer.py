@@ -85,7 +85,7 @@ def record(config_binding, output, *, execute=False):
             and qualification.get('passed') is True
             and qualification.get('checker_sources') == checker_sources, 'Quality observer source is not qualified')
     trace_tool = verify_binding(config['xctrace'])
-    window = OwnedWindow(config['window'], output)
+    window = OwnedWindow(config['window'], output, output_ceiling=512 * 1024**2)
     evidence = {'schema': 'iris-quality-capture-v1', 'candidate': window.config['candidate'],
                 'configuration': config_binding, 'checker_sources': checker_sources, 'physicalAcceptance': False}
     capture = None

@@ -70,7 +70,12 @@ Run `ios_quality_observer.py --input PRIVATE_INPUT --input-sha256 INPUT_SHA256
 quiet device window. Activity Monitor records all processes for 390 seconds;
 the 360-second measurement starts after the fixed setup delay and activation.
 Inventories and foreground logging continue until exports and closure finish.
-The existing window bounds the whole operation to 600 seconds and 100 MiB.
+The quality caller explicitly permits an output admission of at most 512 MiB;
+ordinary launch callers retain their default 100 MiB ceiling. The admitted
+budget and host reserve are still checked before and during execution. Each
+XML input is bounded to 256 MiB. These bounds account for all-process trace
+exports and retained process inventories; they do not alter any measurement
+threshold or clock tolerance. The window remains bounded to 600 seconds.
 The observer installs nothing, builds nothing, does not attach a debugger or
 XCTest runner, and does not retry failures.
 

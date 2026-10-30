@@ -258,6 +258,14 @@ class QualityTests(unittest.TestCase):
             observer.record(self.fixture.write('config', self.fixture.config), self.fixture.root / 'output')
         window.assert_not_called()
 
+    def test_xml_above_256_mib_is_rejected_before_reading_or_parsing(self):
+        self.assertEqual(subject.MAX_XML_BYTES, 256 * 1024**2)
+        oversized = Mock()
+        oversized.stat.return_value = SimpleNamespace(st_size=256 * 1024**2 + 1)
+        with patch.object(subject, 'Path', return_value=oversized), self.assertRaisesRegex(EvidenceError, 'exceeds its bound'):
+            subject.xml('synthetic-oversized-export')
+        oversized.read_bytes.assert_not_called()
+
     def driver(self, *, replacement=False):
         """Replay real command/output shapes with a deterministic virtual clock."""
         f, now, commands = self.fixture, [0.0], []
@@ -269,7 +277,8 @@ class QualityTests(unittest.TestCase):
         config = f.write('configuration', f.config)
 
         class Window:
-            def __init__(self, *_):
+            def __init__(self, *_, output_ceiling):
+                if output_ceiling != 512 * 1024**2: raise ValueError('Quality ceiling was not explicitly supplied')
                 self.out, self.config, self.serial = output, f.window, 0
                 self.closed, self.children, self.capture = False, [], None
             def guard(self): pass

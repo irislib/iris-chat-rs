@@ -18,7 +18,7 @@ from ios_relaunch_adapters import foreground_pid
 from ios_ordinary_relaunch import read_bound, require, verify_binding, validate_distribution
 
 
-MAX_XML_BYTES = 64 * 1024**2
+MAX_XML_BYTES = 256 * 1024**2
 
 
 def finite(value):

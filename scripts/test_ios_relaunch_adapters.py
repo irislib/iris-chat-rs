@@ -80,9 +80,35 @@ class WindowTests(unittest.TestCase):
                               ('shutil.disk_usage', lambda _: SimpleNamespace(free=1024**3))]:
             p = patch('ios_relaunch_adapters.' + target, value); p.start(); self.addCleanup(p.stop)
 
-    def admit(self):
+    def admit(self, **options):
         p = self.root / 'admission.json'; p.write_text(json.dumps(self.config))
-        return adapters.OwnedWindow(binding(p), self.root / 'output', clock=lambda: self.clock)
+        return adapters.OwnedWindow(binding(p), self.root / 'output', clock=lambda: self.clock, **options)
+
+    def test_default_window_still_rejects_more_than_100_mib(self):
+        self.config['max_output_bytes'] = 100 * 1024**2 + 1
+        with self.assertRaisesRegex(EvidenceError, 'output budget'): self.admit()
+        self.assertFalse((self.root / 'output').exists())
+
+    def test_explicit_quality_ceiling_allows_512_mib_with_full_reserved_capacity(self):
+        self.config.update(max_output_bytes=512 * 1024**2, minimum_free_bytes=768 * 1024**2)
+        with patch.object(adapters.shutil, 'disk_usage', return_value=SimpleNamespace(free=1280 * 1024**2)):
+            window = self.admit(output_ceiling=512 * 1024**2)
+            window.guard()
+            window.close()
+        self.assertTrue(json.loads((window.out / 'closure.json').read_text())['closed'])
+
+    def test_output_ceiling_cannot_exceed_512_mib_or_lose_budget_and_reserve_checks(self):
+        for ceiling in (True, 0, 512 * 1024**2 + 1):
+            with self.subTest(ceiling=ceiling), self.assertRaisesRegex(EvidenceError, 'output ceiling'):
+                self.admit(output_ceiling=ceiling)
+        self.config.update(max_output_bytes=512 * 1024**2 + 1, minimum_free_bytes=768 * 1024**2)
+        with self.assertRaisesRegex(EvidenceError, 'output budget'): self.admit(output_ceiling=512 * 1024**2)
+        self.config.update(max_output_bytes=512 * 1024**2, minimum_free_bytes=512 * 1024**2)
+        with self.assertRaisesRegex(EvidenceError, 'host reserve'): self.admit(output_ceiling=512 * 1024**2)
+        self.config['minimum_free_bytes'] = 768 * 1024**2
+        with patch.object(adapters.shutil, 'disk_usage', return_value=SimpleNamespace(free=1280 * 1024**2 - 1)):
+            with self.assertRaisesRegex(EvidenceError, 'reserved capacity'): self.admit(output_ceiling=512 * 1024**2)
+        self.assertFalse((self.root / 'output').exists())
 
     def test_requires_explicit_admission_before_any_process(self):
         self.config['enabled'] = False

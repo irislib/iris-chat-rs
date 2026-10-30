@@ -31,6 +31,7 @@ HOME_QUALIFICATION_SHA256 = '708b4c79ccbcea27a1152a64177cec0ce86c6b010a27c2534e5
 SYSLOG_SIGTERM_SHA256 = '5a2c3f11644b926c1829010c93274f919097e52a77dab442e0a9e477791f8f1b'
 SYSLOG_SIGTERM_STDERR = b'\nExiting...\n'
 MAX_OUTPUT = 100 * 1024 * 1024
+MAX_OUTPUT_CEILING = 512 * 1024 * 1024
 HOME_EVENTS = ['ARMED', 'FIRE', 'home_down_requested', 'home_down_written', 'home_up_written',
                'home_write_complete', 'host_transport_close']
 
@@ -61,7 +62,8 @@ def validate_home_transcript(events, *, device, nonce, build, pid=None, complete
 
 class OwnedWindow:
     """Exact tools, direct-parent leases, bounded outputs and owned process groups."""
-    def __init__(self, admission_binding, out, *, clock=time.monotonic):
+    def __init__(self, admission_binding, out, *, clock=time.monotonic, output_ceiling=MAX_OUTPUT):
+        require(type(output_ceiling) is int and 0 < output_ceiling <= MAX_OUTPUT_CEILING, 'Invalid output ceiling')
         self.binding, self.clock = admission_binding, clock
         self.config = read_bound(admission_binding)
         c = self.config
@@ -79,8 +81,8 @@ class OwnedWindow:
             owner = json.loads((native_lab.lock_path(resource) / 'owner.json').read_text())
             require(owner['pid'] == c['owner_pid'], 'Wrong native lease owner')
         require(0 < finite(c['deadline_monotonic']) - clock() <= 600, 'Invalid runtime deadline')
-        require(type(c['max_output_bytes']) is int and 0 < c['max_output_bytes'] <= MAX_OUTPUT, 'Invalid output budget')
-        require(type(c['minimum_free_bytes']) is int and c['minimum_free_bytes'] > MAX_OUTPUT, 'Missing host reserve')
+        require(type(c['max_output_bytes']) is int and 0 < c['max_output_bytes'] <= output_ceiling, 'Invalid output budget')
+        require(type(c['minimum_free_bytes']) is int and c['minimum_free_bytes'] > output_ceiling, 'Missing host reserve')
         exact(c['tools'], {'coredevice', 'syslog', 'python', 'home_helper', 'home_disabled', 'home_qualification'})
         self.tools = {name: verify_binding(value) for name, value in c['tools'].items()}
         disabled = self.tools['home_disabled'].read_bytes()
