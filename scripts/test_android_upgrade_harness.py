@@ -4,6 +4,7 @@ import copy
 import base64
 import json
 import sqlite3
+from contextlib import closing
 import shutil
 from pathlib import Path
 import tempfile
@@ -26,7 +27,7 @@ def state():
 def database_fixture(path, edited=False):
     """Real SQLite with synthetic rows, only for validator unit tests."""
     path.unlink(missing_ok=True)
-    with sqlite3.connect(path) as db:
+    with closing(sqlite3.connect(path)) as db, db:
         db.executescript("""
           CREATE TABLE app_meta(key TEXT, value TEXT);
           CREATE TABLE preferences(id INTEGER, send_typing_indicators INTEGER);
@@ -240,7 +241,7 @@ class ReceiptEvidence(unittest.TestCase):
         self.receipt.write_text(json.dumps(data))
 
     def test_snapshot_content_is_checked_independently_of_summary(self):
-        with sqlite3.connect(self.receipt.parent / 'upgraded-state/core.sqlite3') as db:
+        with closing(sqlite3.connect(self.receipt.parent / 'upgraded-state/core.sqlite3')) as db, db:
             db.execute("UPDATE messages SET body='replacement body' WHERE id='message'")
         self.replace_database_digest('upgraded')
         with self.assertRaises(ValueError): validate(self.receipt, self.manifest, 'v2026.10.30')
@@ -286,7 +287,7 @@ class ReceiptEvidence(unittest.TestCase):
     def test_reads_wal_without_modifying_originals(self):
         original = self.folder / 'original.db'; database_fixture(original)
         destination = self.folder / 'wal-state'; destination.mkdir()
-        with sqlite3.connect(original) as db:
+        with closing(sqlite3.connect(original)) as db, db:
             db.execute('PRAGMA journal_mode=WAL'); db.execute('PRAGMA wal_autocheckpoint=0')
             db.execute("UPDATE preferences SET send_typing_indicators=1"); db.commit()
             # Copy while the connection is open, so the committed update exists

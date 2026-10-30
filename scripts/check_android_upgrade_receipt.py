@@ -7,6 +7,7 @@ import shutil
 import sqlite3
 import subprocess
 import tempfile
+from contextlib import closing
 from functools import lru_cache
 import json
 import re
@@ -80,7 +81,7 @@ def database_state(folder, files):
             if sha256(work / name) != digest:
                 raise ValueError('Database evidence changed while being read')
         try:
-            with sqlite3.connect((work / 'core.sqlite3').as_uri() + '?mode=ro', uri=True) as db:
+            with closing(sqlite3.connect((work / 'core.sqlite3').as_uri() + '?mode=ro', uri=True)) as db:
                 db.execute('PRAGMA query_only=ON')
                 if db.execute('PRAGMA integrity_check').fetchall() != [('ok',)]:
                     raise ValueError('Retained database integrity check failed')
