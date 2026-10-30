@@ -29,7 +29,7 @@ import ios_runtime_acceptance as contract
 
 ROLES = {'app', 'notification-service', 'share-extension'}
 MAX_UNPACKED = 256 * 1024**2
-SIGNATURE_POLICY = 'terminal-codesign-blob-and-linkedit-extent-v1'
+SIGNATURE_POLICY = 'terminal-codesign-region-and-linkedit-extent-v2'
 
 
 class PreparationError(ValueError):
@@ -75,8 +75,8 @@ def write_json(path, value):
     return binding(Path(path).resolve())
 
 
-def macho_binding(data):
-    """Hash all bytes except the structurally bounded code-signature envelope.
+def macho_binding(data, *, original=None):
+    """Hash all bytes except the structurally bounded terminal signature region.
 
     The four normalized fields are the signature offset/size and __LINKEDIT's
     file/VM sizes. The offset itself must remain identical between two files.
@@ -166,7 +166,21 @@ def macho_binding(data):
     blob_magic, blob_length, blob_count = struct.unpack_from('>III', data, sig_offset)
     require(blob_magic == 0xfade0cc0 and 12 + 8 * blob_count <= blob_length <= sig_size,
             'Invalid embedded signature envelope')
-    require(not any(data[sig_offset + blob_length:]), 'Nonzero bytes outside signature envelope')
+    tail = data[sig_offset + blob_length:]
+    tail_policy, original_digest = 'zero-padding', None
+    if any(tail):
+        require(original is not None, 'Nonzero signature residue needs verified original bytes')
+        original_binding = macho_binding(original)
+        old = original_binding['layout']
+        require(old['signatureOffset'] == sig_offset, 'Original signature start differs')
+        require(sig_offset + sig_size <= old['signatureOffset'] + old['signatureSize'],
+                'Signature residue escapes the original signature region')
+        # codesign can shrink its embedded blob without clearing the old tail.
+        # Every retained byte, including zeros, must match the original at the
+        # identical absolute offset. This does not enlarge the excluded region.
+        require(tail == original[sig_offset + blob_length:sig_offset + sig_size],
+                'Signature residue differs from the verified original')
+        tail_policy, original_digest = 'unchanged-original-bytes', original_binding['fileSHA256']
     ranges = []
     for index in range(blob_count):
         slot, start = struct.unpack_from('>II', data, sig_offset + 12 + index * 8)
@@ -187,6 +201,9 @@ def macho_binding(data):
         'rawLoadCommandsSHA256': sha(data[32:end]),
         'rawLoadCommandsBase64': base64.b64encode(data[32:end]).decode(),
         'fileSHA256': sha(data), 'signaturePolicy': SIGNATURE_POLICY,
+        'signatureRegionSHA256': sha(data[sig_offset:]), 'signatureBlobLength': blob_length,
+        'signatureTailSHA256': sha(tail), 'signatureTailBytes': len(tail),
+        'signatureTailPolicy': tail_policy, 'signatureTailOriginalSHA256': original_digest,
         'layout': {'signatureOffset': sig_offset, 'signatureSize': sig_size,
                    'linkeditOffset': link_offset, 'linkeditFileSize': link_size,
                    'linkeditVMSize': vm_size},
@@ -199,6 +216,9 @@ def compare_code(original, resigned):
     require(original['code'] == resigned['code'], 'Instructions or non-signature load commands changed')
     for field in ('signatureOffset', 'linkeditOffset'):
         require(original['layout'][field] == resigned['layout'][field], 'Signature or linkedit moved')
+    if resigned['signatureTailPolicy'] == 'unchanged-original-bytes':
+        require(resigned['signatureTailOriginalSHA256'] == original['fileSHA256'],
+                'Signature residue was compared with another original')
     return {'original': original['code'], 'resigned': resigned['code']}
 
 
@@ -464,9 +484,15 @@ def prepare(config_binding, output, *, execute=False):
         fingerprint = require_local_identity(identities, certificate)
         commands.run('security', 'verify-cert', '-c', bound(config['certificate']), '-p', 'codeSign', '-L', '-R', 'offline')
         before_resources = inventory(extracted, records)
+        # Read the comparison bytes independently from the hash-verified official
+        # IPA, not from a previously re-signed extraction or a claimed digest.
+        with zipfile.ZipFile(bound(config['ipa'])) as archive:
+            original_executables = {role: archive.read(row['executable'].relative_to(extracted).as_posix())
+                                    for role, row in records.items()}
         original, profiles, entitlements = {}, {}, {}
         for role in sorted(ROLES):
             row = records[role]
+            require(row['executable'].read_bytes() == original_executables[role], 'Extraction differs from official executable')
             commands.run('codesign', '--verify', '--strict', row['path'])
             commands.run('codesign', '-d', '--verbose=4', row['path'])
             original_certificate = output / (role + '-original-certificate-')
@@ -485,7 +511,7 @@ def prepare(config_binding, output, *, execute=False):
             retained = production_entitlements(original_entitlements)
             if role == 'app':
                 require(retained.get('aps-environment') == 'production', 'Main app lacks production APNs')
-            original[role] = {'code': macho_binding(row['executable'].read_bytes()),
+            original[role] = {'code': macho_binding(original_executables[role]),
                               'entitlements': original_entitlements, 'bundleID': row['id'],
                               'leafCertificate': binding(leaf)}
             profile_input = config['profiles'][role]
@@ -515,7 +541,7 @@ def prepare(config_binding, output, *, execute=False):
             commands.run('codesign', '--verify', '--strict', row['path'])
             encoded, _ = commands.run('codesign', '-d', '--entitlements', ':-', row['path'])
             require(plistlib.loads(encoded) == entitlements[role][0], 'Re-signed entitlements differ')
-            code = macho_binding(row['executable'].read_bytes())
+            code = macho_binding(row['executable'].read_bytes(), original=original_executables[role])
             code_bindings[role] = compare_code(original[role]['code'], code)
             prefix = output / (role + '-certificate-')
             commands.run('codesign', '-d', '--extract-certificates=' + str(prefix), row['path'])

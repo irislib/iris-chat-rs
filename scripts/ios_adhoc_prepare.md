@@ -75,16 +75,26 @@ automatic retry or permission to install that output.
 
 ## Executable comparison
 
-The explicit policy `terminal-codesign-blob-and-linkedit-extent-v1` supports thin
+The explicit policy `terminal-codesign-region-and-linkedit-extent-v2` supports thin
 arm64 executables. It preserves the full original and re-signed load-command
 bytes and raw digests in the private record. To compare unsigned content, it
-excludes only the structurally validated terminal embedded-signature envelope.
+excludes only the structurally validated terminal `LC_CODE_SIGNATURE` region.
 It represents the `LC_CODE_SIGNATURE` size as zero and `__LINKEDIT` file/VM
 extent as the unsigned extent, with the standard 16 KiB VM alignment. The
 signature offset and linkedit offset must remain identical. All other command
 bytes, header fields, UUID, instructions and unsigned data remain hash-bound.
 Other segment and data references must not overlap the signature; unsupported
 load commands fail rather than being ignored.
+
+The embedded signature blob may be shorter than its allocated region. Zero
+padding is accepted. Nonzero residual bytes are accepted only when the entire
+tail, including its zero bytes, exactly matches the independently hash-verified
+official IPA at identical offsets, entirely inside both original and re-signed
+terminal signature regions. The original must independently pass structural
+validation; signature starts cannot move. The record preserves both raw region
+and tail hashes, blob length, tail length and the exact original file digest.
+This handles unchanged old signature residue left by `codesign` without erasing
+bytes or excluding any additional instruction or load-command content.
 
 This is **not** a claim that full signed binaries or all raw load-command bytes
 are identical. The exact signature-layout delta is visible in `originalCode`

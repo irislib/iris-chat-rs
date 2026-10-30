@@ -18,8 +18,8 @@ import zipfile
 import ios_adhoc_prepare as subject
 
 
-def executable(signature_size=64, *, instruction=b'unchanged instructions', extra_command=b''):
-    text_size, signature_at = 4096, 4112
+def executable(signature_size=64, *, instruction=b'unchanged instructions', extra_command=b'', signature_at=4112):
+    text_size = 4096
     total = signature_at + signature_size
     segment = lambda name, start, size: struct.pack('<II16sQQQQiiII', 0x19, 72, name,
         0x100000000 + start, (size + 16383) // 16384 * 16384, start, size, 7, 5, 0, 0)
@@ -36,6 +36,74 @@ def executable(signature_size=64, *, instruction=b'unchanged instructions', extr
 
 
 class MachOTests(unittest.TestCase):
+    def residual_signature_pair(self):
+        original = bytearray(executable(128))
+        signature_at = 4112
+        struct.pack_into('>I', original, signature_at + 4, 96)
+        original[signature_at + 12:signature_at + 96] = bytes(range(1, 85))
+        resigned = bytearray(executable(64))
+        struct.pack_into('>I', resigned, signature_at + 4, 32)
+        resigned[signature_at + 12:signature_at + 32] = b'n' * 20
+        resigned[signature_at + 32:] = original[signature_at + 32:signature_at + 64]
+        return bytes(original), bytes(resigned)
+
+    def test_original_signature_residue_is_compared_at_identical_offsets(self):
+        original, resigned = self.residual_signature_pair()
+        before = subject.macho_binding(original)
+        after = subject.macho_binding(resigned, original=original)
+        self.assertEqual(subject.compare_code(before, after)['original'], before['code'])
+        self.assertEqual(after['signatureTailPolicy'], 'unchanged-original-bytes')
+        self.assertEqual(after['signatureTailOriginalSHA256'], subject.sha(original))
+        self.assertEqual(after['signatureTailBytes'], 32)
+        self.assertEqual(after['signatureTailSHA256'], subject.sha(resigned[4112 + 32:]))
+        self.assertEqual(after['signatureRegionSHA256'], subject.sha(resigned[4112:]))
+
+    def test_residual_signature_requires_original_and_rejects_changed_tail(self):
+        original, resigned = self.residual_signature_pair()
+        with self.assertRaises(subject.PreparationError):
+            subject.macho_binding(resigned)
+        changed = bytearray(resigned)
+        changed[4112 + 40] ^= 1
+        with self.assertRaisesRegex(subject.PreparationError, 'residue'):
+            subject.macho_binding(changed, original=original)
+
+    def test_residual_permission_never_excludes_code_outside_signature(self):
+        original, resigned = self.residual_signature_pair()
+        changed = bytearray(resigned)
+        changed[1024] ^= 1
+        with self.assertRaisesRegex(subject.PreparationError, 'Instructions'):
+            subject.compare_code(subject.macho_binding(original), subject.macho_binding(changed, original=original))
+
+    def test_residual_reference_cannot_move_signature_start(self):
+        _, resigned = self.residual_signature_pair()
+        with self.assertRaisesRegex(subject.PreparationError, 'signature start'):
+            subject.macho_binding(resigned, original=executable(128, signature_at=4128))
+
+    def test_residual_region_cannot_extend_past_original(self):
+        original, resigned = self.residual_signature_pair()
+        extended = bytearray(executable(256))
+        struct.pack_into('>I', extended, 4112 + 4, 32)
+        extended[4112 + 32:4112 + 64] = resigned[4112 + 32:]
+        with self.assertRaisesRegex(subject.PreparationError, 'escapes'):
+            subject.macho_binding(extended, original=original)
+
+    def test_every_residual_byte_including_original_zeros_is_compared(self):
+        original, _ = self.residual_signature_pair()
+        resigned = bytearray(executable(112))
+        struct.pack_into('>I', resigned, 4112 + 4, 32)
+        resigned[4112 + 32:] = original[4112 + 32:4112 + 112]
+        self.assertEqual(subject.macho_binding(resigned, original=original)['signatureTailPolicy'], 'unchanged-original-bytes')
+        resigned[4112 + 100] = 1
+        with self.assertRaisesRegex(subject.PreparationError, 'residue'):
+            subject.macho_binding(resigned, original=original)
+
+    def test_residual_permission_never_excludes_changed_load_command(self):
+        original, resigned = self.residual_signature_pair()
+        changed = bytearray(resigned)
+        struct.pack_into('<Q', changed, 32 + 24, 0x100004000)
+        with self.assertRaisesRegex(subject.PreparationError, 'Instructions'):
+            subject.compare_code(subject.macho_binding(original), subject.macho_binding(changed, original=original))
+
     def test_only_signature_extent_changes_are_normalized_and_raw_commands_retained(self):
         original, resigned = map(subject.macho_binding, (executable(64), executable(20000)))
         self.assertEqual(original['code'], resigned['code'])
