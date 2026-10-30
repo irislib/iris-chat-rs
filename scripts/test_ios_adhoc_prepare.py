@@ -355,8 +355,8 @@ class PreparationTests(unittest.TestCase):
             (path / '_CodeSignature/CodeResources').write_bytes(b'new seal')
             if self.mutate_resource:
                 (path / 'resource.txt').write_bytes(b'changed resource')
-        if tool == 'codesign' and args[:2] == ('-d', '--extract-certificates'):
-            Path(str(args[2]) + '0').write_bytes(self.fixture.cert)
+        if tool == 'codesign' and args[0] == '-d' and str(args[1]).startswith('--extract-certificates='):
+            Path(args[1].split('=', 1)[1] + '0').write_bytes(self.fixture.cert)
         return b'', b''
 
     def run_preparation(self):
@@ -382,6 +382,18 @@ class PreparationTests(unittest.TestCase):
         for tool, args in self.calls:
             if tool == 'security' and args[0] == 'verify-cert':
                 self.assertEqual(args[-5:], ('-p', 'codeSign', '-L', '-R', 'offline'))
+
+    def test_certificate_extraction_uses_attached_optional_argument(self):
+        self.run_preparation()
+        extractions = [args for tool, args in self.calls
+                       if tool == 'codesign' and any(str(arg).startswith('--extract-certificates') for arg in args)]
+        self.assertEqual(len(extractions), 6)
+        for args in extractions:
+            self.assertEqual(len(args), 3)
+            self.assertEqual(args[0], '-d')
+            self.assertTrue(args[1].startswith('--extract-certificates='))
+            self.assertEqual(Path(args[1].split('=', 1)[1]).parent, (self.root / 'output').resolve())
+            self.assertTrue(Path(args[2]).name.endswith(('.app', '.appex')))
 
     def test_instruction_failure_preserves_receipt_and_original(self):
         self.mutate_instruction = True
@@ -438,9 +450,9 @@ class PreparationTests(unittest.TestCase):
         run = self.fake_run
         def wrong_signed_leaf(commands, tool, *args):
             result = run(commands, tool, *args)
-            if (tool == 'codesign' and args[:2] == ('-d', '--extract-certificates')
-                    and '-original-certificate-' not in str(args[2])):
-                Path(str(args[2]) + '0').write_bytes(b'wrong actual signed leaf')
+            if (tool == 'codesign' and args[0] == '-d' and str(args[1]).startswith('--extract-certificates=')
+                    and '-original-certificate-' not in args[1]):
+                Path(args[1].split('=', 1)[1] + '0').write_bytes(b'wrong actual signed leaf')
             return result
         with patch.object(subject.sys, 'platform', 'darwin'), patch.object(subject.Commands, 'run', wrong_signed_leaf):
             with self.assertRaisesRegex(subject.PreparationError, 'actual signing certificate'):

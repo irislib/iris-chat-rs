@@ -456,7 +456,7 @@ def prepare(config_binding, output, *, execute=False):
             commands.run('codesign', '--verify', '--strict', row['path'])
             commands.run('codesign', '-d', '--verbose=4', row['path'])
             original_certificate = output / (role + '-original-certificate-')
-            commands.run('codesign', '-d', '--extract-certificates', original_certificate, row['path'])
+            commands.run('codesign', '-d', '--extract-certificates=' + str(original_certificate), row['path'])
             leaf = Path(str(original_certificate) + '0')
             chain = []
             for index in range(10):
@@ -504,7 +504,7 @@ def prepare(config_binding, output, *, execute=False):
             code = macho_binding(row['executable'].read_bytes())
             code_bindings[role] = compare_code(original[role]['code'], code)
             prefix = output / (role + '-certificate-')
-            commands.run('codesign', '-d', '--extract-certificates', prefix, row['path'])
+            commands.run('codesign', '-d', '--extract-certificates=' + str(prefix), row['path'])
             require(Path(str(prefix) + '0').read_bytes() == certificate, 'Unexpected actual signing certificate')
             require((row['path'] / 'embedded.mobileprovision').read_bytes()
                     == bound(config['profiles'][role]['profile']).read_bytes(), 'Embedded profile changed')
