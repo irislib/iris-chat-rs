@@ -202,6 +202,37 @@ class RelaunchTests(unittest.TestCase):
         self.assertEqual([call[0] for call in calls], ['launch', 'trigger'])
         with self.assertRaises(relaunch.EvidenceError): controller.run_once(**callbacks)
 
+    def test_valid_raw_launch_triggers_before_postlaunch_inventory(self):
+        controller = self.controller(); callbacks, calls = self.callbacks()
+        original = callbacks['snapshot']
+        callbacks['snapshot'] = lambda: (calls.append(('snapshot',)) or original())
+        record = controller.run_once(**callbacks)
+        self.assertEqual([call[0] for call in calls], ['snapshot', 'launch', 'trigger', 'snapshot'])
+        self.assertFalse(record['launch_result_proof']['inventory_verified'])
+        self.assertTrue(record['launch_proof']['inventory_verified'])
+
+    def test_bad_actual_launch_result_prevents_trigger(self):
+        for mutate in (lambda d: d.update(deviceIdentifier='wrong'),
+                       lambda d: d['launchOptions'].update(startStopped=True),
+                       lambda d: d['process'].update(processIdentifier=101),
+                       lambda d: d['process'].update(executable='file:///wrong/Example')):
+            controller = self.controller(); callbacks, calls = self.callbacks()
+            result = self.fixture.result(); mutate(result)
+            callbacks['launch'] = lambda _: result
+            with self.assertRaises(relaunch.EvidenceError): controller.run_once(**callbacks)
+            self.assertEqual(controller.record['trigger_count'], 0)
+            self.assertFalse(any(call[0] == 'trigger' for call in calls))
+
+    def test_posttrigger_inventory_failure_is_preserved_without_retry(self):
+        controller = self.controller(); callbacks, calls = self.callbacks()
+        snapshots = iter([self.fixture.snapshot(101), self.fixture.snapshot(103)])
+        callbacks['snapshot'] = lambda: next(snapshots)
+        with self.assertRaises(relaunch.EvidenceError): controller.run_once(**callbacks)
+        self.assertEqual(controller.record['trigger_count'], 1)
+        self.assertIn('failure', controller.record)
+        self.assertFalse(controller.record['completed'])
+        with self.assertRaises(relaunch.EvidenceError): controller.run_once(**callbacks)
+
     def test_uncertain_launch_or_trigger_failure_cannot_retry(self):
         for failure in ('launch', 'trigger'):
             controller = self.controller(); callbacks, calls = self.callbacks()
@@ -230,6 +261,8 @@ class RelaunchTests(unittest.TestCase):
         for sample in capture['samples']: sample['executable'] = f.executable
         capture = {key: capture[key] for key in ('startup_text', 'lifecycle_text', 'samples')}
         capture['process_name'] = 'Example'
+        capture['closure_binding'] = f.write('capture-closure', {'schema': 'iris-relaunch-adapter-closure-v1',
+            'candidate': f.candidate, 'device': f.config['device'], 'closed': True, 'failures': [], 'groups': [1001, 1002, 1003]})
         resume = {'result': f.result(replacement=False), 'snapshot': f.snapshot(102, 147.85),
                   'command': relaunch.launch_command(f.config['bundle_id'], replacement=False),
                   'started_utc': 147.5, 'returned_utc': 147.8, 'validated_utc': 147.9,
@@ -286,6 +319,13 @@ class RelaunchTests(unittest.TestCase):
     def test_provenance_mutation_during_observation_is_rejected(self):
         record, resume, capture = self.runtime_fixture()
         Path(self.fixture.inputs['profiles']['path']).write_text('{}')
+        with self.assertRaises(relaunch.EvidenceError): self.evaluate(record, resume, capture)
+
+    def test_runtime_cannot_skip_failed_process_group_closure(self):
+        record, resume, capture = self.runtime_fixture()
+        value = json.loads(Path(capture['closure_binding']['path']).read_text())
+        value.update(closed=False, failures=['owned logger remains'])
+        capture['closure_binding'] = self.fixture.write('failed-closure', value)
         with self.assertRaises(relaunch.EvidenceError): self.evaluate(record, resume, capture)
 
     def test_stale_resume_with_relabelled_monotonic_times_is_rejected(self):

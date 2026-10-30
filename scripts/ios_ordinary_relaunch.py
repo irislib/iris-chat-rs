@@ -182,9 +182,13 @@ def launch_command(bundle_id, *, replacement):
     return ['device', 'process', 'launch', *(['--terminate-existing'] if replacement else []), bundle_id]
 
 
-def validate_launch(distribution, installed, result, snapshot, command, started, returned, validated,
-                    *, executable, before=None, resume_of=None):
-    """Validate actual CoreDevice output; replacement and resume are distinct."""
+def validate_launch_result(distribution, installed, result, command, started, returned, validated,
+                           *, executable, before=None, resume_of=None):
+    """Check returned target/new PID/options in memory before one control action.
+
+    This is deliberately insufficient for final acceptance: the separate actual
+    postlaunch inventory and every lifecycle check remain mandatory.
+    """
     require((before is None) != (resume_of is None), 'Choose replacement or same-process resume')
     replacement = before is not None
     require(command == launch_command(distribution['bundle_id'], replacement=replacement), 'Nonordinary launch command')
@@ -210,8 +214,6 @@ def validate_launch(distribution, installed, result, snapshot, command, started,
     require(launched['executable'] == executable and isinstance(audit, list) and len(audit) == 8
             and all(type(n) is int and 0 <= n <= 2**32 - 1 for n in audit) and audit[5] == pid,
             'Invalid launch process identity')
-    current = validate_snapshot(snapshot, executable, now=validated)
-    require(snapshot['observed_utc'] >= returned and current['pid'] == pid, 'Launch/inventory mismatch')
     if replacement:
         old = validate_snapshot(before, executable, now=started, foreground=True)
         require(old['pid'] != pid, 'Replacement did not create a fresh process')
@@ -222,7 +224,18 @@ def validate_launch(distribution, installed, result, snapshot, command, started,
             'pid': pid, 'executable': executable, 'audit_token': audit,
             'replacement': replacement, 'previous_pid': before['processes'][0]['pid'] if replacement else None,
             'command': command, 'launch_options': options, 'started_utc': started,
-            'returned_utc': returned, 'validated_utc': validated, 'debugger_free': True}
+            'returned_utc': returned, 'validated_utc': validated, 'debugger_free': True,
+            'inventory_verified': False}
+
+
+def validate_launch(distribution, installed, result, snapshot, command, started, returned, validated,
+                    *, executable, before=None, resume_of=None):
+    """Finish the ordinary-launch proof using actual postlaunch inventory."""
+    proof = validate_launch_result(distribution, installed, result, command, started, returned, validated,
+                                   executable=executable, before=before, resume_of=resume_of)
+    current = validate_snapshot(snapshot, executable, now=validated)
+    require(snapshot['observed_utc'] >= returned and current['pid'] == proof['pid'], 'Launch/inventory mismatch')
+    return {**proof, 'inventory_verified': True}
 
 
 class OrdinaryForegroundRelaunch:
@@ -266,14 +279,17 @@ class OrdinaryForegroundRelaunch:
             result = launch(command)
             returned = self.clock()
             self.record.update(result=result, returned_utc=returned, returned_monotonic=self.monotonic())
+            immediate = validate_launch_result(self.distribution, self.installed, result, command,
+                started, returned, self.clock(), executable=self.executable, before=before)
+            self.record['launch_result_proof'] = immediate
+            self.record['trigger_count'] = 1
+            trigger_result = trigger(armed, immediate)
+            self.record['trigger_result'] = trigger_result
+            validate_trigger(armed, immediate, trigger_result)
             after = snapshot()
             proof = validate_launch(self.distribution, self.installed, result, after, command,
-                                    started, returned, self.clock(), executable=self.executable, before=before)
+                started, returned, self.clock(), executable=self.executable, before=before)
             self.record.update(after=after, launch_proof=proof)
-            self.record['trigger_count'] = 1
-            trigger_result = trigger(armed, proof)
-            self.record['trigger_result'] = trigger_result
-            validate_trigger(armed, proof, trigger_result)
             require(validate_distribution(self.binding, self.candidate) == self.distribution, 'Distribution changed')
             self.record['completed'] = True
             return self.record
@@ -291,6 +307,10 @@ def evaluate_runtime(distribution_binding, candidate, attempt, resume, capture):
             and attempt.get('automatic_retry') is False and attempt.get('completed') is True,
             'Incomplete one-shot attempt')
     require('failure' not in attempt, 'A preserved failure cannot become acceptance')
+    immediate = validate_launch_result(distribution, attempt['installed'], attempt['result'], attempt['command'],
+        attempt['started_utc'], attempt['returned_utc'], attempt['launch_result_proof']['validated_utc'],
+        executable=attempt['executable'], before=attempt['before'])
+    require(immediate == attempt['launch_result_proof'], 'Immediate launch result proof changed')
     proof = validate_launch(distribution, attempt['installed'], attempt['result'], attempt['after'],
                             attempt['command'], attempt['started_utc'], attempt['returned_utc'],
                             attempt['launch_proof']['validated_utc'], executable=attempt['executable'],
@@ -304,10 +324,18 @@ def evaluate_runtime(distribution_binding, candidate, attempt, resume, capture):
     resume_proof = validate_launch(distribution, attempt['installed'], resume['result'], resume['snapshot'],
                                    resume['command'], resume['started_utc'], resume['returned_utc'],
                                    resume['validated_utc'], executable=proof['executable'], resume_of=proof)
-    exact(capture, {'startup_text', 'lifecycle_text', 'process_name', 'samples'})
+    exact(capture, {'startup_text', 'lifecycle_text', 'process_name', 'samples', 'closure_binding'})
+    closure = read_bound(capture['closure_binding'])
+    exact(closure, {'schema', 'candidate', 'device', 'closed', 'failures', 'groups'})
+    require(closure['schema'] == 'iris-relaunch-adapter-closure-v1' and closure['closed'] is True
+            and closure['failures'] == [] and closure['candidate'] == candidate
+            and closure['device'] == distribution['device'] and isinstance(closure['groups'], list)
+            and len(closure['groups']) >= 3
+            and all(type(group) is int and group > 0 for group in closure['groups']),
+            'Capture process groups did not close for this candidate')
     require(capture['process_name'] == urlsplit(proof['executable']).path.rsplit('/', 1)[-1],
             'Capture process name differs from launched executable')
-    evidence = lifecycle.evaluate_early_background(**capture, bundle_id=distribution['bundle_id'],
+    evidence = lifecycle.evaluate_early_background(**{k: v for k, v in capture.items() if k != 'closure_binding'}, bundle_id=distribution['bundle_id'],
         pid=proof['pid'], executable=proof['executable'], device=distribution['device'],
         initial_prefixes=attempt['initial_prefixes'], old_pid=proof['previous_pid'])
     require(finite(attempt['started_monotonic']) <= finite(attempt['returned_monotonic'])

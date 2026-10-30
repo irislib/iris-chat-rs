@@ -16,10 +16,11 @@ from ios_ordinary_relaunch import binding, require, verify_binding
 
 
 SOURCES = ('ios_ordinary_relaunch.py', 'ios_relaunch_lifecycle.py',
+           'ios_relaunch_adapters.py', 'test_ios_relaunch_adapters.py', 'native_lab.py',
            'test_ios_ordinary_relaunch.py', 'test_ios_relaunch_lifecycle.py',
            'ios_runtime_acceptance.py', 'test_ios_runtime_acceptance.py',
            'test_ios_runtime_workflow.py', 'qualify_ios_ordinary_relaunch.py')
-TESTS = ('test_ios_ordinary_relaunch', 'test_ios_relaunch_lifecycle',
+TESTS = ('test_ios_ordinary_relaunch', 'test_ios_relaunch_lifecycle', 'test_ios_relaunch_adapters',
          'test_ios_runtime_acceptance', 'test_ios_runtime_workflow')
 
 

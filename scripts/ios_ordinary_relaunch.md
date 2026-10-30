@@ -40,8 +40,9 @@ blocker; never hand-author passing evidence to fill that gap.
 ## One reserved attempt
 
 `OrdinaryForegroundRelaunch.run_once` accepts small capture/transport callbacks.
-The release owner must separately qualify and hash-bind those adapters and their
-actual tool binaries, reserve the physical device and preserve the first failure.
+`ios_relaunch_adapters.py` supplies the real bounded CoreDevice, syslog and USB
+Home adapters. The release owner must hash-bind their actual tools and private
+admission, reserve the physical device and preserve the first failure.
 Callbacks must provide real observations rather than inferred fields:
 
 1. `prearm()` returns the acknowledged nonce, exact device/bundle/build and
@@ -53,10 +54,33 @@ Callbacks must provide real observations rather than inferred fields:
 3. `launch(command)` issues exactly the supplied ordinary CoreDevice request,
    without console/debugger/environment/argument overrides, and returns its raw
    result. There is no retry, including after an uncertain outcome.
-4. After fresh-PID validation, `trigger(armed, proof)` sends one prearmed Home or
+4. After an in-memory check of the returned target, ordinary options and fresh
+   PID, `trigger(armed, proof)` sends one prearmed Home or
    Lock action. Its result must contain the same nonce/build/new PID,
    `sent_count: 1` and `acknowledged: true`. This acknowledgement proves no
-   background entry, overlap or suspension by itself.
+   background entry, overlap or suspension by itself. Actual process inventory
+   and full launch validation follow the trigger. Failure there invalidates the
+   attempt even though Home was already sent; no second attempt is permitted.
+
+`OwnedWindow` requires `iris-relaunch-adapters-v1` admission with the exact
+candidate/distribution binding, target, direct-parent owner, one new output root, current deadline,
+host disk reserve, output cap (at most 100 MiB) and tools. Both native-lab leases
+must belong to that live direct parent. Tool bindings name the direct CoreDevice
+executable, idevicesyslog, isolated Python interpreter, retained disabled Home
+helper, its existing qualification and a separately reviewed enabled copy.
+The adapter verifies the retained helper/qualification pins and permits only
+the single execution-enable line change; it never creates that copy itself.
+The helper keeps its qualified USB-only transport and pinned dependency checks.
+There is no new UI runner, pairing, package installation or control fallback.
+
+Create `CoreDevice(window)`, `Capture(window, core)` and `PrearmedHome(window)`.
+Start capture before arming Home. Wire `snapshot=capture.snapshot`,
+`prearm=home.arm`, `capture_prefixes=capture.prefixes`, `launch=core.run` and
+`trigger=home.fire`. The two syslog streams must explicitly report connection
+to the exact phone, and the existing process needs actual ordered SpringBoard
+foreground evidence. An idle process with no such evidence does not qualify.
+The returned Home acknowledgement represents the helper's local writes and
+clean transport closure, **not** an OS acknowledgement or observed device effect.
 
 Use the validated physical-device identifier for log connections and the bound
 CoreDevice identifier for returned launch results. Do not infer foreground state
@@ -77,6 +101,11 @@ ordinary resume launch's audit token against the initial launch and binds resume
 placement to the captured host monotonic interval. Paired host UTC/monotonic
 clocks must agree within 250ms; device log timestamps are never compared with
 host clocks. Clock jumps fail instead of extending a freshness/coverage bound.
+After the observation, close the owned window and obtain
+`capture.final_capture(samples)`. This retains the untrimmed final log tails and
+a hash-bound candidate/target process-group closure receipt; a live group or
+cleanup failure invalidates final evaluation. A reaped process leader's numeric
+group ID is never used to signal a potentially unrelated reused process.
 
 `compose_adhoc_proof` consumes a hash-bound
 `iris-ordinary-relaunch-capture-v1` record containing `attempt`, `resume` and
