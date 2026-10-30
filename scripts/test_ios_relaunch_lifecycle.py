@@ -36,6 +36,24 @@ def binding(text):
     return {"bytes": len(data), "sha256": hashlib.sha256(data).hexdigest()}
 
 
+def bind_cutoff(value):
+    """Bind synthetic shutdown metadata without altering any live observation."""
+    last = value["samples"][-1]
+    now = last["observed_monotonic"]
+    value["measurement_cutoff"] = {
+        "schema": "iris-live-capture-cutoff-v1", "intent": "finish-observation",
+        "sample_index": len(value["samples"]) - 1, "samples_sha256": lifecycle.evidence_sha256(value["samples"]),
+        "observed_monotonic": now, "requested_monotonic": now + 0.1,
+        "closing_started_monotonic": now + 0.2, "closing_finished_monotonic": now + 0.5,
+        "prefixes": {name: {"bytes": last[name + "_bytes"], "sha256": last[name + "_sha256"]}
+                     for name in ("startup", "lifecycle")},
+        "streams": {name: {"signal_requested_monotonic": now + 0.25, "signal_sent_monotonic": now + 0.3,
+                           "stopped_monotonic": now + 0.4, "signal": "SIGTERM", "signal_delivered": True,
+                           "returncode": 0, "raw_bytes": binding(value[name + "_text"])["bytes"],
+                           "raw_sha256": binding(value[name + "_text"])["sha256"]}
+                    for name in ("startup", "lifecycle")}}
+
+
 def fixture():
     """A fresh foreground process, true native overlap, 135s + 15s observed."""
     enqueue = startup("restore_enqueued", 0.1, pending=True)
@@ -59,6 +77,7 @@ def fixture():
             for key, item in binding(text).items():
                 sample[name + "_" + key] = item
         value["samples"].append(sample)
+    bind_cutoff(value)
     return value
 
 
@@ -71,11 +90,14 @@ def replace_capture(value, name, old, new):
         for key, item in binding(prefix).items():
             sample[name + "_" + key] = item
     value[name + "_text"] = text.replace(old, new)
+    bind_cutoff(value)
 
 
 class LifecycleTests(unittest.TestCase):
-    def reject(self, value):
+    def reject(self, value, *, rebind=True):
         with self.assertRaises(lifecycle.LifecycleError):
+            if rebind:
+                bind_cutoff(value)
             lifecycle.evaluate_early_background(**value)
 
     def test_true_native_overlap_and_observed_suspension(self):
@@ -253,6 +275,52 @@ class LifecycleTests(unittest.TestCase):
         replace_capture(value, "lifecycle", state(lifecycle.ACTIVE, 137),
                         state(lifecycle.ACTIVE, 130) + state(lifecycle.SUSPENDED, 131) + state(lifecycle.ACTIVE, 137))
         self.reject(value)
+
+    def test_intentional_terminal_disconnect_keeps_raw_and_live_cutoff_distinct(self):
+        # Same terminal syntax as the retained physical capture; identity synthetic.
+        value = fixture()
+        live = copy.deepcopy(value["samples"])
+        for name in ("startup", "lifecycle"):
+            value[name + "_text"] += "[disconnected:" + DEVICE + "]\n"
+        bind_cutoff(value)
+        evidence = lifecycle.evaluate_early_background(**value)
+        self.assertEqual(value["samples"], live)
+        self.assertEqual(evidence["process_samples"], len(live))
+        self.assertEqual(evidence["suspended_seconds"], 135)
+        self.assertEqual(evidence["resumed_seconds"], 15)
+        self.assertEqual(evidence["startup_sha256"], binding(value["startup_text"])["sha256"])
+        self.assertEqual(evidence["startup_measured_sha256"], live[-1]["startup_sha256"])
+        self.assertNotEqual(evidence["startup_sha256"], evidence["startup_measured_sha256"])
+
+    def test_disconnect_before_cutoff_and_postcutoff_records_fail(self):
+        value = fixture()
+        replace_capture(value, "startup", startup("restore_result_observed", 0.7, background=True),
+                        startup("restore_result_observed", 0.7, background=True) + "[disconnected:" + DEVICE + "]\n")
+        self.reject(value)
+        for name, extra in (("startup", "lost 1 messages\n"),
+                            ("startup", startup("backgrounded", 153, background=True)),
+                            ("lifecycle", state(lifecycle.SUSPENDED, 153)),
+                            ("lifecycle", state(lifecycle.ACTIVE, 153)),
+                            ("startup", "[disconnected:other-device]\n"),
+                            ("startup", "[disconnected:" + DEVICE + "]\n[disconnected:" + DEVICE + "]\n"),
+                            ("startup", "[disconnected:" + DEVICE + "]")):
+            value = fixture(); value[name + "_text"] += extra; self.reject(value)
+
+    def test_cutoff_intent_timing_raw_hash_and_live_sample_cannot_be_forged(self):
+        changes = (lambda c: c.update(intent="cleanup-after-failure"),
+                   lambda c: c.update(requested_monotonic=151),
+                   lambda c: c.update(closing_started_monotonic=151),
+                   lambda c: c.update(closing_finished_monotonic=200),
+                   lambda c: c.update(sample_index=0),
+                   lambda c: c["streams"]["startup"].update(signal_delivered=False),
+                   lambda c: c["streams"]["startup"].update(returncode=-9),
+                   lambda c: c["streams"]["startup"].update(raw_sha256="0" * 64),
+                   lambda c: c["streams"]["startup"].update(signal_requested_monotonic=151),
+                   lambda c: c.update(samples_sha256="0" * 64))
+        for change in changes:
+            value = fixture(); change(value["measurement_cutoff"]); self.reject(value, rebind=False)
+        value = fixture(); value["samples"][-1]["observed_monotonic"] = 153
+        self.reject(value, rebind=False)
 
 
 if __name__ == "__main__":

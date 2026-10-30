@@ -261,8 +261,14 @@ class RelaunchTests(unittest.TestCase):
         for sample in capture['samples']: sample['executable'] = f.executable
         capture = {key: capture[key] for key in ('startup_text', 'lifecycle_text', 'samples')}
         capture['process_name'] = 'Example'
+        # Physical idevicesyslog appends this on intentional cleanup. These
+        # bytes were never observed by a live sample and remain in the raw proof.
+        for name in ('startup', 'lifecycle'):
+            capture[name + '_text'] += '[disconnected:' + f.config['device'] + ']\n'
+        lifecycle_fixture.bind_cutoff(capture)
         capture['closure_binding'] = f.write('capture-closure', {'schema': 'iris-relaunch-adapter-closure-v1',
-            'candidate': f.candidate, 'device': f.config['device'], 'closed': True, 'failures': [], 'groups': [1001, 1002, 1003]})
+            'candidate': f.candidate, 'device': f.config['device'], 'closed': True, 'failures': [], 'groups': [1001, 1002, 1003],
+            'measurement_cutoff_sha256': relaunch.lifecycle.evidence_sha256(capture['measurement_cutoff'])})
         resume = {'result': f.result(replacement=False), 'snapshot': f.snapshot(102, 147.85),
                   'command': relaunch.launch_command(f.config['bundle_id'], replacement=False),
                   'started_utc': 147.5, 'returned_utc': 147.8, 'validated_utc': 147.9,
@@ -285,6 +291,9 @@ class RelaunchTests(unittest.TestCase):
             self.evaluate(wrong, resume, capture)
         wrong = copy.deepcopy(capture)
         lifecycle_fixture.replace_capture(wrong, 'startup', 'native_restoring_observed=true', 'native_restoring_observed=false')
+        closure = relaunch.read_bound(wrong['closure_binding'])
+        closure['measurement_cutoff_sha256'] = relaunch.lifecycle.evidence_sha256(wrong['measurement_cutoff'])
+        wrong['closure_binding'] = self.fixture.write('synthetic-native-miss-closure', closure)
         with self.assertRaises(relaunch.lifecycle.LifecycleError):
             self.evaluate(record, resume, wrong)
 

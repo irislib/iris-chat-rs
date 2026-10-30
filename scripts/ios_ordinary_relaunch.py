@@ -324,15 +324,17 @@ def evaluate_runtime(distribution_binding, candidate, attempt, resume, capture):
     resume_proof = validate_launch(distribution, attempt['installed'], resume['result'], resume['snapshot'],
                                    resume['command'], resume['started_utc'], resume['returned_utc'],
                                    resume['validated_utc'], executable=proof['executable'], resume_of=proof)
-    exact(capture, {'startup_text', 'lifecycle_text', 'process_name', 'samples', 'closure_binding'})
+    exact(capture, {'startup_text', 'lifecycle_text', 'process_name', 'samples', 'measurement_cutoff', 'closure_binding'})
     closure = read_bound(capture['closure_binding'])
-    exact(closure, {'schema', 'candidate', 'device', 'closed', 'failures', 'groups'})
+    exact(closure, {'schema', 'candidate', 'device', 'closed', 'failures', 'groups', 'measurement_cutoff_sha256'})
     require(closure['schema'] == 'iris-relaunch-adapter-closure-v1' and closure['closed'] is True
             and closure['failures'] == [] and closure['candidate'] == candidate
             and closure['device'] == distribution['device'] and isinstance(closure['groups'], list)
             and len(closure['groups']) >= 3
             and all(type(group) is int and group > 0 for group in closure['groups']),
             'Capture process groups did not close for this candidate')
+    require(closure['measurement_cutoff_sha256'] == lifecycle.evidence_sha256(capture['measurement_cutoff']),
+            'Closure does not bind the exact live measurement cutoff')
     require(capture['process_name'] == urlsplit(proof['executable']).path.rsplit('/', 1)[-1],
             'Capture process name differs from launched executable')
     evidence = lifecycle.evaluate_early_background(**{k: v for k, v in capture.items() if k != 'closure_binding'}, bundle_id=distribution['bundle_id'],

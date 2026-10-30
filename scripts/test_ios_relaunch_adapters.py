@@ -183,6 +183,101 @@ class WindowTests(unittest.TestCase):
         with self.assertRaises(adapters.lifecycle.LifecycleError):
             adapters.lifecycle.capture_prefixes(**final, device=self.config['device'])
 
+    def measured_capture(self):
+        self.config['deadline_monotonic'] = 500
+        window = self.admit()
+        board = {'processIdentifier': 1, 'executable': 'file:///system/SpringBoard.app/SpringBoard'}
+        core = Mock(); core.run.return_value = {'runningProcesses': [board]}
+        capture = adapters.Capture(window, core)
+        def spawn(command, label):
+            path = Path(command[command.index('-o') + 1]); path.write_text('[connected:synthetic-device]\n')
+            stdout, stderr = window.out / (label + '.stdout'), window.out / (label + '.stderr')
+            stdout.write_bytes(b''); stderr.write_bytes(b'')
+            child = Mock(stdin=None); child.alive = True; child.returncode = None
+            child.poll.side_effect = lambda: None if child.alive else child.returncode
+            child.wait.side_effect = lambda timeout: child.returncode
+            item = {'process': child, 'stdout': stdout, 'stderr': stderr, 'group': 200 + len(window.children)}
+            window.children.append(item)
+            return item
+        with patch.object(window, 'spawn', side_effect=spawn): capture.start()
+        source = log_fixture.fixture()
+        log_fixture.replace_capture(source, 'startup', ' Chat[', ' Example[')
+        log_fixture.replace_capture(source, 'lifecycle', log_fixture.BUNDLE, self.config['bundle_id'])
+        samples = []
+        snapshot = {'processes': [{'pid': 102, 'executable': self.config['executable']}],
+                    'foreground_pid': 102, 'observed_utc': 0}
+        with patch.object(capture, 'snapshot', return_value=snapshot):
+            for recorded in source['samples']:
+                self.clock = recorded['observed_monotonic'] + 10
+                for name in ('startup', 'lifecycle'):
+                    capture.streams[name]['capture'].write_bytes(source[name + '_text'].encode()[:recorded[name + '_bytes']])
+                samples.append(capture.sample(102))
+        return window, capture, samples, source
+
+    def close_capture(self, window, capture, *, extra='', logger_error=False):
+        def signal(group, signum):
+            if signum == 0: raise ProcessLookupError()
+            self.assertEqual(signum, adapters.signal.SIGTERM)
+            self.assertIsNotNone(capture.cutoff['closing_started_monotonic'])
+            item = next(row for row in window.children if row['group'] == group)
+            with item['capture'].open('ab') as stream:
+                if item['capture_name'] == 'lifecycle': stream.write(extra.encode())
+                # Exact syntax observed in the retained physical idevicesyslog log.
+                stream.write(b'[disconnected:synthetic-device]\n')
+            item['process'].alive = False; item['process'].returncode = 0
+            if logger_error: item['stderr'].write_text('logger reported shutdown error')
+            self.clock += 0.05
+        with patch.object(adapters.os, 'killpg', side_effect=signal): window.close()
+
+    def test_live_cutoff_precedes_shutdown_and_preserves_terminal_disconnect(self):
+        window, capture, samples, source = self.measured_capture()
+        live = copy.deepcopy(samples)
+        capture.mark_measurement_cutoff(samples)
+        self.clock += 0.1
+        self.close_capture(window, capture)
+        final = capture.final_capture(samples)
+        self.assertEqual(samples, live)
+        self.assertEqual(final['samples'], live)
+        for name in ('startup', 'lifecycle'):
+            self.assertTrue(final[name + '_text'].endswith('[disconnected:synthetic-device]\n'))
+            self.assertGreater(len(final[name + '_text'].encode()), live[-1][name + '_bytes'])
+        value = {k: v for k, v in final.items() if k != 'closure_binding'}
+        evidence = adapters.lifecycle.evaluate_early_background(**value, bundle_id=self.config['bundle_id'],
+            pid=102, executable=self.config['executable'], device=self.config['device'],
+            initial_prefixes=source['initial_prefixes'], old_pid=101)
+        self.assertEqual((evidence['suspended_seconds'], evidence['resumed_seconds']), (135, 15))
+        self.assertEqual(evidence['process_samples'], len(live))
+        with self.assertRaises(EvidenceError): capture.sample(102)
+
+    def test_disconnect_before_close_signal_invalidates_cutoff(self):
+        window, capture, samples, _ = self.measured_capture()
+        capture.mark_measurement_cutoff(samples)
+        with capture.streams['startup']['capture'].open('ab') as log:
+            log.write(b'[disconnected:synthetic-device]\n')
+        with self.assertRaises(EvidenceError): self.close_capture(window, capture)
+        with self.assertRaises(EvidenceError): capture.final_capture(samples)
+
+    def test_live_loss_cannot_be_hidden_by_shutdown(self):
+        window, capture, samples, _ = self.measured_capture()
+        with capture.streams['startup']['capture'].open('ab') as log: log.write(b'lost 1 messages\n')
+        with self.assertRaises(EvidenceError): capture.mark_measurement_cutoff(samples)
+        # No measurement close intent was established; cleanup grants no evidence.
+        self.assertIsNone(capture.cutoff)
+
+    def test_target_transition_during_close_is_preserved_and_fails(self):
+        window, capture, samples, _ = self.measured_capture()
+        capture.mark_measurement_cutoff(samples)
+        transition = log_fixture.state(adapters.lifecycle.SUSPENDED, 153).replace(log_fixture.BUNDLE, self.config['bundle_id'])
+        with self.assertRaises(EvidenceError): self.close_capture(window, capture, extra=transition)
+        self.assertIn(transition, capture.streams['lifecycle']['capture'].read_text())
+        with self.assertRaises(EvidenceError): capture.final_capture(samples)
+
+    def test_logger_error_during_shutdown_invalidates_closure(self):
+        window, capture, samples, _ = self.measured_capture()
+        capture.mark_measurement_cutoff(samples)
+        with self.assertRaises(EvidenceError): self.close_capture(window, capture, logger_error=True)
+        self.assertFalse(json.loads((window.out / 'closure.json').read_text())['closed'])
+
     def test_home_adapter_accepts_only_complete_bound_local_protocol(self):
         window = self.admit(); home = adapters.PrearmedHome(window)
         stdout, stderr = window.out / 'home.stdout', window.out / 'home.stderr'

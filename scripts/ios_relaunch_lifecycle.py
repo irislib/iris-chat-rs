@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from datetime import datetime
 import hashlib
+import json
 import math
 import re
 
@@ -107,8 +108,78 @@ def _records(data, initial, parser):
     return records
 
 
+def evidence_sha256(value):
+    try:
+        encoded = json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
+    except (ValueError, TypeError, UnicodeError) as error:
+        raise LifecycleError("Invalid cutoff evidence") from error
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def measurement_captures(*, startup_text, lifecycle_text, device, samples, measurement_cutoff):
+    """Separate the last live observation from a narrowly qualified shutdown tail.
+
+    Full raw captures are retained and hashed. Only an empty suffix or the exact
+    logger-generated terminal disconnect is allowed after an explicit live cutoff.
+    No post-exit sample is created, and no shutdown time counts toward a phase.
+    """
+    cutoff = measurement_cutoff
+    require(isinstance(samples, list) and 2 <= len(samples) <= 512, "Missing or excessive live samples")
+    require(isinstance(cutoff, dict) and set(cutoff) == {
+        "schema", "intent", "sample_index", "samples_sha256", "observed_monotonic", "prefixes",
+        "requested_monotonic", "closing_started_monotonic", "closing_finished_monotonic", "streams"},
+        "Missing explicit measurement cutoff")
+    require(cutoff["schema"] == "iris-live-capture-cutoff-v1" and cutoff["intent"] == "finish-observation",
+            "Shutdown did not have an explicit measurement cutoff")
+    require(type(cutoff["sample_index"]) is int and cutoff["sample_index"] == len(samples) - 1
+            and cutoff["samples_sha256"] == evidence_sha256(samples), "Live samples changed after cutoff")
+    last = samples[-1]
+    require(isinstance(last, dict) and set(last) == SAMPLE_KEYS and last["loggers_alive"] is True
+            and last["stderr"] == "", "Cutoff was not a live observation")
+    observed = _number(cutoff["observed_monotonic"])
+    requested = _number(cutoff["requested_monotonic"])
+    started = _number(cutoff["closing_started_monotonic"])
+    finished = _number(cutoff["closing_finished_monotonic"])
+    require(observed == _number(last["observed_monotonic"]) and 0 <= requested - observed <= MAX_SAMPLE_GAP_SECONDS
+            and 0 <= started - requested <= MAX_SAMPLE_GAP_SECONDS and 0 <= finished - started <= 30,
+            "Cutoff and intentional shutdown clocks disagree")
+    require(isinstance(cutoff["prefixes"], dict) and set(cutoff["prefixes"]) == {"startup", "lifecycle"}
+            and isinstance(cutoff["streams"], dict) and set(cutoff["streams"]) == {"startup", "lifecycle"},
+            "Incomplete cutoff stream bindings")
+    raw, measured = {}, {}
+    for name, text in (("startup", startup_text), ("lifecycle", lifecycle_text)):
+        require(isinstance(text, str), "Capture must be text")
+        try:
+            data = text.encode("utf-8", errors="strict")
+        except UnicodeError as error:
+            raise LifecycleError("Invalid final capture encoding") from error
+        require(0 < len(data) <= MAX_CAPTURE_BYTES and data.endswith(b"\n"), "Incomplete or oversized final capture")
+        prefix_binding = {"bytes": last[name + "_bytes"], "sha256": last[name + "_sha256"]}
+        require(cutoff["prefixes"][name] == prefix_binding, "Cutoff is not the exact last live prefix")
+        prefix = _prefix(data, prefix_binding["bytes"], prefix_binding["sha256"], complete=True)
+        measured[name] = _capture(prefix, device)
+        suffix = data[prefix_binding["bytes"]:]
+        require(suffix in (b"", ("[disconnected:" + device + "]\n").encode()),
+                "Unexpected record, loss or transition after measurement cutoff")
+        stop = cutoff["streams"][name]
+        require(isinstance(stop, dict) and set(stop) == {"signal_requested_monotonic", "signal_sent_monotonic",
+                "stopped_monotonic", "signal", "signal_delivered", "returncode", "raw_bytes", "raw_sha256"},
+                "Missing intentional logger stop evidence")
+        signal_requested = _number(stop["signal_requested_monotonic"])
+        sent = _number(stop["signal_sent_monotonic"])
+        stopped = _number(stop["stopped_monotonic"])
+        require(started <= signal_requested <= sent <= stopped <= finished and stopped - signal_requested <= 7
+                and stop["signal"] == "SIGTERM" and stop["signal_delivered"] is True
+                and type(stop["returncode"]) is int and stop["returncode"] in (0, -15),
+                "Logger did not stop through the recorded intentional close")
+        require(type(stop["raw_bytes"]) is int and stop["raw_bytes"] == len(data)
+                and stop["raw_sha256"] == hashlib.sha256(data).hexdigest(), "Final raw capture changed")
+        raw[name] = data
+    return raw, measured
+
+
 def evaluate_early_background(*, startup_text, lifecycle_text, bundle_id, process_name,
-                              pid, executable, device, initial_prefixes, samples, old_pid=None):
+                              pid, executable, device, initial_prefixes, samples, measurement_cutoff, old_pid=None):
     """Require real native-restoration overlap, 135s suspended and 15s resumed.
 
     Initial prefixes are captured immediately before launch. Every later sample
@@ -123,7 +194,8 @@ def evaluate_early_background(*, startup_text, lifecycle_text, bundle_id, proces
     for value in (bundle_id, process_name, executable, device):
         require(isinstance(value, str) and value and "\n" not in value, "Missing capture identity")
     require(isinstance(initial_prefixes, dict) and set(initial_prefixes) == {"startup", "lifecycle"}, "Missing initial prefixes")
-    captures = {"startup": _capture(startup_text, device), "lifecycle": _capture(lifecycle_text, device)}
+    raw_captures, captures = measurement_captures(startup_text=startup_text, lifecycle_text=lifecycle_text,
+        device=device, samples=samples, measurement_cutoff=measurement_cutoff)
     initial = {}
     for name, data in captures.items():
         binding = initial_prefixes[name]
@@ -234,7 +306,10 @@ def evaluate_early_background(*, startup_text, lifecycle_text, bundle_id, proces
             "suspended_started_monotonic": suspended_start, "suspended_last_monotonic": suspended_last,
             "resumed_started_monotonic": resumed_start, "resumed_last_monotonic": resumed_last,
             "pid": pid, "executable": executable, "process_replacements": 0, "unexpected_exits": 0,
-            "startup_sha256": hashlib.sha256(captures["startup"]).hexdigest(),
-            "lifecycle_sha256": hashlib.sha256(captures["lifecycle"]).hexdigest(),
+            "startup_sha256": hashlib.sha256(raw_captures["startup"]).hexdigest(),
+            "lifecycle_sha256": hashlib.sha256(raw_captures["lifecycle"]).hexdigest(),
+            "startup_measured_sha256": hashlib.sha256(captures["startup"]).hexdigest(),
+            "lifecycle_measured_sha256": hashlib.sha256(captures["lifecycle"]).hexdigest(),
+            "measurement_cutoff_sha256": evidence_sha256(measurement_cutoff),
             "stream_continuity": "No detected loss; silent OS log loss cannot be excluded",
             "runtime_acceptance": False}

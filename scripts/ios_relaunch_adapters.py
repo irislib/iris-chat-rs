@@ -8,6 +8,7 @@ installs an app, pairs a device, builds a UI runner, or retries an action.
 from __future__ import annotations
 
 import hashlib
+import copy
 import json
 import os
 from pathlib import Path
@@ -94,6 +95,7 @@ class OwnedWindow:
                             if not k.startswith(('DEVICECTL_CHILD_', 'DYLD_', 'PYTHON'))}
         self.environment.update(LANG='C', LC_ALL='C', TERM='dumb', PYTHONDONTWRITEBYTECODE='1')
         self.closed = False
+        self.capture = None
 
     def guard(self):
         require(not self.closed and self.clock() < self.config['deadline_monotonic'], 'Runtime deadline or closed window')
@@ -131,15 +133,25 @@ class OwnedWindow:
         if self.closed:
             return
         failures = []
+        if self.capture is not None:
+            try: self.capture._closing_started(self.clock())
+            except (OSError, ValueError) as error: failures.append(str(error))
         for item in reversed(self.children):
             child, group = item['process'], item['group']
+            capture_name = item.get('capture_name')
+            if capture_name is not None:
+                try: self.capture._before_signal(capture_name, self.clock())
+                except (OSError, ValueError) as error: failures.append(str(error))
             if child.stdin is not None:
                 try: child.stdin.close()
                 except (OSError, ValueError): pass
             # A reaped leader's numeric PID may have been reused. Never signal
             # a group solely because its number matches an old child receipt.
             if child.poll() is None:
-                try: os.killpg(group, signal.SIGTERM)
+                try:
+                    os.killpg(group, signal.SIGTERM)
+                    if capture_name is not None:
+                        self.capture._signal_sent(capture_name, self.clock())
                 except ProcessLookupError: pass
             try:
                 child.wait(timeout=5)
@@ -153,15 +165,21 @@ class OwnedWindow:
                 failures.append('owned process group remains')
             except ProcessLookupError:
                 pass
+            if capture_name is not None:
+                self.capture._stopped(capture_name, self.clock(), child.returncode)
         try:
             require(read_bound(self.binding) == self.config, 'Runtime admission changed')
             for value in self.config['tools'].values(): verify_binding(value)
         except (OSError, ValueError) as error:
             failures.append(str(error))
+        cutoff_digest = None
+        if self.capture is not None:
+            try: cutoff_digest = self.capture._closing_finished(self.clock())
+            except (OSError, ValueError) as error: failures.append(str(error))
         self.closed = True
         record = {'schema': 'iris-relaunch-adapter-closure-v1', 'candidate': self.config['candidate'],
                   'device': self.config['device'], 'closed': not failures, 'failures': failures,
-                  'groups': [x['group'] for x in self.children]}
+                  'groups': [x['group'] for x in self.children], 'measurement_cutoff_sha256': cutoff_digest}
         (self.out / 'closure.json').write_text(json.dumps(record, sort_keys=True) + '\n')
         require(not failures, 'Owned process-group closure failed')
 
@@ -194,6 +212,9 @@ class Capture:
     def __init__(self, window, coredevice):
         self.window, self.core = window, coredevice
         self.streams, self.os_process = {}, None
+        require(window.capture is None, 'One measured capture per owned window')
+        window.capture = self
+        self.samples, self.cutoff = [], None
 
     def start(self):
         c = self.window.config
@@ -208,6 +229,7 @@ class Capture:
                     '-m', message, '-o', str(path)]
             item = self.window.spawn(args, name)
             item['capture'] = path
+            item['capture_name'] = name
             self.streams[name] = item
         deadline = min(self.window.clock() + 5, self.window.config['deadline_monotonic'])
         while True:
@@ -233,10 +255,16 @@ class Capture:
             require(item['capture'].stat().st_size <= lifecycle.MAX_CAPTURE_BYTES, 'Capture size exceeded')
             # A concurrently appended tail is retained on disk, but is not yet a
             # complete observation. Final closure must evaluate the whole file.
-            data = item['capture'].read_bytes()
+            data = self._raw(name)
             data = data[:data.rfind(b'\n') + 1]
             result[name + '_text'] = data.decode('utf-8')
         return result
+
+    def _raw(self, name):
+        with self.streams[name]['capture'].open('rb') as stream:
+            data = stream.read(lifecycle.MAX_CAPTURE_BYTES + 1)
+        require(len(data) <= lifecycle.MAX_CAPTURE_BYTES, 'Final capture size exceeded')
+        return data
 
     def prefixes(self):
         value = self.texts()
@@ -254,6 +282,7 @@ class Capture:
         return {'observed_utc': time.time(), 'processes': selected, 'foreground_pid': foreground}
 
     def sample(self, expected_pid):
+        require(self.cutoff is None and not self.window.closed, 'Cannot sample after the measurement cutoff')
         snapshot = self.snapshot()
         require(len(snapshot['processes']) == 1 and snapshot['processes'][0]['pid'] == expected_pid, 'Observed process changed')
         texts = self.prefixes()
@@ -262,7 +291,67 @@ class Capture:
         for name in ('startup', 'lifecycle'):
             data = texts[name + '_text'].encode()
             result[name + '_bytes'], result[name + '_sha256'] = len(data), hashlib.sha256(data).hexdigest()
+        self.samples.append(copy.deepcopy(result))
         return result
+
+    def mark_measurement_cutoff(self, samples):
+        """Freeze an existing live sample before any close signal; never add one."""
+        require(self.cutoff is None and len(samples) >= 2 and samples == self.samples,
+                'Cutoff must bind every actual live sample, unchanged')
+        self.window.guard(); self.health()
+        last = self.samples[-1]
+        prefixes = {name: {'bytes': last[name + '_bytes'], 'sha256': last[name + '_sha256']}
+                    for name in ('startup', 'lifecycle')}
+        self._require_exact_live_prefixes(prefixes)
+        self.cutoff = {'schema': 'iris-live-capture-cutoff-v1', 'intent': 'finish-observation',
+                       'sample_index': len(samples) - 1, 'samples_sha256': lifecycle.evidence_sha256(samples),
+                       'observed_monotonic': last['observed_monotonic'], 'prefixes': prefixes,
+                       'requested_monotonic': self.window.clock(), 'closing_started_monotonic': None,
+                       'closing_finished_monotonic': None, 'streams': {}}
+
+    def _require_exact_live_prefixes(self, prefixes, names=('startup', 'lifecycle')):
+        for name in names:
+            item = self.streams[name]
+            require(item['process'].poll() is None and not item['stdout'].read_bytes()
+                    and not item['stderr'].read_bytes(), 'Logger stopped before intentional close')
+            data = self._raw(name)
+            require(len(data) == prefixes[name]['bytes'] and hashlib.sha256(data).hexdigest() == prefixes[name]['sha256'],
+                    'Unsampled data arrived before intentional close')
+            lifecycle._capture(data.decode('utf-8'), self.window.config['device'])
+
+    def _closing_started(self, now):
+        if self.cutoff is not None:
+            self.cutoff['closing_started_monotonic'] = now
+            self._require_exact_live_prefixes(self.cutoff['prefixes'])
+
+    def _before_signal(self, name, now):
+        if self.cutoff is not None:
+            self._require_exact_live_prefixes(self.cutoff['prefixes'], (name,))
+            self.cutoff['streams'][name] = {'signal_requested_monotonic': now, 'signal': 'SIGTERM',
+                                           'signal_delivered': False}
+
+    def _signal_sent(self, name, now):
+        if self.cutoff is not None and name in self.cutoff['streams']:
+            self.cutoff['streams'][name].update(signal_sent_monotonic=now, signal_delivered=True)
+
+    def _stopped(self, name, now, returncode):
+        if self.cutoff is not None and name in self.cutoff['streams']:
+            self.cutoff['streams'][name].update(stopped_monotonic=now, returncode=returncode)
+
+    def _closing_finished(self, now):
+        if self.cutoff is None:
+            return None
+        self.cutoff['closing_finished_monotonic'] = now
+        texts = {}
+        for name, item in self.streams.items():
+            require(not item['stdout'].read_bytes() and not item['stderr'].read_bytes(), 'Final logger error')
+            data = self._raw(name)
+            require(name in self.cutoff['streams'], 'Logger was not intentionally stopped')
+            self.cutoff['streams'][name].update(raw_bytes=len(data), raw_sha256=hashlib.sha256(data).hexdigest())
+            texts[name + '_text'] = data.decode('utf-8')
+        lifecycle.measurement_captures(**texts, device=self.window.config['device'],
+                                      samples=self.samples, measurement_cutoff=self.cutoff)
+        return lifecycle.evidence_sha256(self.cutoff)
 
     def final_texts(self):
         require(self.window.closed, 'Close every owned process before final capture')
@@ -271,11 +360,15 @@ class Capture:
         for item in self.streams.values():
             require(not item['stdout'].read_bytes() and not item['stderr'].read_bytes(), 'Final logger error')
         # Do not trim the final tail: incomplete final records must fail parsing.
-        return {name + '_text': item['capture'].read_bytes().decode('utf-8') for name, item in self.streams.items()}
+        return {name + '_text': self._raw(name).decode('utf-8') for name in self.streams}
 
     def final_capture(self, samples):
+        require(self.cutoff is not None and samples == self.samples, 'Missing unchanged live measurement cutoff')
+        closure = json.loads((self.window.out / 'closure.json').read_text())
+        require(closure.get('measurement_cutoff_sha256') == lifecycle.evidence_sha256(self.cutoff),
+                'Closure does not bind this measurement cutoff')
         return {**self.final_texts(), 'process_name': self.window.config['process_name'], 'samples': samples,
-                'closure_binding': binding(self.window.out / 'closure.json')}
+                'measurement_cutoff': copy.deepcopy(self.cutoff), 'closure_binding': binding(self.window.out / 'closure.json')}
 
 
 def foreground_pid(text, bundle_id, springboard_pid):

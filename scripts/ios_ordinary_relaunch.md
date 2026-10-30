@@ -101,11 +101,26 @@ ordinary resume launch's audit token against the initial launch and binds resume
 placement to the captured host monotonic interval. Paired host UTC/monotonic
 clocks must agree within 250ms; device log timestamps are never compared with
 host clocks. Clock jumps fail instead of extending a freshness/coverage bound.
-After the observation, close the owned window and obtain
-`capture.final_capture(samples)`. This retains the untrimmed final log tails and
-a hash-bound candidate/target process-group closure receipt; a live group or
-cleanup failure invalidates final evaluation. A reaped process leader's numeric
-group ID is never used to signal a potentially unrelated reused process.
+After the required observation, call `capture.mark_measurement_cutoff(samples)`
+while both loggers are still live. This binds the unchanged sample sequence and
+the exact complete prefixes from its last real sample. It verifies that no
+unsampled bytes have arrived; it does not take or invent another sample. Then
+close the owned window and obtain `capture.final_capture(samples)`.
+
+The measurement cutoff records explicit close intent, host monotonic request,
+signal and completion times, actual signal delivery and exit status. Each live
+prefix is checked again before any close signal and immediately before its
+logger's signal. The final raw files, including shutdown output, remain intact.
+After the cutoff, only an empty suffix or exactly one terminal
+`[disconnected:<device>]` line is accepted per stream. A premature disconnect,
+loss/error, partial tail, duplicate disconnect or extra startup/lifecycle record
+fails; no post-cutoff app transition is discarded. Shutdown contributes no
+observed phase duration, and sampling after the cutoff is prohibited.
+
+The closure receipt binds the cutoff digest; the cutoff binds both the last live
+prefixes and full raw-file hashes. A live process group or cleanup failure
+invalidates final evaluation. A reaped process leader's numeric group ID is never
+used to signal a potentially unrelated reused process.
 
 `compose_adhoc_proof` consumes a hash-bound
 `iris-ordinary-relaunch-capture-v1` record containing `attempt`, `resume` and
