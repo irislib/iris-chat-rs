@@ -11,6 +11,7 @@ PACKAGE_NAME="to.iris.chat.debug"
 TEST_PACKAGE_NAME="${ANDROID_TEST_PACKAGE_NAME:-to.iris.chat.test}"
 CONTRACT_CLASSES="to.iris.chat.core.AppManagerContractTest"
 SMOKE_CLASSES="to.iris.chat.IrisChatUiSmokeTest,to.iris.chat.account.AndroidKeystoreSecretStoreTest"
+CONTACT_CLASSES="to.iris.chat.ui.screens.ContactNicknameCardTest"
 
 resolve_serial() {
   if [[ -n "${IRIS_ANDROID_SERIAL:-}" ]]; then
@@ -82,23 +83,13 @@ run_filtered_android_test() {
   local classes="$2"
 
   reset_android_app_state "${serial}"
-  if ! (
+  (
     cd "${ANDROID_DIR}"
     ANDROID_SERIAL="${serial}" \
       ./gradlew \
       :app:connectedDebugAndroidTest \
       -Pandroid.testInstrumentationRunnerArguments.class="${classes}"
-  ); then
-    echo "Android instrumentation failed for ${classes}; resetting app state and retrying once." >&2
-    reset_android_app_state "${serial}"
-    (
-      cd "${ANDROID_DIR}"
-      ANDROID_SERIAL="${serial}" \
-        ./gradlew \
-        :app:connectedDebugAndroidTest \
-        -Pandroid.testInstrumentationRunnerArguments.class="${classes}"
-    )
-  fi
+  )
   reset_android_app_state "${serial}"
 }
 
@@ -137,3 +128,8 @@ export IRIS_DEBUG_RELAY_SET_ID="$(local_relay_set_id)"
 
 run_filtered_android_test "${ANDROID_SERIAL_VALUE}" "${CONTRACT_CLASSES}"
 run_filtered_android_test "${ANDROID_SERIAL_VALUE}" "${SMOKE_CLASSES}"
+SMOKE_STARTED="$(python3 -c 'import time; print(time.time())')"
+run_filtered_android_test "${ANDROID_SERIAL_VALUE}" "${CONTACT_CLASSES}"
+python3 "${ROOT_DIR}/scripts/android_runtime_smoke.py" \
+  --results "${ANDROID_DIR}/app/build/outputs/androidTest-results/connected" \
+  --since "${SMOKE_STARTED}"
