@@ -347,6 +347,13 @@ class ReleaseWorkflowTests(unittest.TestCase):
             '      - "scripts/test_apple_connect_api.py"',
             '      - "scripts/run_public_link_phone.py"',
             '      - "scripts/test_ios_harness_retry_contract.py"',
+            '      - "scripts/android_upgrade_release.py"',
+            '      - "scripts/android_upgrade_state.py"',
+            '      - "scripts/android_upgrade_ui.py"',
+            '      - "scripts/check_android_upgrade_receipt.py"',
+            '      - "scripts/test_android_release_upgrade.py"',
+            '      - "scripts/test_android_upgrade_harness.py"',
+            '      - "test-fixtures/android-upgrade/releases.json"',
         ]
         # Haps recipes have dedicated checks below. Changes to any native app or
         # build input must still trigger the original full platform checks.

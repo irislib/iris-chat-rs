@@ -331,6 +331,35 @@ class HostedSelection(unittest.TestCase):
         self.assertIn("-p 'test_*.py'", guard)
 
 
+    def test_standalone_upgrade_edits_run_contract_without_native_builds(self):
+        import fnmatch
+        import re
+        root = Path(__file__).resolve().parents[1]
+        native = (root / '.github/workflows/ci.yml').read_text()
+        contract = (root / '.github/workflows/release-contract.yml').read_text()
+        standalone = ['scripts/android_upgrade_release.py', 'scripts/android_upgrade_state.py',
+                      'scripts/android_upgrade_ui.py', 'scripts/check_android_upgrade_receipt.py',
+                      'scripts/test_android_release_upgrade.py', 'scripts/test_android_upgrade_harness.py',
+                      'test-fixtures/android-upgrade/releases.json']
+        for event in ('push', 'pull_request'):
+            def patterns(workflow, key):
+                body = re.search(r'^  ' + event + r':\n(.*?)(?=^  \S|\Z)', workflow, re.M | re.S).group(1)
+                block = re.search(r'^    ' + key + r':\n((?:      - .+\n)+)', body, re.M).group(1)
+                return [json.loads(line.removeprefix('      - ')) for line in block.splitlines()]
+            ignored, included = patterns(native, 'paths-ignore'), patterns(contract, 'paths')
+            for path in standalone:
+                with self.subTest(event=event, path=path):
+                    self.assertIn(path, ignored)  # Exact entries, not broad source exclusions.
+                    self.assertTrue(any(fnmatch.fnmatchcase(path, rule) for rule in included))
+            for path in ('scripts/test_native_contract.sh', 'scripts/test_fast.sh', 'scripts/android_saved_history.py',
+                         'core/src/lib.rs', 'android/app/src/main/java/to/iris/chat/MainActivity.kt'):
+                with self.subTest(event=event, native_input=path):
+                    self.assertFalse(any(fnmatch.fnmatchcase(path, rule) for rule in ignored))
+            # A mixed validator/app change must still build the native apps.
+            changed = ['scripts/check_android_upgrade_receipt.py', 'core/src/lib.rs']
+            self.assertTrue(any(not any(fnmatch.fnmatchcase(path, rule) for rule in ignored) for path in changed))
+
+
 class Selectors(unittest.TestCase):
     def test_ambiguous_or_foreign_controls_rejected(self):
         root = ET.fromstring('<hierarchy><node package="to.iris.chat" text="Save" clickable="true" enabled="true" bounds="[0,0][20,20]"/><node package="to.iris.chat" text="Save" clickable="true" enabled="true" bounds="[30,0][50,20]"/><node package="other" text="Private"/></hierarchy>')
