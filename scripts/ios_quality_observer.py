@@ -18,7 +18,7 @@ from ios_relaunch_adapters import Capture, CoreDevice, OwnedWindow, foreground_p
 
 
 RECORD_SECONDS = 390
-SAMPLE_INTERVAL_SECONDS = 1.5
+SAMPLE_INTERVAL_SECONDS = 1.0
 SOURCE_NAMES = ('ios_quality_observer.py', 'ios_quality_trace.py', 'ios_relaunch_adapters.py',
                 'ios_relaunch_lifecycle.py', 'ios_ordinary_relaunch.py', 'ios_runtime_acceptance.py', 'native_lab.py')
 
@@ -42,7 +42,7 @@ def ready_text(item):
             and 'Ctrl-C to stop the recording\n' in text)
 
 
-def sample(capture, core, window, pid):
+def sample(capture, core, window, pid, previous=None):
     record = {'monotonic_before': time.monotonic(), 'utc_before': time.time()}
     record['capture'] = capture.sample(pid)
     require(foreground_pid(capture.prefixes()['lifecycle_text'], window.config['bundle_id'],
@@ -50,7 +50,10 @@ def sample(capture, core, window, pid):
     # Capture.sample's last CoreDevice query is the retained actual inventory.
     record['inventory'] = binding(window.out / f'coredevice-{window.serial:03d}.json')
     record.update(monotonic_after=time.monotonic(), utc_after=time.time())
-    require(record['monotonic_after'] - record['monotonic_before'] <= 2.5, 'Slow foreground observation')
+    gap = record['monotonic_after'] - record['monotonic_before']
+    if previous is not None:
+        gap = max(gap, record['monotonic_after'] - previous['monotonic_after'])
+    require(gap <= 2.5, f'Foreground observation gap exceeds 2.5 seconds ({gap:.6f} seconds)')
     return record
 
 
@@ -60,7 +63,7 @@ def collect_until(window, capture, core, pid, observations, predicate, *, deadli
         require(time.monotonic() < deadline, 'Observation command exceeded its deadline')
         now = time.monotonic()
         if not observations or now - observations[-1]['monotonic_after'] >= SAMPLE_INTERVAL_SECONDS:
-            row = sample(capture, core, window, pid)
+            row = sample(capture, core, window, pid, observations[-1] if observations else None)
             observations.append(row)
             require(len(observations) <= 500, 'Observation count exceeded its bound')
             if boundaries is not None:
@@ -154,7 +157,7 @@ def record(config_binding, output, *, execute=False):
         require(len(after) == 1 and all(after[0].get(k) == apps[0].get(k) for k in fields),
                 'Installed app inventory changed during measurement')
         evidence['apps_after'] = binding(window.out / f'coredevice-{window.serial:03d}.json')
-        observations.append(sample(capture, core, window, config['pid']))
+        observations.append(sample(capture, core, window, config['pid'], observations[-1]))
         capture.mark_measurement_cutoff(capture.samples)
         window.close()
         evidence.update(observations=observations, boundaries=boundaries,

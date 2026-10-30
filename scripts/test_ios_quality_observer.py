@@ -266,9 +266,10 @@ class QualityTests(unittest.TestCase):
             subject.xml('synthetic-oversized-export')
         oversized.read_bytes.assert_not_called()
 
-    def driver(self, *, replacement=False):
+    def driver(self, *, replacement=False, query_seconds=0):
         """Replay real command/output shapes with a deterministic virtual clock."""
         f, now, commands = self.fixture, [0.0], []
+        progress = self.driver_progress = {'samples': 0, 'exports': 0, 'closed': False}
         output = f.root / 'run'
         output.mkdir()
         f.config['xctrace'] = f.raw('synthetic-xctrace', b'fixture tool')
@@ -292,6 +293,7 @@ class QualityTests(unittest.TestCase):
                     stdout.write_text('Starting recording with the Activity Monitor template. Targeting All Processes.\nCtrl-C to stop the recording\nReached specified time limit, ending recording...\nRecording completed. Saving output file...\n')
                     child = SimpleNamespace(poll=lambda: 0 if now[0] >= 390 else None)
                 else:
+                    progress['exports'] += 1
                     stdout.write_text('Finished export\n')
                     destination = Path(argv[argv.index('--output') + 1])
                     source = f.toc() if label == 'toc' else (f.counters() if label == 'counters' else f.thermal())
@@ -300,6 +302,7 @@ class QualityTests(unittest.TestCase):
                 return {'stdout': stdout, 'stderr': stderr, 'process': child}
             def close(self):
                 self.closed = True
+                progress.update(closed=True, stopped_monotonic=now[0])
                 if self.capture and self.capture.cutoff:
                     observer.save(output / 'closure.json', {'closed': True, 'failures': [], 'candidate': f.candidate,
                         'device': f.window['device'], 'measurement_cutoff_sha256': lifecycle.evidence_sha256(self.capture.cutoff)})
@@ -330,6 +333,8 @@ class QualityTests(unittest.TestCase):
             def prefixes(self): return {key: f.capture[key] for key in ('startup_text', 'lifecycle_text')}
             def sample(self, pid):
                 self.core.run(['device', 'info', 'processes'])
+                now[0] += query_seconds
+                progress['samples'] += 1
                 sample = copy.deepcopy(f.capture['samples'][0]); sample['observed_monotonic'] = now[0]
                 self.samples.append(sample)
                 return sample
@@ -361,6 +366,37 @@ class QualityTests(unittest.TestCase):
         with self.assertRaisesRegex(EvidenceError, 'same process'):
             self.driver(replacement=True)
         self.assertTrue((self.fixture.root / 'run/failure.json').is_file())
+        self.assertFalse((self.fixture.root / 'run/cpu.json').exists())
+
+    def test_complete_driver_preserves_coverage_with_realistic_1_1_second_queries(self):
+        result, _ = self.driver(query_seconds=1.1)
+        self.assertEqual(result['status'], 'passed')
+        self.assertGreaterEqual(result['foreground_sample_max_gap_seconds'], 2.1)
+        self.assertLessEqual(result['foreground_sample_max_gap_seconds'], 2.5)
+        self.assertGreaterEqual(result['warmup_seconds'], 180)
+        self.assertGreaterEqual(result['discarded_interval_seconds'], 60)
+        self.assertTrue(all(row['observed_seconds'] >= 60 for row in result['windows']))
+        capture = json.loads((self.fixture.root / 'run/capture.json').read_text())
+        self.assertTrue(all(abs(row['monotonic_after'] - row['monotonic_before'] - 1.1) < 1e-8
+                            for row in capture['observations']))
+        self.assertEqual(self.driver_progress['exports'], 3)
+
+    def test_query_over_2_5_seconds_stops_on_first_observation(self):
+        with self.assertRaisesRegex(EvidenceError, 'observation gap'):
+            self.driver(query_seconds=2.6)
+        self.assertEqual(self.driver_progress['samples'], 1)
+        self.assertEqual(self.driver_progress['exports'], 0)
+        self.assertTrue(self.driver_progress['closed'])
+        self.assertLess(self.driver_progress['stopped_monotonic'], 8)
+        self.assertFalse((self.fixture.root / 'run/cpu.json').exists())
+
+    def test_whole_gap_over_2_5_seconds_stops_before_a_third_observation(self):
+        with self.assertRaisesRegex(EvidenceError, 'observation gap'):
+            self.driver(query_seconds=1.6)
+        self.assertEqual(self.driver_progress['samples'], 2)
+        self.assertEqual(self.driver_progress['exports'], 0)
+        self.assertTrue(self.driver_progress['closed'])
+        self.assertLess(self.driver_progress['stopped_monotonic'], 10)
         self.assertFalse((self.fixture.root / 'run/cpu.json').exists())
 
 
