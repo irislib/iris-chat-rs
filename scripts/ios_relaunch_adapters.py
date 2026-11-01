@@ -62,13 +62,18 @@ def validate_home_transcript(events, *, device, nonce, build, pid=None, complete
 
 class OwnedWindow:
     """Exact tools, direct-parent leases, bounded outputs and owned process groups."""
-    def __init__(self, admission_binding, out, *, clock=time.monotonic, output_ceiling=MAX_OUTPUT):
+    def __init__(self, admission_binding, out, *, clock=time.monotonic, output_ceiling=MAX_OUTPUT, mode='hid-capable'):
+        require(mode in ('hid-capable', 'observation-only'), 'Unknown runtime mode')
+        self.observation_only = mode == 'observation-only'
         require(type(output_ceiling) is int and 0 < output_ceiling <= MAX_OUTPUT_CEILING, 'Invalid output ceiling')
         self.binding, self.clock = admission_binding, clock
         self.config = read_bound(admission_binding)
         c = self.config
-        exact(c, {'schema', 'enabled', 'candidate', 'distribution_binding', 'device', 'coredevice_id', 'bundle_id', 'build', 'process_name',
-                  'executable', 'owner_pid', 'output_root', 'deadline_monotonic', 'minimum_free_bytes', 'max_output_bytes', 'tools'})
+        fields = {'schema', 'enabled', 'candidate', 'distribution_binding', 'device', 'coredevice_id', 'bundle_id', 'build', 'process_name',
+                  'executable', 'owner_pid', 'output_root', 'deadline_monotonic', 'minimum_free_bytes', 'max_output_bytes', 'tools'}
+        exact(c, fields | ({'mode'} if self.observation_only else set()))
+        if self.observation_only:
+            require(c['mode'] == mode, 'Missing explicit observation-only admission')
         require(c['schema'] == 'iris-relaunch-adapters-v1' and c['enabled'] is True, 'Runtime is not admitted')
         distribution = validate_distribution(c['distribution_binding'], c['candidate'])
         require(all(c[key] == distribution[key] for key in ('device', 'coredevice_id', 'bundle_id'))
@@ -83,15 +88,19 @@ class OwnedWindow:
         require(0 < finite(c['deadline_monotonic']) - clock() <= 600, 'Invalid runtime deadline')
         require(type(c['max_output_bytes']) is int and 0 < c['max_output_bytes'] <= output_ceiling, 'Invalid output budget')
         require(type(c['minimum_free_bytes']) is int and c['minimum_free_bytes'] > output_ceiling, 'Missing host reserve')
-        exact(c['tools'], {'coredevice', 'syslog', 'python', 'home_helper', 'home_disabled', 'home_qualification'})
+        required_tools = {'coredevice', 'syslog'}
+        if not self.observation_only:
+            required_tools |= {'python', 'home_helper', 'home_disabled', 'home_qualification'}
+        exact(c['tools'], required_tools)
         self.tools = {name: verify_binding(value) for name, value in c['tools'].items()}
-        disabled = self.tools['home_disabled'].read_bytes()
-        require(c['tools']['home_disabled']['sha256'] == HOME_DISABLED_SHA256
-                and c['tools']['home_qualification']['sha256'] == HOME_QUALIFICATION_SHA256,
-                'HID helper differs from retained qualified source')
-        require(disabled.count(b'EXECUTION_ENABLED = False') == 1
-                and self.tools['home_helper'].read_bytes() == disabled.replace(b'EXECUTION_ENABLED = False', b'EXECUTION_ENABLED = True'),
-                'HID helper activation contains another change')
+        if not self.observation_only:
+            disabled = self.tools['home_disabled'].read_bytes()
+            require(c['tools']['home_disabled']['sha256'] == HOME_DISABLED_SHA256
+                    and c['tools']['home_qualification']['sha256'] == HOME_QUALIFICATION_SHA256,
+                    'HID helper differs from retained qualified source')
+            require(disabled.count(b'EXECUTION_ENABLED = False') == 1
+                    and self.tools['home_helper'].read_bytes() == disabled.replace(b'EXECUTION_ENABLED = False', b'EXECUTION_ENABLED = True'),
+                    'HID helper activation contains another change')
         self.out = Path(out).resolve()
         require(c['output_root'] == str(self.out), 'Output root differs from admitted one-shot window')
         require(shutil.disk_usage(self.out.parent).free >= c['minimum_free_bytes'] + c['max_output_bytes'], 'Insufficient reserved capacity')
@@ -115,6 +124,7 @@ class OwnedWindow:
         require(total + 4096 <= self.config['max_output_bytes'], 'Runtime output budget exceeded')
 
     def spawn(self, command, label, *, stdin=False):
+        require(not self.observation_only or (not stdin and label != 'home'), 'HID is forbidden in observation-only mode')
         self.guard()
         self.serial += 1
         base = self.out / f'{self.serial:03d}-{label}'
@@ -198,6 +208,8 @@ class CoreDevice:
         self.window = window
 
     def run(self, command):
+        require(not self.window.observation_only or '--terminate-existing' not in command,
+                'Terminating launch is forbidden in observation-only mode')
         bundle = self.window.config['bundle_id']
         require(command in (['device', 'info', 'processes'],
                             ['device', 'info', 'apps', '--filter', "bundleIdentifier == '" + bundle + "'"],
@@ -418,6 +430,7 @@ def foreground_pid(text, bundle_id, springboard_pid):
 
 class PrearmedHome:
     def __init__(self, window):
+        require(not window.observation_only, 'HID is forbidden in observation-only mode')
         self.window, self.item = window, None
         self.nonce, self.fired = str(uuid.uuid4()), False
 
@@ -430,6 +443,7 @@ class PrearmedHome:
         return [json.loads(line) for line in data.splitlines(keepends=True) if line.endswith(b'\n')]
 
     def arm(self):
+        require(not self.window.observation_only, 'HID is forbidden in observation-only mode')
         require(self.item is None, 'HID helper cannot be restarted')
         c = self.window.config
         command = [str(self.window.tools['python']), '-I', '-B', str(self.window.tools['home_helper']),
@@ -447,6 +461,7 @@ class PrearmedHome:
             time.sleep(0.002)
 
     def fire(self, armed, proof):
+        require(not self.window.observation_only, 'HID is forbidden in observation-only mode')
         require(not self.fired and self.item is not None, 'HID action cannot be retried')
         c = self.window.config
         require(armed == {'armed': True, 'nonce': self.nonce, 'device': c['device'], 'bundle_id': c['bundle_id'], 'build': c['build']}, 'Wrong armed target')

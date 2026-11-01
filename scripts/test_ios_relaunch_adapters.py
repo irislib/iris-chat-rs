@@ -84,6 +84,66 @@ class WindowTests(unittest.TestCase):
         p = self.root / 'admission.json'; p.write_text(json.dumps(self.config))
         return adapters.OwnedWindow(binding(p), self.root / 'output', clock=lambda: self.clock, **options)
 
+    def observation_input(self):
+        self.config['mode'] = 'observation-only'
+        self.config['tools'] = {name: self.tools[name] for name in ('coredevice', 'syslog')}
+
+    def test_observation_only_admits_no_home_files_and_rejects_all_home_entrypoints(self):
+        self.observation_input()
+        for name in ('python', 'home_helper', 'home_disabled', 'home_qualification'):
+            Path(self.tools[name]['path']).unlink()
+        window = self.admit(mode='observation-only')
+        self.assertEqual(set(window.tools), {'coredevice', 'syslog'})
+        with patch.object(adapters.subprocess, 'Popen') as spawn:
+            with self.assertRaisesRegex(EvidenceError, 'observation-only'):
+                adapters.PrearmedHome(window)
+            home = object.__new__(adapters.PrearmedHome)
+            home.window = window
+            for action in (home.arm, lambda: home.fire({}, {})):
+                with self.assertRaisesRegex(EvidenceError, 'observation-only'): action()
+            with self.assertRaisesRegex(EvidenceError, 'observation-only'):
+                adapters.CoreDevice(window).run(['device', 'process', 'launch', '--terminate-existing', self.config['bundle_id']])
+            with self.assertRaisesRegex(EvidenceError, 'observation-only'):
+                window.spawn(['unused-home-helper'], 'home', stdin=True)
+        spawn.assert_not_called()
+        window.guard(); window.close()
+        self.assertTrue(json.loads((window.out / 'closure.json').read_text())['closed'])
+
+    def test_missing_home_files_require_both_explicit_observation_admission_and_caller(self):
+        self.observation_input()
+        with self.assertRaises(EvidenceError): self.admit()
+        del self.config['mode']
+        with self.assertRaises(EvidenceError): self.admit(mode='observation-only')
+        with self.assertRaises(EvidenceError): self.admit()
+        self.assertFalse((self.root / 'output').exists())
+
+    def test_observation_mode_rejects_unknown_modes_extra_tools_and_wrong_target(self):
+        self.observation_input()
+        with patch.object(adapters.subprocess, 'Popen') as spawn:
+            with self.assertRaises(EvidenceError): self.admit(mode='unknown')
+            self.config['mode'] = 'hid-capable'
+            with self.assertRaises(EvidenceError): self.admit(mode='observation-only')
+            self.config['mode'] = 'observation-only'
+            self.config['tools']['home_helper'] = self.tools['home_helper']
+            with self.assertRaises(EvidenceError): self.admit(mode='observation-only')
+            del self.config['tools']['home_helper']
+            self.config['device'] = 'different-phone'
+            with self.assertRaises(EvidenceError): self.admit(mode='observation-only')
+        spawn.assert_not_called()
+
+    def test_observation_mode_preserves_parent_lease_deadline_and_capacity_gates(self):
+        self.observation_input()
+        for key, value in [('owner_pid', os.getppid() + 1), ('deadline_monotonic', 9),
+                           ('max_output_bytes', 512 * 1024**2 + 1), ('minimum_free_bytes', 1)]:
+            original = self.config[key]; self.config[key] = value
+            with self.subTest(key=key), self.assertRaises(EvidenceError): self.admit(mode='observation-only')
+            self.config[key] = original
+        with patch.object(adapters.native_lab, 'lock_path', side_effect=FileNotFoundError):
+            with self.assertRaises(FileNotFoundError): self.admit(mode='observation-only')
+        with patch.object(adapters.shutil, 'disk_usage', return_value=SimpleNamespace(free=1)):
+            with self.assertRaises(EvidenceError): self.admit(mode='observation-only')
+        self.assertFalse((self.root / 'output').exists())
+
     def test_default_window_still_rejects_more_than_100_mib(self):
         self.config['max_output_bytes'] = 100 * 1024**2 + 1
         with self.assertRaisesRegex(EvidenceError, 'output budget'): self.admit()

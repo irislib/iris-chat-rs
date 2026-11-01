@@ -43,9 +43,13 @@ evidence; an unsupported trace format or unobserved foreground state fails.
 Execution requires the release owner's accepted distribution, exact installed
 candidate/PID, and existing `OwnedWindow` configuration. The latter includes
 exact-device and acceptance leases, candidate/provisioning provenance, pinned
-tools, explicit output/free-space limits, and strict capture closure. Its Home
-helper bindings remain required by that existing configuration, but this
-observer does not invoke the helper or any HID action.
+tools, explicit output/free-space limits, and strict capture closure. Both the
+observer and its window admission explicitly select `observation-only` mode;
+add `"mode": "observation-only"` to the window configuration and bind only
+`coredevice` and `syslog` in its `tools`. This mode rejects Home/HID operations
+and terminating launches. The default HID-capable window retains all existing
+Home source and qualification bindings. The observation tooling is separately
+qualified and hash-bound; changing it does not change the tagged app candidate.
 
 Create a private JSON input with these fields; each binding is an absolute
 `path` and its `sha256`:

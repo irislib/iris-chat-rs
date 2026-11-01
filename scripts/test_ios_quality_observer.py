@@ -278,7 +278,8 @@ class QualityTests(unittest.TestCase):
         config = f.write('configuration', f.config)
 
         class Window:
-            def __init__(self, *_, output_ceiling):
+            def __init__(self, *_, output_ceiling, mode):
+                if mode != 'observation-only': raise ValueError('Quality observer enabled HID')
                 if output_ceiling != 512 * 1024**2: raise ValueError('Quality ceiling was not explicitly supplied')
                 self.out, self.config, self.serial = output, f.window, 0
                 self.closed, self.children, self.capture = False, [], None
