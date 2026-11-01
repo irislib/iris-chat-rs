@@ -2,6 +2,23 @@
 
 Each release has channel-specific notes. The release tag must match the `##` heading exactly.
 
+## v2026.11.1.3
+
+### GitHub
+
+- Reuse unchanged message subscriptions during idle delivery retries, avoiding repeated downloads of retained history.
+- Restore subscriptions after server closure and reconnects, with synthetic populated-account and serialized network regression coverage.
+
+### Apple
+
+- Reduce unnecessary work while the app is idle.
+- Keep messages arriving after reconnecting to a message server.
+
+### Zapstore
+
+- Reduce unnecessary work while the app is idle.
+- Keep messages arriving after reconnecting to a message server.
+
 ## v2026.11.1.2
 
 ### GitHub

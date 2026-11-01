@@ -123,6 +123,7 @@ include!("tests/device_connections.rs");
 include!("tests/protocol_startup_guards.rs");
 include!("tests/profile_metadata_restart.rs");
 include!("tests/protocol_runtime_replay.rs");
+include!("tests/protocol_idle_replay.rs");
 include!("tests/pending_publish_replay.rs");
 include!("tests/metadata_privacy.rs");
 include!("tests/retry_publish_ordering.rs");

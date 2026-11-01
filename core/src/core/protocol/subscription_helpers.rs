@@ -111,10 +111,26 @@ pub(super) async fn subscribe_protocol_filters_with_id(
     let mut accepted = 0usize;
     let mut last_error = None;
     for relay in relays.values() {
+        let existing = relay.subscription(&subscription_id).await;
+        let unchanged = !filters.is_empty() && existing.as_ref() == Some(&filters);
+        if existing.is_some() && !unchanged {
+            // Remove obsolete filters even on an offline relay, so the SDK
+            // cannot restore the old plan when its socket reconnects.
+            let _ = relay.unsubscribe(&subscription_id).await;
+        }
+        if filters.is_empty() {
+            continue;
+        }
         if relay.status() != RelayStatus::Connected {
             continue;
         }
         attempted = attempted.saturating_add(1);
+        if unchanged {
+            // The status watcher invalidates these on reconnect/CLOSED.
+            // Reissuing a healthy REQ replays history on every idle retry tick.
+            accepted = accepted.saturating_add(1);
+            continue;
+        }
         match relay
             .subscribe_with_id(
                 subscription_id.clone(),
@@ -127,7 +143,7 @@ pub(super) async fn subscribe_protocol_filters_with_id(
             Err(error) => last_error = Some(error.to_string()),
         }
     }
-    if accepted > 0 {
+    if filters.is_empty() || accepted > 0 {
         Ok(())
     } else if attempted == 0 {
         Err("no connected relays".to_string())

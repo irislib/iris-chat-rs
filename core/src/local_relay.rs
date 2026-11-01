@@ -15,6 +15,8 @@ use tokio_tungstenite::tungstenite::Message;
 
 #[derive(Default)]
 struct RelayState {
+    #[cfg(test)]
+    wire: Option<Vec<(usize, Value)>>,
     events_by_id: BTreeMap<String, Value>,
     subscriptions: HashMap<usize, HashMap<String, Vec<Value>>>,
     clients: HashMap<usize, mpsc::UnboundedSender<Message>>,
@@ -94,6 +96,12 @@ fn lock_relay_state(state: &Arc<Mutex<RelayState>>) -> MutexGuard<'_, RelayState
 }
 
 enum RelayControl {
+    #[cfg(test)]
+    Wire(std_mpsc::Sender<Vec<(usize, Value)>>),
+    #[cfg(test)]
+    CloseSubscription(String, String, std_mpsc::Sender<usize>),
+    #[cfg(test)]
+    DisconnectClients(std_mpsc::Sender<usize>),
     IgnoreAcknowledgements(u64, std_mpsc::Sender<()>),
     ReplayStored,
     Snapshot(std_mpsc::Sender<Vec<Value>>),
@@ -165,6 +173,31 @@ impl TestRelay {
                     tokio::select! {
                         Some(control) = control_rx.recv() => {
                             match control {
+                                #[cfg(test)]
+                                RelayControl::Wire(reply) => {
+                                    let _ = reply.send(lock_relay_state(&state).wire.get_or_insert_default().clone());
+                                }
+                                #[cfg(test)]
+                                RelayControl::DisconnectClients(reply) => {
+                                    let state = lock_relay_state(&state);
+                                    for sender in state.clients.values() {
+                                        let _ = sender.send(Message::Close(None));
+                                    }
+                                    let _ = reply.send(state.clients.len());
+                                }
+                                #[cfg(test)]
+                                RelayControl::CloseSubscription(id, reason, reply) => {
+                                    let mut state = lock_relay_state(&state);
+                                    let clients = state.subscriptions.iter_mut()
+                                        .filter_map(|(client, subscriptions)| subscriptions.remove(&id).map(|_| *client))
+                                        .collect::<Vec<_>>();
+                                    for client in &clients {
+                                        if let Some(sender) = state.clients.get(client) {
+                                            let _ = sender.send(Message::Text(json!(["CLOSED", id, reason]).to_string()));
+                                        }
+                                    }
+                                    let _ = reply.send(clients.len());
+                                }
                                 RelayControl::IgnoreAcknowledgements(kind, reply) => {
                                     lock_relay_state(&state).faults.unacknowledged_kinds.insert(kind);
                                     let _ = reply.send(());
@@ -238,6 +271,41 @@ impl TestRelay {
         reply_rx
             .recv_timeout(StdDuration::from_secs(5))
             .unwrap_or_default()
+    }
+
+    #[cfg(test)]
+    // Enables recording on the first call; unrelated tests retain no transcript.
+    pub(crate) fn wire(&self) -> Vec<(usize, Value)> {
+        let (tx, rx) = std_mpsc::channel();
+        self.control_tx
+            .send(RelayControl::Wire(tx))
+            .expect("live test relay");
+        rx.recv_timeout(StdDuration::from_secs(5))
+            .expect("relay wire snapshot")
+    }
+
+    #[cfg(test)]
+    pub(crate) fn close_subscription(&self, id: &str, reason: &str) -> usize {
+        let (tx, rx) = std_mpsc::channel();
+        self.control_tx
+            .send(RelayControl::CloseSubscription(
+                id.into(),
+                reason.into(),
+                tx,
+            ))
+            .expect("live test relay");
+        rx.recv_timeout(StdDuration::from_secs(5))
+            .expect("relay closed subscription")
+    }
+
+    #[cfg(test)]
+    pub(crate) fn disconnect_clients(&self) -> usize {
+        let (tx, rx) = std_mpsc::channel();
+        self.control_tx
+            .send(RelayControl::DisconnectClients(tx))
+            .expect("live test relay");
+        rx.recv_timeout(StdDuration::from_secs(5))
+            .expect("relay disconnect")
     }
 }
 
@@ -347,6 +415,10 @@ fn handle_client_message(client_id: usize, raw_message: &str, state: &Arc<Mutex<
     let Some(kind) = parts.first().and_then(Value::as_str) else {
         return;
     };
+    #[cfg(test)]
+    if let Some(wire) = lock_relay_state(state).wire.as_mut() {
+        wire.push((client_id, message.clone()));
+    }
 
     match kind {
         "REQ" if parts.len() >= 2 => {

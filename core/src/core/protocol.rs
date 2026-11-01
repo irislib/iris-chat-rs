@@ -904,6 +904,15 @@ impl AppCore {
                     loop {
                         match notifications.recv().await {
                             Ok(RelayNotification::RelayStatus { status }) => {
+                                if status == RelayStatus::Connected {
+                                    // Cached filters describe the old socket. The SDK's
+                                    // second-resolution reconnect check can miss a quick
+                                    // reconnect, so repair this relay once through AppCore.
+                                    let id = SubscriptionId::new(PROTOCOL_SUBSCRIPTION_ID);
+                                    if relay.subscription(&id).await.is_some() {
+                                        let _ = relay.unsubscribe(&id).await;
+                                    }
+                                }
                                 let _ = tx.send(CoreMsg::Internal(Box::new(
                                     InternalEvent::RelayStatusChanged {
                                         relay_url: relay_url.clone(),
@@ -921,8 +930,25 @@ impl AppCore {
                                     },
                                 )));
                             }
+                            Ok(RelayNotification::Message {
+                                message:
+                                    nostr::RelayMessage::Closed {
+                                        subscription_id, ..
+                                    },
+                            }) if subscription_id.as_ref().as_str() == PROTOCOL_SUBSCRIPTION_ID => {
+                                // The SDK retains filters for auth-required/rate-limited
+                                // CLOSED responses. Evict them so the next bounded liveness
+                                // check repairs this relay instead of treating it as healthy.
+                                let _ = relay.unsubscribe(subscription_id.as_ref()).await;
+                            }
                             Ok(_) => {}
-                            Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                            Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                                // A missed CLOSED cannot be distinguished from a healthy
+                                // subscription through the SDK's public filter snapshot.
+                                let _ = relay
+                                    .unsubscribe(&SubscriptionId::new(PROTOCOL_SUBSCRIPTION_ID))
+                                    .await;
+                            }
                             Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                         }
                     }
@@ -1316,7 +1342,9 @@ impl AppCore {
                     PROTOCOL_SUBSCRIPTION_LIVENESS_CHECK_SECS,
                 ));
             }
-            RelayStatus::Connected => {}
+            RelayStatus::Connected => {
+                self.reconcile_protocol_subscriptions("relay_connected", false);
+            }
             RelayStatus::Disconnected | RelayStatus::Terminated | RelayStatus::Sleeping
                 if was_connected && !is_connected =>
             {
@@ -1509,7 +1537,6 @@ impl AppCore {
             self.schedule_relay_transport_retry("subscription_reconcile_offline");
             return;
         }
-        let previous_applied_plan = self.protocol_subscription_runtime.applied_plan.clone();
         let filters = desired_plan
             .as_ref()
             .map(build_protocol_subscription_filters)
@@ -1545,14 +1572,8 @@ impl AppCore {
                         };
                     }
                     let subscription_id = SubscriptionId::new(PROTOCOL_SUBSCRIPTION_ID);
-                    if previous_applied_plan.is_some() {
-                        let _ = client.unsubscribe(&subscription_id).await;
-                    }
-                    let result = if filters.is_empty() {
-                        Ok(())
-                    } else {
-                        subscribe_protocol_filters_with_id(&client, subscription_id, filters).await
-                    };
+                    let result =
+                        subscribe_protocol_filters_with_id(&client, subscription_id, filters).await;
                     let result = match result {
                         Ok(()) => match discovery_scopes {
                             Ok(scopes) => {
