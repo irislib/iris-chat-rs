@@ -66,7 +66,8 @@ verified release-tree root.
 
 The Linux CLI is built in Debian 12 so it does not inherit the hosted runner's
 newer glibc requirement. Before uploading it, the build workflow installs the
-exact archive in a fresh Debian 12 container as root and as a regular user,
+exact archive in a fresh Debian 12 container with its D-Bus runtime library
+(`libdbus-1-3`), as root and as a regular user,
 then runs `iris --version` and `iris --help` for both installations. Test the
 public website installer with `./scripts/test_cli_install_docker`.
 

@@ -254,7 +254,7 @@ with (root / 'calls.jsonl').open('a') as log:
         self.assertIn("bash scripts/install-cargo-deb.sh", desktop)
         self.assertNotIn("cargo install cargo-deb", desktop)
         self.assertIn('apt-snapshots.tsv:/opt/iris-build/build-inputs/apt-snapshots.tsv:ro', installer_test)
-        self.assertIn('pinned-apt.sh debian ca-certificates curl tar', installer_test)
+        self.assertIn('pinned-apt.sh debian ca-certificates curl tar libdbus-1-3', installer_test)
 
     def test_cache_restore_prefixes_cannot_cross_snapshot_or_image_changes(self):
         workflow = (ROOT / ".github/workflows/build-artifacts.yml").read_text()
@@ -294,7 +294,7 @@ with (root / 'calls.jsonl').open('a') as log:
         self.assertIn(str(ROOT / "linux/scripts/pinned-apt.sh") + ":/opt/iris-build/scripts/pinned-apt.sh:ro", args)
         self.assertIn(str(ROOT / "linux/build-inputs/apt-snapshots.tsv") + ":/opt/iris-build/build-inputs/apt-snapshots.tsv:ro", args)
         self.assertIn(str(archive) + ":/tmp/iris-cli.tar.gz:ro", args)
-        self.assertIn("bash /opt/iris-build/scripts/pinned-apt.sh debian ca-certificates curl tar", args[-1])
+        self.assertIn("bash /opt/iris-build/scripts/pinned-apt.sh debian ca-certificates curl tar libdbus-1-3", args[-1])
         self.assertNotIn("cargo ", args[-1])
 
 

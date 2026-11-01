@@ -107,6 +107,9 @@ Quick install:
   ./install.sh
   ./install.sh /usr/local/bin
 
+Linux requires glibc 2.36 or newer and the D-Bus runtime library.
+On Debian/Ubuntu, install the runtime with: sudo apt install libdbus-1-3
+
 The iris command can create or restore a profile, send messages, search local
 messages, and listen for new messages.
 
