@@ -8,6 +8,14 @@
   and mDNS behavior, ICE consent, candidate comparison and cleanup, and native
   socket protection, preserving the compatible iOS dependencies.
 
+## 0.1.59
+
+- Back off failed message-server connections across anonymous readers while
+  keeping each author's connections, authentication, and requests separate.
+- Use `iris-chat-protocol` 0.3.14 to avoid repeated checkpoint writes when queued
+  delivery retries make no progress, preserving durable session and delivery
+  changes.
+
 ## 0.1.44
 
 - Recover direct sends immediately after secret-key restore instead of waiting

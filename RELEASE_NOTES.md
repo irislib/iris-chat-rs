@@ -2,6 +2,28 @@
 
 Each release has channel-specific notes. The release tag must match the `##` heading exactly.
 
+## v2026.11.1.4
+
+### GitHub
+
+- Back off connection attempts to unavailable message servers while preserving separate anonymous authentication and history requests for each author.
+- Avoid rewriting unchanged pending-message state during retries. Preserve delivery progress, device revocations, failed-save rollback, and recovery after restart.
+- Verify populated-account recovery across five message servers, including unavailable servers and a large pending queue, followed by two idle minutes without database mutations.
+- Update the protocol source package to 0.3.14 and the CLI source package to 0.1.59.
+- Hold final publication until the exact tagged artifacts pass required acceptance checks, then publish those same artifacts.
+
+### Apple
+
+- Reduce repeated connection attempts when a message server is unavailable.
+- Avoid unnecessary database writes while messages are waiting to be delivered.
+- Keep message recovery and private connections working after a server reconnects.
+
+### Zapstore
+
+- Reduce repeated connection attempts when a message server is unavailable.
+- Avoid unnecessary database writes while messages are waiting to be delivered.
+- Keep message recovery and private connections working after a server reconnects.
+
 ## v2026.11.1.3
 
 ### GitHub

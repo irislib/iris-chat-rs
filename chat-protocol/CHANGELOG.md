@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.14
+
+- Avoid rewriting checkpoints when remote-device and linked-device retries only
+  advance their retry clocks. Persist session, target, and delivery changes while
+  preserving save-failure rollback and recovery after restart.
+
 ## 0.3.3
 
 - Retry queued sender-key controls immediately when authenticated group metadata
