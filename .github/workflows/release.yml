@@ -197,6 +197,7 @@ jobs:
 
   release:
     name: Create GitHub release
+    environment: release-publication
     needs:
       - validate
       - verify

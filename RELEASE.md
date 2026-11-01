@@ -355,14 +355,14 @@ and `focused_tests` (whitespace-separated exact names), with optional
 `focused_release` and `focused_ignored`. It retains compiled dependencies even
 after a test failure and reuses them across source revisions. These focused
 checks leave the full validation and tagged release gates unchanged.
-The tagged core gate also retains compiled outputs after a test failure, using
-the existing target paths and restore prefixes bound to reviewed installer and
-input-pin hashes. Every native release cache preserves that input boundary;
-OS-only and legacy cross-input fallbacks are rejected. The core gate keeps at
-most one partial and one complete cache per source, compiler, architecture,
-input set and lock set. Repeated failures reuse the first partial cache; a later
-passing gate saves the complete cache without creating a new multi-gigabyte entry
-for every retry.
+Automatic cache writes are reserved for the trusted main core check. Tagged
+release jobs restore compatible caches without saving tag-only copies, keeping
+the free cache allowance available for reusable main builds. Explicit focused
+development workflows may still save their existing caches. Every native
+release cache preserves the reviewed compiler and input boundary; OS-only and
+legacy cross-input fallbacks are rejected. The main core check keeps at most
+one partial and one complete cache per source and input set. Repeated failures
+reuse the first partial cache; a later passing check saves the complete cache.
 
 For an optimized local Mac development build, reserve one writer for the selected
 caches, set `CARGO_TARGET_DIR` to the existing absolute
@@ -413,6 +413,16 @@ stand in for unrelated platform coverage or a required physical-device check.
 
 The tagged GitHub release workflow remains the release builder and runs every
 release and mesh resource gate before publishing its signed, attested assets.
+Only the publication job uses the `release-publication` environment. Configure
+its required release reviewer before tagging and verify that protection is
+still present. Builds and automated checks finish while publication waits,
+leaving their exact tagged artifacts available for any outstanding device
+acceptance. The release owner approves that run's pending deployment only
+after reviewing its source, artifact provenance and required acceptance results.
+The same artifacts then proceed to publication without rebuilding. Reject a
+failed candidate; do not bypass the protection or remove reviewers to publish
+it. This review does not waive separate Apple distribution gates.
+
 Public release also requires the exact source commit and all ancestors to be
 available from the owned Hashtree source URL in `haps-release.json`. The
 maintainer publishes source with the existing signing identity; CI only reads

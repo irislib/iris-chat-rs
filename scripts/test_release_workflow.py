@@ -517,6 +517,10 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("name: populated-discovery-cpu-and-privacy", jobs["verify"])
         self.assertIn("path: iris-chat-rs/work/private-controls/", jobs["verify"])
         publish = jobs["release"].split("    runs-on:", 1)[0]
+        self.assertEqual(re.findall(r"^    environment: (.+)$", publish, re.MULTILINE),
+                         ["release-publication"])
+        for name in ("validate", "verify", "mesh-resource", "build"):
+            self.assertNotIn("release-publication", jobs[name])
         self.assertEqual(re.findall(r"^      - (.+)$", publish, re.MULTILINE),
                          ["validate", "verify", "build", "mesh-resource"])
         self.assertNotIn("    if:", publish)
