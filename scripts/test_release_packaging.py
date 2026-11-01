@@ -311,6 +311,8 @@ print(json.dumps({"tag": tag, "verified": True,
             self.assertIn("--read-only", arguments)
             self.assertEqual(arguments[arguments.index("--network") + 1], "bridge")
             self.assertEqual(arguments[arguments.index("--platform") + 1], "linux/amd64")
+            runtime = arguments[arguments.index("--entrypoint") + 2]
+            self.assertRegex(runtime, r"^ubuntu:24\.04@sha256:[0-9a-f]{64}$")
             mounts = [arguments[i + 1] for i, arg in enumerate(arguments) if arg == "--mount"]
             self.assertEqual(mounts, [f"type=bind,source={linux.resolve()},target=/release/iris,readonly",
                                       f"type=bind,source={ca.resolve()},target=/release/ca.pem,readonly"])

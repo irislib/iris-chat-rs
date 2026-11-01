@@ -32,7 +32,8 @@ def isolated_check(cli: Path, ca_file: Path, app: bool, environment: dict) -> su
         "--mount", f"type=bind,source={cli},target=/release/iris,readonly",
         "--mount", f"type=bind,source={ca_file},target=/release/ca.pem,readonly",
         "--env", "SSL_CERT_FILE=/release/ca.pem", "--entrypoint", "/release/iris",
-        "ubuntu:24.04", "--data-dir", "/profile",
+        "ubuntu:24.04@sha256:fe81560990fae86dc4743202b2cb4d3df98d0bcf949173cecef15ce1127ef852",
+        "--data-dir", "/profile",
         "update", "check", "--source", "hashtree", "--json",
     ]
     if app:
