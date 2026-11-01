@@ -139,7 +139,7 @@ class ReleaseInputPinTests(unittest.TestCase):
                 for path in inputs:
                     self.assertFalse(render(keys[0]).startswith(render(prefix, "iris-chat-rs/" + path)), (job, path))
             if job == "verify":
-                self.assertEqual(len(keys), 2)  # Restore and partial/complete save.
+                self.assertEqual(len(keys), 1)  # Restore only; main owns cache writes.
                 self.assertEqual(len(prefixes), 3)
                 self.assertTrue(all(value.startswith("rust-release-v2-") for value in [*keys, *prefixes]))
 

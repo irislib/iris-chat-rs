@@ -133,6 +133,44 @@ class MainReleaseCacheTests(unittest.TestCase):
                 selected.append(name)
         self.assertEqual(selected, ['rust'])
 
+    def test_automatic_ci_only_writes_the_shared_main_core_cache(self):
+        workflow = (ROOT / '.github/workflows/ci.yml').read_text()
+        self.assertNotRegex(workflow, r'uses: actions/cache@')
+        writers = []
+        for block in re.split(r'(?=^  [\w-]+:\n)', workflow.split('\njobs:\n', 1)[1], flags=re.MULTILINE):
+            if 'uses: actions/cache/save@' in block:
+                writers.append(block.split(':', 1)[0].strip())
+        self.assertEqual(writers, ['rust-focused', 'rust-package', 'rust', 'ios'])
+        for name, scope in [('rust-focused', 'rust-focused'), ('rust-package', 'rust-package')]:
+            body = workflow.split(f'\n  {name}:\n', 1)[1].split('\n    name:', 1)[0]
+            self.assertIn(f"inputs.scope == '{scope}'", body)
+        ios = job(workflow, 'ios', 'windows')
+        save = step(ios, 'Save successful iOS compiler cache')
+        expression = re.search(r'if: \$\{\{ (.+) \}\}', save).group(1)
+        for event, hit, expected in [('push', 'false', False), ('pull_request', 'false', False),
+                                     ('workflow_dispatch', 'false', True), ('workflow_dispatch', 'true', False)]:
+            with self.subTest(event=event, hit=hit):
+                self.assertEqual(evaluate(expression, {'github.event_name': event,
+                    'steps.ios_cargo_cache.outputs.cache-hit': hit}), expected)
+        restore = step(ios, 'Restore Cargo cache')
+        paths = lambda text: text.split('          path: |\n', 1)[1].split('          key:', 1)[0]
+        self.assertEqual(paths(restore), paths(save))
+        self.assertIn('key: ${{ steps.ios_cargo_cache.outputs.cache-primary-key }}', save)
+        self.assertIn('python3 scripts/reuse_ios_core_cache.py --producer-run "$IOS_CORE_SEED_RUN"', ios)
+
+    def test_release_jobs_restore_without_competing_cache_writes(self):
+        for filename, count in [('release.yml', 1), ('build-artifacts.yml', 6)]:
+            workflow = (ROOT / '.github/workflows' / filename).read_text()
+            with self.subTest(workflow=filename):
+                self.assertNotRegex(workflow, r'uses: actions/cache(?:/save)?@')
+                self.assertEqual(len(re.findall(r'uses: actions/cache/restore@[0-9a-f]{40} # v6', workflow)), count)
+
+    def test_setup_actions_do_not_add_implicit_cache_writers(self):
+        for path in (ROOT / '.github/workflows').glob('*.yml'):
+            text = path.read_text()
+            with self.subTest(workflow=path.name):
+                self.assertNotRegex(text, r'(?m)^\s+(?:cache|bundler-cache|cache-dependency-path):')
+
 
 if __name__ == "__main__":
     unittest.main()

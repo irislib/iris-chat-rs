@@ -143,6 +143,7 @@ jobs:
 
       - name: Restore release compiler cache
         id: cargo-cache
+        # Main CI owns reusable cache writes; tag-only copies crowd it out.
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
@@ -173,16 +174,6 @@ jobs:
           path: iris-chat-rs/work/private-controls/
           if-no-files-found: warn
           retention-days: 14
-      - name: Preserve release compiler cache after tests
-        if: ${{ !cancelled() && steps.cargo-cache.outcome == 'success' && (steps.release-gate.outcome == 'success' || steps.release-gate.outcome == 'failure') && steps.cargo-cache.outputs.cache-hit != 'true' && (steps.release-gate.outcome == 'success' || !endsWith(steps.cargo-cache.outputs.cache-matched-key, format('-{0}-partial', needs.validate.outputs.sha))) }}
-        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            ${{ github.workspace }}/cargo-target
-          key: rust-release-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.identity }}-${{ hashFiles('iris-chat-rs/scripts/release-build-inputs.py', 'iris-chat-rs/scripts/release-build-inputs.json', 'iris-chat-rs/linux/scripts/pinned-apt.sh', 'iris-chat-rs/linux/build-inputs/apt-snapshots.tsv') }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock') }}-${{ needs.validate.outputs.sha }}-${{ steps.release-gate.outcome == 'success' && 'complete' || 'partial' }}
-
 
   mesh-resource:
     name: Relayless recovery and resource budgets

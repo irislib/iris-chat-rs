@@ -58,6 +58,8 @@ env:
   IRIS_UPDATE_MANIFEST_URL: ${{ vars.IRIS_UPDATE_MANIFEST_URL }}
   IRIS_UPDATE_POLL_SECONDS: ${{ vars.IRIS_UPDATE_POLL_SECONDS }}
 
+# Tag caches cannot warm later tags. Restore compatible caches without
+# displacing the shared main core cache from the free allowance.
 jobs:
   metadata:
     name: Resolve build identity
@@ -143,7 +145,7 @@ jobs:
           path: ${{ runner.temp }}/iris-release-rust/receipt.json
           if-no-files-found: warn
       - name: Cache Cargo and Gradle
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
             ~/.cargo/registry
@@ -233,7 +235,7 @@ jobs:
           path: ${{ runner.temp }}/iris-release-rust/receipt.json
           if-no-files-found: warn
       - name: Cache Cargo
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
             ~/.cargo/registry
@@ -418,7 +420,7 @@ jobs:
           path: ${{ runner.temp }}/iris-release-rust/receipt.json
           if-no-files-found: warn
       - name: Cache Cargo
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
             ~/.cargo/registry
@@ -566,7 +568,7 @@ jobs:
           path: ${{ runner.temp }}/iris-release-rust/receipt.json
           if-no-files-found: warn
       - name: Cache Cargo
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
             ~/.cargo/registry
@@ -632,7 +634,7 @@ jobs:
       # The container writes through the checkout bind mount, not the job's
       # host CARGO_TARGET_DIR. Always rebuild/verify the tagged app after restore.
       - name: Cache Linux release dependencies
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ${{ env.APP_DIR }}/linux/target/release
           key: linux-release-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.linux-cache.outputs.toolchain }}-${{ hashFiles('iris-chat-rs/**/Cargo.toml', 'iris-chat-rs/**/build.rs', 'iris-chat-rs/**/.cargo/config*', 'iris-chat-rs/**/rust-toolchain*', 'iris-chat-rs/linux/Dockerfile', 'iris-chat-rs/linux/.dockerignore', 'iris-chat-rs/linux/scripts/**', 'iris-chat-rs/linux/build-inputs/**', 'iris-chat-rs/scripts/linux-release', 'iris-chat-rs/scripts/build_common.sh', 'iris-chat-rs/scripts/docker_stage_common.sh') }}-${{ hashFiles('iris-chat-rs/linux/Cargo.lock') }}
@@ -699,7 +701,7 @@ jobs:
           path: ${{ runner.temp }}/iris-release-rust/receipt.json
           if-no-files-found: warn
       - name: Cache Cargo
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
             ~/.cargo/registry
