@@ -144,7 +144,14 @@ async fn scope_changes_dispose_the_connection_before_any_new_request() {
             .filter(|(_, value)| value[0] == "REQ")
             .count();
         assert!(connection
-            .read(&url, &changed, &mut Collection::new(false), None, None)
+            .read(
+                &url,
+                &changed,
+                &mut Collection::new(false),
+                None,
+                None,
+                tokio::time::Instant::now() + Duration::from_secs(3)
+            )
             .await
             .is_err());
         assert!(connection.session.is_none());

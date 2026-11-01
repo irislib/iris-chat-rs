@@ -289,10 +289,18 @@ async fn anonymous_reads_wire_isolates_authors_retries_and_validates_delivery() 
 /// These experiments each need to occupy the entire process-global budget.
 /// Separate exact-test children let them run concurrently under the parallel
 /// harness without sharing that deliberately saturated application process.
-fn capacity_experiment_in_child(test: &str) -> bool {
+pub(super) fn capacity_experiment_in_child(test: &str) -> bool {
+    capacity_experiment_with_watchdog(test, Duration::from_secs(20))
+}
+
+pub(super) fn capacity_experiment_with_watchdog(test: &str, watchdog: Duration) -> bool {
     use std::process::{Command, Stdio};
     const CHILD: &str = "IRIS_TEST_ANONYMOUS_CAPACITY_CHILD";
-    let name = format!("core::protocol::anonymous_reads::tests::{test}");
+    let name = if test.starts_with("core::") {
+        test.to_owned()
+    } else {
+        format!("core::protocol::anonymous_reads::tests::{test}")
+    };
     if std::env::var(CHILD).as_deref() == Ok(name.as_str()) {
         return false;
     }
@@ -318,7 +326,7 @@ fn capacity_experiment_in_child(test: &str) -> bool {
         .stderr(Stdio::piped())
         .spawn()
         .expect("start owned capacity experiment");
-    let deadline = Instant::now() + Duration::from_secs(20);
+    let deadline = Instant::now() + watchdog;
     let timed_out = loop {
         if child
             .try_wait()

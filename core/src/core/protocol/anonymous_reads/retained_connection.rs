@@ -70,7 +70,11 @@ impl ScopedReadConnection {
             && !filters.iter().any(requests_message_history)
     }
 
-    async fn open(&self, connector: Option<Connector>) -> anyhow::Result<Session> {
+    async fn open(
+        &self,
+        connector: Option<Connector>,
+        deadline: tokio::time::Instant,
+    ) -> anyhow::Result<Session> {
         // Retention must never block a query or consume a cold-read permit.
         // When these slots are full, this read keeps its disposable behavior.
         let permit = self.slots.clone().try_acquire_owned().ok();
@@ -79,6 +83,7 @@ impl ScopedReadConnection {
             connector,
             relay_addresses::connect(&self.relay),
             permit.is_some(),
+            deadline,
         )
         .await?;
         Ok(Session {
@@ -97,6 +102,7 @@ impl ScopedReadConnection {
         collected: &mut Collection,
         connector: Option<Connector>,
         mut verification: Option<RelayVerification<'_>>,
+        deadline: tokio::time::Instant,
     ) -> anyhow::Result<()> {
         if !self.matches(relay, filters) {
             self.session = None;
@@ -117,7 +123,7 @@ impl ScopedReadConnection {
                 diagnostics::retained_reused();
                 session
             }
-            None => self.open(connector.clone()).await?,
+            None => self.open(connector.clone(), deadline).await?,
         };
         let mut result = read_query(
             relay,
@@ -133,7 +139,7 @@ impl ScopedReadConnection {
             // once inside the original query deadline, with a fresh socket and
             // fresh anonymous AUTH. Semantic/auth/limit errors never retry here.
             drop(session);
-            session = self.open(connector).await?;
+            session = self.open(connector, deadline).await?;
             result = read_query(
                 relay,
                 filters,

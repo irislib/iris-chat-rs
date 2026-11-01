@@ -439,6 +439,7 @@ async fn dns_wire_keeps_hostname_validation_and_anonymous_author_tls_scopes() {
                 Some(scope.connector(&url, filters).unwrap()),
                 transport,
                 None,
+                tokio::time::Instant::now() + Duration::from_secs(5),
             )
             .await
             .unwrap();
@@ -485,6 +486,7 @@ async fn dns_wire_keeps_hostname_validation_and_anonymous_author_tls_scopes() {
             Some(wrong_tls.connector(&wrong, &alice_filters).unwrap()),
             transport,
             None,
+            tokio::time::Instant::now() + Duration::from_secs(5),
         )
         .await
         .unwrap_err();

@@ -8,6 +8,118 @@ fn own_seen_rumor(owner: &Keys) -> UnsignedEvent {
     .unwrap()
 }
 
+#[test]
+fn sibling_retry_backoff_stays_quiet_and_delivery_progress_survives_restart() {
+    use std::sync::atomic::Ordering::Relaxed;
+    let mut f = established_readiness_fixture();
+    let sibling = Keys::generate();
+    f.sender
+        .ingest_app_keys_event(&signed_app_keys(
+            &f.owner,
+            &[f.device.public_key(), sibling.public_key()],
+            2,
+        ))
+        .unwrap();
+    f.sender
+        .send_local_sibling_unsigned_event(
+            f.peer_owner.public_key(),
+            &f.peer_owner.public_key().to_hex(),
+            own_seen_rumor(&f.owner),
+            UnixSeconds(10),
+        )
+        .unwrap();
+    assert_eq!(f.sender.pending_local_sibling_sends.len(), 1);
+    let mut sessions = f.sender.session_manager.snapshot();
+    let mut receive_only = sessions
+        .users
+        .iter()
+        .find(|user| user.owner_pubkey == ndr_owner(f.peer_owner.public_key()))
+        .unwrap()
+        .devices
+        .iter()
+        .find(|device| device.device_pubkey == ndr_device(f.ready_device.public_key()))
+        .unwrap()
+        .active_session
+        .clone()
+        .unwrap();
+    receive_only.our_current_nostr_key = None;
+    assert!(!nostr_double_ratchet::Session::from_state(receive_only.clone()).can_send());
+    let record = sessions
+        .users
+        .iter_mut()
+        .find(|user| user.owner_pubkey == f.sender.local_owner)
+        .unwrap()
+        .devices
+        .iter_mut()
+        .find(|device| device.device_pubkey == ndr_device(sibling.public_key()))
+        .unwrap();
+    record.active_session = None;
+    record.inactive_sessions = vec![receive_only];
+    record.last_activity = Some(NdrUnixSeconds(100));
+    f.sender.session_manager =
+        SessionManager::from_snapshot(sessions, f.device.secret_key().to_secret_bytes()).unwrap();
+    f.sender.persist().unwrap();
+    let before = f.sender.session_manager.snapshot();
+    let pending = f.sender.pending_local_sibling_sends.clone();
+    let storage = Arc::new(GroupRetryCountingStorage {
+        inner: f.sender.storage.clone(),
+        puts: 0.into(),
+        fail_next: false.into(),
+    });
+    f.sender.storage = storage.clone();
+    assert!(f
+        .sender
+        .retry_pending_local_sibling_sends(NdrUnixSeconds(1_000))
+        .unwrap()
+        .is_empty());
+    assert_eq!(f.sender.session_manager.snapshot(), before);
+    assert_eq!(storage.puts.load(Relaxed), 0);
+    let mut ready = test_engine(&f.owner, &sibling);
+    let _queued = std::mem::take(&mut f.sender.pending_local_sibling_sends);
+    observe_sibling_invite(&mut f.sender, &ready, &sibling);
+    f.sender.pending_local_sibling_sends = pending;
+    let before = f.sender.session_manager.snapshot();
+    let pending = serde_json::to_value(&f.sender.pending_local_sibling_sends).unwrap();
+    let writes = storage.puts.load(Relaxed);
+    storage.fail_next.store(true, Relaxed);
+    assert!(f
+        .sender
+        .retry_pending_local_sibling_sends(NdrUnixSeconds(1_060))
+        .is_err());
+    assert_eq!(f.sender.session_manager.snapshot(), before);
+    assert_eq!(
+        serde_json::to_value(&f.sender.pending_local_sibling_sends).unwrap(),
+        pending
+    );
+    let effects = f
+        .sender
+        .retry_pending_local_sibling_sends(NdrUnixSeconds(1_060))
+        .unwrap();
+    assert_eq!(decrypt_own_sync_effects(&mut ready, effects).len(), 1);
+    let progressed = f.sender.session_manager.snapshot();
+    assert_ne!(progressed, before);
+    assert_eq!(storage.puts.load(Relaxed), writes + 2);
+    let mut restored = ProtocolEngine::load_or_create_for_local_device(
+        storage.clone(),
+        f.owner.public_key(),
+        &f.device,
+    )
+    .unwrap();
+    assert_eq!(restored.session_manager.snapshot(), progressed);
+    let writes = storage.puts.load(Relaxed);
+    assert!(restored
+        .retry_pending_local_sibling_sends(NdrUnixSeconds(1_120))
+        .unwrap()
+        .is_empty());
+    assert_eq!(restored.session_manager.snapshot(), progressed);
+    assert_eq!(
+        storage.puts.load(Relaxed),
+        writes,
+        "unchanged retry after restart must not save again"
+    );
+    assert!(restored.pending_local_sibling_sends.is_empty());
+}
+
 fn observe_sibling_invite(
     sender: &mut ProtocolEngine,
     sibling: &ProtocolEngine,

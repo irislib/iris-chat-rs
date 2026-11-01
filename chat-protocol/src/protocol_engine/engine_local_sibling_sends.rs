@@ -68,6 +68,8 @@ impl ProtocolEngine {
         self.with_state_checkpoint(|engine| {
             let mut effects = Vec::new();
             let mut processed = 0usize;
+            let mut persist_needed = false;
+            let sessions_before = engine.session_manager.snapshot();
             for mut pending in std::mem::take(&mut engine.pending_local_sibling_sends) {
                 if engine.held_direct_chats.contains(&pending.chat_id)
                     || pending.next_retry_at_secs > now.get()
@@ -81,6 +83,7 @@ impl ProtocolEngine {
                 let sessions = engine.session_manager.clone();
                 match engine.prepare_pending_local_sibling_send(&mut pending, now) {
                     Ok((ready, complete)) => {
+                        persist_needed |= complete || !ready.is_empty();
                         effects.extend(ready);
                         if !complete {
                             engine.pending_local_sibling_sends.push(pending);
@@ -92,7 +95,12 @@ impl ProtocolEngine {
                     }
                 }
             }
-            engine.persist()?;
+            // Empty effects alone cannot certify unchanged durable sessions.
+            // Preserve session changes while leaving pure retry-clock updates
+            // in memory, just as the other pending-work queues do.
+            if persist_needed || engine.session_manager.snapshot() != sessions_before {
+                engine.persist()?;
+            }
             Ok(effects)
         })
     }

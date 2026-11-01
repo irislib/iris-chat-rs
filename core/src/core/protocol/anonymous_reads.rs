@@ -15,6 +15,7 @@ pub(in crate::core) mod diagnostics;
 mod retained_connection;
 pub(in crate::core) use retained_connection::{idle_connections, ScopedReadConnection};
 mod relay_addresses;
+mod relay_backoff;
 mod scoped_tls;
 pub(in crate::core) use scoped_tls::ScopedTlsConnector;
 mod verification_cache;
@@ -31,8 +32,11 @@ static BACKGROUND_SLOTS: OnceLock<Semaphore> = OnceLock::new();
 
 pub(in crate::core) fn invalidate_relay_addresses() {
     relay_addresses::clear();
+    relay_backoff::clear();
 }
 
+#[cfg(test)]
+mod failed_relay_tests;
 #[cfg(test)]
 mod memory_tests;
 #[cfg(test)]
@@ -329,14 +333,32 @@ async fn read_one_with_connector(
     connection: Option<&mut ScopedReadConnection>,
 ) -> Result<Vec<Event>, ReadFailure> {
     let mut collected = Collection::new(filters.iter().any(requests_message_history));
-    match tokio::time::timeout(timeout, async {
+    let deadline = tokio::time::Instant::now() + timeout;
+    match tokio::time::timeout_at(deadline, async {
         match connection {
             Some(connection) => {
                 connection
-                    .read(relay, filters, &mut collected, connector, verification)
+                    .read(
+                        relay,
+                        filters,
+                        &mut collected,
+                        connector,
+                        verification,
+                        deadline,
+                    )
                     .await
             }
-            None => read_socket(relay, filters, &mut collected, connector, verification).await,
+            None => {
+                read_socket(
+                    relay,
+                    filters,
+                    &mut collected,
+                    connector,
+                    verification,
+                    deadline,
+                )
+                .await
+            }
         }
     })
     .await
@@ -377,6 +399,7 @@ async fn read_socket(
     collected: &mut Collection,
     connector: Option<Connector>,
     verification: Option<RelayVerification<'_>>,
+    deadline: tokio::time::Instant,
 ) -> anyhow::Result<()> {
     read_socket_with_transport(
         relay,
@@ -385,6 +408,7 @@ async fn read_socket(
         connector,
         relay_addresses::connect(relay),
         verification,
+        deadline,
     )
     .await
 }
@@ -427,7 +451,9 @@ async fn open_read_socket(
     connector: Option<Connector>,
     transport: impl std::future::Future<Output = std::io::Result<tokio::net::TcpStream>>,
     retained: bool,
+    deadline: tokio::time::Instant,
 ) -> anyhow::Result<ReadSocket> {
+    let admission = relay_backoff::Attempt::begin(relay, deadline)?;
     let attempt = diagnostics::OpenAttempt::new(retained);
     let config = WebSocketConfig {
         write_buffer_size: 0,
@@ -436,11 +462,18 @@ async fn open_read_socket(
         max_frame_size: Some(MAX_FRAME_BYTES),
         ..Default::default()
     };
-    let transport = transport.await?;
     // The original URL remains authoritative for Host, SNI and certificate
-    // verification. Only DNS answers are shared; every read owns a fresh socket.
-    let (socket, _) =
-        client_async_tls_with_config(relay.as_str(), transport, Some(config), connector).await?;
+    // verification. Shared failure pacing contains no author, AUTH or TLS state.
+    let result = async {
+        let transport = transport.await?;
+        let (socket, _) =
+            client_async_tls_with_config(relay.as_str(), transport, Some(config), connector)
+                .await?;
+        Ok::<_, anyhow::Error>(socket)
+    }
+    .await;
+    admission.completed(result.is_ok());
+    let socket = result?;
     let handshake = match socket.get_ref() {
         MaybeTlsStream::Rustls(stream) => stream.get_ref().1.handshake_kind(),
         _ => None,
@@ -456,9 +489,10 @@ async fn read_socket_with_transport(
     connector: Option<Connector>,
     transport: impl std::future::Future<Output = std::io::Result<tokio::net::TcpStream>>,
     verification: Option<RelayVerification<'_>>,
+    deadline: tokio::time::Instant,
 ) -> anyhow::Result<()> {
     validate_read_filters(filters)?;
-    let mut socket = open_read_socket(relay, connector, transport, false).await?;
+    let mut socket = open_read_socket(relay, connector, transport, false, deadline).await?;
     let result = read_query(
         relay,
         filters,

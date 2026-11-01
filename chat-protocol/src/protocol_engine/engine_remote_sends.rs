@@ -148,6 +148,7 @@ impl ProtocolEngine {
             let mut effects = Vec::new();
             let mut processed = 0usize;
             let mut persist_needed = false;
+            let sessions_before = engine.session_manager.snapshot();
             for mut pending in std::mem::take(&mut engine.pending_remote_sends) {
                 if engine.held_direct_chats.contains(&pending.chat_id)
                     || pending.next_retry_at_secs > now.get()
@@ -158,16 +159,14 @@ impl ProtocolEngine {
                 }
                 processed += 1;
                 let sessions = engine.session_manager.clone();
-                let missing_roster = engine
-                    .session_manager
-                    .roster(pending.recipient_owner)
-                    .is_none();
+                let targets_before = pending.eligible_devices.clone();
+                let completed_before = pending.completed_devices.clone();
                 match engine.prepare_pending_remote_send(&mut pending, now) {
                     Ok((ready, complete)) => {
-                        // Only the missing-roster branch is known to change
-                        // nothing except its retry clock. Empty effects from a
-                        // known roster can still accompany device/session work.
-                        persist_needed |= !missing_roster || complete || !ready.is_empty();
+                        persist_needed |= complete
+                            || !ready.is_empty()
+                            || pending.eligible_devices != targets_before
+                            || pending.completed_devices != completed_before;
                         effects.extend(ready);
                         if !complete {
                             engine.pending_remote_sends.push(pending);
@@ -177,12 +176,17 @@ impl ProtocolEngine {
                         engine.session_manager = sessions;
                         // Target revocations applied before preparation failed
                         // must remain durable even when session work rolls back.
-                        persist_needed = true;
+                        persist_needed |= pending.eligible_devices != targets_before
+                            || pending.completed_devices != completed_before;
                         engine.pending_remote_sends.push(pending);
                     }
                 }
             }
-            if persist_needed {
+            // Empty wire effects alone do not prove a no-op. Compare the
+            // complete durable session state once per batch, including device
+            // creation and gap-only session changes. Retry clocks may remain
+            // volatile; unchanged clocks must not rewrite the entire backlog.
+            if persist_needed || engine.session_manager.snapshot() != sessions_before {
                 engine.persist()?;
             }
             Ok(effects)

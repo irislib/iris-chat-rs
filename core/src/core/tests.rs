@@ -216,6 +216,7 @@ include!("tests/synthetic_vm_profile.rs");
 include!("tests/populated_discovery_idle.rs");
 include!("tests/foreground_discovery.rs");
 include!("tests/synthetic_protocol_checkpoint.rs");
+include!("tests/populated_retry_idle.rs");
 
 include!("tests/message_mutations.rs");
 include!("tests/message_mutation_live_privacy.rs");

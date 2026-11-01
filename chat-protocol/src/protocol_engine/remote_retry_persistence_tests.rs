@@ -250,7 +250,7 @@ fn remote_retry_mixed_progress_and_backoff_restore_after_failed_save() {
 }
 
 #[test]
-fn remote_retry_known_roster_without_effects_still_persists() {
+fn remote_retry_known_roster_without_state_changes_does_not_persist() {
     let mut f = remote_send_fixture();
     let peer = f.peer_owner.public_key();
     f.sender
@@ -262,6 +262,8 @@ fn remote_retry_known_roster_without_effects_still_persists() {
         fail_next: false.into(),
     });
     f.sender.storage = storage.clone();
+    let sessions = f.sender.session_manager.snapshot();
+    let mut pending = f.sender.pending_remote_sends.clone();
     assert!(f
         .sender
         .retry_pending_remote_sends(NdrUnixSeconds(1_000))
@@ -269,8 +271,14 @@ fn remote_retry_known_roster_without_effects_still_persists() {
         .is_empty());
     assert_eq!(
         storage.puts.load(std::sync::atomic::Ordering::Relaxed),
-        1,
-        "empty effects cannot certify that known-roster preparation was mutation-free"
+        0,
+        "unchanged sessions and targets must not force a checkpoint"
+    );
+    assert_eq!(f.sender.session_manager.snapshot(), sessions);
+    pending[0].next_retry_at_secs = 1_060;
+    assert_eq!(
+        serde_json::to_value(&f.sender.pending_remote_sends).unwrap(),
+        serde_json::to_value(&pending).unwrap()
     );
     f.sender.hold_pending_direct_sends(peer, true);
     let held = serde_json::to_value(&f.sender.pending_remote_sends).unwrap();
@@ -279,7 +287,7 @@ fn remote_retry_known_roster_without_effects_still_persists() {
         .retry_pending_remote_sends(NdrUnixSeconds(1_060))
         .unwrap()
         .is_empty());
-    assert_eq!(storage.puts.load(std::sync::atomic::Ordering::Relaxed), 1);
+    assert_eq!(storage.puts.load(std::sync::atomic::Ordering::Relaxed), 0);
     assert!(
         serde_json::to_value(&f.sender.pending_remote_sends).unwrap() == held,
         "held sends must retain their exact pending state"
