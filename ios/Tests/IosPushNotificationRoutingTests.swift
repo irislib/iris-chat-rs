@@ -10,12 +10,14 @@ final class IosPushNotificationRoutingTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: dataDir) }
         let manager = AppManager(rust: MockRustApp(state: makeAppState(rev: 1, account: makeAuthorizedAccount())),
             secretStore: InMemorySecretStore(bundle: makeStoredAccountBundle()), dataDir: dataDir, environment: [:])
-        // A parseable envelope with unavailable local keys takes the real
+        // A signed envelope with unavailable local keys takes the real
         // preview-cache retry path, which previously slept on the main thread.
+        // Deterministic fixture: test secret scalar 1, zero BIP-340 auxiliary randomness.
         let payload: [AnyHashable: Any] = ["event": [
-            "id": String(repeating: "0", count: 64),
+            "id": "7cebb5e0ff8748944a98505808fa7cf30d2561833f3e1cda3f8f841afb2d66d1",
             "pubkey": "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
-            "sig": String(repeating: "0", count: 128), "created_at": 1,
+            "sig": "2e451fc57a78edc86dbd5802f06df677669c430a5d48240a0ba9fe2cd3a294c0bc4d64301d70efff19cb51ebe37960c4b06c721d86c12308bdf1d68fcd68e277",
+            "created_at": 1,
             "kind": 1060, "tags": [["header", "unavailable"]], "content": "unavailable"
         ]]
         let start = Date()
