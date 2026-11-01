@@ -17,8 +17,9 @@ from ios_ordinary_relaunch import binding, require, verify_binding
 
 
 TESTS = ('test_ios_quality_observer', 'test_ios_relaunch_adapters', 'test_ios_relaunch_lifecycle',
-         'test_ios_ordinary_relaunch', 'test_ios_runtime_acceptance', 'test_ios_runtime_workflow')
-TEST_SOURCES = tuple(name + '.py' for name in TESTS) + ('qualify_ios_quality_observer.py',)
+         'test_ios_ordinary_relaunch', 'test_ios_runtime_acceptance', 'test_ios_runtime_workflow',
+         'test_ios_warm_lifecycle', 'test_ios_voip_background_wake.PrivateInputsTests', 'test_ios_ostrace_capture')
+TEST_SOURCES = tuple(name.split('.')[0] + '.py' for name in TESTS) + ('qualify_ios_quality_observer.py',)
 
 
 def replay(counters, toc, thermal, reference):

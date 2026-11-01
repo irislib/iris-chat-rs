@@ -107,7 +107,7 @@ class WarmLifecycleTests(unittest.TestCase):
         with self.assertRaises(life.LifecycleError): evaluate(value, initial, switch, resume)
 
     def test_adapter_rejects_replacement_and_other_commands_before_spawning(self):
-        core = warm.WarmCoreDevice(SimpleNamespace(config={'bundle_id': logs.BUNDLE}))
+        core = warm.WarmCoreDevice(SimpleNamespace(config={'bundle_id': logs.BUNDLE}, observation_only=False))
         for command in [['device', 'process', 'launch', '--terminate-existing', logs.BUNDLE],
                         ['device', 'process', 'terminate', '--pid', '102'], ['device', 'process', 'launch', 'other']]:
             with self.assertRaises(EvidenceError): core.run(command)
