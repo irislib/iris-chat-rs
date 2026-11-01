@@ -424,7 +424,7 @@ publication. No signing key is added to CI.
 
 The verifier explicitly reads from `https://cdn.iris.to` and
 `https://upload.iris.to`, starting with empty local clone and cache storage.
-The clone deadline is 1800 seconds, within a 45-minute publishing job.
+The clone deadline is 2700 seconds, within a 60-minute publishing job.
 Complete ancestry traversal and every hash check remain required; timeouts
 still stop publication. These route and deadline settings do not establish
 faster cold verification.
