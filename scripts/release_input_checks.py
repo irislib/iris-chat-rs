@@ -98,6 +98,7 @@ class ReleaseInputPinTests(unittest.TestCase):
             "android": (builds, common + apt + ["scripts/android-release-inputs.py", "scripts/android-release-inputs.json"]),
             "ios": (builds, common), "macos": (builds, common),
             "windows": (builds, common + ["global.json"]),
+            "windows-ui": (ci, common + ["global.json"]),
             "cli": (builds, common + ["scripts/docker_stage_common.sh", "linux/scripts/pinned-apt.sh", "linux/build-inputs/**"]),
         }
         def render(template, changed=None):
@@ -209,6 +210,20 @@ class ReleaseInputPinTests(unittest.TestCase):
         save = package.split("      - name: Preserve compiled package dependencies after failure\n", 1)[1]
         self.assertIn("key: ${{ steps.cargo-cache.outputs.cache-primary-key }}", save)
 
+
+    def test_windows_native_ci_installs_the_pinned_sdk_before_building(self) -> None:
+        workflow = (ROOT / ".github/workflows/ci.yml").read_text()
+        job = re.split(r"\n  (?=\S)", workflow.split("\n  windows-ui:\n", 1)[1], maxsplit=1)[0]
+        installer = job.split("      - name: Install checksum-verified Windows build tools\n", 1)[1].split("\n      - name:", 1)[0]
+        self.assertIn("shell: bash", installer)
+        self.assertIn("scripts/release-build-inputs.py --install", installer)
+        self.assertIn("--tools windows", installer)
+        self.assertIn("--target x86_64-pc-windows-msvc", installer)
+        self.assertNotIn("continue-on-error", installer)
+        self.assertLess(job.index("Install checksum-verified Windows build tools"), job.index("Build native app"))
+        self.assertNotIn("rustup", job)
+        self.assertNotIn("choco install", job)
+        self.assertIn("path: ${{ runner.temp }}/iris-windows-rust/receipt.json", job)
 
     def test_release_rust_and_binding_steps_enforce_committed_locks(self) -> None:
         for filename in ("scripts/ios-build", "scripts/macos-build", "scripts/linux-release"):

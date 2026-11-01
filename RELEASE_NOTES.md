@@ -2,6 +2,24 @@
 
 Each release has channel-specific notes. The release tag must match the `##` heading exactly.
 
+## v2026.11.1.1
+
+### GitHub
+
+- Add the Iris CLI for ARM64 Linux, including native hosted builds, pinned Debian build inputs, and root and regular-user installation checks.
+- Publish the ARM64 CLI as the Haps `iris` package with a matching locked source-build recipe. Preserve the asset inventories of older releases.
+- Reject mismatched Docker platforms before building a CLI archive.
+
+- Split release workflow tests to satisfy the source-size gate and install the pinned Windows build tools in native CI.
+
+### Apple
+
+- No Apple app changes in this release.
+
+### Zapstore
+
+- No Android app changes in this release.
+
 ## v2026.11.1
 
 ### GitHub

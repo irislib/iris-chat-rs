@@ -11,6 +11,7 @@ on:
       - ".github/workflows/release.yml"
       - ".github/workflows/release-checks.yml"
       - "scripts/test_release_workflow.py"
+      - "scripts/apple_release_workflow_checks.py"
       - "scripts/apple_connect_api.py"
       - "scripts/test_apple_connect_api.py"
       - "scripts/run_public_link_phone.py"
@@ -56,6 +57,7 @@ on:
       - ".github/workflows/release.yml"
       - ".github/workflows/release-checks.yml"
       - "scripts/test_release_workflow.py"
+      - "scripts/apple_release_workflow_checks.py"
       - "scripts/apple_connect_api.py"
       - "scripts/test_apple_connect_api.py"
       - "scripts/run_public_link_phone.py"
@@ -930,24 +932,28 @@ jobs:
         shell: pwsh
         working-directory: iris-chat-rs
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           path: iris-chat-rs
-      - name: Install build tools
-        run: |
-          rustup toolchain install stable --profile minimal
-          rustup default stable
-          rustup target add x86_64-pc-windows-msvc
-          choco install cmake nasm --no-progress -y
+      - name: Install checksum-verified Windows build tools
+        shell: bash
+        run: python scripts/release-build-inputs.py --install --work "$RUNNER_TEMP/iris-windows-rust" --target x86_64-pc-windows-msvc --bash "$(cygpath -w "$BASH")" --tools windows
+      - name: Retain reviewed Windows build inputs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: windows-native-build-inputs
+          path: ${{ runner.temp }}/iris-windows-rust/receipt.json
+          if-no-files-found: warn
       - name: Cache Cargo
-        uses: actions/cache@v4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             ${{ github.workspace }}/cargo-target
-          key: all-builds-windows-${{ hashFiles('iris-chat-rs/**/Cargo.lock', 'iris-chat-rs/windows/**/*.csproj') }}
-          restore-keys: all-builds-windows-
+          key: all-builds-windows-${{ hashFiles('iris-chat-rs/scripts/release-build-inputs.py', 'iris-chat-rs/scripts/release-build-inputs.json', 'iris-chat-rs/global.json') }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock', 'iris-chat-rs/windows/**/*.csproj') }}
+          restore-keys: all-builds-windows-${{ hashFiles('iris-chat-rs/scripts/release-build-inputs.py', 'iris-chat-rs/scripts/release-build-inputs.json', 'iris-chat-rs/global.json') }}-
       - name: Check Windows build input pins
         run: ./scripts/test-windows-build-inputs.ps1
       - name: Build native app
