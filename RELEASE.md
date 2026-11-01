@@ -609,6 +609,9 @@ Set `IRIS_DISTRIBUTION_TOOLS_DIR` to an absolute directory containing a qualifie
 used by other local services. Haps helpers with source-file caching and
 retained-root delta uploads avoid processing all previous package payloads on
 each release; older helpers report when these optimizations are unavailable.
+The distributor checks `htree release publish --expected-root` support before
+contacting GitHub or uploading files; a valid Haps helper bundle alone does not
+establish that the separate release publisher supports this safeguard.
 
 For an already tagged release, run the reviewed current distributor checkout
 with the explicit original `--tag`; record the tooling commit separately from

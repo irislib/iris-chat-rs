@@ -34,6 +34,15 @@ require_command() {
   fi
 }
 
+require_hashtree_release_publisher() {
+  require_command htree
+  local help
+  if ! help="$(htree release publish --help)" || [[ "$help" != *"--expected-root"* ]]; then
+    echo "Hashtree publication needs htree with release publish --expected-root support. Update the qualified release tools before retrying." >&2
+    return 1
+  fi
+}
+
 read_nsec() {
   local path="$1"
   if [[ ! -f "$path" ]]; then

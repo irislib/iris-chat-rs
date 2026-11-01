@@ -76,6 +76,38 @@ class ReleasePublishGuardTests(unittest.TestCase):
 
 
 class DistributionToolsTests(unittest.TestCase):
+    def test_release_root_guard_support_is_checked_before_github_or_publication(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            marker = root / "calls"
+            for name in ("haps", "gh"):
+                tool = root / name
+                tool.write_text(f'#!/bin/sh\necho {name} >> "$CALLS"\nexit 71\n')
+                tool.chmod(0o755)
+            htree = root / "htree"
+            env = {**os.environ, "PATH": str(root) + os.pathsep + os.environ["PATH"],
+                   "IRIS_DISTRIBUTION_TOOLS_DIR": str(root), "CALLS": str(marker)}
+            for label, help_text, help_exit, reaches_github in (
+                ("old", "Usage: htree release publish TREE VERSION CID", 0, False),
+                ("broken", "--expected-root", 9, False),
+                ("supported", "--expected-root <CID>", 0, True),
+            ):
+                with self.subTest(helper=label):
+                    marker.unlink(missing_ok=True)
+                    htree.write_text('#!/bin/sh\n[ "$*" = "release publish --help" ] || exit 77\n'
+                                     f"echo '{help_text}'\nexit {help_exit}\n")
+                    htree.chmod(0o755)
+                    result = subprocess.run(
+                        [str(ROOT / "scripts/distribute"), "hashtree", "--tag", "v2026.11.1.2", "--check"],
+                        env=env, capture_output=True, text=True, timeout=10,
+                    )
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertEqual(marker.exists(), reaches_github, result.stderr)
+                    if reaches_github:
+                        self.assertEqual(marker.read_text().splitlines(), ["gh"])
+                    else:
+                        self.assertIn("--expected-root support", result.stderr)
+
     def test_release_tools_override_path_without_replacing_global_tools(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

@@ -193,6 +193,10 @@ class DistributeTests(unittest.TestCase):
             r"""
             #!/usr/bin/env bash
             set -Eeuo pipefail
+            if [[ "$*" == "release publish --help" ]]; then
+              printf '%s\n' '--expected-root <CID>'
+              exit 0
+            fi
             printf 'htree %s\n' "$*" >> "$FAKE_COMMAND_LOG"
             if [[ "${HTREE_CONFIG_DIR:-}" != "$FAKE_EXPECTED_HTREE_CONFIG_DIR" ||
                   "${HTREE_DATA_DIR:-}" != "$IRIS_HASHTREE_DATA_DIR" ]]; then

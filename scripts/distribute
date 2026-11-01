@@ -400,6 +400,9 @@ PY
   echo "Published $TAG to Zapstore."
 }
 
+if [[ "$CHANNEL" == "hashtree" ]]; then
+  require_hashtree_release_publisher
+fi
 release_preflight
 if [[ "$CHANNEL" == "hashtree" || "$CHANNEL" == "zapstore" ]]; then
   if [[ -z "${IRIS_ANDROID_UPGRADE_RECEIPT:-}" ]]; then
