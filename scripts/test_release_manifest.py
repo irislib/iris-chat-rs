@@ -37,6 +37,31 @@ def names(tag: str, *, include_ios: bool = True) -> list[str]:
 
 
 class ReleaseManifestTests(unittest.TestCase):
+    def test_arm64_cli_is_required_only_from_its_first_release(self) -> None:
+        for tag, arm64 in (("v2026.10.30", False), ("v2026.11.1", True),
+                           ("v2026.11.1.1", True), ("v2027.1.1", True)):
+            with self.subTest(tag=tag):
+                result = subprocess.run([str(MANIFEST), "list-assets", "--tag", tag],
+                                        capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                assets = result.stdout.splitlines()
+                arm_name = f"iris-{tag}-aarch64-unknown-linux-gnu.tar.gz"
+                self.assertEqual(arm_name in assets, arm64)
+                self.assertEqual(len(assets), 14 if arm64 else 13)
+                if not arm64:
+                    continue
+                with tempfile.TemporaryDirectory() as directory:
+                    root = Path(directory)
+                    for name in assets:
+                        if name != arm_name:
+                            (root / name).write_bytes(name.encode())
+                    command = [str(MANIFEST), "create", "--tag", tag,
+                               "--commit", "a" * 40, "--asset-dir", str(root),
+                               "--out", str(root.parent / (root.name + "-manifest.json"))]
+                    result = subprocess.run(command, capture_output=True, text=True)
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn(arm_name, result.stderr)
+
     def setUp(self) -> None:
         self.directory = tempfile.TemporaryDirectory()
         self.root = Path(self.directory.name)

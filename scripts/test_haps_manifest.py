@@ -32,7 +32,7 @@ class HapsManifestTests(unittest.TestCase):
         return self.checker.validate(manifest or self.manifest, self.config, tag or self.tag)
 
     def test_all_published_package_variants_match_current_release(self):
-        self.assertEqual(self.validate(), 6)
+        self.assertEqual(self.validate(), 7)
 
     def test_rejects_stale_package_and_target_override_versions(self):
         for package in ("default", "iris", "override"):

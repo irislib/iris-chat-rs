@@ -70,6 +70,16 @@
         "iris": "iris"
       },
       "root": "iris"
+    },
+    {
+      "name": "iris",
+      "target": "aarch64-unknown-linux-gnu",
+      "asset": "iris-{tag}-aarch64-unknown-linux-gnu.tar.gz",
+      "description": "Iris Chat command-line client",
+      "commands": {
+        "iris": "iris"
+      },
+      "root": "iris"
     }
   ],
   "version_scheme": "date-revision"

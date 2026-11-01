@@ -27,7 +27,9 @@ promote the exact attested Linux release with pinned checksums and regenerated
 AUR registration. Use a public company contact in package metadata and commits.
 
 The release builds Android arm64, iOS, macOS arm64, Windows x64, Linux x64,
-and CLI archives for macOS arm64/x64 and Linux x64.
+and CLI archives for macOS arm64/x64 and Linux arm64/x64. The ARM64 Linux CLI
+is included from `v2026.11.1`; older immutable release inventories stay unchanged.
+Its Haps package is `iris`; `iris-chat` is the desktop app.
 
 The existing crates.io packages use separate semantic versions. When updating
 `iris-chat-protocol`, advance its version and the exact local consumer pins and
@@ -72,7 +74,10 @@ Linux container inputs are fixed by OCI digests in `linux/Dockerfile` and
 `scripts/docker_stage_common.sh`. Desktop releases use Ubuntu 26.04's packaged
 Rust (previous qualification: package 1.93.1ubuntu1), GTK4/libadwaita and GStreamer;
 the separate Debian 12 CLI builder uses Rust 1.99.0. Both build their existing
-default features with `--locked` for Linux x86_64; the desktop retains distro
+default features with `--locked`; the CLI targets Linux x86_64 and aarch64,
+with native hosted runners and separate architecture caches. Linux CLI jobs use
+the digest-pinned compiler inside the build container; host Rust is not used.
+The desktop targets x86_64 and retains distro
 Rust because the rustup compiler crashes under the supported amd64 emulation.
 `linux/build-inputs/apt-snapshots.tsv` fixes the 20261028T000000Z repository roots.
 Its `ubuntu-noble` profile covers hosted Ubuntu 24.04 CMake/DBus/pkg-config
@@ -217,7 +222,7 @@ or Kotlin or sign the app. The release build runs this check first, stops on
 failure, and then executes the complete release tasks without exclusions.
 
 Update both package versions and every build version argument in `haps.toml`
-for the same tag. Check all six source package variants with
+for the same tag. Check all seven source package variants with
 `python3 scripts/validate-haps-manifest.py --tag <tag>` before dispatching CI.
 The Linux Haps source recipe must invoke locked Cargo directly and stage its
 matching output. Do not route it through `scripts/linux-release`: that separate

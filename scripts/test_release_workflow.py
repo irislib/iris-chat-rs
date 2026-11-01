@@ -508,7 +508,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
         locked_recipe = '"--manifest-path", "linux/Cargo.toml", "--locked"'
         self.assertIn(locked_recipe, original)
         variants = [
-            ("current", original, 0, "Validated 6 Haps package variants"),
+            ("current", original, 0, "Validated 7 Haps package variants"),
             ("stale", original.replace('version = "', 'version = "9', 1), 1, "version"),
             ("unlocked", original.replace(locked_recipe, '"--manifest-path", "linux/Cargo.toml"', 1),
              1, "native locked Cargo"),

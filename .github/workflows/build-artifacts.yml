@@ -671,6 +671,11 @@ jobs:
           - runner: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
             platform: cli-linux-x64
+            docker_platform: linux/amd64
+          - runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            platform: cli-linux-arm64
+            docker_platform: linux/arm64
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
     env: *build_metadata
@@ -680,11 +685,8 @@ jobs:
         working-directory: ${{ env.APP_DIR }}
     steps:
       - *checkout_build
-      - name: Install Linux dependencies
-        if: runner.os == 'Linux'
-        run: |
-          sudo bash linux/scripts/pinned-apt.sh ubuntu-noble cmake libdbus-1-dev pkg-config
       - name: Install checksum-verified Rust target
+        if: runner.os == 'macOS'
         run: |
           tools=()
           if [[ "$RUNNER_OS" == macOS ]]; then tools=(--tools macos-cli); fi
@@ -725,8 +727,8 @@ jobs:
               file "$extracted/iris/iris"
               ;;
           esac
-          if [[ "$target" == "x86_64-unknown-linux-gnu" ]]; then
-            ./scripts/test_cli_install_docker --archive "$archive"
+          if [[ "$target" == *-unknown-linux-gnu ]]; then
+            ./scripts/test_cli_install_docker --archive "$archive" --platform "${{ matrix.docker_platform }}"
           fi
           mv "$archive" "dist/cli/iris-v${IRIS_APP_VERSION_NAME}-${target}.tar.gz"
       - name: Upload CLI build

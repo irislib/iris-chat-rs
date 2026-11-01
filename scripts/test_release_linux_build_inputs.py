@@ -268,7 +268,14 @@ with (root / 'calls.jsonl').open('a') as log:
                 self.assertIn("iris-chat-rs/" + path, key)
                 self.assertIn("iris-chat-rs/" + path, restore)
             self.assertIn("hashFiles(", restore)
-        self.assertIn("sudo bash linux/scripts/pinned-apt.sh ubuntu-noble cmake libdbus-1-dev pkg-config", cli)
+        # Linux compilers and native dependencies are inside the digest-pinned
+        # Debian builder. Only macOS needs a host compiler installation.
+        host_rust = cli.split("      - name: Install checksum-verified Rust target\n", 1)[1]
+        self.assertTrue(host_rust.startswith("        if: runner.os == 'macOS'\n"))
+        self.assertIn('IRIS_CLI_LINUX_DOCKER_BUILD=1 ./scripts/cli-release "$target"', cli)
+        builder = (ROOT / "scripts/cli-release").read_text()
+        self.assertIn('$(docker_rust_build_image)', builder)
+        self.assertIn('pinned-apt.sh debian cmake libclang-dev libdbus-1-dev pkg-config', builder)
 
     def test_installer_smoke_mounts_only_readonly_pins_and_does_not_build(self):
         self.stub("docker", """

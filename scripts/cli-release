@@ -19,6 +19,7 @@ Build and package one or more iris CLI targets:
   aarch64-apple-darwin
   x86_64-apple-darwin
   x86_64-unknown-linux-gnu
+  aarch64-unknown-linux-gnu
 EOF
 }
 
@@ -134,8 +135,8 @@ package_target() {
   install -m 755 "$binary" "$package/iris"
   write_installer "$package/install.sh"
   write_readme "$package/README.txt"
-  case "$(uname -m):$target" in
-    arm64:aarch64-*|aarch64:aarch64-*|x86_64:x86_64-*|amd64:x86_64-*)
+  case "$(uname -s):$(uname -m):$target" in
+    Darwin:arm64:aarch64-apple-darwin|Darwin:x86_64:x86_64-apple-darwin|Linux:aarch64:aarch64-unknown-linux-gnu|Linux:arm64:aarch64-unknown-linux-gnu|Linux:x86_64:x86_64-unknown-linux-gnu|Linux:amd64:x86_64-unknown-linux-gnu)
       "$package/iris" --version
       ;;
     *)
@@ -170,6 +171,9 @@ build_macos() {
 build_linux_native() {
   local target="$1"
   local target_dir="$ROOT/target/cli-release/linux-x64"
+  if [[ "$target" == aarch64-unknown-linux-gnu ]]; then
+    target_dir="$ROOT/target/cli-release/linux-arm64"
+  fi
   require_rust_target "$target"
   CARGO_TARGET_DIR="$target_dir" \
     cargo build --manifest-path "$ROOT/core/Cargo.toml" --release --bin iris --target "$target" --locked
@@ -180,7 +184,16 @@ build_linux_docker() {
   local target="$1"
   local target_dir="$ROOT/target/cli-release/linux-x64"
   local image="${IRIS_CLI_LINUX_BUILD_IMAGE:-$(docker_rust_build_image)}"
-  local platform="${IRIS_CLI_LINUX_DOCKER_PLATFORM:-$(docker_default_platform)}"
+  local expected_platform=linux/amd64
+  if [[ "$target" == aarch64-unknown-linux-gnu ]]; then
+    target_dir="$ROOT/target/cli-release/linux-arm64"
+    expected_platform=linux/arm64
+  fi
+  local platform="${IRIS_CLI_LINUX_DOCKER_PLATFORM:-${IRIS_DOCKER_PLATFORM:-$expected_platform}}"
+  [[ "$platform" == "$expected_platform" ]] || {
+    echo "Docker platform $platform does not match CLI target $target ($expected_platform)." >&2
+    return 1
+  }
   local repo_basename
   repo_basename="$(basename "$ROOT")"
 
@@ -190,7 +203,8 @@ build_linux_docker() {
     --rm \
     -v "$ROOT/..:/workspace:cached" \
     -w "/workspace/$repo_basename/core" \
-    -e CARGO_TARGET_DIR="/workspace/$repo_basename/target/cli-release/linux-x64" \
+    -e CARGO_TARGET_DIR="/workspace/$repo_basename/target/cli-release/$(basename "$target_dir")" \
+    -e IRIS_CLI_TARGET="$target" \
     -e IRIS_APP_VERSION_NAME \
     -e IRIS_APP_VERSION_CODE \
     -e IRIS_BUILD_GIT_SHA \
@@ -201,6 +215,10 @@ build_linux_docker() {
       set -Eeuo pipefail
       export DEBIAN_FRONTEND=noninteractive
       export PATH="/usr/local/cargo/bin:$PATH"
+      [[ "$(rustc -vV | sed -n "s/^host: //p")" == "$IRIS_CLI_TARGET" ]] || {
+        echo "Container compiler does not match CLI target $IRIS_CLI_TARGET" >&2
+        exit 1
+      }
       bash ../linux/scripts/pinned-apt.sh debian cmake libclang-dev libdbus-1-dev pkg-config
       cargo build --release --bin iris --locked --jobs "$IRIS_CLI_LINUX_BUILD_JOBS"
     '
@@ -212,8 +230,13 @@ build_target() {
     aarch64-apple-darwin|x86_64-apple-darwin)
       build_macos "$1"
       ;;
-    x86_64-unknown-linux-gnu)
-      if [[ "${IRIS_CLI_LINUX_DOCKER_BUILD:-0}" != "1" && "$(uname -s)" == Linux && "$(uname -m)" =~ ^(x86_64|amd64)$ ]]; then
+    x86_64-unknown-linux-gnu|aarch64-unknown-linux-gnu)
+      local native_target="$(uname -s):$(uname -m):$1"
+      if [[ "${IRIS_CLI_LINUX_DOCKER_BUILD:-0}" != "1" &&
+            ( "$native_target" == Linux:x86_64:x86_64-unknown-linux-gnu ||
+              "$native_target" == Linux:amd64:x86_64-unknown-linux-gnu ||
+              "$native_target" == Linux:aarch64:aarch64-unknown-linux-gnu ||
+              "$native_target" == Linux:arm64:aarch64-unknown-linux-gnu ) ]]; then
         build_linux_native "$1"
       else
         command -v docker >/dev/null || { echo "Docker is required to build $1 on this host" >&2; return 1; }

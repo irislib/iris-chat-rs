@@ -43,6 +43,7 @@ def excluded_platforms(tag: str) -> list[str]:
 
 
 def asset_specs(tag: str) -> dict[str, tuple[str, str, str]]:
+    require_tag(tag)
     specs = {
         f"iris-chat-{tag}-android-arm64.apk": ("android", "arm64", "apk"),
         f"iris-chat-{tag}-android-arm64.aab": ("android", "arm64", "aab"),
@@ -62,6 +63,12 @@ def asset_specs(tag: str) -> dict[str, tuple[str, str, str]]:
             "archive",
         ),
     }
+    # Keep immutable historical inventories valid after adding a platform.
+    release_date = tuple(map(int, tag.removeprefix("v").split(".")[:3]))
+    if release_date >= (2026, 11, 1):
+        specs[f"iris-{tag}-aarch64-unknown-linux-gnu.tar.gz"] = (
+            "cli", "linux-arm64", "archive"
+        )
     excluded = excluded_platforms(tag)
     return {name: spec for name, spec in specs.items() if spec[0] not in excluded}
 
