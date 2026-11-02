@@ -2215,8 +2215,8 @@ fn mobile_push_decrypt_renders_matching_pending_invite_response_with_chat_id() {
     );
 
     assert!(resolution.should_show);
-    assert_eq!(resolution.title, "Invite accepted");
-    assert_eq!(resolution.body, "Someone joined your chat");
+    assert_eq!(resolution.title, "New chat");
+    assert_eq!(resolution.body, "");
     let resolved: serde_json::Value =
         serde_json::from_str(&resolution.payload_json).expect("payload json");
     let peer_chat_id = peer.public_key().to_hex();

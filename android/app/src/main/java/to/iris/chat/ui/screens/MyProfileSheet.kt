@@ -425,7 +425,7 @@ fun MyProfileSheet(
                                     tag = "myProfileDesktopNotificationsSwitch",
                                 )
                                 SettingsToggleRow(
-                                    title = "Invite accepted",
+                                    title = "New chats",
                                     checked = preferences.inviteAcceptanceNotificationsEnabled,
                                     onCheckedChange = { enabled ->
                                         appManager.dispatch(

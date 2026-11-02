@@ -123,6 +123,7 @@ pub(crate) mod desktop_read_notifications;
 mod mobile_push;
 mod model;
 pub(crate) mod notifications;
+mod invite_notifications;
 mod payloads;
 mod persistence;
 mod private_contacts;
@@ -666,6 +667,8 @@ pub struct AppCore {
     open_invite_chat_on_join: bool,
     pending_private_invite_responses: BTreeMap<String, invites::PendingPrivateInviteResponseV1>,
     pending_private_invite_cleanup_retry: bool,
+    pending_new_chat_responses: BTreeMap<String, Event>,
+    new_chat_notifications: BTreeMap<String, String>,
     pending_private_invite_lookup: Option<(String, device_sync::InviteAcceptanceIntent)>,
     pending_outgoing_invite_acceptance: Option<invites::PendingOutgoingInviteAcceptance>,
     threads: BTreeMap<String, ThreadRecord>,

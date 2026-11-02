@@ -1218,8 +1218,8 @@ fn invite_acceptance_push_resolution(
     event: nostr::Event,
     chat_id: String,
 ) -> MobilePushNotificationResolution {
-    let title = "Invite accepted".to_string();
-    let body = "Someone joined your chat".to_string();
+    let title = "New chat".to_string();
+    let body = String::new();
     let mut resolved_payload = serde_json::Map::new();
     for (key, value) in payload_object {
         resolved_payload.insert(key.clone(), value.clone());
@@ -1278,7 +1278,7 @@ fn decrypted_mobile_push_body(kind: u64, content: &str) -> String {
         },
         kind if kind == CHAT_SETTINGS_KIND as u64 => "Updated chat".to_string(),
         kind if kind == APP_KEYS_EVENT_KIND as u64 => "Updated devices".to_string(),
-        MOBILE_PUSH_INVITE_RESPONSE_KIND => "Someone joined your chat".to_string(),
+        MOBILE_PUSH_INVITE_RESPONSE_KIND => "New chat".to_string(),
         _ => {
             let content = content.trim();
             if content.is_empty() {

@@ -206,7 +206,7 @@ struct NotificationsSettingsSection: View {
             .irisControlTint()
             .accessibilityIdentifier("myProfileDesktopNotificationsToggle")
 
-        Toggle("Invite accepted", isOn: inviteAccepted)
+        Toggle("New chats", isOn: inviteAccepted)
         .irisHoverPointer()
             .irisControlTint()
             .accessibilityIdentifier("myProfileInviteAcceptedNotificationsToggle")

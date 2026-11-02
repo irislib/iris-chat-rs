@@ -385,6 +385,10 @@ pub struct MentionNotificationSnapshot {
 
 #[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
 pub struct ChatThreadSnapshot {
+    /// A newly authenticated incoming chat in this runtime. Never inferred from
+    /// unread counts or restored history; replayed handshakes leave it unchanged.
+    #[uniffi(default = None)]
+    pub new_chat_notification_id: Option<String>,
     pub social_connection: Option<SocialConnectionSnapshot>,
     pub chat_id: String,
     pub kind: ChatKind,

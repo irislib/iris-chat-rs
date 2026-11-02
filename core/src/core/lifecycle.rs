@@ -99,6 +99,8 @@ impl AppCore {
             open_invite_chat_on_join: true,
             pending_private_invite_responses: BTreeMap::new(),
             pending_private_invite_cleanup_retry: false,
+            pending_new_chat_responses: BTreeMap::new(),
+            new_chat_notifications: BTreeMap::new(),
             pending_private_invite_lookup: None,
             pending_outgoing_invite_acceptance: None,
             threads: BTreeMap::new(),

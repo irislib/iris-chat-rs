@@ -165,13 +165,23 @@ impl ProtocolEngine {
         else {
             return Ok(false);
         };
-        Ok(matches!(
-            engine.invite_owner_exact_app_keys_membership(
+        Ok(engine.invite_owner_device_is_authorized(invite_owner_pubkey, invite_device_pubkey))
+    }
+
+    /// Checks exact signed evidence, including an encrypted proof ingested by
+    /// a read-only notification preview. Generic roster projections do not count.
+    pub fn invite_owner_device_is_authorized(
+        &self,
+        invite_owner_pubkey: PublicKey,
+        invite_device_pubkey: PublicKey,
+    ) -> bool {
+        invite_owner_pubkey == invite_device_pubkey || matches!(
+            self.invite_owner_exact_app_keys_membership(
                 ndr_owner(invite_owner_pubkey),
                 invite_device_pubkey,
             ),
             Some(true)
-        ))
+        )
     }
 }
 

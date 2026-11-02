@@ -53,6 +53,19 @@ pub(super) fn load_issued_invites(
 }
 
 impl AppCore {
+    pub(super) fn restore_chat_invites(&mut self, storage: &dyn StorageAdapter) -> anyhow::Result<()> {
+        self.private_chat_invites = super::invites::load_private_chat_invites(storage)?;
+        self.issued_invites = load_issued_invites(storage)?;
+        self.pending_invite_upload = None;
+        self.pending_private_invite_responses = super::invites::load_pending_private_invite_responses(storage)?;
+        self.pending_new_chat_responses = super::invite_notifications::load_pending_responses(storage)?;
+        Ok(())
+    }
+
+    pub(super) fn build_public_invite_snapshot(&self) -> Option<PublicInviteSnapshot> {
+        self.personal_invite_snapshot()
+    }
+
     pub(super) fn create_public_invite(&mut self) {
         self.begin_invite_upload(None, None, None);
     }

@@ -32,6 +32,10 @@ pub struct NotificationCandidate {
 /// 4. The chat is not currently open with the app foregrounded.
 /// 5. For ordinary chats, `unread_count` strictly increased. Muted group
 ///    mentions compare exact unread IDs, so concurrent reads cannot hide them.
+///
+/// A new authenticated incoming chat can also notify without a first message.
+/// Its runtime marker honors the separate new-chat preference, mute, block,
+/// and focus rules. A coalesced first message uses the ordinary message notice.
 pub fn decide_notifications(
     previous_chats: &[ChatThreadSnapshot],
     next_chats: &[ChatThreadSnapshot],
@@ -56,6 +60,27 @@ pub fn decide_notifications(
             continue;
         }
         let previous = previous_by_id.get(chat.chat_id.as_str()).copied();
+        if preferences.invite_acceptance_notifications_enabled
+            && !chat.is_muted
+            && !preferences.blocked_owner_pubkeys.contains(&chat.chat_id)
+            && chat.new_chat_notification_id.is_some()
+            && chat.new_chat_notification_id
+                != previous.and_then(|old| old.new_chat_notification_id.clone())
+            && chat.unread_count <= previous.map_or(0, |old| old.unread_count)
+        {
+            out.push(NotificationCandidate {
+                chat_id: chat.chat_id.clone(),
+                // An exact control ID prevents read-message cleanup from
+                // immediately deleting a chat with zero unread messages.
+                message_id: chat
+                    .new_chat_notification_id
+                    .as_ref()
+                    .map(|id| format!("invite:{id}")),
+                title: "New chat".into(),
+                body: String::new(),
+            });
+            continue;
+        }
         let mention = if chat.is_muted {
             if chat.kind != crate::state::ChatKind::Group
                 || preferences.silent_mention_chat_ids.contains(&chat.chat_id)
@@ -131,6 +156,7 @@ mod tests {
         preview: Option<&str>,
     ) -> ChatThreadSnapshot {
         ChatThreadSnapshot {
+            new_chat_notification_id: None,
             social_connection: None,
             chat_id: id.to_string(),
             kind: ChatKind::Direct,
@@ -162,6 +188,44 @@ mod tests {
             desktop_notifications_enabled: enabled,
             ..PreferencesSnapshot::default()
         }
+    }
+
+    #[test]
+    fn new_chat_notice_respects_preferences_focus_and_replay_without_an_unread_message() {
+        let mut next = chat("new", 0, None, false, None);
+        next.new_chat_notification_id = Some("accepted".into());
+        let out = decide_notifications(&[], &[next.clone()], &prefs(true), false, None);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].title, "New chat");
+        assert!(out[0].body.is_empty());
+        assert_eq!(out[0].message_id.as_deref(), Some("invite:accepted"));
+        assert!(
+            decide_notifications(&[next.clone()], &[next.clone()], &prefs(true), false, None)
+                .is_empty()
+        );
+        assert!(decide_notifications(&[], &[next.clone()], &prefs(false), false, None).is_empty());
+        let mut disabled = prefs(true);
+        disabled.invite_acceptance_notifications_enabled = false;
+        assert!(decide_notifications(&[], &[next.clone()], &disabled, false, None).is_empty());
+        assert!(
+            decide_notifications(&[], &[next.clone()], &prefs(true), true, Some("new")).is_empty()
+        );
+        assert_eq!(
+            decide_notifications(&[], &[next.clone()], &prefs(true), false, Some("new")).len(),
+            1
+        );
+        next.is_muted = true;
+        assert!(decide_notifications(&[], &[next.clone()], &prefs(true), false, None).is_empty());
+        next.is_muted = false;
+        next.unread_count = 1;
+        next.last_message_is_outgoing = Some(false);
+        next.last_message_preview = Some("Hello".into());
+        let out = decide_notifications(&[], &[next], &prefs(true), false, None);
+        assert_eq!(out.len(), 1);
+        assert_eq!(
+            out[0].body, "Hello",
+            "coalesced first message replaces the generic chat notice"
+        );
     }
 
     #[test]

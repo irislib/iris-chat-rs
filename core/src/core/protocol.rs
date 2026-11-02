@@ -117,7 +117,8 @@ impl AppCore {
         batch: ProtocolRetryBatch,
     ) {
         if batch.is_empty() {
-            if self.drain_queued_direct_text_messages(reason) {
+            let new_chats = self.finish_pending_new_chat_notifications();
+            if self.drain_queued_direct_text_messages(reason) || new_chats {
                 self.persist_best_effort();
                 self.rebuild_state();
                 self.emit_state();
@@ -188,6 +189,7 @@ impl AppCore {
         self.request_protocol_subscription_refresh();
         self.schedule_fast_protocol_retry_if_pending();
         self.drain_queued_direct_text_messages(reason);
+        self.finish_pending_new_chat_notifications();
         self.persist_best_effort();
         self.rebuild_state();
         self.emit_state();

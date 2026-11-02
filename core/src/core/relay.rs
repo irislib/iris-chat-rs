@@ -245,6 +245,7 @@ impl AppCore {
                     }
                     super::invites::PrivateInviteResponseDisposition::NotMatched => {}
                 }
+                self.queue_new_chat_response(&event);
                 let retry_results = self
                     .protocol_engine
                     .as_mut()
