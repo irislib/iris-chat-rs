@@ -294,15 +294,6 @@ pub(super) fn capacity_experiment_in_child(test: &str) -> bool {
 }
 
 pub(super) fn capacity_experiment_with_watchdog(test: &str, watchdog: Duration) -> bool {
-    capacity_child(test, watchdog, false)
-}
-
-#[cfg(unix)]
-pub(super) fn capacity_experiment_with_resource_limits(test: &str, watchdog: Duration) -> bool {
-    capacity_child(test, watchdog, true)
-}
-
-fn capacity_child(test: &str, watchdog: Duration, limit_resources: bool) -> bool {
     use std::process::{Command, Stdio};
     const CHILD: &str = "IRIS_TEST_ANONYMOUS_CAPACITY_CHILD";
     let name = if test.starts_with("core::") {
@@ -319,13 +310,7 @@ fn capacity_child(test: &str, watchdog: Duration, limit_resources: bool) -> bool
         shell
             .args([
                 "-c",
-                if limit_resources && cfg!(target_os = "linux") {
-                    "ulimit -c 0 && ulimit -n 2048 && ulimit -v 786432 && exec \"$@\""
-                } else if limit_resources {
-                    "ulimit -c 0 && ulimit -n 2048 && exec \"$@\""
-                } else {
-                    "ulimit -c 0 && exec \"$@\""
-                },
+                "ulimit -c 0 && exec \"$@\"",
                 "iris-anonymous-capacity-child",
             ])
             .arg(&executable);

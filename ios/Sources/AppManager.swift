@@ -349,7 +349,6 @@ final class LiveRustAppClient: RustAppClient {
 #endif
 
     init(dataDir: String, appVersion: String) {
-        IrisNetworkResources.prepare()
         let app = FfiApp(dataDir: dataDir, keychainGroup: "", appVersion: appVersion)
         self.ffi = app
 #if os(iOS) || os(macOS)

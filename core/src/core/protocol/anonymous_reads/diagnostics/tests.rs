@@ -81,6 +81,6 @@ fn discovery_diagnostics_open_results_count_once_and_serialize_only_counts() {
     assert_eq!(snapshot.tls_resumed, 1);
     let json = serde_json::to_value(snapshot).unwrap();
     let fields = json.as_object().unwrap();
-    assert_eq!(fields.len(), 15);
+    assert_eq!(fields.len(), 13);
     assert!(fields.values().all(|value| value.as_u64().is_some()));
 }
