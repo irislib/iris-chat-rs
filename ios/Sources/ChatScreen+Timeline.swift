@@ -245,7 +245,16 @@ extension ChatScreen {
         pendingScrollSettle?.cancel()
         pendingScrollSettle = nil
         timelineScrollSettleGeneration += 1
+        let generation = timelineScrollSettleGeneration
+        if anchor == .center {
+            // Realizing a distant lazy row changes the estimated content height.
+            // Treat the jump as browsing until its animation has settled.
+            shouldFollowLatest = false
+            isNearBottom = false
+            timelineAutoFollowSuppressedUntil = Date().addingTimeInterval(1.2)
+        }
         let scroll = {
+            guard generation == timelineScrollSettleGeneration else { return }
             let action = {
                 proxy.scrollTo(messageId, anchor: anchor)
             }
@@ -259,7 +268,13 @@ extension ChatScreen {
         }
         DispatchQueue.main.async { scroll() }
         if animated {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { scroll() }
+            let settle = DispatchWorkItem {
+                guard generation == timelineScrollSettleGeneration else { return }
+                pendingScrollSettle = nil
+                scroll()
+            }
+            pendingScrollSettle = settle
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15, execute: settle)
         }
 #endif
     }

@@ -45,6 +45,7 @@ struct ChatScreen: View {
     @StateObject var timelineCoordinator = ChatTimelineInteractionCoordinator()
     @State private var activeBubbleSwipe: ActiveMessageBubbleSwipe?
     @State private var activeMessageActionDockId: String?
+    @State private var quoteLookupTask: Task<Void, Never>?
     @State private var replyTarget: ChatMessageSnapshot?
     @State private var editTarget: ChatMessageSnapshot?
     @State private var editComposerState = IrisComposerState()
@@ -212,6 +213,7 @@ struct ChatScreen: View {
                                                     value: frame.maxY
                                                 )
                                         }
+                                        .allowsHitTesting(false)
                                     }
                                     .irisInteractiveKeyboardDismiss()
                                     .simultaneousGesture(timelineDragGesture)
@@ -224,6 +226,7 @@ struct ChatScreen: View {
                                     .allowsHitTesting(timelineIsVisible)
                                 }
                                 .irisOnChange(of: chatId) { _ in
+                                    quoteLookupTask?.cancel()
                                     timelineChatGeneration += 1
                                     timelineScrollSettleGeneration += 1
                                     pendingScrollSettle?.cancel()
@@ -711,6 +714,7 @@ struct ChatScreen: View {
         .irisOnChange(of: dynamicTypeSize) { _ in preserveBrowsingPosition() }
         .irisOnChange(of: displayScale) { _ in preserveBrowsingPosition() }
         .onDisappear {
+            quoteLookupTask?.cancel()
             pendingTimelineScroll = nil
             timelineChatGeneration += 1
             timelineScrollSettleGeneration += 1
@@ -767,7 +771,13 @@ struct ChatScreen: View {
     }
 
     private var timelineDragGesture: some Gesture {
-        DragGesture(minimumDistance: 0, coordinateSpace: .named(ChatTimelineCoordinateSpace.name))
+#if os(macOS)
+        // A mouse click on a quote is a button press until the pointer moves.
+        let minimumDistance: CGFloat = 6
+#else
+        let minimumDistance: CGFloat = 0
+#endif
+        return DragGesture(minimumDistance: minimumDistance, coordinateSpace: .named(ChatTimelineCoordinateSpace.name))
             .onChanged { value in
                 handleTimelineUserPan(
                     translationY: value.translation.height,
@@ -888,12 +898,14 @@ struct ChatScreen: View {
                 }
             },
             onScrollToQuote: { reply in
-                scrollToQuotedMessage(
-                    from: message,
-                    reply: reply,
-                    in: chat.messages,
-                    proxy: proxy
-                )
+                quoteLookupTask?.cancel()
+                quoteLookupTask = Task { @MainActor in
+                    if await manager.revealQuotedMessage(reply, before: message.id, in: chatId) {
+#if os(iOS)
+                        PlatformHaptics.messageMenuOpened()
+#endif
+                    }
+                }
             },
             onShowReactors: {
                 reactorsSelection = MessageReactorsSelection(messageId: message.id)
@@ -935,7 +947,10 @@ struct ChatScreen: View {
     }
 
     private func handleTimelineUserPan(translationY: CGFloat, velocityY: CGFloat) {
-        if abs(translationY) > 6 || abs(velocityY) > 60 { pendingTimelineScroll = nil }
+        if abs(translationY) > 6 || abs(velocityY) > 60 {
+            quoteLookupTask?.cancel()
+            pendingTimelineScroll = nil
+        }
         if pendingScrollSettle != nil {
             pendingScrollSettle?.cancel()
             pendingScrollSettle = nil
@@ -960,6 +975,7 @@ struct ChatScreen: View {
     }
 
     private func jumpToLatest(proxy: ScrollViewProxy) {
+        quoteLookupTask?.cancel()
         pendingPrependAnchorMessageId = nil
         pendingScrollSettle?.cancel()
         pendingScrollSettle = nil
@@ -1099,33 +1115,6 @@ struct ChatScreen: View {
             .map(\.id)
             .joined(separator: ",")
         return [manager.seenEligibilityToken, messageIds].joined(separator: "|")
-    }
-
-    // The wire format for a quoted reply only carries author + a snippet
-    // (max 96 chars, newlines flattened). To find the message the snippet
-    // came from, walk backwards from the replying message and match the
-    // same author whose own snippet matches. Disambiguates on the most
-    // recent matching message, which is the natural reading order.
-    private func scrollToQuotedMessage(
-        from replyingMessage: ChatMessageSnapshot,
-        reply: ReplyPreview,
-        in messages: [ChatMessageSnapshot],
-        proxy: ScrollViewProxy
-    ) {
-        guard let currentIdx = messages.firstIndex(where: { $0.id == replyingMessage.id }) else { return }
-        let target = reply.body
-        for i in stride(from: currentIdx - 1, through: 0, by: -1) {
-            let candidate = messages[i]
-            guard candidate.author == reply.author else { continue }
-            let candidateSnippet = replySnippet(for: candidate)
-            if candidateSnippet == target {
-                scrollToMessage(proxy: proxy, messageId: candidate.id)
-                #if os(iOS)
-                PlatformHaptics.messageMenuOpened()
-                #endif
-                return
-            }
-        }
     }
 
     private func messageInfoContext(for selection: MessageInfoSelection) -> (message: ChatMessageSnapshot, chat: CurrentChatSnapshot?) {

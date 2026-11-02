@@ -501,6 +501,7 @@ struct ReplyPreviewView: View {
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
                     .fill((isOutgoing ? palette.onBubbleMine : palette.onBubbleTheirs).opacity(0.12))
             )
+            .contentShape(Rectangle())
         }
         .buttonStyle(.irisPlain)
         .accessibilityHint("Tap to scroll to the quoted message")
