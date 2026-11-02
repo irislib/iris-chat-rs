@@ -318,16 +318,7 @@ async fn recovery_and_cold_queries_enforce_byte_budget_and_release_admission_aft
     worker
         .configure(std::slice::from_ref(&relay.url), vec![filter.clone()])
         .unwrap();
-    until(|| {
-        relay.requests() > 0
-            && relay
-                .wire
-                .lock()
-                .unwrap()
-                .iter()
-                .any(|(_, row)| row[0] == "AUTH")
-    })
-    .await;
+    until(|| relay.ready_subjects() == HashSet::from([peer.public_key().to_hex()])).await;
     let body = "x".repeat(70 * 1024);
     *relay.events.lock().unwrap() = (0..256)
         .map(|index| metadata(&peer, &format!("{index}:{body}")))
