@@ -3,10 +3,49 @@
 use super::*;
 use tokio::sync::OwnedSemaphorePermit;
 
-const MAX_RETAINED_CONNECTIONS: usize = 64;
+const MAX_RETAINED_CONNECTIONS: usize = 512;
+const DEFAULT_RETAINED_CONNECTIONS: usize = 64;
 const MAX_CONNECTION_AGE: Duration = Duration::from_secs(600);
 const MAX_IDLE_CONTROL_FRAMES: usize = 64;
-static RETAINED_SLOTS: OnceLock<Arc<Semaphore>> = OnceLock::new();
+static RETAINED_POOL: OnceLock<RetentionPool> = OnceLock::new();
+
+struct RetentionPool {
+    slots: Arc<Semaphore>,
+    capacity: usize,
+}
+
+fn capacity_for_descriptor_limit(limit: Option<usize>) -> usize {
+    // Leave at least three quarters for active reads, messaging, calls, files,
+    // and the platform UI. The library never changes the process limit.
+    limit
+        .map_or(DEFAULT_RETAINED_CONNECTIONS, |limit| limit / 4)
+        .min(MAX_RETAINED_CONNECTIONS)
+}
+
+fn retention_capacity() -> usize {
+    #[cfg(unix)]
+    {
+        let mut limit = std::mem::MaybeUninit::<libc::rlimit>::uninit();
+        // SAFETY: getrlimit initializes this correctly sized output on success.
+        if unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, limit.as_mut_ptr()) } == 0 {
+            // SAFETY: the successful call initialized both fields.
+            let limit = unsafe { limit.assume_init() };
+            return capacity_for_descriptor_limit(Some(
+                usize::try_from(limit.rlim_cur).unwrap_or(usize::MAX),
+            ));
+        }
+    }
+    capacity_for_descriptor_limit(None)
+}
+
+pub(super) fn retention_snapshot() -> (u64, u64) {
+    RETAINED_POOL.get().map_or((0, 0), |pool| {
+        (
+            pool.capacity as u64,
+            pool.capacity.saturating_sub(pool.slots.available_permits()) as u64,
+        )
+    })
+}
 
 struct Session {
     socket: ReadSocket,
@@ -57,8 +96,15 @@ impl ScopedReadConnection {
             relay: relay.clone(),
             filters: filters.to_vec(),
             session: None,
-            slots: RETAINED_SLOTS
-                .get_or_init(|| Arc::new(Semaphore::new(MAX_RETAINED_CONNECTIONS)))
+            slots: RETAINED_POOL
+                .get_or_init(|| {
+                    let capacity = retention_capacity();
+                    RetentionPool {
+                        slots: Arc::new(Semaphore::new(capacity)),
+                        capacity,
+                    }
+                })
+                .slots
                 .clone(),
         }
     }

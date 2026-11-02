@@ -27,6 +27,8 @@ pub(in crate::core) struct Snapshot {
     pub config_resets: u64,
     pub retained_reuses: u64,
     pub retained_opens: u64,
+    pub retained_capacity: u64,
+    pub retained_active: u64,
     pub disposable_opens: u64,
     pub failed_opens: u64,
     pub tls_full: u64,
@@ -64,6 +66,8 @@ impl Counters {
             config_resets: self.config_resets.load(Ordering::Relaxed),
             retained_reuses: self.retained_reuses.load(Ordering::Relaxed),
             retained_opens: self.retained_opens.load(Ordering::Relaxed),
+            retained_capacity: 0,
+            retained_active: 0,
             disposable_opens: self.disposable_opens.load(Ordering::Relaxed),
             failed_opens: self.failed_opens.load(Ordering::Relaxed),
             tls_full: self.tls_full.load(Ordering::Relaxed),
@@ -73,7 +77,10 @@ impl Counters {
 }
 
 pub(in crate::core) fn snapshot() -> Snapshot {
-    COUNTERS.snapshot()
+    let mut snapshot = COUNTERS.snapshot();
+    (snapshot.retained_capacity, snapshot.retained_active) =
+        super::retained_connection::retention_snapshot();
+    snapshot
 }
 
 pub(super) fn retained_reused() {
