@@ -1,7 +1,6 @@
 use super::AppStore;
 use crate::core::{DiscoveredUserRecord, UserDiscoveryCache};
 use rusqlite::{params, OptionalExtension};
-use std::collections::BTreeMap;
 
 impl AppStore {
     pub(crate) fn load_user_discovery(&self) -> anyhow::Result<UserDiscoveryCache> {
@@ -9,24 +8,26 @@ impl AppStore {
             .conn
             .lock()
             .map_err(|_| anyhow::anyhow!("storage connection mutex poisoned"))?;
-        let (owner_pubkey_hex, follow_event_id, follow_created_at_secs, social_rank_ready) = conn
+        let mut cache = conn
             .query_row(
                 "SELECT owner_pubkey_hex, follow_event_id, follow_created_at_secs,
-                        social_rank_ready
+                        social_rank_ready, follow_event_json, social_graph
                  FROM user_discovery_state WHERE id = 1",
                 [],
                 |row| {
-                    Ok((
-                        row.get::<_, Option<String>>(0)?,
-                        row.get::<_, Option<String>>(1)?,
-                        row.get::<_, i64>(2)? as u64,
-                        row.get::<_, bool>(3)?,
-                    ))
+                    Ok(UserDiscoveryCache {
+                        owner_pubkey_hex: row.get(0)?,
+                        follow_event_id: row.get(1)?,
+                        follow_created_at_secs: row.get::<_, i64>(2)? as u64,
+                        social_rank_ready: row.get(3)?,
+                        follow_event_json: row.get(4)?,
+                        social_graph: row.get(5)?,
+                        ..Default::default()
+                    })
                 },
             )
             .optional()?
-            .unwrap_or((None, None, 0, false));
-        let mut users = BTreeMap::new();
+            .unwrap_or_default();
         let mut stmt = conn.prepare(
             "SELECT owner_pubkey_hex, follow_position, petname
              FROM user_discovery_users
@@ -41,44 +42,21 @@ impl AppStore {
         })?;
         for row in rows {
             let row = row?;
-            users.insert(row.owner_pubkey_hex.clone(), row);
+            cache.users.insert(row.owner_pubkey_hex.clone(), row);
         }
-        let mut social_friend_support = BTreeMap::new();
         let mut stmt = conn.prepare(
             "SELECT target_owner_pubkey_hex, friend_support
              FROM user_discovery_social WHERE account_owner_pubkey_hex = ?1",
         )?;
-        let rows = stmt.query_map([owner_pubkey_hex.as_deref().unwrap_or_default()], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, u16>(1)?))
-        })?;
+        let rows = stmt.query_map(
+            [cache.owner_pubkey_hex.as_deref().unwrap_or_default()],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, u16>(1)?)),
+        )?;
         for row in rows {
             let (owner, support) = row?;
-            social_friend_support.insert(owner, support);
+            cache.social_friend_support.insert(owner, support);
         }
-        Ok(UserDiscoveryCache {
-            follow_event_json: conn
-                .query_row(
-                    "SELECT follow_event_json FROM user_discovery_state WHERE id = 1",
-                    [],
-                    |row| row.get(0),
-                )
-                .optional()?
-                .flatten(),
-            owner_pubkey_hex,
-            follow_event_id,
-            follow_created_at_secs,
-            users,
-            social_rank_ready,
-            social_friend_support,
-            social_graph: conn
-                .query_row(
-                    "SELECT social_graph FROM user_discovery_state WHERE id = 1",
-                    [],
-                    |row| row.get(0),
-                )
-                .optional()?
-                .flatten(),
-        })
+        Ok(cache)
     }
 
     pub(crate) fn replace_user_discovery(

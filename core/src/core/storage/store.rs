@@ -2553,6 +2553,10 @@ mod tests {
     #[test]
     fn user_discovery_cache_replaces_atomically_and_restores_offline() {
         let (_tmp, mut store) = fresh_store();
+        assert_eq!(
+            store.load_user_discovery().unwrap(),
+            UserDiscoveryCache::default()
+        );
         let first_user = DiscoveredUserRecord {
             owner_pubkey_hex: "owner-a".to_string(),
             follow_position: 0,
@@ -2564,7 +2568,7 @@ mod tests {
             petname: None,
         };
         let initial = UserDiscoveryCache {
-            follow_event_json: None,
+            follow_event_json: Some(r#"{"id":"follow-1","tags":[["p","owner-a"]]}"#.into()),
             owner_pubkey_hex: Some("root-a".to_string()),
             follow_event_id: Some("follow-1".to_string()),
             follow_created_at_secs: 10,
@@ -2574,7 +2578,7 @@ mod tests {
             ]),
             social_rank_ready: true,
             social_friend_support: BTreeMap::from([("global-a".to_string(), 2)]),
-            social_graph: None,
+            social_graph: Some(vec![0, 1, 127, 255]),
         };
         store.replace_user_discovery(&initial).unwrap();
         assert_eq!(store.load_user_discovery().unwrap(), initial);

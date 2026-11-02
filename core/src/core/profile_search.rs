@@ -538,7 +538,6 @@ fn search_people_candidates(
             social_source,
             social_distance,
             friend_support,
-            owner_hex.clone(),
             FollowedUserSearchResult {
                 social_connection: super::social_connection::social_connection(
                     current_owner_hex,
@@ -562,11 +561,11 @@ fn search_people_candidates(
             .then_with(|| left.2.cmp(&right.2))
             .then_with(|| left.3.cmp(&right.3))
             .then_with(|| left.4.cmp(&right.4))
-            .then_with(|| left.5.cmp(&right.5))
+            .then_with(|| left.5.owner_pubkey_hex.cmp(&right.5.owner_pubkey_hex))
     });
     Ok(matches
         .into_iter()
-        .map(|(_, _, _, _, _, _, row)| row)
+        .map(|(_, _, _, _, _, row)| row)
         .collect())
 }
 

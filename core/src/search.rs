@@ -85,11 +85,7 @@ impl SearchQuery {
     }
 
     pub(crate) fn name_rank(&self, names: &[&str]) -> NameMatchRank {
-        let mut rank = if self.matches(names) {
-            NameMatchRank::Substring
-        } else {
-            NameMatchRank::OtherField
-        };
+        let mut rank = NameMatchRank::OtherField;
         for name in names {
             let name = name.to_lowercase();
             let compact = compact_search_text(&name);
@@ -113,7 +109,11 @@ impl SearchQuery {
                 rank = NameMatchRank::WordPrefix;
             }
         }
-        rank
+        if rank == NameMatchRank::OtherField && self.matches(names) {
+            NameMatchRank::Substring
+        } else {
+            rank
+        }
     }
 }
 
@@ -162,4 +162,35 @@ pub(crate) fn filter_threads_for_search(
         }
     }
     (contacts, groups)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn name_ranking_preserves_unicode_and_stronger_later_matches() {
+        use NameMatchRank::{Exact, OtherField, Substring, WordPrefix};
+        let cases: &[(&str, &[&str], NameMatchRank)] = &[
+            ("anna", &["Annabelle", "Anna"], Exact),
+            ("anna", &["Joanna", "Annabelle"], WordPrefix),
+            ("anna", &["Joanna"], Substring),
+            ("anna sm", &["Anna Smith"], WordPrefix),
+            ("smith anna", &["Anna Smith"], WordPrefix),
+            ("annasm", &["Anna Smith"], WordPrefix),
+            ("anna cooper", &["Anna Jones", "Bob Cooper"], Substring),
+            ("coding", &["Anna Smith"], OtherField),
+            ("i", &["İ"], Exact),
+            ("İ", &["I"], Exact),
+            ("ος", &["ΟΣ"], Exact),
+            ("σ", &["ΟΣ"], Substring),
+        ];
+        for &(query, names, expected) in cases {
+            assert_eq!(
+                SearchQuery::new(query).name_rank(names),
+                expected,
+                "{query:?}: {names:?}"
+            );
+        }
+    }
 }

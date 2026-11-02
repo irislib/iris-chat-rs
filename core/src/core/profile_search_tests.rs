@@ -172,7 +172,11 @@ fn equally_relevant_direct_follows_keep_social_order_before_global_hits() {
     let conn = people_search_connection();
     let first = Keys::generate().public_key().to_hex();
     let second = Keys::generate().public_key().to_hex();
-    let global = Keys::generate().public_key().to_hex();
+    let mut globals = [
+        Keys::generate().public_key().to_hex(),
+        Keys::generate().public_key().to_hex(),
+    ];
+    globals.sort();
     let root = Keys::generate().public_key().to_hex();
     conn.execute(
         "INSERT INTO user_discovery_state(id, owner_pubkey_hex, social_rank_ready) VALUES (1, ?1, 0)",
@@ -189,19 +193,21 @@ fn equally_relevant_direct_follows_keep_social_order_before_global_hits() {
         [&first],
     )
     .unwrap();
-    conn.execute(
-        "INSERT INTO profile_search_candidates VALUES
-             (?1, 'Alex One', '[]', NULL, NULL, 1, 1)",
-        [&global],
-    )
-    .unwrap();
+    for global in globals.iter().rev() {
+        conn.execute(
+            "INSERT INTO profile_search_candidates VALUES
+                 (?1, 'Alex One', '[]', NULL, NULL, 1, 1)",
+            [global],
+        )
+        .unwrap();
+    }
 
     let owners = search_people_candidates(&conn, "alex", &HashSet::new(), Some(&root))
         .unwrap()
         .into_iter()
         .map(|row| row.owner_pubkey_hex)
         .collect::<Vec<_>>();
-    assert_eq!(owners, vec![first, second, global]);
+    assert_eq!(owners, [vec![first, second], globals.to_vec()].concat());
 }
 
 #[test]
