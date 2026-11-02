@@ -296,6 +296,49 @@ class WindowTests(unittest.TestCase):
         with self.assertRaises(adapters.lifecycle.LifecycleError):
             adapters.lifecycle.capture_prefixes(**final, device=self.config['device'])
 
+    def test_observation_startup_filter_is_exact_pid_and_keeps_logger_errors_fatal(self):
+        self.observation_input()
+        window = self.admit(mode='observation-only')
+        core = Mock(); core.run.return_value = {'runningProcesses': [
+            {'processIdentifier': 1, 'executable': 'file:///system/SpringBoard.app/SpringBoard'},
+            {'processIdentifier': 101, 'executable': self.config['executable']},
+        ]}
+        capture = adapters.Capture(window, core, startup_pid=101)
+        def spawn(command, label):
+            Path(command[command.index('-o') + 1]).write_text('[connected:synthetic-device]\n')
+            stdout, stderr = window.out / (label + '.stdout'), window.out / (label + '.stderr')
+            stdout.write_bytes(b''); stderr.write_bytes(b'')
+            child = Mock(); child.poll.return_value = None
+            return {'process': child, 'stdout': stdout, 'stderr': stderr}
+        with patch.object(window, 'spawn', side_effect=spawn) as started:
+            capture.start()
+        prefix = [str(window.tools['syslog']), '-u', self.config['device'], '--no-colors']
+        self.assertEqual([call.args for call in started.call_args_list], [
+            (prefix + ['-p', '101', '-m', 'iris.startup ', '-o', str(window.out / 'startup.log')], 'startup'),
+            (prefix + ['-p', '1', '-m', self.config['bundle_id'], '-o', str(window.out / 'lifecycle.log')], 'lifecycle'),
+        ])
+        capture.streams['startup']['stderr'].write_text('unexpected packet data 02 00000010\n')
+        with self.assertRaisesRegex(EvidenceError, 'Logger exited or reported an error'):
+            capture.health()
+        capture.streams['startup']['stderr'].write_bytes(b'')
+        capture.health(); window.close()
+
+    def test_startup_pid_filter_requires_observation_and_exact_live_app(self):
+        def window(observation=True):
+            return SimpleNamespace(observation_only=observation, capture=None, config=self.config)
+        for pid in (True, 0, -1, '101', 1.5):
+            with self.subTest(pid=pid), self.assertRaises(EvidenceError):
+                adapters.Capture(window(), Mock(), startup_pid=pid)
+        with self.assertRaisesRegex(EvidenceError, 'observation-only'):
+            adapters.Capture(window(False), Mock(), startup_pid=101)
+        springboard = {'processIdentifier': 1, 'executable': 'file:///system/SpringBoard.app/SpringBoard'}
+        app = {'processIdentifier': 101, 'executable': self.config['executable']}
+        for rows in ([], [{**app, 'processIdentifier': 102}], [{**app, 'executable': '/other'}], [app, app]):
+            core = Mock(); core.run.return_value = {'runningProcesses': [springboard, *rows]}
+            capture = adapters.Capture(window(), core, startup_pid=101)
+            with self.subTest(rows=rows), self.assertRaisesRegex(EvidenceError, 'exact live app'):
+                capture.start()
+
     def measured_capture(self):
         self.config['deadline_monotonic'] = 500
         window = self.admit()

@@ -233,7 +233,11 @@ class CoreDevice:
 
 
 class Capture:
-    def __init__(self, window, coredevice):
+    def __init__(self, window, coredevice, *, startup_pid=None):
+        require(startup_pid is None or (window.observation_only is True
+                and type(startup_pid) is int and startup_pid > 0),
+                'A fixed startup PID requires observation-only mode and a positive integer')
+        self.startup_pid = startup_pid
         self.window, self.core = window, coredevice
         self.streams, self.os_process = {}, None
         require(window.capture is None, 'One measured capture per owned window')
@@ -247,9 +251,16 @@ class Capture:
         found = [r for r in rows if r.get('executable', '').endswith('/SpringBoard.app/SpringBoard')]
         require(len(found) == 1, 'Missing unique SpringBoard process')
         self.os_process = found[0]
+        if self.startup_pid is not None:
+            app = [r for r in rows if r.get('processIdentifier') == self.startup_pid
+                   or r.get('executable') == c['executable']]
+            require(len(app) == 1 and app[0].get('processIdentifier') == self.startup_pid
+                    and app[0].get('executable') == c['executable'], 'Missing exact live app for startup PID filter')
         # A single name selector in pinned idevicesyslog resolves to the old PID.
-        # Startup must span replacement; its evaluator still requires the new PID.
-        for name, process_filter, message in (('startup', None, 'iris.startup '),
+        # Relaunch startup must span replacement. Fixed-process observations can
+        # request only their exact PID from the device's logging service.
+        startup_filter = str(self.startup_pid) if self.startup_pid is not None else None
+        for name, process_filter, message in (('startup', startup_filter, 'iris.startup '),
                                               ('lifecycle', str(self.os_process['processIdentifier']), c['bundle_id'])):
             path = self.window.out / (name + '.log')
             args = [str(self.window.tools['syslog']), '-u', c['device'], '--no-colors']
