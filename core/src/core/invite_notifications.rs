@@ -21,22 +21,29 @@ impl AppCore {
     // Published device invites can be answered before the account's signed
     // device proof arrives. Retain the encrypted response across restarts and
     // announce it only after the protocol accepts the authenticated session.
-    pub(super) fn queue_new_chat_response(&mut self, event: &Event) {
-        if self.pending_new_chat_responses.len() >= MAX_PENDING
-            || serde_json::to_vec(event).is_ok_and(|bytes| bytes.len() > 128 * 1024)
-        {
-            return;
+    // Return an unqueued sender for immediate authorization checking by the
+    // caller; queue capacity or a storage failure must not hide proved arrivals.
+    pub(super) fn queue_new_chat_response(
+        &mut self,
+        event: &Event,
+    ) -> Option<(PublicKey, PublicKey)> {
+        if serde_json::to_vec(event).is_ok_and(|bytes| bytes.len() > 128 * 1024) {
+            return None;
         }
-        let Some((owner, _)) = self.new_chat_response_sender(event, false) else {
-            return;
-        };
+        let sender @ (owner, _) = self.new_chat_response_sender(event, false)?;
         if self.threads.contains_key(&owner.to_hex())
             || self
                 .logged_in
                 .as_ref()
                 .is_some_and(|login| login.owner_pubkey == owner)
         {
-            return;
+            return None;
+        }
+        // Bound only the waiting queue. The caller also checks this freshly
+        // authenticated sender after protocol ingestion, when a bundled proof
+        // may authorize it without needing a waiting slot.
+        if self.pending_new_chat_responses.len() >= MAX_PENDING {
+            return Some(sender);
         }
         let save = || -> anyhow::Result<()> {
             self.private_chat_invite_storage()?.put(
@@ -48,6 +55,9 @@ impl AppCore {
         if save().is_ok() {
             self.pending_new_chat_responses
                 .insert(event.id.to_hex(), event.clone());
+            None
+        } else {
+            Some(sender)
         }
     }
 
@@ -100,14 +110,9 @@ impl AppCore {
                 completed.push(id);
                 continue;
             };
-            if !self.protocol_engine.as_ref().is_some_and(|engine| {
-                engine.invite_owner_device_is_authorized(owner, device)
-                    && engine.active_session_count_for_owner(owner) > 0
-            }) {
+            if !self.record_verified_new_chat_response(&event, owner, device) {
                 continue;
             }
-            self.cache_invite_acceptance_preview(&id, &owner.to_hex());
-            self.record_new_chat_notification(&owner.to_hex(), &id);
             completed.push(id);
         }
         if completed.is_empty() {
@@ -125,6 +130,23 @@ impl AppCore {
                 }
             }
         }
+        true
+    }
+
+    pub(super) fn record_verified_new_chat_response(
+        &mut self,
+        event: &Event,
+        owner: PublicKey,
+        device: PublicKey,
+    ) -> bool {
+        if !self.protocol_engine.as_ref().is_some_and(|engine| {
+            engine.invite_owner_device_is_authorized(owner, device)
+                && engine.active_session_count_for_owner(owner) > 0
+        }) {
+            return false;
+        }
+        self.cache_invite_acceptance_preview(&event.id.to_hex(), &owner.to_hex());
+        self.record_new_chat_notification(&owner.to_hex(), &event.id.to_hex());
         true
     }
 

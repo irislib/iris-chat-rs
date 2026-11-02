@@ -216,6 +216,71 @@ mod invite_notification_regressions {
     }
 
     #[test]
+    fn new_chat_notifications_accept_proved_arrival_with_full_unproved_queue() {
+        let owner = Keys::generate();
+        let device = Keys::generate();
+        let mut core = isolated_invite_ui_core("new-chat-full-waiting-queue", &owner, &device);
+        let invite = core
+            .protocol_engine
+            .as_ref()
+            .unwrap()
+            .local_invite()
+            .unwrap();
+        for _ in 0..32 {
+            let unproved_owner = Keys::generate();
+            let unproved_device = Keys::generate();
+            core.handle_relay_event(response_with_proof(
+                &invite,
+                &unproved_owner,
+                &unproved_device,
+                None,
+            ));
+        }
+        assert_eq!(core.pending_new_chat_responses.len(), 32);
+        let before = core.state.chat_list.clone();
+
+        let peer_owner = Keys::generate();
+        let peer_device = Keys::generate();
+        let wrong_owner = Keys::generate();
+        let wrong_proof =
+            signed_app_keys_authorization_event(&wrong_owner, peer_device.public_key(), 10);
+        core.handle_relay_event(response_with_proof(
+            &invite,
+            &peer_owner,
+            &peer_device,
+            Some(&wrong_proof),
+        ));
+        assert!(candidates(&before, &core).is_empty());
+        assert!(!core.threads.contains_key(&peer_owner.public_key().to_hex()));
+        assert_eq!(core.pending_new_chat_responses.len(), 32);
+
+        let proof = signed_app_keys_authorization_event(&peer_owner, peer_device.public_key(), 10);
+        let event = response_with_proof(&invite, &peer_owner, &peer_device, Some(&proof));
+        core.handle_relay_event(event.clone());
+        let notices = candidates(&before, &core);
+        assert_eq!(
+            notices.len(),
+            1,
+            "unproved senders must not crowd out a proved new chat"
+        );
+        assert_eq!(notices[0].chat_id, peer_owner.public_key().to_hex());
+        assert_eq!(notices[0].title, "New chat");
+        assert!(notices[0].body.is_empty());
+        assert_eq!(core.pending_new_chat_responses.len(), 32);
+        assert_eq!(
+            super::super::invite_notifications::load_pending_responses(
+                &core.private_chat_invite_storage().unwrap()
+            )
+            .unwrap()
+            .len(),
+            32
+        );
+        let after = core.state.chat_list.clone();
+        core.handle_relay_event(event);
+        assert!(candidates(&after, &core).is_empty());
+    }
+
+    #[test]
     fn new_chat_notifications_wait_for_proof_across_restart() {
         let owner = Keys::generate();
         let device = Keys::generate();
