@@ -362,6 +362,7 @@ impl AppCore {
             .issued_invites
             .get(&pending.invite_key)
             .is_some_and(|issued| issued.record.kind == "group");
+        self.cache_invite_acceptance_preview(&event_id, &pending.claimed_owner.to_hex());
         if let Err(error) = self.consume_private_chat_invite_after_response(&pending.invite_key) {
             self.pending_private_invite_cleanup_retry = true;
             self.push_debug_log(
@@ -383,6 +384,7 @@ impl AppCore {
 
         let chat_id = pending.claimed_owner.to_hex();
         if !is_group_invite {
+            self.record_new_chat_notification(&chat_id, &event_id);
             self.ensure_thread_record(&chat_id, unix_now().get())
                 .unread_count = 0;
         }

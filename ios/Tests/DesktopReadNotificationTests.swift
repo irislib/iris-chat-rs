@@ -7,6 +7,14 @@ import UserNotifications
 #endif
 
 final class DesktopReadNotificationTests: XCTestCase {
+    func testNewChatWithNoUnreadMessagesSurvivesMessageCleanup() {
+        let content = SystemDesktopNotificationPoster.content(accountID: "owner", chatID: "new-chat",
+            messageID: "invite:accepted", title: "New chat", body: "")
+        let record = DesktopReadNotification(UNNotificationRequest(identifier: "iris-chat-invite", content: content, trigger: nil))
+        XCTAssertTrue(DesktopReadNotification.readIdentifiers([record], accountID: "owner", dataDir: "/fixture",
+            fullyReadChatIDs: ["new-chat"], lookup: { _, _, _ in [] }).isEmpty)
+    }
+
     func testExactReadKeepsUnreadSiblingOtherAccountAndCall() {
         let records = [
             DesktopReadNotification(identifier: "iris-chat-read", accountID: "owner", chatID: "chat", messageID: "seen"),

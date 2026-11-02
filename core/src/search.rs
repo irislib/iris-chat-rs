@@ -11,6 +11,7 @@ pub(crate) fn include_note_to_self(chats: &mut Vec<ChatThreadSnapshot>, account:
         return;
     }
     chats.push(ChatThreadSnapshot {
+        new_chat_notification_id: None,
         social_connection: Some(crate::SocialConnectionSnapshot {
             is_favorite: false,
             badge: Some(crate::SocialBadge::Following),

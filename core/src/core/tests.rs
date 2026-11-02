@@ -131,6 +131,7 @@ include!("tests/nearby_publish_burst.rs");
 include!("tests/publish_drain_progress.rs");
 include!("tests/protocol_filters_push.rs");
 include!("tests/protocol_discovery_demand.rs");
+include!("tests/invite_notifications.rs");
 include!("tests/device_approval.rs");
 include!("tests/app_keys_roster.rs");
 include!("tests/app_keys_device_labels.rs");

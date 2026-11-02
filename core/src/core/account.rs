@@ -4,7 +4,6 @@ use super::account_app_keys::{
 };
 pub(super) use super::account_pending_link::connect_pending_device_link_client;
 use super::account_pending_link::validate_link_authorization;
-use super::invites::{load_pending_private_invite_responses, load_private_chat_invites};
 use super::persistence::apply_persisted_preferences;
 use super::*;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
@@ -601,6 +600,8 @@ impl AppCore {
         self.groups.clear();
         self.chat_message_ttl_seconds.clear();
         self.recent_handshake_peers.clear();
+        self.pending_new_chat_responses.clear();
+        self.new_chat_notifications.clear();
         self.seen_event_ids.clear();
         self.seen_event_order.clear();
         self.typing_floor_secs.clear();
@@ -753,11 +754,7 @@ impl AppCore {
             None
         };
         let restored = (|| -> anyhow::Result<ProtocolEngine> {
-            self.private_chat_invites = load_private_chat_invites(storage.as_ref())?;
-            self.issued_invites = super::issued_invites::load_issued_invites(storage.as_ref())?;
-            self.pending_invite_upload = None;
-            self.pending_private_invite_responses =
-                load_pending_private_invite_responses(storage.as_ref())?;
+            self.restore_chat_invites(storage.as_ref())?;
 
             let mut engine = ProtocolEngine::load_or_create_for_local_device(
                 storage,

@@ -382,6 +382,7 @@ impl AppCore {
                         .as_deref(),
                 );
                 ChatThreadSnapshot {
+                    new_chat_notification_id: self.new_chat_notifications.get(&thread.chat_id).cloned(),
                     social_connection: self.social_connection(&thread.chat_id),
                     chat_id: thread.chat_id.clone(),
                     kind: thread_kind,
@@ -684,10 +685,6 @@ impl AppCore {
             .collect()
     }
 
-    pub(super) fn build_public_invite_snapshot(&self) -> Option<PublicInviteSnapshot> {
-        self.personal_invite_snapshot()
-    }
-
     pub(super) fn build_link_device_snapshot(&self) -> Option<LinkDeviceSnapshot> {
         if let Some(pending) = self.pending_linked_device.as_ref() {
             return Some(LinkDeviceSnapshot {
@@ -752,6 +749,7 @@ impl AppCore {
                         && !self.group_message_is_hidden(&thread.chat_id, m)
                 });
                 Some(ChatThreadSnapshot {
+                    new_chat_notification_id: None,
                     social_connection: None,
                     chat_id,
                     kind: ChatKind::Group,

@@ -192,6 +192,7 @@ fn fixture_thread(kind: ChatKind, index: u32) -> ChatThreadSnapshot {
     };
 
     ChatThreadSnapshot {
+        new_chat_notification_id: None,
         social_connection: None,
         chat_id: format!("{prefix}-{:04}", index + 1),
         kind,

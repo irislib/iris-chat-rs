@@ -124,6 +124,7 @@ fn unchanged_roster_replay_finishes_invite_cleanup_visibly_and_durably() {
         core.remember_event(format!("{index:064x}"));
     }
     assert!(!core.has_seen_event(&roster.id.to_hex()));
+    let previous_chats = core.state.chat_list.clone();
     core.enter_batch();
     core.handle_relay_event(roster);
     core.exit_batch();
@@ -131,6 +132,11 @@ fn unchanged_roster_replay_finishes_invite_cleanup_visibly_and_durably() {
     assert_eq!(stored_session_count(&core, peer.public_key()), 1);
     assert_eq!(core.screen_stack, vec![Screen::Settings]);
     assert!(core.state.chat_list.iter().any(|chat| chat.chat_id == chat_id));
+    let notices = super::notifications::decide_notifications(
+        &previous_chats, &core.state.chat_list, &core.state.preferences, false, None,
+    );
+    assert_eq!(notices.len(), 1, "cleanup recovery must still announce the new chat");
+    assert_eq!(notices[0].title, "New chat");
     drop(core);
     let mut restarted = logged_in_test_core_at_data_dir(&owner, &device, data_dir);
     let saved = restarted.load_persisted().unwrap().unwrap();
