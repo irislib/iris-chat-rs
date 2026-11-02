@@ -10,6 +10,8 @@ pub(in crate::core) mod mesh_group_envelopes;
 mod schema;
 mod store;
 mod store_pending_relay;
+mod writer_lease;
+pub(crate) use writer_lease::{CoreWriterLease, WriterEpoch};
 
 pub use account::validate_account_storage;
 pub(crate) use connection::{open_database, DataDirLock, CORE_DB_FILENAME};
@@ -17,7 +19,7 @@ pub(crate) use iris_chat_protocol::{SharedConnection, SqliteStorageAdapter};
 pub(crate) use store::{
     load_messages_around_with_visibility, load_messages_before_with_visibility,
     load_recent_messages_with_visibility, search_messages_fts, AppStore, PersistedMessageSearchHit,
-    SaveSnapshot,
+    SaveSnapshot, ShareAttachment, ShareDraft, ShareRecipient, ShareSubmission,
 };
 
 mod store_block_intervals;

@@ -33,6 +33,9 @@ mod store_chat_pins;
 
 #[path = "store_outgoing_events.rs"]
 mod store_outgoing_events;
+#[path = "store_share_outbox.rs"]
+mod store_share_outbox;
+pub(crate) use store_share_outbox::{ShareAttachment, ShareDraft, ShareRecipient, ShareSubmission};
 
 #[path = "store_message_pages.rs"]
 mod store_message_pages;
@@ -530,6 +533,8 @@ impl AppStore {
 }
 
 const TABLES_TO_CLEAR: &[&str] = &[
+    "share_recipients",
+    "share_requests",
     "mesh_group_envelopes",
     "direct_file_transfers",
     "pending_message_reads",

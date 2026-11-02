@@ -565,3 +565,27 @@ fn migrates_v41_blocked_history_visibility_without_changing_existing_preferences
     assert_eq!(retained, (1, None, 100));
     assert_eq!(user_version(&conn), SCHEMA_VERSION);
 }
+#[test]
+fn migrating_v46_adds_share_receipts_without_touching_existing_messages() {
+    let mut conn = Connection::open_in_memory().unwrap();
+    ensure_schema(&mut conn).unwrap();
+    conn.execute_batch("DROP TABLE share_recipients; DROP TABLE share_requests;
+        INSERT INTO threads(chat_id) VALUES ('existing');
+        INSERT INTO messages(chat_id, id, kind, author, body, is_outgoing, created_at_secs, delivery)
+            VALUES ('existing', 'unchanged', 'user', 'You', 'Keep this message', 1, 1, 'sent');
+        PRAGMA user_version = 46;").unwrap();
+    ensure_schema(&mut conn).unwrap();
+    let body: String = conn
+        .query_row(
+            "SELECT body FROM messages WHERE id = 'unchanged'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(body, "Keep this message");
+    let count: usize = conn
+        .query_row("SELECT count(*) FROM share_requests", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(count, 0);
+    assert_eq!(user_version(&conn), SCHEMA_VERSION);
+}

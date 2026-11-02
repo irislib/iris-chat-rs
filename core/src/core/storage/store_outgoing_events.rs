@@ -66,25 +66,7 @@ impl AppStore {
             .lock()
             .map_err(|_| anyhow::anyhow!("storage connection mutex poisoned"))?;
         let tx = conn.transaction()?;
-        tx.execute(
-            "INSERT INTO threads(chat_id, unread_count, updated_at_secs, draft)
-             VALUES (?1, ?2, ?3, ?4)
-             ON CONFLICT(chat_id) DO UPDATE SET
-                unread_count = excluded.unread_count,
-                updated_at_secs = excluded.updated_at_secs,
-                draft = excluded.draft",
-            params![
-                thread.chat_id,
-                thread.unread_count as i64,
-                thread.updated_at_secs as i64,
-                thread.draft
-            ],
-        )?;
-        upsert_message_row(&tx, &thread.chat_id, message)?;
-        tx.execute(
-            "UPDATE messages SET outgoing_event_json = ?3 WHERE chat_id = ?1 AND id = ?2",
-            params![thread.chat_id, message.id, event_json],
-        )?;
+        write_outgoing_event(&tx, thread, message, &event_json)?;
         tx.commit()?;
         self.cache.threads.remove(&thread.chat_id);
         Ok(())
@@ -110,4 +92,32 @@ impl AppStore {
         json.map(|value| serde_json::from_str(&value).map_err(Into::into))
             .transpose()
     }
+}
+
+pub(super) fn write_outgoing_event(
+    tx: &Transaction<'_>,
+    thread: &ThreadRecord,
+    message: &ChatMessageSnapshot,
+    event_json: &str,
+) -> anyhow::Result<()> {
+    tx.execute(
+        "INSERT INTO threads(chat_id, unread_count, updated_at_secs, draft)
+         VALUES (?1, ?2, ?3, ?4)
+         ON CONFLICT(chat_id) DO UPDATE SET
+            unread_count = excluded.unread_count,
+            updated_at_secs = excluded.updated_at_secs,
+            draft = excluded.draft",
+        params![
+            thread.chat_id,
+            thread.unread_count as i64,
+            thread.updated_at_secs as i64,
+            thread.draft
+        ],
+    )?;
+    upsert_message_row(tx, &thread.chat_id, message)?;
+    tx.execute(
+        "UPDATE messages SET outgoing_event_json = ?3 WHERE chat_id = ?1 AND id = ?2",
+        params![thread.chat_id, message.id, event_json],
+    )?;
+    Ok(())
 }

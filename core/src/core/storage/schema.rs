@@ -7,9 +7,29 @@ use rusqlite::{params, Connection, Transaction};
 // Bump when a non-additive change to the schema lands and migrate
 // inside `ensure_schema` below. Greenfield: version 1 is the initial
 // shape and there is no previous JSON layout to migrate from.
-const SCHEMA_VERSION: u32 = 46;
+const SCHEMA_VERSION: u32 = 47;
 
 const INITIAL_SCHEMA: &str = r#"
+CREATE TABLE IF NOT EXISTS share_requests (
+    id TEXT PRIMARY KEY,
+    account_owner_pubkey_hex TEXT NOT NULL,
+    fingerprint BLOB NOT NULL CHECK (length(fingerprint) = 32),
+    payload_json TEXT,
+    prepared_text TEXT
+);
+
+CREATE TABLE IF NOT EXISTS share_recipients (
+    share_id TEXT NOT NULL REFERENCES share_requests(id) ON DELETE CASCADE,
+    chat_id TEXT NOT NULL,
+    position INTEGER NOT NULL,
+    message_id TEXT,
+    event_json TEXT,
+    queued INTEGER NOT NULL DEFAULT 0 CHECK (queued IN (0, 1)),
+    PRIMARY KEY(share_id, chat_id),
+    UNIQUE(share_id, position),
+    CHECK (queued = 0 OR message_id IS NOT NULL)
+);
+
 CREATE TABLE IF NOT EXISTS direct_file_transfers (
     id TEXT PRIMARY KEY,
     record_json TEXT NOT NULL

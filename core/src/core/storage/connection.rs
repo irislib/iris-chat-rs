@@ -78,7 +78,7 @@ pub(crate) fn open_database(data_dir: &Path) -> anyhow::Result<SharedConnection>
     Ok(Arc::new(Mutex::new(conn)))
 }
 
-fn ensure_private_data_dir(data_dir: &Path) -> anyhow::Result<()> {
+pub(super) fn ensure_private_data_dir(data_dir: &Path) -> anyhow::Result<()> {
     // The database, SQLite sidecars, and notification caches contain decrypted
     // messages and session keys. Secure their directory before opening any file.
     #[cfg(unix)]
