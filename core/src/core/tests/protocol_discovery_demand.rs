@@ -21,7 +21,7 @@ fn cache_discovery_roster(core: &mut AppCore, owner: &Keys, devices: &[PublicKey
 }
 
 #[test]
-fn discovery_demand_excludes_cache_only_peers_and_activates_isolated_wire_on_open() {
+fn discovery_demand_excludes_cache_only_peers_and_updates_shared_wire_on_open() {
     let owner = Keys::generate();
     let device = Keys::generate();
     let peer = Keys::generate();
@@ -55,11 +55,7 @@ fn discovery_demand_excludes_cache_only_peers_and_activates_isolated_wire_on_ope
         let receive = serde_json::to_string(&receive).unwrap();
         assert!(expected.iter().all(|key| !receive.contains(&key.to_hex())));
         let scopes = core.private_discovery_subscriptions(discovery).unwrap();
-        assert_eq!(
-            scopes.len(),
-            expected.len(),
-            "cache-only metadata must not create workers"
-        );
+        assert_eq!(scopes.len(), 1, "contacts must share one discovery worker");
         core.runtime
             .block_on(
                 protocol::private_reads::apply_private_discovery_subscriptions(
@@ -71,8 +67,7 @@ fn discovery_demand_excludes_cache_only_peers_and_activates_isolated_wire_on_ope
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
             let rows = wire.lock().unwrap();
-            let ready = rows.iter().filter(|(_, value)| value[0] == "AUTH").count()
-                >= expected.len()
+            let ready = rows.iter().filter(|(_, value)| value[0] == "AUTH").count() >= 1
                 && expected.iter().all(|key| {
                     rows.iter().any(|(_, value)| {
                         value[0] == "REQ" && value.to_string().contains(&key.to_hex())
@@ -102,12 +97,23 @@ fn discovery_demand_excludes_cache_only_peers_and_activates_isolated_wire_on_ope
                 let authors = subjects.entry(*connection).or_default();
                 for filter in value.as_array().unwrap().iter().skip(2) {
                     let requested = filter["authors"].as_array().unwrap();
-                    assert_eq!(requested.len(), 1);
-                    authors.insert(requested[0].as_str().unwrap().to_owned());
+                    authors.extend(
+                        requested
+                            .iter()
+                            .map(|author| author.as_str().unwrap().to_owned()),
+                    );
                 }
             }
         }
-        assert!(subjects.values().all(|authors| authors.len() == 1));
+        assert_eq!(
+            subjects.len(),
+            1,
+            "discovery opened duplicate relay connections"
+        );
+        assert_eq!(
+            subjects.values().next().unwrap(),
+            &expected.iter().map(PublicKey::to_hex).collect()
+        );
         let mut signers = HashSet::new();
         for connection in subjects.keys() {
             let (_, auth) = rows
@@ -126,33 +132,34 @@ fn discovery_demand_excludes_cache_only_peers_and_activates_isolated_wire_on_ope
     let plan = core.compute_protocol_subscription_plan().unwrap();
     let (_, discovery) =
         core.split_private_discovery_filters(build_protocol_subscription_filters(&plan));
-    let removed =
-        core.protocol_subscription_runtime.discovery_clients[&cached[0].0.public_key()].clone();
     assert_eq!(
         core.private_discovery_subscriptions(discovery)
             .unwrap()
             .len(),
-        2
+        1
     );
-    assert!(!core
+    let removed = core
         .protocol_subscription_runtime
-        .discovery_clients
-        .contains_key(&cached[0].0.public_key()));
-    // A held descriptor cannot resurrect the removed scope through catch-up.
-    assert!(core
-        .runtime
-        .block_on(
-            protocol::private_reads::apply_private_discovery_subscriptions(
-                vec![(
-                    Arc::downgrade(&removed),
-                    vec![Filter::new()
-                        .author(cached[0].0.public_key())
-                        .kind(Kind::Metadata)]
-                )],
-                &[relay],
+        .discovery
+        .as_ref()
+        .unwrap()
+        .clone();
+    let stale = Arc::downgrade(&removed);
+    core.private_discovery_subscriptions(Vec::new()).unwrap();
+    assert!(
+        core.runtime
+            .block_on(
+                protocol::private_reads::apply_private_discovery_subscriptions(
+                    vec![(
+                        stale,
+                        vec![Filter::new().author(peer.public_key()).kind(Kind::Metadata)]
+                    )],
+                    &[relay]
+                )
             )
-        )
-        .is_err());
+            .is_err(),
+        "a held descriptor cannot restart cancelled discovery"
+    );
     assert_eq!(serde_json::to_value(&core.app_keys).unwrap(), saved);
 }
 

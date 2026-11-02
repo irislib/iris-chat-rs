@@ -143,6 +143,7 @@ impl AppCore {
             defer_owner_app_keys_publish: false,
             owner_registration_lookup_generation: None,
             current_device_labels: None,
+            discovery_relays: Arc::default(),
             protocol_subscription_runtime: ProtocolSubscriptionRuntime::default(),
             relay_transport_runtime: RelayTransportRuntime::default(),
             relay_status_watch_urls: HashSet::new(),
@@ -467,6 +468,8 @@ impl AppCore {
         self.push_debug_log("app.shutdown", "stopping core");
         self.pause_pending_linked_device();
         self.stop_device_sync();
+        self.protocol_subscription_runtime = Default::default();
+        self.reset_public_discovery();
         self.clear_update_sources();
         self.reset_pending_invite_acceptance();
         self.device_invite_poll_token = self.device_invite_poll_token.saturating_add(1);

@@ -1,79 +1,7 @@
 use super::*;
-
-#[test]
-fn live_peer_advert_queries_have_one_anonymous_subject_and_no_own_receive_context() {
-    let runtime = tokio::runtime::Runtime::new().unwrap();
-    runtime.block_on(async {
-        let own = Keys::generate();
-        let peers = [Keys::generate().public_key(), Keys::generate().public_key()];
-        let (relay, wire) =
-            crate::core::publish_helpers::authenticated_relay(own.public_key(), false).await;
-        let own_client = crate::core::publish_helpers::identity_receiver(&own, &relay, &wire).await;
-        let advert = EventBuilder::new(Kind::Custom(37195), "own public endpoint advert")
-            .sign_with_keys(&own)
-            .unwrap();
-        own_client.send_event(&advert).await.unwrap();
-        let mut config = Config::new();
-        config.node.control.enabled = false;
-        config.node.discovery.nostr.enabled = false;
-        config.node.discovery.local.enabled = false;
-        config.node.discovery.lan.enabled = false;
-        let endpoint = Arc::new(
-            FipsEndpoint::builder()
-                .config(config)
-                .without_system_tun()
-                .bind()
-                .await
-                .unwrap(),
-        );
-        let adapter = PrivateMeshProviders::new(Vec::new(), None, Vec::new(), vec![relay]);
-        for peer in peers {
-            let filters = vec![Filter::new().kind(Kind::Custom(37195)).author(peer)];
-            let tls = adapter.advert_tls(&filters);
-            let mut connections = adapter
-                .relays
-                .iter()
-                .map(|relay| ScopedReadConnection::new(relay, &filters))
-                .collect::<Vec<_>>();
-            adapter
-                .discover(
-                    filters,
-                    endpoint.clone(),
-                    flume::unbounded().0,
-                    &mut DiscoveryObservations::default(),
-                    &tls,
-                    &mut connections,
-                )
-                .await;
-        }
-        let rows = wire.lock().unwrap().clone();
-        let identified = rows
-            .iter()
-            .filter(|(_, event)| event[0] == "EVENT" && event[1]["id"] == advert.id.to_hex())
-            .map(|(connection, _)| *connection)
-            .collect::<HashSet<_>>();
-        assert!(!identified.is_empty());
-        let mut subjects = BTreeMap::<usize, HashSet<PublicKey>>::new();
-        for (connection, event) in rows {
-            if event[0] == "REQ" {
-                for peer in peers {
-                    if event.to_string().contains(&peer.to_hex()) {
-                        assert!(!identified.contains(&connection));
-                        assert!(!event.to_string().contains(&own.public_key().to_hex()));
-                        subjects.entry(connection).or_default().insert(peer);
-                    }
-                }
-            }
-            if event[0] == "AUTH" && !identified.contains(&connection) {
-                assert_ne!(event[1]["pubkey"], own.public_key().to_hex());
-            }
-        }
-        assert_eq!(subjects.len(), 2);
-        assert!(subjects.values().all(|keys| keys.len() == 1));
-        own_client.shutdown().await;
-        endpoint.shutdown().await.unwrap();
-    });
-}
+use crate::core::protocol::public_discovery::{test_support, PublicDiscovery};
+use std::sync::atomic::Ordering;
+type DiscoveryWire = Arc<std::sync::Mutex<Vec<(usize, serde_json::Value)>>>;
 
 #[test]
 fn mesh_advert_quiet_delay_respects_expiry_without_expired_spin() {
@@ -154,85 +82,6 @@ fn mesh_nonadvert_cadence_changes_only_on_new_event_ids_and_explicit_demand() {
     assert_eq!(cadence.after_poll(false), Duration::from_secs(30));
 }
 
-type DiscoveryWire = Arc<std::sync::Mutex<Vec<(usize, serde_json::Value)>>>;
-
-async fn discovery_relay(
-    initially_released: bool,
-) -> (RelayUrl, DiscoveryWire, tokio::sync::watch::Sender<bool>) {
-    discovery_relay_with_auth(initially_released, true).await
-}
-
-async fn discovery_relay_with_auth(
-    initially_released: bool,
-    accept_auth: bool,
-) -> (RelayUrl, DiscoveryWire, tokio::sync::watch::Sender<bool>) {
-    use futures_util::{SinkExt, StreamExt};
-    use serde_json::{json, Value};
-    use tokio_tungstenite::{accept_async, tungstenite::Message};
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let relay = RelayUrl::parse(&format!("ws://{}", listener.local_addr().unwrap())).unwrap();
-    let wire = DiscoveryWire::default();
-    let recorded = wire.clone();
-    let (release, released) = tokio::sync::watch::channel(initially_released);
-    tokio::spawn(async move {
-        let mut connection = 0;
-        while let Ok((stream, _)) = listener.accept().await {
-            connection += 1;
-            let wire = recorded.clone();
-            let mut released = released.clone();
-            tokio::spawn(async move {
-                let mut socket = accept_async(stream).await.unwrap();
-                socket
-                    .send(Message::Text(
-                        json!(["AUTH", format!("fixture-{connection}")]).to_string(),
-                    ))
-                    .await
-                    .unwrap();
-                let mut authenticated = false;
-                while let Some(Ok(Message::Text(text))) = socket.next().await {
-                    let value: Value = serde_json::from_str(&text).unwrap();
-                    wire.lock().unwrap().push((connection, value.clone()));
-                    match value[0].as_str() {
-                        Some("AUTH") => {
-                            let event: Event = serde_json::from_value(value[1].clone()).unwrap();
-                            event.verify().unwrap();
-                            authenticated = true;
-                            if socket
-                                .send(Message::Text(
-                                    json!(["OK", event.id, accept_auth, ""]).to_string(),
-                                ))
-                                .await
-                                .is_err()
-                            {
-                                break;
-                            }
-                            if !accept_auth {
-                                break;
-                            }
-                        }
-                        Some("REQ") if authenticated => {
-                            while !*released.borrow_and_update() {
-                                if released.changed().await.is_err() {
-                                    return;
-                                }
-                            }
-                            if socket
-                                .send(Message::Text(json!(["EOSE", value[1]]).to_string()))
-                                .await
-                                .is_err()
-                            {
-                                break;
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-            });
-        }
-    });
-    (relay, wire, release)
-}
-
 fn subject_queries(
     wire: &DiscoveryWire,
     author: PublicKey,
@@ -245,12 +94,11 @@ fn subject_queries(
         }
         if authenticated.contains(connection)
             && value[0] == "REQ"
-            && value
-                .as_array()
-                .unwrap()
-                .iter()
-                .skip(2)
-                .any(|filter| filter["authors"] == serde_json::json!([author.to_hex()]))
+            && value.as_array().unwrap().iter().skip(2).any(|filter| {
+                filter["authors"]
+                    .as_array()
+                    .is_some_and(|authors| authors.contains(&serde_json::json!(author.to_hex())))
+            })
         {
             requested.insert((*connection, value[1].as_str().unwrap().to_owned()));
         }
@@ -269,437 +117,90 @@ async fn wait_subject(wire: &DiscoveryWire, author: PublicKey, count: usize) {
     }
 }
 
-async fn discovery_endpoint() -> Arc<FipsEndpoint> {
-    let mut config = Config::new();
-    config.node.control.enabled = false;
-    config.node.discovery.nostr.enabled = false;
-    config.node.discovery.local.enabled = false;
-    config.node.discovery.lan.enabled = false;
-    Arc::new(
-        FipsEndpoint::builder()
-            .config(config)
-            .without_system_tun()
-            .bind()
-            .await
-            .unwrap(),
-    )
-}
-
 #[test]
-fn mesh_discovery_preserves_unrelated_workers_and_refreshes_only_requested_author() {
+fn linked_device_relay_discovery_and_protocol_share_one_connection_without_provider_admission() {
     let runtime = tokio::runtime::Runtime::new().unwrap();
     runtime.block_on(async {
-        let (relay, wire, _release) = discovery_relay(true).await;
-        let own = Keys::generate().public_key();
-        let peers = [Keys::generate().public_key(), Keys::generate().public_key()];
-        let filter = |author| Filter::new().kind(Kind::Custom(37195)).author(author);
-        let providers = Arc::new(PrivateMeshProviders::new(
-            Vec::new(),
-            None,
-            Vec::new(),
-            vec![relay],
-        ));
-        let live = discovery_endpoint().await;
+        let peer = Keys::generate();
+        let sibling = Keys::generate();
+        let relay = test_support::relay(vec![]).await;
+        let pool = test_support::pool();
+        let providers = Arc::new(
+            PrivateMeshProviders::new(vec![], None, vec![], vec![relay.url.clone()])
+                .with_relay_pool(pool.clone())
+                .with_device_sync_authors([sibling.public_key()]),
+        );
+        let _ordinary = providers.discovery_slots.acquire_many(2).await.unwrap();
+        let _reserved = providers.device_sync_slots.acquire().await.unwrap();
+        let live = tls_tests::endpoint().await;
         let mut discovery = PrivateMeshDiscovery::default();
         discovery.update(
             providers.clone(),
-            vec![filter(peers[0])],
+            vec![Filter::new()
+                .kind(Kind::Custom(37195))
+                .authors([peer.public_key(), sibling.public_key()])],
             live.clone(),
             flume::unbounded().0,
             &runtime,
         );
-        wait_subject(&wire, peers[0], 1).await;
-        let original = discovery.workers.values().next().unwrap().wake.clone();
-        discovery.update(
-            providers.clone(),
-            vec![filter(peers[1]), filter(peers[0])],
-            live.clone(),
-            flume::unbounded().0,
-            &runtime,
-        );
-        wait_subject(&wire, peers[1], 1).await;
-        let retained = discovery
-            .workers
-            .values()
-            .find(|worker| worker.author == peers[0])
-            .unwrap();
-        assert!(Arc::ptr_eq(&original, &retained.wake));
-        assert_eq!(subject_queries(&wire, peers[0]).len(), 1);
-        discovery.refresh_author(peers[0]);
-        wait_subject(&wire, peers[0], 2).await;
-        assert_eq!(subject_queries(&wire, peers[1]).len(), 1);
-        let rows = wire.lock().unwrap().clone();
-        let mut authenticated = BTreeMap::new();
-        for (connection, frame) in &rows {
-            if frame[0] == "AUTH" {
-                let event: Event = serde_json::from_value(frame[1].clone()).unwrap();
-                event.verify().unwrap();
-                assert_ne!(event.pubkey, own);
-                assert!(!peers.contains(&event.pubkey));
-                assert!(authenticated.insert(*connection, event.pubkey).is_none());
-            }
-            if frame[0] == "REQ" {
-                assert_eq!(frame.as_array().unwrap().len(), 3);
-                let query = frame[2].as_object().unwrap();
-                assert_eq!(query.len(), 2);
-                assert_eq!(query["kinds"], serde_json::json!([37195]));
-                assert_eq!(query["authors"].as_array().unwrap().len(), 1);
-            }
-            assert_ne!(frame[0], "EVENT");
-        }
-        assert!((2..=3).contains(&authenticated.len()));
-        assert_eq!(
-            authenticated.values().collect::<HashSet<_>>().len(),
-            authenticated.len()
-        );
-        let mut subjects = BTreeMap::<usize, HashSet<String>>::new();
-        for (connection, frame) in rows.iter().filter(|(_, frame)| frame[0] == "REQ") {
-            subjects
-                .entry(*connection)
-                .or_default()
-                .insert(frame[2]["authors"][0].as_str().unwrap().into());
-        }
-        assert!(subjects.values().all(|authors| authors.len() == 1));
-        let stopped = discovery
-            .workers
-            .values()
-            .map(|worker| worker.task.abort_handle())
-            .collect::<Vec<_>>();
-        discovery.update(
-            providers,
-            Vec::new(),
-            live.clone(),
-            flume::unbounded().0,
-            &runtime,
-        );
-        assert!(discovery.workers.is_empty());
-        tokio::time::timeout(Duration::from_secs(3), async {
-            while !stopped.iter().all(tokio::task::AbortHandle::is_finished) {
-                sleep(Duration::from_millis(1)).await;
-            }
-        })
-        .await
-        .unwrap();
-        live.shutdown().await.unwrap();
-    });
-}
-
-#[test]
-fn linked_device_discovery_bypasses_busy_contacts_without_combining_wire_contexts() {
-    let runtime = tokio::runtime::Runtime::new().unwrap();
-    runtime.block_on(async {
-        let (relay, wire, _release) = discovery_relay(true).await;
-        let own = Keys::generate().public_key();
-        let siblings = [Keys::generate().public_key(), Keys::generate().public_key()];
-        let contact = Keys::generate().public_key();
-        let peers = [siblings[0], siblings[1], contact];
-        let filters = peers
-            .map(|author| Filter::new().kind(Kind::Custom(37195)).author(author))
-            .to_vec();
-        let providers_for = |authors: Vec<PublicKey>| {
-            Arc::new(
-                PrivateMeshProviders::new(Vec::new(), None, Vec::new(), vec![relay.clone()])
-                    .with_device_sync_authors(authors),
+        let (send, incoming) = flume::unbounded();
+        let protocol = PublicDiscovery::new(runtime.handle(), send, pool);
+        protocol
+            .configure(
+                std::slice::from_ref(&relay.url),
+                vec![Filter::new().kind(Kind::Metadata).author(peer.public_key())],
             )
-        };
-        let providers = providers_for(siblings.to_vec());
-        // Occupy both ordinary reads as slow/offline contact discovery would.
-        let background = providers.discovery_slots.acquire_many(2).await.unwrap();
-        let reserved = providers.device_sync_slots.acquire().await.unwrap();
-        let live = discovery_endpoint().await;
-        let mut discovery = PrivateMeshDiscovery::default();
-        discovery.update(
-            providers.clone(),
-            filters.clone(),
-            live.clone(),
-            flume::unbounded().0,
-            &runtime,
-        );
-        sleep(Duration::from_millis(100)).await;
+            .unwrap();
+        wait_subject(&relay.wire, sibling.public_key(), 1).await;
+        test_support::until(|| {
+            relay
+                .wire
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|(_, row)| row[0] == "REQ" && row[2]["kinds"] == serde_json::json!([0]))
+        })
+        .await;
         assert!(
-            wire.lock().unwrap().is_empty(),
-            "admission must stay bounded"
+            discovery.workers.is_empty(),
+            "no FIPS provider means no polling workers"
         );
-        drop(reserved);
-        for sibling in siblings {
-            wait_subject_closed(&wire, sibling, 1).await;
-        }
-        assert!(subject_queries(&wire, contact).is_empty());
-        discovery.refresh_author(siblings[0]);
-        wait_subject_closed(&wire, siblings[0], 2).await;
-        assert!(subject_queries(&wire, contact).is_empty());
-
-        // Roster changes replace blocked workers too. A removed sibling gets
-        // ordinary admission; it cannot retain its former reserved lane.
-        let updated = providers_for(vec![siblings[1]]);
-        let updated_background = updated.discovery_slots.acquire_many(2).await.unwrap();
-        discovery.update(
-            updated.clone(),
-            filters,
-            live.clone(),
-            flume::unbounded().0,
-            &runtime,
-        );
-        wait_subject_closed(&wire, siblings[1], 2).await;
-        assert_eq!(subject_queries(&wire, siblings[0]).len(), 2);
-        assert!(subject_queries(&wire, contact).is_empty());
-        drop(updated_background);
-        wait_subject_closed(&wire, siblings[0], 3).await;
-        wait_subject_closed(&wire, contact, 1).await;
-
-        let mut authenticated = BTreeMap::new();
-        let mut subjects = BTreeMap::<usize, HashSet<PublicKey>>::new();
-        for (connection, frame) in wire.lock().unwrap().iter() {
-            match frame[0].as_str() {
-                Some("AUTH") => {
-                    let event: Event = serde_json::from_value(frame[1].clone()).unwrap();
-                    event.verify().unwrap();
-                    assert_ne!(event.pubkey, own);
-                    assert!(!peers.contains(&event.pubkey));
-                    assert!(authenticated.insert(*connection, event.pubkey).is_none());
-                }
-                Some("REQ") => {
-                    assert_eq!(frame.as_array().unwrap().len(), 3);
-                    let query = frame[2].as_object().unwrap();
-                    assert_eq!(query.len(), 2);
-                    assert_eq!(query["kinds"], serde_json::json!([37195]));
-                    let authors = query["authors"].as_array().unwrap();
-                    assert_eq!(authors.len(), 1);
-                    let author = PublicKey::from_hex(authors[0].as_str().unwrap()).unwrap();
-                    assert!(peers.contains(&author));
-                    subjects.entry(*connection).or_default().insert(author);
-                }
-                Some("EVENT") => panic!("discovery context published an event"),
-                _ => {}
-            }
-        }
-        assert_eq!(subjects.len(), authenticated.len());
-        assert_eq!(
-            authenticated.values().collect::<HashSet<_>>().len(),
-            authenticated.len()
-        );
-        assert!(subjects.values().all(|authors| authors.len() == 1));
+        assert_eq!(relay.connections.load(Ordering::SeqCst), 1);
+        let profile = EventBuilder::new(Kind::Metadata, "profile")
+            .sign_with_keys(&peer)
+            .unwrap();
+        relay.publish(profile);
+        tokio::time::timeout(Duration::from_secs(3), incoming.recv_async())
+            .await
+            .unwrap()
+            .unwrap();
+        let before = relay.requests();
+        sleep(Duration::from_millis(250)).await;
+        assert_eq!(relay.requests(), before);
+        discovery.refresh_author(sibling.public_key());
+        wait_subject_closed(&relay.wire, sibling.public_key(), 2).await;
+        assert_eq!(relay.connections.load(Ordering::SeqCst), 1);
         drop(discovery);
-        drop(background);
+        drop(protocol);
+        test_support::until(|| relay.active.load(Ordering::SeqCst) == 0).await;
         live.shutdown().await.unwrap();
     });
 }
 
 #[test]
-fn mesh_discovery_demand_waits_for_busy_query_and_coalesces() {
-    let runtime = tokio::runtime::Runtime::new().unwrap();
-    runtime.block_on(async {
-        let (relay, wire, release) = discovery_relay(false).await;
-        let author = Keys::generate().public_key();
-        let providers = Arc::new(PrivateMeshProviders::new(
-            Vec::new(),
-            None,
-            Vec::new(),
-            vec![relay],
-        ));
-        let live = discovery_endpoint().await;
-        let mut discovery = PrivateMeshDiscovery::default();
-        discovery.update(
-            providers,
-            vec![Filter::new().kind(Kind::Custom(37195)).author(author)],
-            live.clone(),
-            flume::unbounded().0,
-            &runtime,
-        );
-        wait_subject(&wire, author, 1).await;
-        discovery.refresh_author(author);
-        discovery.refresh_author(author);
-        sleep(Duration::from_millis(25)).await;
-        assert_eq!(
-            subject_queries(&wire, author).len(),
-            1,
-            "demand interrupted a busy read"
-        );
-        release.send(true).unwrap();
-        wait_subject(&wire, author, 2).await;
-        sleep(Duration::from_millis(25)).await;
-        assert_eq!(
-            subject_queries(&wire, author).len(),
-            2,
-            "demand failed to coalesce"
-        );
-        drop(discovery);
-        live.shutdown().await.unwrap();
-    });
-}
-
-#[test]
-fn mesh_discovery_does_not_retain_unusable_metadata_workers() {
-    // Configure without polling the runtime: this checks worker ownership, not
-    // a synthetic provider's networking or any publicly configured service.
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .unwrap();
-    let live = runtime.block_on(discovery_endpoint());
+fn provider_discovery_still_splits_authors_and_preserves_reserved_sibling_admission() {
     let a = Keys::generate().public_key();
     let b = Keys::generate().public_key();
-    let relay = RelayUrl::parse("ws://127.0.0.1:9").unwrap();
-    let filters = vec![
-        Filter::new().kind(Kind::Custom(37195)).author(a),
-        Filter::new().kind(Kind::Metadata).author(a),
-        Filter::new().kind(Kind::Metadata).author(b),
-    ];
-    let mut discovery = PrivateMeshDiscovery::default();
-    discovery.update(
-        Arc::new(PrivateMeshProviders::new(
-            Vec::new(),
-            None,
-            Vec::new(),
-            Vec::new(),
-        )),
-        filters.clone(),
-        live.clone(),
-        flume::unbounded().0,
-        &runtime,
-    );
-    assert!(discovery.workers.is_empty());
-    discovery.update(
-        Arc::new(PrivateMeshProviders::new(
-            Vec::new(),
-            None,
-            Vec::new(),
-            vec![relay.clone()],
-        )),
-        filters.clone(),
-        live.clone(),
-        flume::unbounded().0,
-        &runtime,
-    );
-    assert_eq!(discovery.workers.len(), 1);
-    let retained = discovery.workers.values().next().unwrap();
-    assert_eq!(retained.author, a);
-    assert_eq!(retained.filters.len(), 1);
-    assert!(is_peer_advert_filter(&retained.filters[0]));
-    discovery.update(
-        Arc::new(PrivateMeshProviders::new(
-            Vec::new(),
-            None,
-            vec![Keys::generate().public_key().to_bech32().unwrap()],
-            vec![relay.clone()],
-        )),
-        filters.clone(),
-        live.clone(),
-        flume::unbounded().0,
-        &runtime,
-    );
-    assert_eq!(discovery.workers.len(), 2);
-    assert_eq!(
-        discovery
-            .workers
-            .values()
-            .map(|worker| worker.filters.len())
-            .sum::<usize>(),
-        3
-    );
-    discovery.update(
-        Arc::new(PrivateMeshProviders::new(
-            Vec::new(),
-            None,
-            Vec::new(),
-            vec![relay],
-        )),
-        filters,
-        live.clone(),
-        flume::unbounded().0,
-        &runtime,
-    );
-    assert_eq!(discovery.workers.len(), 1);
-    assert!(discovery
-        .workers
-        .values()
-        .all(|worker| worker.filters.iter().all(is_peer_advert_filter)));
-    drop(discovery);
-    runtime.block_on(async { live.shutdown().await.unwrap() });
-}
-
-#[test]
-fn mesh_failed_anonymous_reads_back_off_and_explicit_demand_resets() {
-    let runtime = tokio::runtime::Runtime::new().unwrap();
-    runtime.block_on(async {
-        let (relay, wire, _release) = discovery_relay_with_auth(true, false).await;
-        let author = Keys::generate().public_key();
-        let providers = PrivateMeshProviders::new(Vec::new(), None, Vec::new(), vec![relay]);
-        let live = discovery_endpoint().await;
-        let mut observations = DiscoveryObservations::default();
-        let mut cadence = DiscoveryCadence::default();
-        let filters = vec![Filter::new().kind(Kind::Custom(37195)).author(author)];
-        let tls = providers.advert_tls(&filters);
-        let mut connections = providers
-            .relays
-            .iter()
-            .map(|relay| ScopedReadConnection::new(relay, &filters))
-            .collect::<Vec<_>>();
-        for expected in [30, 60, 120, 120] {
-            let poll = providers
-                .discover(
-                    filters.clone(),
-                    live.clone(),
-                    flume::unbounded().0,
-                    &mut observations,
-                    &tls,
-                    &mut connections,
-                )
-                .await;
-            assert!(poll.attempted);
-            assert!(!poll.changed);
-            assert!(!poll.closed);
-            assert!(
-                observations.seen.is_empty(),
-                "failed reads moved seen state"
-            );
-            assert_eq!(
-                poll.next_delay(&mut cadence),
-                Some(Duration::from_secs(expected))
-            );
-        }
-        assert!(
-            subject_queries(&wire, author).is_empty(),
-            "rejected AUTH became a completed authenticated query"
-        );
-        let rows = wire.lock().unwrap().clone();
-        let mut requests = 0;
-        for (_, frame) in &rows {
-            if frame[0] == "REQ" {
-                requests += 1;
-                assert_eq!(frame.as_array().unwrap().len(), 3);
-                assert_eq!(
-                    frame[2],
-                    serde_json::json!({"authors": [author.to_hex()], "kinds": [37195]})
-                );
-            }
-        }
-        assert_eq!(requests, 4);
-        let authentications = wire
-            .lock()
-            .unwrap()
-            .iter()
-            .filter(|(_, frame)| frame[0] == "AUTH")
-            .map(|(_, frame)| {
-                serde_json::from_value::<Event>(frame[1].clone())
-                    .unwrap()
-                    .pubkey
-            })
-            .collect::<HashSet<_>>();
-        assert_eq!(authentications.len(), 4);
-        assert!(!authentications.contains(&author));
-        cadence.reset();
-        assert_eq!(
-            DiscoveryPoll {
-                attempted: true,
-                ..Default::default()
-            }
-            .next_delay(&mut cadence),
-            Some(Duration::from_secs(30))
-        );
-        assert_eq!(DiscoveryPoll::default().next_delay(&mut cadence), None);
-        live.shutdown().await.unwrap();
-    });
+    let filters = split_provider_authors(Filter::new().kind(Kind::Custom(37195)).authors([a, b]));
+    assert_eq!(filters.len(), 2);
+    assert!(filters
+        .iter()
+        .all(|filter| FipsDiscoveryScope::from_filter(filter).is_ok()));
+    let provider =
+        PrivateMeshProviders::new(vec![], None, vec![], vec![]).with_device_sync_authors([a]);
+    let _ordinary = provider.discovery_slots.try_acquire_many(2).unwrap();
+    assert!(provider.device_sync_slots.try_acquire().is_ok());
+    assert_eq!(provider.device_sync_authors, BTreeSet::from([a]));
 }
 
 fn inject_route_need(core: &mut AppCore, author: PublicKey, generation: u64, guarded: bool) {
@@ -726,7 +227,7 @@ async fn wait_subject_closed(wire: &DiscoveryWire, author: PublicKey, count: usi
             })
             .map(|(connection, value)| (*connection, value[1].as_str().unwrap().to_owned()))
             .collect::<HashSet<_>>();
-        if closed.len() >= count {
+        if closed.len() >= count.saturating_sub(1) && connections.len() >= count {
             return;
         }
         assert!(
@@ -749,23 +250,22 @@ fn mesh_route_retry_core_guard_requires_exact_private_work_on_actual_wire() {
     );
     let runtime = tokio::runtime::Runtime::new().unwrap();
     runtime.block_on(async {
-        let (relay, wire, _release) = discovery_relay(true).await;
+        let relay = test_support::relay(vec![]).await;
+        let wire = relay.wire.clone();
         let peers = [Keys::generate().public_key(), Keys::generate().public_key()];
         let [a, b] = peers;
         let a_npub = a.to_bech32().unwrap();
         let b_npub = b.to_bech32().unwrap();
-        let live = discovery_endpoint().await;
+        let live = tls_tests::endpoint().await;
         core.install_device_sync_endpoint_for_test(live.clone());
         core.fips_connection_generation = 7;
         let mesh = core.device_sync.as_mut().unwrap();
         let outbox = mesh.nearby_outbox.clone();
         mesh.protocol_subscriptions.discovery.update(
-            Arc::new(PrivateMeshProviders::new(
-                Vec::new(),
-                None,
-                Vec::new(),
-                vec![relay],
-            )),
+            Arc::new(
+                PrivateMeshProviders::new(Vec::new(), None, Vec::new(), vec![relay.url.clone()])
+                    .with_relay_pool(test_support::pool()),
+            ),
             peers
                 .map(|peer| Filter::new().kind(Kind::Custom(37195)).author(peer))
                 .to_vec(),
@@ -854,38 +354,24 @@ fn mesh_route_retry_core_guard_requires_exact_private_work_on_actual_wire() {
         );
         assert_eq!(subject_queries(&wire, b).len(), 1);
 
-        let mut authenticated = BTreeMap::new();
-        let mut subjects = BTreeMap::<usize, HashSet<PublicKey>>::new();
-        for (connection, frame) in wire.lock().unwrap().iter() {
-            match frame[0].as_str() {
-                Some("AUTH") => {
-                    let event: Event = serde_json::from_value(frame[1].clone()).unwrap();
-                    event.verify().unwrap();
-                    assert!(!peers.contains(&event.pubkey));
-                    assert!(authenticated.insert(*connection, event.pubkey).is_none());
-                }
-                Some("REQ") => {
-                    assert_eq!(frame.as_array().unwrap().len(), 3);
-                    let query = frame[2].as_object().unwrap();
-                    assert_eq!(query.len(), 2);
-                    assert_eq!(query["kinds"], serde_json::json!([37195]));
-                    let authors = query["authors"].as_array().unwrap();
-                    assert_eq!(authors.len(), 1);
-                    let author = PublicKey::from_hex(authors[0].as_str().unwrap()).unwrap();
-                    assert!(peers.contains(&author));
-                    subjects.entry(*connection).or_default().insert(author);
-                }
-                Some("EVENT") => panic!("discovery context published an event"),
-                _ => {}
+        let rows = wire.lock().unwrap().clone();
+        assert_eq!(
+            rows.iter().map(|(id, _)| id).collect::<HashSet<_>>().len(),
+            1
+        );
+        for (_, frame) in &rows {
+            assert_ne!(frame[0], "EVENT");
+            if frame[0] == "REQ" {
+                assert!(frame[2].get("#p").is_none());
+                assert_eq!(frame[2]["kinds"], serde_json::json!([37195]));
+            }
+            if frame[0] == "AUTH" {
+                let auth: Event = serde_json::from_value(frame[1].clone()).unwrap();
+                auth.verify().unwrap();
+                assert!(!peers.contains(&auth.pubkey));
+                assert_ne!(auth.pubkey.to_bech32().unwrap(), live.npub());
             }
         }
-        assert!((2..=4).contains(&authenticated.len()));
-        assert_eq!(
-            authenticated.values().collect::<HashSet<_>>().len(),
-            authenticated.len()
-        );
-        assert_eq!(subjects.len(), authenticated.len());
-        assert!(subjects.values().all(|authors| authors.len() == 1));
         drop(core.device_sync.take());
         live.shutdown().await.unwrap();
     });

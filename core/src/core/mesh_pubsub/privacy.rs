@@ -1,8 +1,5 @@
 use super::*;
-use crate::core::protocol::anonymous_reads::{
-    idle_connections, ScopedReadConnection, ScopedTlsConnector,
-};
-use crate::core::protocol::private_reads::DiscoveryCadence;
+use crate::core::protocol::public_discovery::{DiscoveryRelays, PublicDiscovery};
 use fips_core::config::{PeerConfig, TransportInstances, UdpConfig, WebSocketConfig};
 use fips_core::{Config, FipsEndpoint};
 use nostr_pubsub::QueryOptions;
@@ -10,6 +7,35 @@ use nostr_pubsub_fips::{FipsAnonymousPublisher, FipsDiscoveryScope, FipsPubsubCl
 use std::collections::BTreeSet;
 
 const OPERATION_TIMEOUT: Duration = Duration::from_secs(12);
+
+// Only FIPS provider scopes poll; public relays use live subscriptions.
+#[derive(Debug)]
+struct DiscoveryCadence {
+    next: Duration,
+}
+
+impl Default for DiscoveryCadence {
+    fn default() -> Self {
+        Self {
+            next: Duration::from_secs(30),
+        }
+    }
+}
+
+impl DiscoveryCadence {
+    fn reset(&mut self) {
+        *self = Self::default();
+    }
+
+    fn after_poll(&mut self, changed: bool) -> Duration {
+        if changed {
+            self.reset();
+        }
+        let delay = self.next;
+        self.next = (delay * 2).min(Duration::from_secs(120));
+        delay
+    }
+}
 
 fn is_peer_advert_filter(filter: &Filter) -> bool {
     filter
@@ -124,8 +150,7 @@ pub(in crate::core) struct PrivateMeshProviders {
     device_sync_authors: BTreeSet<PublicKey>,
     relays: Vec<RelayUrl>,
     key: String,
-    #[cfg(test)]
-    tls_test_roots: Vec<(RelayUrl, rustls::RootCertStore)>,
+    relay_pool: Arc<DiscoveryRelays>,
 }
 
 impl PrivateMeshProviders {
@@ -172,8 +197,7 @@ impl PrivateMeshProviders {
             device_sync_authors: BTreeSet::new(),
             relays,
             key,
-            #[cfg(test)]
-            tls_test_roots: Vec::new(),
+            relay_pool: Arc::default(),
         }
     }
 
@@ -189,42 +213,9 @@ impl PrivateMeshProviders {
         self
     }
 
-    fn advert_tls(&self, filters: &[Filter]) -> Vec<Option<ScopedTlsConnector>> {
-        self.relays
-            .iter()
-            .map(|relay| {
-                #[cfg(test)]
-                if let Some((_, roots)) = self.tls_test_roots.iter().find(|(url, _)| url == relay) {
-                    return ScopedTlsConnector::new_with_roots(relay, filters, roots.clone());
-                }
-                ScopedTlsConnector::new(relay, filters)
-            })
-            .collect()
-    }
-
-    #[cfg(test)]
-    pub(in crate::core) fn set_test_tls_roots(
-        &mut self,
-        relay: &RelayUrl,
-        certificates: Vec<Vec<u8>>,
-    ) -> Result<(), String> {
-        use sha2::Digest;
-        if !self.relays.contains(relay) || certificates.is_empty() {
-            return Err("test roots require an exact configured mesh relay".into());
-        }
-        let mut roots = rustls::RootCertStore::empty();
-        let mut digest = sha2::Sha256::new();
-        for certificate in certificates {
-            digest.update(&certificate);
-            roots
-                .add(rustls::pki_types::CertificateDer::from(certificate))
-                .map_err(|error| error.to_string())?;
-        }
-        self.tls_test_roots.retain(|(url, _)| url != relay);
-        self.tls_test_roots.push((relay.clone(), roots));
-        self.key
-            .push_str(&format!(":test-roots:{relay}:{:x}", digest.finalize()));
-        Ok(())
+    pub(in crate::core) fn with_relay_pool(mut self, pool: Arc<DiscoveryRelays>) -> Self {
+        self.relay_pool = pool;
+        self
     }
 
     pub(in crate::core) fn available(&self) -> bool {
@@ -280,8 +271,6 @@ impl PrivateMeshProviders {
         live: Arc<FipsEndpoint>,
         sender: Sender<CoreMsg>,
         observations: &mut DiscoveryObservations,
-        advert_tls: &[Option<ScopedTlsConnector>],
-        connections: &mut [ScopedReadConnection],
     ) -> DiscoveryPoll {
         let mut poll = DiscoveryPoll::default();
         let Some(filter) = filters.first() else {
@@ -305,29 +294,8 @@ impl PrivateMeshProviders {
         let Ok(_slot) = slots.acquire().await else {
             return poll;
         };
-        // FIPS's External mode never opens its own relay client. Cold live-peer
-        // adverts are fetched here on a one-author anonymous context instead.
-        let adverts = filters
-            .iter()
-            .filter(|filter| is_peer_advert_filter(filter))
-            .cloned()
-            .collect::<Vec<_>>();
-        if !adverts.is_empty() && !self.relays.is_empty() {
-            poll.attempted = true;
-            if let Ok(events) = crate::core::protocol::anonymous_reads::poll_relays_reusing(
-                &self.relays,
-                &adverts,
-                advert_tls,
-                connections,
-            )
-            .await
-            {
-                for event in events {
-                    self.deliver_discovery(event, &live, &sender, observations, &mut poll)
-                        .await;
-                }
-            }
-        }
+        // Relay endpoint adverts arrive through shared live pub/sub. Only
+        // explicitly configured FIPS providers use this one-subject query lane.
         if !self.available() {
             return poll;
         }
@@ -422,6 +390,7 @@ impl Drop for PrivateEndpoint {
 pub(in crate::core) struct PrivateMeshDiscovery {
     provider_key: String,
     workers: BTreeMap<String, DiscoveryWorker>,
+    relay_discovery: Option<PublicDiscovery>,
 }
 
 struct DiscoveryWorker {
@@ -439,6 +408,9 @@ impl Drop for DiscoveryWorker {
 
 impl PrivateMeshDiscovery {
     pub(in crate::core) fn refresh_author(&self, author: PublicKey) {
+        if let Some(relay) = &self.relay_discovery {
+            relay.refresh(Some(author));
+        }
         for worker in self
             .workers
             .values()
@@ -449,6 +421,9 @@ impl PrivateMeshDiscovery {
     }
 
     pub(in crate::core) fn refresh_all(&self) {
+        if let Some(relay) = &self.relay_discovery {
+            relay.refresh(None);
+        }
         for worker in self.workers.values() {
             worker.wake.notify_one();
         }
@@ -464,19 +439,28 @@ impl PrivateMeshDiscovery {
     ) {
         if self.provider_key != providers.key {
             self.workers.clear();
+            self.relay_discovery = None;
             self.provider_key.clone_from(&providers.key);
         }
-        if !providers.available() && providers.relays.is_empty() {
+        let adverts = filters
+            .iter()
+            .filter(|filter| is_peer_advert_filter(filter))
+            .cloned()
+            .collect::<Vec<_>>();
+        if providers.relays.is_empty() || adverts.is_empty() {
+            self.relay_discovery = None;
+        } else {
+            let relay = self.relay_discovery.get_or_insert_with(|| {
+                PublicDiscovery::mesh(runtime.handle(), providers.relay_pool.clone(), live.clone())
+            });
+            let _ = relay.configure(&providers.relays, adverts);
+        }
+        if !providers.available() {
             self.workers.clear();
             return;
         }
         let mut scopes = std::collections::BTreeMap::<String, Vec<Filter>>::new();
-        for filter in filters {
-            // Without an explicit FIPS provider, only adverts have a usable
-            // source (the anonymous relay reader). Do not retain no-I/O timers.
-            if !providers.available() && !is_peer_advert_filter(&filter) {
-                continue;
-            }
+        for filter in filters.into_iter().flat_map(split_provider_authors) {
             let Ok(scope) = FipsDiscoveryScope::from_filter(&filter) else {
                 continue;
             };
@@ -515,20 +499,6 @@ impl PrivateMeshDiscovery {
             let requested = wake.clone();
             let worker_filters = filters.clone();
             let task = runtime.spawn(async move {
-                // TLS tickets and key-exchange hints belong only to this exact
-                // worker configuration. Ordinary demand retains them; dropping
-                // or replacing the worker drops them even during a blocked read.
-                let advert_filters = worker_filters
-                    .iter()
-                    .filter(|filter| is_peer_advert_filter(filter))
-                    .cloned()
-                    .collect::<Vec<_>>();
-                let advert_tls = providers.advert_tls(&advert_filters);
-                let mut connections = providers
-                    .relays
-                    .iter()
-                    .map(|relay| ScopedReadConnection::new(relay, &advert_filters))
-                    .collect::<Vec<_>>();
                 let mut observations = DiscoveryObservations::default();
                 let mut cadence = DiscoveryCadence::default();
                 loop {
@@ -538,8 +508,6 @@ impl PrivateMeshDiscovery {
                             live.clone(),
                             sender.clone(),
                             &mut observations,
-                            &advert_tls,
-                            &mut connections,
                         )
                         .await;
                     if poll.closed {
@@ -554,7 +522,6 @@ impl PrivateMeshDiscovery {
                     // A real demand is coalesced during a busy query. It never
                     // interrupts the in-flight anonymous authentication/read.
                     tokio::select! {
-                        _ = idle_connections(&mut connections) => {},
                         _ = sleep(delay) => {},
                         _ = requested.notified() => cadence.reset(),
                     }
@@ -571,4 +538,20 @@ impl PrivateMeshDiscovery {
             );
         }
     }
+}
+
+// Unlike public relay discovery, FIPS provider discovery retains one anonymous
+// subject per provider context. Do not merge this with the shared relay filters.
+fn split_provider_authors(filter: Filter) -> Vec<Filter> {
+    let Some(authors) = filter.authors.as_ref().filter(|authors| authors.len() > 1) else {
+        return vec![filter];
+    };
+    authors
+        .iter()
+        .map(|author| {
+            let mut scoped = filter.clone();
+            scoped.authors = Some(BTreeSet::from([*author]));
+            scoped
+        })
+        .collect()
 }

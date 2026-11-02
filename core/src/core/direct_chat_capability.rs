@@ -131,6 +131,7 @@ impl AppCore {
 
         let tx = self.core_sender.clone();
         let owner_pubkey_hex = owner_pubkey_hex.to_string();
+        let discovery = self.discovery_relays.clone();
         self.runtime.spawn(async move {
             ensure_session_relays_configured(&client, &relay_urls).await;
             connect_client_with_timeout(&client, DIRECT_CAPABILITY_FETCH_TIMEOUT).await;
@@ -138,9 +139,13 @@ impl AppCore {
                 .kind(Kind::from(APP_KEYS_EVENT_KIND as u16))
                 .author(owner)
                 .limit(MAX_DIRECT_CAPABILITY_EVENTS);
-            let result =
-                fetch_events_for_filters(&client, vec![filter], DIRECT_CAPABILITY_FETCH_TIMEOUT)
-                    .await;
+            let result = fetch_events_for_filters(
+                &client,
+                &discovery,
+                vec![filter],
+                DIRECT_CAPABILITY_FETCH_TIMEOUT,
+            )
+            .await;
             let _ = tx.send(CoreMsg::Internal(Box::new(
                 InternalEvent::DirectChatCapabilityFetchFinished {
                     generation,

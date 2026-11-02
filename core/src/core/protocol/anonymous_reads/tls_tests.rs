@@ -6,10 +6,7 @@ use rustls::{
     server::{ServerSessionMemoryCache, StoresServerSessions},
     HandshakeKind, ProtocolVersion, RootCertStore, ServerConfig,
 };
-use std::sync::{
-    atomic::{AtomicUsize, Ordering},
-    Mutex,
-};
+use std::sync::Mutex;
 use tokio::net::TcpListener;
 use tokio_rustls::TlsAcceptor;
 
@@ -58,16 +55,6 @@ pub(in crate::core) fn acceptor_with_sessions(
 pub(in crate::core) type Wire = Arc<Mutex<Vec<(usize, serde_json::Value)>>>;
 pub(in crate::core) type Handshakes = Arc<Mutex<Vec<(HandshakeKind, ProtocolVersion, bool)>>>;
 
-#[derive(Default)]
-pub(in crate::core) struct RelayControl {
-    pub(in crate::core) stall_queries: bool,
-    pub(in crate::core) ping_after_close: bool,
-    pub(in crate::core) query_waiting: tokio::sync::Notify,
-    pub(in crate::core) release_query: tokio::sync::Notify,
-    pub(in crate::core) send_ping: tokio::sync::Notify,
-    pub(in crate::core) pong: tokio::sync::Notify,
-}
-
 struct RecordHost(Arc<Mutex<Vec<String>>>);
 
 impl tokio_tungstenite::tungstenite::handshake::server::Callback for RecordHost {
@@ -107,23 +94,6 @@ pub(in crate::core) async fn relay(resume: bool, tls12_only: bool, events: Vec<E
 }
 
 async fn relay_with_acceptor(acceptor: TlsAcceptor, events: Vec<Event>) -> Relay {
-    relay_with_retention(acceptor, events, false, None).await
-}
-
-pub(in crate::core) async fn persistent_relay(events: Vec<Event>) -> Relay {
-    relay_with_retention(acceptor(true, false), events, true, None).await
-}
-
-pub(in crate::core) async fn controlled_persistent_relay(control: Arc<RelayControl>) -> Relay {
-    relay_with_retention(acceptor(true, false), vec![], true, Some(control)).await
-}
-
-async fn relay_with_retention(
-    acceptor: TlsAcceptor,
-    events: Vec<Event>,
-    keep_open: bool,
-    control: Option<Arc<RelayControl>>,
-) -> Relay {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = RelayUrl::parse(&format!("wss://{}", listener.local_addr().unwrap())).unwrap();
     let wire: Wire = Arc::default();
@@ -149,7 +119,6 @@ async fn relay_with_retention(
                     let names = names.clone();
                     let hosts = hosts.clone();
                     let events = events.clone();
-                    let control = control.clone();
                     children.spawn(async move {
                         // Rejected certificates are an expected negative case.
                         let Ok(stream) = acceptor.accept(stream).await else { return; };
@@ -164,11 +133,6 @@ async fn relay_with_retention(
                         socket.send(Message::Text(serde_json::json!(["AUTH", format!("tls-fixture-{id}")]).to_string())).await.unwrap();
                         let mut authenticated = false;
                         while let Some(Ok(message)) = socket.next().await {
-                            if let Message::Pong(payload) = &message {
-                                assert_eq!(payload, &[7, 1, 9]);
-                                control.as_ref().expect("only controlled relays send Ping").pong.notify_one();
-                                continue;
-                            }
                             let Message::Text(text) = message else { break; };
                             let value: serde_json::Value = serde_json::from_str(&text).unwrap();
                             wire.lock().unwrap().push((id, value.clone()));
@@ -181,10 +145,6 @@ async fn relay_with_retention(
                                     socket.send(Message::Text(serde_json::json!(["OK", auth.id, true, ""]).to_string())).await.unwrap();
                                 }
                                 Some("REQ") if authenticated => {
-                                    if let Some(control) = control.as_ref().filter(|control| control.stall_queries) {
-                                        control.query_waiting.notify_one();
-                                        control.release_query.notified().await;
-                                    }
                                     let filters = value.as_array().unwrap()[2..].iter().cloned()
                                         .map(serde_json::from_value::<Filter>).collect::<Result<Vec<_>, _>>().unwrap();
                                     for event in events.iter().filter(|event| filters.iter().any(|filter| filter.match_event(event, nostr::filter::MatchEventOptions::new()))) {
@@ -192,14 +152,7 @@ async fn relay_with_retention(
                                     }
                                     socket.send(Message::Text(serde_json::json!(["EOSE", value[1]]).to_string())).await.unwrap();
                                 }
-                                Some("CLOSE") if !keep_open => break,
-                                Some("CLOSE") => {
-                                    if let Some(control) = control.as_ref().filter(|control| control.ping_after_close) {
-                                        control.send_ping.notified().await;
-                                        socket.send(Message::Text(serde_json::json!(["NOTICE", "query complete"]).to_string())).await.unwrap();
-                                        socket.send(Message::Ping(vec![7, 1, 9])).await.unwrap();
-                                    }
-                                }
+                                Some("CLOSE") => break,
                                 _ => {},
                             }
                         }
@@ -221,17 +174,12 @@ async fn relay_with_retention(
     }
 }
 
-fn filter(author: PublicKey) -> Filter {
-    Filter::new().author(author).kind(Kind::Metadata)
-}
-
-async fn read(relay: &Relay, keys: &Keys, scope: &ScopedTlsConnector) {
-    let events = poll(&relay.url, vec![filter(keys.public_key())], Some(scope))
-        .await
-        .unwrap();
-    assert_eq!(events.len(), 1);
-    assert_eq!(events[0].pubkey, keys.public_key());
-    assert!(!relay.task.is_finished(), "TLS fixture failed");
+pub(in crate::core) fn connector() -> Connector {
+    Connector::Rustls(Arc::new(
+        rustls::ClientConfig::builder()
+            .with_root_certificates(roots())
+            .with_no_client_auth(),
+    ))
 }
 
 pub(in crate::core) fn assert_wire(relay: &Relay, authors: &[PublicKey], connections: usize) {
@@ -266,203 +214,4 @@ pub(in crate::core) fn assert_wire(relay: &Relay, authors: &[PublicKey], connect
     assert_eq!(signers.len(), connections);
     assert_eq!(subjects.len(), connections);
     assert!(subjects.values().all(|subjects| subjects.len() == 1));
-}
-
-#[tokio::test]
-async fn tls_wire_resumes_only_the_same_author_and_relay_with_fresh_anonymous_auth() {
-    let alice = Keys::generate();
-    let bob = Keys::generate();
-    let events = [&alice, &bob]
-        .iter()
-        .map(|key| {
-            EventBuilder::new(Kind::Metadata, "{}")
-                .sign_with_keys(key)
-                .unwrap()
-        })
-        .collect();
-    let relay = relay(true, false, events).await;
-    let alice_scope =
-        ScopedTlsConnector::new_with_roots(&relay.url, &[filter(alice.public_key())], roots())
-            .unwrap();
-    read(&relay, &alice, &alice_scope).await;
-    read(&relay, &alice, &alice_scope).await;
-    let bob_scope =
-        ScopedTlsConnector::new_with_roots(&relay.url, &[filter(bob.public_key())], roots())
-            .unwrap();
-    read(&relay, &bob, &bob_scope).await;
-    let replacement =
-        ScopedTlsConnector::new_with_roots(&relay.url, &[filter(alice.public_key())], roots())
-            .unwrap();
-    read(&relay, &alice, &replacement).await;
-    let mut other_url = relay.url.as_str().trim_end_matches('/').to_owned();
-    other_url.push_str("/other-discovery");
-    let other_url = RelayUrl::parse(&other_url).unwrap();
-    let other_scope =
-        ScopedTlsConnector::new_with_roots(&other_url, &[filter(alice.public_key())], roots())
-            .unwrap();
-    assert_eq!(
-        poll(
-            &other_url,
-            vec![filter(alice.public_key())],
-            Some(&other_scope)
-        )
-        .await
-        .unwrap()
-        .len(),
-        1
-    );
-    let kinds = relay.handshakes.lock().unwrap().clone();
-    assert_eq!(
-        kinds.iter().map(|row| row.0).collect::<Vec<_>>(),
-        [
-            HandshakeKind::Full,
-            HandshakeKind::Resumed,
-            HandshakeKind::Full,
-            HandshakeKind::Full,
-            HandshakeKind::Full
-        ]
-    );
-    assert!(kinds
-        .iter()
-        .all(|(_, version, fresh_dhe)| *version == ProtocolVersion::TLSv1_3 && *fresh_dhe));
-    assert_wire(&relay, &[alice.public_key(), bob.public_key()], 5);
-    // Normal production roots must still reject this test CA.
-    let untrusted = ScopedTlsConnector::new(&relay.url, &[filter(alice.public_key())]).unwrap();
-    assert!(poll(
-        &relay.url,
-        vec![filter(alice.public_key())],
-        Some(&untrusted)
-    )
-    .await
-    .is_err());
-}
-
-#[tokio::test]
-async fn tls_wire_preserves_full_validation_when_resumption_is_unavailable_or_tls12() {
-    for tls12_only in [false, true] {
-        let keys = Keys::generate();
-        let event = EventBuilder::new(Kind::Metadata, "{}")
-            .sign_with_keys(&keys)
-            .unwrap();
-        let relay = relay(false, tls12_only, vec![event]).await;
-        let scope =
-            ScopedTlsConnector::new_with_roots(&relay.url, &[filter(keys.public_key())], roots())
-                .unwrap();
-        read(&relay, &keys, &scope).await;
-        read(&relay, &keys, &scope).await;
-        let kinds = relay.handshakes.lock().unwrap().clone();
-        assert_eq!(kinds.len(), 2);
-        assert!(
-            kinds
-                .iter()
-                .all(|(kind, _, fresh_dhe)| *kind == HandshakeKind::Full && *fresh_dhe),
-            "tls12_only={tls12_only}, observed handshakes: {kinds:?}"
-        );
-        assert_wire(&relay, &[keys.public_key()], 2);
-    }
-}
-
-#[derive(Debug)]
-struct CountedSessions {
-    storage: Arc<dyn StoresServerSessions>,
-    inserted: AtomicUsize,
-    hits: AtomicUsize,
-    misses: AtomicUsize,
-}
-
-impl CountedSessions {
-    fn new(capacity: usize) -> Self {
-        Self {
-            storage: ServerSessionMemoryCache::new(capacity),
-            inserted: AtomicUsize::new(0),
-            hits: AtomicUsize::new(0),
-            misses: AtomicUsize::new(0),
-        }
-    }
-}
-
-impl StoresServerSessions for CountedSessions {
-    fn put(&self, key: Vec<u8>, value: Vec<u8>) -> bool {
-        let stored = self.storage.put(key, value);
-        if stored {
-            self.inserted.fetch_add(1, Ordering::SeqCst);
-        }
-        stored
-    }
-
-    fn get(&self, key: &[u8]) -> Option<Vec<u8>> {
-        self.storage.get(key)
-    }
-
-    fn take(&self, key: &[u8]) -> Option<Vec<u8>> {
-        let value = self.storage.take(key);
-        if value.is_some() {
-            self.hits.fetch_add(1, Ordering::SeqCst);
-        } else {
-            self.misses.fetch_add(1, Ordering::SeqCst);
-        }
-        value
-    }
-
-    fn can_cache(&self) -> bool {
-        self.storage.can_cache()
-    }
-}
-
-#[tokio::test]
-async fn tls_wire_distinguishes_server_ticket_eviction_from_client_scope_reset() {
-    let keys = [Keys::generate(), Keys::generate(), Keys::generate()];
-    let authors = keys.iter().map(Keys::public_key).collect::<Vec<_>>();
-    for (capacity, expected_second, hits, misses) in [
-        (4, HandshakeKind::Full, 0, 3),
-        (12, HandshakeKind::Resumed, 3, 0),
-    ] {
-        let sessions = Arc::new(CountedSessions::new(capacity));
-        let events = keys
-            .iter()
-            .map(|key| {
-                EventBuilder::new(Kind::Metadata, "{}")
-                    .sign_with_keys(key)
-                    .unwrap()
-            })
-            .collect();
-        let relay = relay_with_acceptor(
-            acceptor_with_sessions(true, false, sessions.clone()),
-            events,
-        )
-        .await;
-        // Retain the same exact author/URL scopes across both ordered sweeps.
-        // Two tickets per handshake overflow four server records before the
-        // first author returns; its new tickets then evict the next author's.
-        let scopes = authors
-            .iter()
-            .map(|author| {
-                ScopedTlsConnector::new_with_roots(&relay.url, &[filter(*author)], roots()).unwrap()
-            })
-            .collect::<Vec<_>>();
-        for _ in 0..2 {
-            for (key, scope) in keys.iter().zip(&scopes) {
-                read(&relay, key, scope).await;
-            }
-        }
-        let observed = relay.handshakes.lock().unwrap().clone();
-        let expected = [HandshakeKind::Full; 3]
-            .into_iter()
-            .chain([expected_second; 3])
-            .collect::<Vec<_>>();
-        assert_eq!(
-            observed.iter().map(|row| row.0).collect::<Vec<_>>(),
-            expected
-        );
-        assert!(observed
-            .iter()
-            .all(|(_, version, fresh_dhe)| *version == ProtocolVersion::TLSv1_3 && *fresh_dhe));
-        assert_eq!(sessions.inserted.load(Ordering::SeqCst), 12);
-        // A lookup miss proves that the client offered a retained ticket; a
-        // recreated client scope would not offer a ticket or call take at all.
-        assert_eq!(sessions.hits.load(Ordering::SeqCst), hits);
-        assert_eq!(sessions.misses.load(Ordering::SeqCst), misses);
-        assert_wire(&relay, &authors, 6);
-        println!("TLS_SERVER_SESSION_CAPACITY capacity={capacity} second_sweep={expected_second:?} hits={hits} misses={misses} fresh_auth=6 sole_author_requests=6");
-    }
 }

@@ -43,71 +43,62 @@ def fanout_command():
     ]
 
 
-def fanout_evidence(mode):
-    # Uneven retained-socket distribution intentionally proves that the parser
-    # validates measured per-relay counters, not a fictitious 64 per relay.
-    retained = (17, 16, 13, 11, 7)
-    relays = [dict(relay_index=i, subjects=480, poll_round_min=1, poll_round_max=1,
-                   completed_polls=480, new_poll_connections=480-n, reused_connections=n,
-                   reused_polls=n, connections=480-n, tls_full_handshakes=0,
-                   tls_resumed_handshakes=480-n) for i, n in enumerate(retained)]
-    cycle = dict(seconds=125.0, cpu_percent_one_core=1.0, application_wire_bytes=5000000,
-                 every_author_polled=True, relay_samples=relays)
-    for key in ("completed_polls", "new_poll_connections", "reused_connections", "reused_polls",
-                "connections", "tls_full_handshakes", "tls_resumed_handshakes"):
-        cycle[key] = sum(row[key] for row in relays)
-    quiet = dict(seconds=35.0, cpu_percent_one_core=0.1, application_wire_bytes=0, connections=0)
+def fanout_evidence(mode, relay_count=5):
+    from verify_discovery_idle import SOURCES
+    quiet = dict(seconds=125.0, cpu_percent_one_core=0.4, application_wire_bytes=0, connections=0,
+                 app_row_writes=0, protocol_writes=0, core_messages_processed=192, evicted_discovery_replays=192,
+                 relay_samples=[dict(relay_index=i, subjects=480, active_connections=1,
+                                     application_wire_bytes=0, connections=0) for i in range(relay_count)])
     result = dict(database_bytes=100*1024*1024, message_rows=32768, contacts=96, peer_devices=288,
                   own_devices=3, groups=8, discovery_subjects=384, mesh_discovery_subjects=96,
-                  total_discovery_subjects=480, relay_count=5, author_relay_pairs=2400,
-                  targeted_relay_polls=5, debug_assertions=False, settle_seconds=95.0,
-                  readiness_round_min=3, completed_peer_polls=7200,
-                  relay_readiness=[dict(relay_index=i, subjects=480, readiness_round_min=3,
-                                        completed_peer_polls=1440) for i in range(5)],
-                  fresh_anonymous_authentications=11749, anonymous_connections=11749,
-                  all_completed_polls=12005, all_reused_polls=256, revoked_stale_records=96,
+                  total_discovery_subjects=480, relay_count=relay_count, debug_assertions=False,
+                  settle_seconds=2.0, anonymous_connections=relay_count, revoked_stale_records=96,
                   targeted_fresh_proof_delivered=True, privacy_wire_passed=True,
-                  quiet_samples=[dict(quiet), dict(quiet)],
-                  full_cycle_tls_samples=json.loads(json.dumps([cycle, cycle])))
-    for field, path in (("fixture_source_sha256", "core/src/core/tests/synthetic_history_scale.rs"),
-                        ("test_source_sha256", "core/src/core/tests/populated_discovery_idle.rs")):
+                  relay_readiness=[dict(relay_index=i, subjects=480, connections=1, anonymous_authentications=1)
+                                   for i in range(relay_count)],
+                  quiet_samples=json.loads(json.dumps([quiet, quiet])))
+    for field, path in SOURCES.items():
         result[field] = hashlib.sha256((ROOT / path).read_bytes()).hexdigest()
-    first = result["full_cycle_tls_samples"][0]
-    if mode == "one-relay": result.update(relay_count=1, author_relay_pairs=480)
+    first = result["quiet_samples"][0]
+    if mode == "one-relay": result["relay_count"] = 1
     elif mode == "missing-relay": first["relay_samples"].pop()
-    elif mode == "duplicate-relay": first["relay_samples"][4]["relay_index"] = 0
-    elif mode == "missing-subject": first["relay_samples"][2]["subjects"] = 479
-    elif mode == "unpolled-pair": first["relay_samples"][2]["poll_round_min"] = 0
-    elif mode == "relay-sum": first["relay_samples"][2]["connections"] += 1
-    elif mode == "full-tls": first["relay_samples"][2]["tls_full_handshakes"] = 1
-    elif mode == "unwarmed-relay": result["relay_readiness"][2]["readiness_round_min"] = 2
+    elif mode == "duplicate-relay": first["relay_samples"][-1]["relay_index"] = 0
+    elif mode == "missing-subject": first["relay_samples"][0]["subjects"] = 479
+    elif mode == "repeated-work": first["relay_samples"][0]["application_wire_bytes"] = 1
+    elif mode == "extra-connection": first["relay_samples"][0]["active_connections"] = 2
+    elif mode == "unwarmed-relay": result["relay_readiness"][0]["subjects"] = 479
     elif mode == "missing-readiness": result["relay_readiness"].pop()
-    elif mode == "wrong-target-fanout": result["targeted_relay_polls"] = 1
+    elif mode == "missing-proof": result["targeted_fresh_proof_delivered"] = False
     elif mode == "excess-cpu": first["cpu_percent_one_core"] = 5.1
-    elif mode == "short-cycle": first["seconds"] = 124.0
-    elif mode == "short-quiet": result["quiet_samples"][0]["seconds"] = 34.0
-    elif mode == "global-cap": first["reused_connections"] = 320
-    elif mode == "stale-source": result["test_source_sha256"] = "0"*64
+    elif mode == "short-quiet": first["seconds"] = 124.0
+    elif mode == "db-write": first["app_row_writes"] = 1
+    elif mode == "protocol-write": first["protocol_writes"] = 1
+    elif mode == "missing-samples": result["quiet_samples"].pop()
+    elif mode == "tiny-fixture": result["database_bytes"] = 1024
+    elif mode == "stale-source": result["discovery_source_sha256"] = "0"*64
     elif mode == "debug": result["debug_assertions"] = True
-    elif mode == "boolean-counter": first["relay_samples"][2]["tls_full_handshakes"] = False
-    elif mode == "fractional-counter": first["relay_samples"][2]["completed_polls"] = 480.0
+    elif mode == "boolean-counter": first["relay_samples"][0]["connections"] = False
+    elif mode == "fractional-counter": first["relay_samples"][0]["subjects"] = 480.0
     elif mode == "no-privacy": result["privacy_wire_passed"] = False
+    elif mode == "missing-mesh-subjects": del result["mesh_discovery_subjects"]
+    elif mode == "wrong-total-subjects": result["total_discovery_subjects"] = 479
+    elif mode == "unauthed-connection": result["relay_readiness"][0]["anonymous_authentications"] = 0
+    elif mode == "unprocessed-replay": first["core_messages_processed"] = 191
     elif mode == "settle-clock-overhead": result["settle_seconds"] = 121.25
-    lines = ["populated discovery child status=exit status: 0", "stdout:", "running 1 test",
-             "test " + FANOUT_TEST + " ... "]
+    test = FANOUT_TEST if relay_count == 5 else FANOUT_TEST.replace("five_relay_", "")
+    lines = ["populated discovery child status=exit status: 0", "stdout:", "running 1 test", "test " + test + " ... "]
     lines += ["POPULATED_DISCOVERY_IDLE_SAMPLE="+json.dumps(row) for row in result["quiet_samples"]]
-    lines += ["POPULATED_DISCOVERY_CYCLE_SAMPLE="+json.dumps(row) for row in result["full_cycle_tls_samples"]]
-    lines += ["POPULATED_DISCOVERY_IDLE_RESULT="+json.dumps(result),
-              "ok", "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 99 filtered out; finished in 420.0s", "stderr:"]
+    lines += ["POPULATED_DISCOVERY_IDLE_RESULT="+json.dumps(result), "ok",
+              "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 99 filtered out; finished in 420.0s", "stderr:"]
     if mode == "wrong-test": lines[3] = "test unrelated ... "
     log = "\n".join(lines)+"\n"
-    receipt = dict(schema="iris-populated-discovery-idle/v1", passed=True, timed_out=False,
-                   exit_code=0, seconds=420.0, measurements=[result],
-                   log_bytes=len(log.encode()), log_sha256=hashlib.sha256(log.encode()).hexdigest())
+    receipt = dict(schema="iris-populated-discovery-idle/v2", passed=True, timed_out=False,
+                   exit_code=0, seconds=420.0, measurements=[result], log_bytes=len(log.encode()),
+                   log_sha256=hashlib.sha256(log.encode()).hexdigest())
     if mode == "parent-close-overhead": receipt["seconds"] = 540.1
     elif mode == "settle-clock-overhead": receipt["seconds"] = 445.0
     elif mode == "wrong-log": receipt["log_sha256"] = "0"*64
-    elif mode == "log-mismatch": receipt["measurements"][0]["settle_seconds"] = 94.0
+    elif mode == "log-mismatch": result["settle_seconds"] = 3.0
     elif mode == "failed": receipt["passed"] = False
     elif mode == "timeout": receipt["timed_out"] = True
     return receipt, log
@@ -264,6 +255,7 @@ class RustRunnerTests(unittest.TestCase):
             python = binary_dir / "python3"
             python.write_text(
                 '#!/bin/sh\n'
+                'case "$1" in */verify_discovery_idle.py) exec "$IRIS_TEST_REAL_PYTHON" "$@";; esac\n'
                 'if [ "$1" = "-" ]; then\n'
                 '  if [ "$#" = 1 ]; then echo 45678; exit; fi\n'
                 '  exec "$IRIS_TEST_REAL_PYTHON" "$@"\n'
@@ -344,92 +336,8 @@ class RustRunnerTests(unittest.TestCase):
                 output.mkdir()
                 env["IRIS_PRIVATE_CONTROL_FIXTURE_OUTPUT"] = str(output / "native-private-controls.json")
                 if cpu_receipt != "missing":
-                    child_log = b"Synthetic companion child log\n"
-                    sample = {"seconds": 35.0, "cpu_percent_one_core": 0.2,
-                              "application_wire_bytes": 0, "connections": 0}
-                    cycle = {"seconds": 125.0, "cpu_percent_one_core": 0.4,
-                             "application_wire_bytes": 1000000, "connections": 416,
-                             "every_author_polled": True, "tls_full_handshakes": 0,
-                             "tls_resumed_handshakes": 416, "completed_polls": 480,
-                             "new_poll_connections": 416, "reused_polls": 64, "reused_connections": 64}
-                    measurements = {"database_bytes": 100 * 1024 * 1024,
-                                    "message_rows": 30000, "contacts": 96,
-                                    "peer_devices": 288, "own_devices": 3, "groups": 8,
-                                    "discovery_subjects": 384, "readiness_round_min": 3,
-                                    "mesh_discovery_subjects": 96, "total_discovery_subjects": 480,
-                                    "completed_peer_polls": 1440, "fresh_anonymous_authentications": 2145,
-                                    "anonymous_connections": 2145, "all_completed_polls": 2401, "all_reused_polls": 256,
-                                    "revoked_stale_records": 96,
-                                    "targeted_fresh_proof_delivered": True,
-                                    "privacy_wire_passed": True,
-                                    "quiet_samples": [dict(sample), dict(sample)],
-                                    "full_cycle_tls_samples": [dict(cycle), dict(cycle)]}
-                    receipt = {"schema": "iris-populated-discovery-idle/v1", "passed": True,
-                               "timed_out": False, "exit_code": 0,
-                               "log_bytes": len(child_log), "log_sha256": hashlib.sha256(child_log).hexdigest(),
-                               "measurements": [measurements]}
-                    if cpu_receipt == "failed":
-                        receipt["passed"] = False
-                    elif cpu_receipt == "wrong-log":
-                        receipt["log_sha256"] = "0" * 64
-                    elif cpu_receipt == "excess-cpu":
-                        measurements["quiet_samples"][0]["cpu_percent_one_core"] = 5.1
-                    elif cpu_receipt == "tiny-fixture":
-                        measurements["database_bytes"] = 2 * 1024 * 1024
-                    elif cpu_receipt == "missing-cycles":
-                        del measurements["full_cycle_tls_samples"]
-                    elif cpu_receipt == "partial-cycle":
-                        measurements["full_cycle_tls_samples"][0]["seconds"] = 70.0
-                    elif cpu_receipt == "excess-cycle-cpu":
-                        measurements["full_cycle_tls_samples"][0]["cpu_percent_one_core"] = 5.1
-                    elif cpu_receipt == "unresumed-cycle":
-                        measurements["full_cycle_tls_samples"][0]["tls_full_handshakes"] = 1
-                    elif cpu_receipt == "no-cycle-polls":
-                        measurements["full_cycle_tls_samples"][0]["tls_resumed_handshakes"] = 0
-                    elif cpu_receipt == "missing-mesh-subjects":
-                        del measurements["mesh_discovery_subjects"]
-                    elif cpu_receipt == "missing-total-subjects":
-                        del measurements["total_discovery_subjects"]
-                    elif cpu_receipt == "too-few-mesh-subjects":
-                        measurements["mesh_discovery_subjects"] = 95
-                    elif cpu_receipt == "wrong-total-subjects":
-                        measurements["total_discovery_subjects"] = 479
-                    elif cpu_receipt == "mesh-not-warmed-up":
-                        measurements["completed_peer_polls"] = 1152
-                    elif cpu_receipt == "missing-fresh-mesh-auth":
-                        measurements["fresh_anonymous_authentications"] = 1440
-                    elif cpu_receipt == "ordinary-only-tls-cycle":
-                        measurements["full_cycle_tls_samples"][1]["tls_resumed_handshakes"] = 384
-                    elif cpu_receipt == "ordinary-only-connection-cycle":
-                        measurements["full_cycle_tls_samples"][1]["connections"] = 384
-                    elif cpu_receipt == "missing-retention-accounting":
-                        del measurements["all_reused_polls"]
-                    elif cpu_receipt == "unauthed-connection":
-                        measurements["anonymous_connections"] += 1
-                    elif cpu_receipt == "unaccounted-poll":
-                        measurements["all_completed_polls"] += 1
-                    elif cpu_receipt == "missing-final-poll":
-                        measurements["all_completed_polls"] -= 1
-                        measurements["all_reused_polls"] -= 1
-                    elif cpu_receipt == "retention-cap-exceeded":
-                        measurements["full_cycle_tls_samples"][0]["reused_connections"] = 65
-                    elif cpu_receipt == "retained-scope-missed":
-                        measurements["full_cycle_tls_samples"][0]["reused_connections"] = 63
-                    elif cpu_receipt == "extra-retained-polls":
-                        measurements["full_cycle_tls_samples"][0].update(completed_polls=545, reused_polls=129)
-                    elif cpu_receipt == "missed-disposable-scope":
-                        measurements["full_cycle_tls_samples"][0].update(
-                            completed_polls=480, reused_polls=65, new_poll_connections=415,
-                            connections=415, tls_resumed_handshakes=415)
-                    elif cpu_receipt == "unaccounted-cycle-poll":
-                        measurements["full_cycle_tls_samples"][0]["completed_polls"] += 1
-                    elif cpu_receipt == "boolean-cycle-counter":
-                        measurements["full_cycle_tls_samples"][0]["tls_full_handshakes"] = False
-                    elif cpu_receipt == "fractional-cycle-counter":
-                        measurements["full_cycle_tls_samples"][0]["completed_polls"] = 480.0
-                    elif cpu_receipt == "negative-reuse-counter":
-                        measurements["all_reused_polls"] = -1
-                    (output / "populated-discovery-idle.log").write_bytes(child_log)
+                    receipt, child_log = fanout_evidence(cpu_receipt, 1)
+                    (output / "populated-discovery-idle.log").write_text(child_log)
                     (output / "populated-discovery-idle.json").write_text(json.dumps(receipt))
             if approval_relay is not None:
                 env["IRIS_DEVICE_APPROVAL_RELAY_URL"] = approval_relay
@@ -637,9 +545,9 @@ class RustRunnerTests(unittest.TestCase):
     def test_five_relay_gate_rejects_missing_or_inconsistent_evidence(self):
         modes = ("missing", "failed", "timeout", "wrong-log", "log-mismatch", "wrong-test",
                  "missing-outer", "duplicate-outer", "one-relay", "missing-relay", "duplicate-relay",
-                 "missing-subject", "unpolled-pair", "relay-sum", "full-tls", "unwarmed-relay",
-                 "missing-readiness", "wrong-target-fanout", "excess-cpu", "short-cycle", "short-quiet",
-                 "global-cap", "stale-source", "debug", "boolean-counter", "fractional-counter", "no-privacy")
+                 "missing-subject", "repeated-work", "extra-connection", "unwarmed-relay", "missing-readiness",
+                 "missing-proof", "excess-cpu", "short-quiet", "db-write", "protocol-write", "missing-samples",
+                 "stale-source", "debug", "boolean-counter", "fractional-counter", "no-privacy", "unprocessed-replay")
         for nextest in (True, False):
             commands = self.commands(nextest, "Linux")
             index = commands.index(fanout_command())
@@ -661,13 +569,9 @@ class RustRunnerTests(unittest.TestCase):
     def test_linux_requires_valid_populated_companion_evidence(self):
         for nextest in (True, False):
             for mode in ("passed", "missing", "failed", "wrong-log", "excess-cpu", "tiny-fixture",
-                         "missing-cycles", "partial-cycle", "excess-cycle-cpu", "unresumed-cycle", "no-cycle-polls",
-                         "missing-mesh-subjects", "missing-total-subjects", "too-few-mesh-subjects", "wrong-total-subjects",
-                         "mesh-not-warmed-up", "missing-fresh-mesh-auth", "ordinary-only-tls-cycle",
-                         "ordinary-only-connection-cycle", "missing-retention-accounting", "unauthed-connection",
-                         "unaccounted-poll", "missing-final-poll", "retention-cap-exceeded", "retained-scope-missed",
-                         "extra-retained-polls", "missed-disposable-scope", "unaccounted-cycle-poll",
-                         "boolean-cycle-counter", "fractional-cycle-counter", "negative-reuse-counter"):
+                         "missing-samples", "short-quiet", "repeated-work", "extra-connection", "db-write", "protocol-write",
+                         "missing-mesh-subjects", "wrong-total-subjects", "missing-readiness", "unauthed-connection",
+                         "boolean-counter", "fractional-counter", "unprocessed-replay", "stale-source"):
                 with self.subTest(nextest=nextest, receipt=mode):
                     result, calls = self.run_runner(nextest, platform="Linux", cpu_receipt=mode)
                     if mode == "passed":

@@ -8,7 +8,11 @@ const SEARCH_CAPABILITY_TIMEOUT: Duration = Duration::from_secs(5);
 /// Resolve a bounded batch with the same signature, timestamp and conflict
 /// checks used when opening a direct chat. Empty snapshots must reach the
 /// cache too, so a revoked device list removes a previously visible person.
-pub(super) async fn fetch_search_app_keys(client: &Client, owners: Vec<PublicKey>) -> Vec<Event> {
+pub(super) async fn fetch_search_app_keys(
+    client: &Client,
+    discovery: &Arc<protocol::public_discovery::DiscoveryRelays>,
+    owners: Vec<PublicKey>,
+) -> Vec<Event> {
     let owners = owners
         .into_iter()
         .collect::<std::collections::BTreeSet<_>>();
@@ -27,7 +31,7 @@ pub(super) async fn fetch_search_app_keys(client: &Client, owners: Vec<PublicKey
                 .limit(32 * chunk.len())
         })
         .collect();
-    let events = fetch_events_for_filters(client, filters, SEARCH_CAPABILITY_TIMEOUT)
+    let events = fetch_events_for_filters(client, discovery, filters, SEARCH_CAPABILITY_TIMEOUT)
         .await
         .unwrap_or_default();
     resolve_search_app_keys(events, &owners, unix_now().get())
@@ -123,14 +127,18 @@ mod tests {
             let supported = app_keys(&owner, Some(&device), now);
             client.send_event(&supported).await.unwrap();
             assert_eq!(
-                fetch_search_app_keys(&client, vec![owner.public_key(), unknown.public_key()])
-                    .await,
+                fetch_search_app_keys(
+                    &client,
+                    &Arc::default(),
+                    vec![owner.public_key(), unknown.public_key()]
+                )
+                .await,
                 vec![supported]
             );
             let revoked = app_keys(&owner, None, now + 1);
             client.send_event(&revoked).await.unwrap();
             assert_eq!(
-                fetch_search_app_keys(&client, vec![owner.public_key()]).await,
+                fetch_search_app_keys(&client, &Arc::default(), vec![owner.public_key()]).await,
                 vec![revoked]
             );
             client.disconnect().await;

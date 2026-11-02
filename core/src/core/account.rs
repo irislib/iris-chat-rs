@@ -325,6 +325,7 @@ impl AppCore {
         let filters = Self::pending_linked_device_filters(pending);
         let relay_urls = self.device_approval_relay_urls.clone();
         let tx = self.core_sender.clone();
+        let discovery = self.discovery_relays.clone();
         self.runtime.spawn(async move {
             connect_pending_device_link_client(&client, &relay_urls).await;
             for (id, filter) in ["link-device-response", "link-device-approval"]
@@ -337,6 +338,7 @@ impl AppCore {
             }
             let events = super::protocol::fetch_events_for_filters(
                 &client,
+                &discovery,
                 filters,
                 Duration::from_secs(PENDING_DEVICE_LINK_FETCH_TIMEOUT_SECS),
             )
@@ -600,6 +602,7 @@ impl AppCore {
         self.seen_event_order.clear();
         self.typing_floor_secs.clear();
         self.protocol_subscription_runtime = ProtocolSubscriptionRuntime::default();
+        self.reset_public_discovery();
         self.relay_transport_runtime = RelayTransportRuntime::default();
         self.relay_status_watch_generation = self.relay_status_watch_generation.wrapping_add(1);
         self.relay_status_watch_urls.clear();

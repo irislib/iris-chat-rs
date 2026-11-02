@@ -50,6 +50,7 @@ impl AppCore {
         self.seen_event_order.clear();
         self.typing_floor_secs.clear();
         self.protocol_subscription_runtime = ProtocolSubscriptionRuntime::default();
+        self.reset_public_discovery();
         self.relay_transport_runtime = RelayTransportRuntime::default();
         self.relay_status_watch_generation = self.relay_status_watch_generation.wrapping_add(1);
         self.relay_status_watch_urls.clear();

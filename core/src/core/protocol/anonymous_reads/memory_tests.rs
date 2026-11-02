@@ -4,18 +4,13 @@
 use crate::core::{AppCore, LocalAuthorizationState, LoggedInState};
 use crate::state::AppState;
 use crate::updates::{CoreMsg, InternalEvent};
-use futures_util::{SinkExt, StreamExt};
-use nostr::{Event, EventBuilder, Filter, Keys, Kind, RelayUrl, Timestamp};
+use nostr::{EventBuilder, Filter, Keys, Kind, Timestamp};
 use nostr_sdk::Client;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::io::Write;
 use std::process::{Command, Output, Stdio};
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
-use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::watch;
-use tokio_tungstenite::tungstenite::Message;
 
 const CHILD: &str = "IRIS_TEST_DISCOVERY_MEMORY_CHILD";
 const TEST: &str = if cfg!(target_os = "linux") {
@@ -194,251 +189,106 @@ fn legacy_sdk_allocation() {
     println!("LEGACY_SDK_COMPLETED clients={}", clients.len());
 }
 
-#[derive(Default)]
-struct RelayState {
-    active: AtomicUsize,
-    requests: AtomicUsize,
-    parked: AtomicUsize,
-    phase: AtomicUsize,
-    seen: Mutex<HashSet<String>>,
-}
-
-struct Connection(Arc<RelayState>);
-impl Drop for Connection {
-    fn drop(&mut self) {
-        self.0.active.fetch_sub(1, Ordering::SeqCst);
-    }
-}
-
-async fn serve_connection(
-    stream: TcpStream,
-    state: Arc<RelayState>,
-    events: Arc<HashMap<String, Event>>,
-    mut release: watch::Receiver<bool>,
-) {
-    // Include accepted sockets whose handshake is still in flight in the
-    // cancellation proof. Cancelling a reader can close TCP before it sends
-    // the complete WebSocket handshake.
-    state.active.fetch_add(1, Ordering::SeqCst);
-    let _connection = Connection(state.clone());
-    let mut socket = match tokio_tungstenite::accept_async(stream).await {
-        Ok(socket) => socket,
-        Err(tokio_tungstenite::tungstenite::Error::Protocol(
-            tokio_tungstenite::tungstenite::error::ProtocolError::HandshakeIncomplete,
-        )) if state.phase.load(Ordering::SeqCst) == 1 => return,
-        Err(error) => panic!("local handshake: {error}"),
-    };
-    while let Some(Ok(Message::Text(text))) = socket.next().await {
-        let frame: serde_json::Value = serde_json::from_str(&text).expect("serialized request");
-        if frame[0] != "REQ" {
-            continue;
-        }
-        let author = frame[2]["authors"].as_array().expect("author-scoped read");
-        assert_eq!(author.len(), 1, "private interests must not be batched");
-        let author = author[0].as_str().expect("author key");
-        let index = state.requests.fetch_add(1, Ordering::SeqCst);
-        state.seen.lock().expect("seen lock").insert(author.into());
-        if state.phase.load(Ordering::SeqCst) == 1 {
-            // Cancellation must close both active reads and queued scope work.
-            while socket.next().await.is_some() {}
-            return;
-        }
-        if index < 4 {
-            state.parked.fetch_add(1, Ordering::SeqCst);
-            loop {
-                let released = *release.borrow();
-                if released {
-                    break;
-                }
-                tokio::select! {
-                    changed = release.changed() => if changed.is_err() { return; },
-                    _ = socket.next() => return,
-                }
-            }
-        }
-        let event = events.get(author).expect("requested fixture author");
-        socket
-            .send(Message::Text(
-                serde_json::json!(["EVENT", frame[1], event]).to_string(),
-            ))
-            .await
-            .expect("local event");
-        socket
-            .send(Message::Text(
-                serde_json::json!(["EOSE", frame[1]]).to_string(),
-            ))
-            .await
-            .expect("local end of stored events");
-    }
-}
-
 fn populated_startup() {
+    use crate::core::protocol::public_discovery::test_support;
+    use std::sync::atomic::Ordering;
     let (_temp, mut core, incoming) = fixture();
+    core.discovery_relays = test_support::pool();
     let handle = core.runtime.handle().clone();
     handle.block_on(async {
-        let events = Arc::new(
-            (0..PEERS)
-                .map(|_| {
-                    let keys = Keys::generate();
-                    let event = EventBuilder::new(Kind::Metadata, "{\"name\":\"memory fixture\"}")
-                        .sign_with_keys(&keys)
-                        .expect("signed profile");
-                    (keys.public_key().to_hex(), event)
-                })
-                .collect::<HashMap<_, _>>(),
-        );
-        assert_eq!(events.len(), PEERS);
+        let events = (0..PEERS)
+            .map(|_| {
+                EventBuilder::new(Kind::Metadata, "{\"name\":\"memory fixture\"}")
+                    .sign_with_keys(&Keys::generate())
+                    .unwrap()
+            })
+            .collect::<Vec<_>>();
+        let relay = test_support::relay(events.clone()).await;
         let filters = events
-            .values()
+            .iter()
             .map(|event| Filter::new().kind(Kind::Metadata).author(event.pubkey))
             .collect::<Vec<_>>();
-        let listener = TcpListener::bind("127.0.0.1:0").await.expect("local relay");
-        let relay = RelayUrl::parse(&format!("ws://{}", listener.local_addr().unwrap())).unwrap();
-        let state = Arc::new(RelayState::default());
-        let (release, release_rx) = watch::channel(false);
-        let server_state = state.clone();
-        let server_events = events.clone();
-        let server = tokio::spawn(async move {
-            let mut connections = tokio::task::JoinSet::new();
-            loop {
-                tokio::select! {
-                    accepted = listener.accept() => {
-                        let (stream, _) = accepted.expect("local accept");
-                        connections.spawn(serve_connection(stream, server_state.clone(),
-                            server_events.clone(), release_rx.clone()));
-                    },
-                    result = connections.join_next(), if !connections.is_empty() => {
-                        result.expect("connection result").expect("local connection task");
-                    },
-                }
-            }
-        });
-
-        // This is the same registration and apply path used when reconciling
-        // protocol subscriptions after a populated account is opened.
-        let scopes = core
+        let subscriptions = core
             .private_discovery_subscriptions(filters.clone())
-            .expect("register peers");
+            .unwrap();
+        assert_eq!(
+            subscriptions.len(),
+            1,
+            "contact count must not create more workers"
+        );
         super::super::private_reads::apply_private_discovery_subscriptions(
-            scopes,
-            std::slice::from_ref(&relay),
+            subscriptions,
+            std::slice::from_ref(&relay.url),
         )
         .await
-        .expect("apply production scopes");
+        .unwrap();
         let mut delivered = HashSet::new();
-        let deadline = Instant::now() + Duration::from_secs(15);
-        while delivered.len() < PEERS {
-            assert!(
-                Instant::now() < deadline,
-                "not every retained author made progress"
-            );
-            if let Ok(Ok(CoreMsg::Internal(event))) =
-                tokio::time::timeout(Duration::from_millis(100), incoming.recv_async()).await
-            {
-                if let InternalEvent::RelayEvent(event) = *event {
-                    assert!(events.contains_key(&event.pubkey.to_hex()));
-                    delivered.insert(event.pubkey);
+        tokio::time::timeout(Duration::from_secs(15), async {
+            while delivered.len() < PEERS {
+                if let CoreMsg::Internal(event) = incoming.recv_async().await.unwrap() {
+                    if let InternalEvent::RelayEvent(event) = *event {
+                        delivered.insert(event.pubkey);
+                    }
                 }
             }
-            let released = *release.borrow();
-            if delivered.len() >= 64 && !released {
-                assert_eq!(state.parked.load(Ordering::SeqCst), 4);
-                release.send(true).expect("release stalled reads");
-            }
-        }
-        assert_eq!(state.seen.lock().unwrap().len(), PEERS);
+        })
+        .await
+        .expect("populated public discovery did not progress");
+        assert_eq!(relay.connections.load(Ordering::SeqCst), 1);
         println!("PRODUCTION_PROGRESS peers={}", delivered.len());
-
-        // Cold startup/backfill goes through the other production reader too;
-        // retaining all results must not recreate one SDK cache per author.
-        let cold = tokio::time::timeout(
-            Duration::from_secs(15),
-            super::fetch(
-                std::slice::from_ref(&relay),
+        let cold = core
+            .discovery_relays
+            .fetch(
+                std::slice::from_ref(&relay.url),
                 filters.clone(),
                 Duration::from_secs(3),
-            ),
-        )
-        .await
-        .expect("cold populated discovery deadline")
-        .expect("cold populated discovery");
+            )
+            .await
+            .unwrap();
         assert_eq!(cold.len(), PEERS);
-        assert!(cold.iter().all(|event| events
-            .get(&event.pubkey.to_hex())
-            .is_some_and(|expected| expected.id == event.id)));
+        assert_eq!(
+            relay.connections.load(Ordering::SeqCst),
+            1,
+            "cold lookup opened a duplicate connection"
+        );
         println!("PRODUCTION_COLD peers={}", cold.len());
-
-        state.phase.store(1, Ordering::SeqCst);
         for reset in [false, true] {
-            assert!(
-                !server.is_finished(),
-                "local relay exited before cancellation"
-            );
             let changed = filters
                 .iter()
                 .cloned()
                 .map(|filter| filter.since(Timestamp::from(if reset { 2 } else { 1 })))
                 .collect();
-            let scopes = core.private_discovery_subscriptions(changed).unwrap();
-            let stale_apply = scopes.clone();
-            let before = state.requests.load(Ordering::SeqCst);
+            let subscriptions = core.private_discovery_subscriptions(changed).unwrap();
+            let stale = subscriptions.clone();
+            let before = relay.requests();
             super::super::private_reads::apply_private_discovery_subscriptions(
-                scopes,
-                std::slice::from_ref(&relay),
+                subscriptions,
+                std::slice::from_ref(&relay.url),
             )
             .await
             .unwrap();
-            let deadline = Instant::now() + Duration::from_secs(2);
-            while state.requests.load(Ordering::SeqCst) == before {
-                assert!(Instant::now() < deadline, "no active read to cancel");
-                tokio::time::sleep(Duration::from_millis(5)).await;
-            }
-            assert!(
-                state.requests.load(Ordering::SeqCst) - before < PEERS,
-                "no queued cancellation case"
-            );
+            test_support::until(|| relay.requests() > before).await;
             if reset {
                 core.protocol_subscription_runtime = Default::default();
             } else {
-                core.private_discovery_subscriptions(Vec::new())
-                    .expect("remove interests");
+                core.private_discovery_subscriptions(Vec::new()).unwrap();
             }
             assert!(
                 super::super::private_reads::apply_private_discovery_subscriptions(
-                    stale_apply,
-                    std::slice::from_ref(&relay)
+                    stale,
+                    std::slice::from_ref(&relay.url)
                 )
                 .await
-                .is_err(),
-                "an obsolete apply must not revive removed interests"
+                .is_err()
             );
-            let deadline = Instant::now() + Duration::from_secs(2);
-            while state.active.load(Ordering::SeqCst) != 0 {
-                assert!(Instant::now() < deadline, "cancelled sockets remained open");
-                tokio::time::sleep(Duration::from_millis(5)).await;
-            }
-            let cancelled_at = state.requests.load(Ordering::SeqCst);
+            test_support::until(|| relay.active.load(Ordering::SeqCst) == 0).await;
+            let stopped = relay.requests();
             tokio::time::sleep(Duration::from_millis(250)).await;
-            assert_eq!(
-                state.requests.load(Ordering::SeqCst),
-                cancelled_at,
-                "queued work opened after its lifetime ended"
-            );
-            assert_eq!(
-                state.active.load(Ordering::SeqCst),
-                0,
-                "cancelled handshakes or sockets remained open"
-            );
-            assert!(
-                !server.is_finished(),
-                "local relay exited during cancellation"
-            );
+            assert_eq!(relay.requests(), stopped, "removed discovery restarted");
         }
         println!(
             "PRODUCTION_CANCELLED peak_rss_kib={:?}",
             process_peak_rss(std::process::id())
         );
-        server.abort();
-        let _ = server.await;
     });
 }

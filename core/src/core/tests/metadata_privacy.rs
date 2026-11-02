@@ -224,9 +224,10 @@ fn metadata_privacy_isolates_peer_discovery_from_identity_auth_and_own_receive_f
     ] {
         assert!(!discovery_json.contains(&own));
     }
-    assert!(discovery
-        .iter()
-        .all(|filter| filter.authors.as_ref().unwrap().len() == 1));
+    assert!(discovery.iter().all(|filter| filter
+        .authors
+        .as_ref()
+        .is_some_and(|authors| !authors.is_empty())));
     core.reconcile_protocol_subscriptions("metadata-wire-test", false);
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
@@ -235,9 +236,7 @@ fn metadata_privacy_isolates_peer_discovery_from_identity_auth_and_own_receive_f
             rows.iter()
                 .any(|(_, event)| event[0] == "REQ" && event.to_string().contains(&peer.to_hex()))
         });
-        if all_requested
-            && rows.iter().filter(|(_, event)| event[0] == "AUTH").count() > peers.len()
-        {
+        if all_requested && rows.iter().filter(|(_, event)| event[0] == "AUTH").count() == 2 {
             break;
         }
         assert!(
@@ -272,12 +271,13 @@ fn metadata_privacy_isolates_peer_discovery_from_identity_auth_and_own_receive_f
         .iter()
         .map(|(number, _)| *number)
         .collect::<HashSet<_>>();
-    // A cold-start lookup also receives a fresh anonymous query context, even
-    // when its caller is the account-authenticated receive client.
+    // A cold public lookup reuses anonymous discovery, while its caller
+    // remains on the separate account-authenticated receiving connection.
     let receiver_client = core.logged_in.as_ref().unwrap().client.clone();
     core.runtime.block_on(async {
         let events = protocol::fetch_events_for_filters(
             &receiver_client,
+            &core.discovery_relays,
             vec![Filter::new()
                 .kind(Kind::from(APP_KEYS_EVENT_KIND as u16))
                 .authors([peer_owner, other_owner])],
@@ -290,21 +290,25 @@ fn metadata_privacy_isolates_peer_discovery_from_identity_auth_and_own_receive_f
     let rows = wire.lock().unwrap();
     let mut scopes: std::collections::HashMap<usize, HashSet<PublicKey>> =
         std::collections::HashMap::new();
-    let mut cold_authors = HashSet::new();
     for (number, event) in rows.iter().filter(|(_, event)| event[0] == "REQ") {
+        assert!(
+            live_connections.contains(number),
+            "cold lookup opened another connection"
+        );
         for peer in peers {
             if event.to_string().contains(&peer.to_hex()) {
                 scopes.entry(*number).or_default().insert(peer);
-                if !live_connections.contains(number) {
-                    cold_authors.insert(peer);
-                }
             }
         }
     }
-    assert_eq!(cold_authors, HashSet::from([peer_owner, other_owner]));
-    assert!(
-        scopes.values().all(|authors| authors.len() == 1),
-        "one connection must never reveal multiple private contact lookups: {scopes:?}"
+    assert_eq!(
+        scopes.len(),
+        1,
+        "public authors must share one discovery transport"
+    );
+    assert_eq!(
+        scopes.values().next().unwrap(),
+        &peers.into_iter().collect()
     );
     for (number, event) in rows.iter().filter(|(_, event)| {
         event[0] == "REQ"

@@ -719,6 +719,7 @@ pub struct AppCore {
     defer_owner_app_keys_publish: bool,
     owner_registration_lookup_generation: Option<u64>,
     current_device_labels: Option<CurrentDeviceLabels>,
+    discovery_relays: Arc<protocol::public_discovery::DiscoveryRelays>,
     protocol_subscription_runtime: ProtocolSubscriptionRuntime,
     relay_transport_runtime: RelayTransportRuntime,
     relay_status_watch_urls: HashSet<String>,

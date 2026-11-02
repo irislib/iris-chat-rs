@@ -55,12 +55,14 @@ impl AppCore {
             format!("reason={reason} owner={owner_hex}"),
         );
         let tx = self.core_sender.clone();
+        let discovery = self.discovery_relays.clone();
         self.runtime.spawn(async move {
             ensure_session_relays_configured(&client, &relay_urls).await;
             connect_client_with_timeout(&client, Duration::from_secs(5)).await;
             let filter = Filter::new().kind(Kind::Metadata).author(owner_pubkey);
             match super::protocol::fetch_events_for_filters(
                 &client,
+                &discovery,
                 vec![filter],
                 Duration::from_secs(PROFILE_METADATA_FETCH_TIMEOUT_SECS),
             )

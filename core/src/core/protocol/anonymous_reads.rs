@@ -1,5 +1,5 @@
-//! Small anonymous read connections. Never construct an SDK Client here:
-//! its verification caches are eagerly allocated even for an empty lookup.
+//! Bounded private cold reads with fresh anonymous authentication. Public
+//! discovery uses the shared pub/sub adapter instead.
 use super::*;
 use futures_util::{stream, SinkExt, StreamExt};
 use nostr::EventId;
@@ -12,23 +12,14 @@ use tokio_tungstenite::{
 };
 
 pub(in crate::core) mod diagnostics;
-mod retained_connection;
-pub(in crate::core) use retained_connection::{idle_connections, ScopedReadConnection};
 mod relay_addresses;
 mod relay_backoff;
-mod scoped_tls;
-pub(in crate::core) use scoped_tls::ScopedTlsConnector;
-mod verification_cache;
-use verification_cache::RelayVerification;
-pub(super) use verification_cache::VerificationCache;
 
 pub(super) const COLD_READERS: usize = 4;
-pub(super) const BACKGROUND_READERS: usize = 16;
 const MAX_FRAME_BYTES: usize = 128 * 1024;
 const MAX_RESULT_BYTES: usize = 16 * 1024 * 1024;
 const MAX_RESULT_EVENTS: usize = 16_384;
 static COLD_SLOTS: OnceLock<Semaphore> = OnceLock::new();
-static BACKGROUND_SLOTS: OnceLock<Semaphore> = OnceLock::new();
 
 pub(in crate::core) fn invalidate_relay_addresses() {
     relay_addresses::clear();
@@ -127,119 +118,6 @@ async fn collect_reads(
     }
 }
 
-#[cfg(test)]
-pub(super) async fn poll(
-    relay: &RelayUrl,
-    filters: Vec<Filter>,
-    tls: Option<&ScopedTlsConnector>,
-) -> Result<Vec<Event>, String> {
-    background_read(relay, &filters, tls, None, None)
-        .await
-        .map_err(ReadFailure::message)
-}
-
-pub(super) async fn poll_retained(
-    relay: &RelayUrl,
-    filters: Vec<Filter>,
-    tls: Option<&ScopedTlsConnector>,
-    verification: RelayVerification<'_>,
-    connection: Option<&mut ScopedReadConnection>,
-) -> Result<Vec<Event>, String> {
-    let verification = scoped_tls::sole_public_author(&filters).map(|_| verification);
-    background_read(relay, &filters, tls, verification, connection)
-        .await
-        .map_err(ReadFailure::message)
-}
-
-/// A retained one-author worker uses background admission, preserving cold
-/// capacity for invites. Relay fan-out and aggregate result limits remain
-/// bounded just as for cold reads; a safety-limit failure is never partial success.
-#[cfg(test)]
-pub(in crate::core) async fn poll_relays(
-    relays: &[RelayUrl],
-    filters: &[Filter],
-    tls: &[Option<ScopedTlsConnector>],
-) -> Result<Vec<Event>, String> {
-    let mut connections = relays
-        .iter()
-        .map(|relay| ScopedReadConnection::new(relay, filters))
-        .collect::<Vec<_>>();
-    poll_relays_reusing(relays, filters, tls, &mut connections).await
-}
-
-pub(in crate::core) async fn poll_relays_reusing(
-    relays: &[RelayUrl],
-    filters: &[Filter],
-    tls: &[Option<ScopedTlsConnector>],
-    connections: &mut [ScopedReadConnection],
-) -> Result<Vec<Event>, String> {
-    if relays.is_empty()
-        || relays.len() != tls.len()
-        || relays.len() != connections.len()
-        || scoped_tls::sole_public_author(filters).is_none()
-    {
-        return Err("invalid scoped discovery relays or filters".into());
-    }
-    // Materialize the borrowed jobs before awaiting the bounded stream. The
-    // iterator's higher-ranked mutable borrows otherwise obscure Send when
-    // this reader is used from the spawned mesh discovery worker.
-    let mut jobs: Vec<futures_util::future::BoxFuture<'_, Result<Vec<Event>, ReadFailure>>> =
-        Vec::with_capacity(relays.len());
-    for ((relay, tls), connection) in relays.iter().zip(tls).zip(connections) {
-        jobs.push(Box::pin(background_read(
-            relay,
-            filters,
-            tls.as_ref(),
-            None,
-            Some(connection),
-        )));
-    }
-    collect_reads(
-        stream::iter(jobs).buffer_unordered(COLD_READERS),
-        filters.iter().any(requests_message_history),
-    )
-    .await
-}
-
-async fn background_read(
-    relay: &RelayUrl,
-    filters: &[Filter],
-    tls: Option<&ScopedTlsConnector>,
-    verification: Option<RelayVerification<'_>>,
-    mut connection: Option<&mut ScopedReadConnection>,
-) -> Result<Vec<Event>, ReadFailure> {
-    let slots = BACKGROUND_SLOTS.get_or_init(|| Semaphore::new(BACKGROUND_READERS));
-    // Admission can wait longer than a relay's Ping deadline. The current
-    // socket is still idle until the permit arrives; service only its bounded
-    // control traffic, without opening a query or taking transaction ownership.
-    let _permit = tokio::select! {
-        permit = slots.acquire() => permit,
-        _ = async {
-            if let Some(connection) = connection.as_deref_mut() {
-                idle_connections(std::slice::from_mut(connection)).await;
-            } else {
-                std::future::pending::<()>().await;
-            }
-        } => unreachable!("idle handling never admits a background read"),
-    }
-    .map_err(|error| ReadFailure::Unavailable(error.to_string()))?;
-    // Bound an unresponsive subject's turn; Tokio's semaphore is FIFO, so
-    // every retained author eventually runs even when all relays are offline.
-    let connector = tls
-        .map(|tls| tls.connector(relay, filters))
-        .transpose()
-        .map_err(ReadFailure::Unavailable)?;
-    read_one_with_connector(
-        relay,
-        filters,
-        Duration::from_secs(3),
-        connector,
-        verification,
-        connection,
-    )
-    .await
-}
-
 fn requests_message_history(filter: &Filter) -> bool {
     filter.kinds.as_ref().is_some_and(|kinds| {
         kinds
@@ -308,20 +186,13 @@ enum ReadFailure {
     Unavailable(String),
     Limit(String),
 }
-impl ReadFailure {
-    fn message(self) -> String {
-        match self {
-            Self::Unavailable(message) | Self::Limit(message) => message,
-        }
-    }
-}
 
 async fn read_one(
     relay: &RelayUrl,
     filters: &[Filter],
     timeout: Duration,
 ) -> Result<Vec<Event>, ReadFailure> {
-    read_one_with_connector(relay, filters, timeout, None, None, None).await
+    read_one_with_connector(relay, filters, timeout, None).await
 }
 
 async fn read_one_with_connector(
@@ -329,38 +200,13 @@ async fn read_one_with_connector(
     filters: &[Filter],
     timeout: Duration,
     connector: Option<Connector>,
-    verification: Option<RelayVerification<'_>>,
-    connection: Option<&mut ScopedReadConnection>,
 ) -> Result<Vec<Event>, ReadFailure> {
     let mut collected = Collection::new(filters.iter().any(requests_message_history));
     let deadline = tokio::time::Instant::now() + timeout;
-    match tokio::time::timeout_at(deadline, async {
-        match connection {
-            Some(connection) => {
-                connection
-                    .read(
-                        relay,
-                        filters,
-                        &mut collected,
-                        connector,
-                        verification,
-                        deadline,
-                    )
-                    .await
-            }
-            None => {
-                read_socket(
-                    relay,
-                    filters,
-                    &mut collected,
-                    connector,
-                    verification,
-                    deadline,
-                )
-                .await
-            }
-        }
-    })
+    match tokio::time::timeout_at(
+        deadline,
+        read_socket(relay, filters, &mut collected, connector, deadline),
+    )
     .await
     {
         // Match the former SDK fetch deadline: already validated events remain
@@ -398,7 +244,6 @@ async fn read_socket(
     filters: &[Filter],
     collected: &mut Collection,
     connector: Option<Connector>,
-    verification: Option<RelayVerification<'_>>,
     deadline: tokio::time::Instant,
 ) -> anyhow::Result<()> {
     read_socket_with_transport(
@@ -407,7 +252,6 @@ async fn read_socket(
         collected,
         connector,
         relay_addresses::connect(relay),
-        verification,
         deadline,
     )
     .await
@@ -450,11 +294,10 @@ async fn open_read_socket(
     relay: &RelayUrl,
     connector: Option<Connector>,
     transport: impl std::future::Future<Output = std::io::Result<tokio::net::TcpStream>>,
-    retained: bool,
     deadline: tokio::time::Instant,
 ) -> anyhow::Result<ReadSocket> {
     let admission = relay_backoff::Attempt::begin(relay, deadline)?;
-    let attempt = diagnostics::OpenAttempt::new(retained);
+    let attempt = diagnostics::OpenAttempt::new();
     let config = WebSocketConfig {
         write_buffer_size: 0,
         max_write_buffer_size: MAX_FRAME_BYTES * 2,
@@ -488,18 +331,16 @@ async fn read_socket_with_transport(
     collected: &mut Collection,
     connector: Option<Connector>,
     transport: impl std::future::Future<Output = std::io::Result<tokio::net::TcpStream>>,
-    verification: Option<RelayVerification<'_>>,
     deadline: tokio::time::Instant,
 ) -> anyhow::Result<()> {
     validate_read_filters(filters)?;
-    let mut socket = open_read_socket(relay, connector, transport, false, deadline).await?;
+    let mut socket = open_read_socket(relay, connector, transport, deadline).await?;
     let result = read_query(
         relay,
         filters,
         collected,
         &mut socket,
         &mut ReadAuthentication::default(),
-        verification,
     )
     .await;
     if result.is_ok() {
@@ -508,16 +349,13 @@ async fn read_socket_with_transport(
     result.map(|_| ())
 }
 
-// Retain the completed ID only after its exact subscription was closed.
-// A failed CLOSE does not discard an otherwise complete validated response.
 async fn read_query(
     relay: &RelayUrl,
     filters: &[Filter],
     collected: &mut Collection,
     socket: &mut ReadSocket,
     authentication: &mut ReadAuthentication,
-    mut verification: Option<RelayVerification<'_>>,
-) -> anyhow::Result<Option<SubscriptionId>> {
+) -> anyhow::Result<()> {
     let id = SubscriptionId::generate();
     let mut request = vec![serde_json::json!("REQ"), serde_json::json!(id)];
     for filter in filters {
@@ -551,9 +389,7 @@ async fn read_query(
                 .cloned()
                 .and_then(|value| serde_json::from_value::<Event>(value).ok())
                 .filter(|event| {
-                    verification
-                        .as_mut()
-                        .map_or_else(|| event.verify().is_ok(), |cache| cache.verify(event))
+                    event.verify().is_ok()
                         && filters.iter().any(|filter| {
                             filter.match_event(event, nostr::filter::MatchEventOptions::new())
                         })
@@ -605,11 +441,11 @@ async fn read_query(
                 if authentication.id.is_some() && !authentication.accepted {
                     continue;
                 }
-                let closed = socket
+                let _ = socket
                     .send(Message::Text(serde_json::json!(["CLOSE", id]).to_string()))
                     .await
                     .is_ok();
-                return Ok(closed.then_some(id));
+                return Ok(());
             }
             Some("CLOSED") if our_subscription => {
                 let reason = parts

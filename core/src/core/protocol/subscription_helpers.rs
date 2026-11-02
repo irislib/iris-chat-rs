@@ -23,8 +23,8 @@ pub(in crate::core) fn build_protocol_subscription_filters(
 
     let mut filters = Vec::new();
     if !roster_authors.is_empty() {
-        // Profile catch-up belongs to the same isolated public-owner worker
-        // as its device roster, including updates published while offline.
+        // Profiles and device rosters share the anonymous public subscription,
+        // including updates published while offline.
         filters.push(
             Filter::new()
                 .kind(Kind::Metadata)
@@ -154,11 +154,32 @@ pub(super) async fn subscribe_protocol_filters_with_id(
 
 pub(in crate::core) async fn fetch_events_for_filters(
     client: &Client,
+    discovery: &Arc<super::public_discovery::DiscoveryRelays>,
     filters: Vec<Filter>,
     timeout: Duration,
 ) -> Result<Vec<Event>, String> {
     let relay_urls = client.relays().await.keys().cloned().collect::<Vec<_>>();
-    super::anonymous_reads::fetch(&relay_urls, filters, timeout).await
+    let (public, private): (Vec<_>, Vec<_>) = filters
+        .into_iter()
+        .partition(super::private_reads::is_public_discovery_filter);
+    let public = async {
+        if public.is_empty() {
+            Ok(Vec::new())
+        } else {
+            discovery.fetch(&relay_urls, public, timeout).await
+        }
+    };
+    let private = async {
+        if private.is_empty() {
+            Ok(Vec::new())
+        } else {
+            super::anonymous_reads::fetch(&relay_urls, private, timeout).await
+        }
+    };
+    let (public, private) = tokio::join!(public, private);
+    let mut events = public?;
+    events.extend(private?);
+    Ok(events)
 }
 
 pub(super) async fn wait_for_connected_relays(client: &Client, timeout: Duration) -> usize {

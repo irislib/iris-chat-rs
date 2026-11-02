@@ -99,14 +99,11 @@ async fn relay(mode: usize, events: Arc<Vec<Event>>) -> Relay {
 
 async fn history(relay: &Relay, author: PublicKey) -> Result<Vec<Event>, ReadFailure> {
     let filters = [Filter::new().author(author).kind(Kind::Custom(1060))];
-    let tls = ScopedTlsConnector::new_with_roots(&relay.url, &filters, tls_tests::roots()).unwrap();
     read_one_with_connector(
         &relay.url,
         &filters,
         Duration::from_millis(250),
-        Some(tls.connector(&relay.url, &filters).unwrap()),
-        None,
-        None,
+        Some(tls_tests::connector()),
     )
     .await
 }

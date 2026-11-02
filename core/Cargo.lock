@@ -2585,6 +2585,7 @@ version = "0.1.59"
 dependencies = [
  "anyhow",
  "async-trait",
+ "async-wsocket",
  "base64 0.22.1",
  "clap",
  "cpal",

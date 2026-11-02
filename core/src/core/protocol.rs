@@ -4,6 +4,7 @@ use crate::core::projection::relay_connection_status;
 pub(in crate::core) mod anonymous_reads;
 mod backfill;
 pub(super) mod private_reads;
+pub(in crate::core) mod public_discovery;
 mod retry_helpers;
 mod subscription_helpers;
 
@@ -807,10 +808,13 @@ impl AppCore {
             .protocol_fetch_last_started_at = Some(Instant::now());
 
         let tx = self.core_sender.clone();
+        let discovery = self.discovery_relays.clone();
         self.runtime.spawn(async move {
             ensure_session_relays_configured(&client, &relay_urls).await;
             connect_client_with_timeout(&client, Duration::from_secs(5)).await;
-            match fetch_events_for_filters(&client, filters, Duration::from_secs(5)).await {
+            match fetch_events_for_filters(&client, &discovery, filters, Duration::from_secs(5))
+                .await
+            {
                 Ok(collected) => {
                     let _ = tx.send(CoreMsg::Internal(Box::new(InternalEvent::DebugLog {
                         category: "protocol.catch_up.result".to_string(),

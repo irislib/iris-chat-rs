@@ -17,6 +17,12 @@ mod foreground_discovery {
     const CHILD: &str = "IRIS_TEST_FOREGROUND_DISCOVERY_CHILD";
     type Wire = Arc<Mutex<Vec<(usize, usize, Value)>>>;
 
+    fn single_author_selector(value: &Value, author: &str) -> String {
+        let mut value = value.clone();
+        value["authors"] = json!([author]);
+        value.to_string()
+    }
+
     #[derive(Default)]
     struct WireProgress {
         checked: usize,
@@ -46,7 +52,9 @@ mod foreground_discovery {
                     if let Some(authors) = &filter.authors {
                         for author in authors {
                             let author = author.to_hex();
-                            if stable.get(&author).is_some_and(|filters| filters.contains(&value.to_string())) {
+                            if stable.get(&author).is_some_and(|filters| {
+                                filters.contains(&single_author_selector(value, &author))
+                            }) {
                                 self.discovery.insert((relay, author));
                             }
                         }
@@ -193,7 +201,6 @@ mod foreground_discovery {
     ) -> (BTreeSet<(usize, String)>, bool, bool) {
         let rows = wire.lock().unwrap().clone();
         let mut authentication = BTreeMap::new();
-        let mut anonymous_keys = HashSet::new();
         for (_, connection, value) in rows.iter().filter(|(_, _, value)| value[0] == "AUTH") {
             let event: Event = serde_json::from_value(value[1].clone()).unwrap();
             event.verify().unwrap();
@@ -204,10 +211,6 @@ mod foreground_discovery {
                 assert!(
                     !identities.contains(&signer),
                     "peer identity authenticated a read"
-                );
-                assert!(
-                    anonymous_keys.insert(signer),
-                    "anonymous authentication reused across connections"
                 );
             }
         }
@@ -239,8 +242,8 @@ mod foreground_discovery {
                     );
                     assert_eq!(
                         authors.len(),
-                        1,
-                        "public discovery must isolate each author"
+                        public.len(),
+                        "public discovery mixed unrelated selectors"
                     );
                     assert!(
                         value.get("#p").is_none(),
@@ -250,26 +253,27 @@ mod foreground_discovery {
                         own.iter().all(|key| !request.to_string().contains(key)),
                         "public discovery exposed our identity"
                     );
-                    let author = public[0];
-                    // Profiles may be uncovered cold lookups. Covered public
-                    // metadata must retain its exact stable selectors instead
-                    // of also issuing broad cold since/limit queries.
-                    let profile_only = value["kinds"] == json!([0])
-                        && value.get("since").is_none()
-                        && value.get("limit").is_none();
-                    // Foreground also reconciles the isolated FIPS fixture;
-                    // its advert lookup is not protocol metadata catch-up.
-                    let mesh_only = value["kinds"] == json!([37195])
-                        && value.get("since").is_none()
-                        && value.get("limit").is_none();
-                    assert!(profile_only || mesh_only || stable[author].contains(&value.to_string()),
+                    for author in public {
+                        // Profiles may be uncovered cold lookups. Covered public
+                        // metadata must retain its exact stable selectors instead
+                        // of also issuing broad cold since/limit queries.
+                        let profile_only = value["kinds"] == json!([0])
+                            && value.get("since").is_none()
+                            && value.get("limit").is_none();
+                        // Foreground also reconciles the isolated FIPS fixture;
+                        // its advert lookup is not protocol metadata catch-up.
+                        let mesh_only = value["kinds"] == json!([37195])
+                            && value.get("since").is_none()
+                            && value.get("limit").is_none();
+                        assert!(profile_only || mesh_only || stable[author].contains(&single_author_selector(value, author)),
                         "covered public metadata duplicated through broad cold catch-up: relay={relay}, filter={value}");
-                    contexts
-                        .entry(*connection)
-                        .or_default()
-                        .insert(author.clone());
-                    if stable[author].contains(&value.to_string()) {
-                        observed.insert((*relay, author.clone()));
+                        contexts
+                            .entry(*connection)
+                            .or_default()
+                            .insert(author.clone());
+                        if stable[author].contains(&single_author_selector(value, author)) {
+                            observed.insert((*relay, author.clone()));
+                        }
                     }
                 } else if signer.is_some_and(|signer| !own.contains(signer)) {
                     let kinds = filter.kinds.as_ref().unwrap();
@@ -280,11 +284,14 @@ mod foreground_discovery {
                 }
             }
         }
-        for (connection, authors) in contexts {
-            assert_eq!(
-                authors.len(),
-                1,
-                "a read context linked different public authors"
+        for (connection, _) in contexts {
+            assert!(
+                rows.iter()
+                    .filter(|(_, id, frame)| *id == connection && frame[0] == "REQ")
+                    .flat_map(|(_, _, frame)| &frame.as_array().unwrap()[2..])
+                    .all(|filter| filter.get("#p").is_none()
+                        && filter["kinds"] != json!([MESSAGE_EVENT_KIND])),
+                "public discovery shared a private receive context"
             );
             assert!(
                 rows.iter()
@@ -491,7 +498,10 @@ mod foreground_discovery {
                 stable
                     .entry(author.to_hex())
                     .or_default()
-                    .insert(serde_json::to_value(&filter).unwrap().to_string());
+                    .insert(single_author_selector(
+                        &serde_json::to_value(&filter).unwrap(),
+                        &author.to_hex(),
+                    ));
             }
         }
         assert!(stable.len() >= contacts * 4);
@@ -502,8 +512,8 @@ mod foreground_discovery {
             fixture
                 .core
                 .protocol_subscription_runtime
-                .discovery_clients
-                .is_empty(),
+                .discovery
+                .is_none(),
             "first foreground must precede retained worker configuration"
         );
 
@@ -589,7 +599,8 @@ mod foreground_discovery {
                     .all(|author| observed.contains(&(relay, author.clone())))
             });
             if populated && Instant::now() >= next_coverage_report {
-                let support: Value = serde_json::from_str(&app.0.export_support_bundle_json()).unwrap();
+                let support: Value =
+                    serde_json::from_str(&app.0.export_support_bundle_json()).unwrap();
                 let current = &support["protocol_subscription"]["desired_plan"];
                 let missing = (0..healthy_count).map(|relay| {
                     let authors = stable.keys().filter(|author| !observed.contains(&(relay, (*author).clone()))).collect::<Vec<_>>();
@@ -600,7 +611,10 @@ mod foreground_discovery {
                     }).count();
                     json!({"relay": relay, "missing": authors.len(), "still_desired": still_desired})
                 }).collect::<Vec<_>>();
-                println!("FOREGROUND_COVERAGE={}", json!({"elapsed_ms": foreground.elapsed().as_millis(), "missing": missing}));
+                println!(
+                    "FOREGROUND_COVERAGE={}",
+                    json!({"elapsed_ms": foreground.elapsed().as_millis(), "missing": missing})
+                );
                 next_coverage_report = Instant::now() + Duration::from_secs(30);
             }
             let profile_delivered = app.0.user_profile(target.clone()).name.name
@@ -681,7 +695,8 @@ mod foreground_discovery {
         );
         assert!(support["event_counts"]["app_keys_events"].as_u64().unwrap() > 0);
         assert_eq!(app.0.recovery.restart_count.load(Ordering::Relaxed), 0);
-        let (_, private_history, recipient_catch_up) = assert_wire(&wire, &own, &identities, &stable);
+        let (_, private_history, recipient_catch_up) =
+            assert_wire(&wire, &own, &identities, &stable);
         assert!(private_history && recipient_catch_up);
         phase(started, Some(foreground), "foreground_assertions_complete");
         if populated {

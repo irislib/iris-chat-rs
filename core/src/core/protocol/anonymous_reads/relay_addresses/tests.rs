@@ -388,7 +388,7 @@ fn dns_server_key_excludes_path_and_handles_ip_literals() {
 
 #[tokio::test]
 async fn dns_wire_keeps_hostname_validation_and_anonymous_author_tls_scopes() {
-    use super::super::{read_socket_with_transport, tls_tests, Collection, ScopedTlsConnector};
+    use super::super::{read_socket_with_transport, tls_tests, Collection};
     use nostr::prelude::*;
     use rustls::{HandshakeKind, ProtocolVersion};
 
@@ -412,17 +412,9 @@ async fn dns_wire_keeps_hostname_validation_and_anonymous_author_tls_scopes() {
             .author(alice.public_key())
             .kind(Kind::Metadata)];
         let bob_filters = vec![Filter::new().author(bob.public_key()).kind(Kind::Metadata)];
-        let alice_tls =
-            ScopedTlsConnector::new_with_roots(&url, &alice_filters, tls_tests::roots()).unwrap();
-        let bob_tls =
-            ScopedTlsConnector::new_with_roots(&url, &bob_filters, tls_tests::roots()).unwrap();
         let cache = AddressCache::default();
         let lookups = AtomicUsize::new(0);
-        for (filters, scope) in [
-            (&alice_filters, &alice_tls),
-            (&alice_filters, &alice_tls),
-            (&bob_filters, &bob_tls),
-        ] {
+        for filters in [&alice_filters, &alice_filters, &bob_filters] {
             let transport = cache.connect_with(
                 &key,
                 |_| {
@@ -436,9 +428,8 @@ async fn dns_wire_keeps_hostname_validation_and_anonymous_author_tls_scopes() {
                 &url,
                 filters,
                 &mut collected,
-                Some(scope.connector(&url, filters).unwrap()),
+                Some(tls_tests::connector()),
                 transport,
-                None,
                 tokio::time::Instant::now() + Duration::from_secs(5),
             )
             .await
@@ -459,7 +450,7 @@ async fn dns_wire_keeps_hostname_validation_and_anonymous_author_tls_scopes() {
             observed.iter().map(|row| row.0).collect::<Vec<_>>(),
             [
                 HandshakeKind::Full,
-                HandshakeKind::Resumed,
+                HandshakeKind::Full,
                 HandshakeKind::Full
             ]
         );
@@ -470,8 +461,6 @@ async fn dns_wire_keeps_hostname_validation_and_anonymous_author_tls_scopes() {
         // A cached address does not authorize the IP's certificate for a
         // different DNS name, even with the test CA explicitly trusted.
         let wrong = RelayUrl::parse(&format!("wss://wrong.invalid:{}", address.port())).unwrap();
-        let wrong_tls =
-            ScopedTlsConnector::new_with_roots(&wrong, &alice_filters, tls_tests::roots()).unwrap();
         let wrong_key = Server::from_relay(&wrong).unwrap();
         let transport = cache.connect_with(
             &wrong_key,
@@ -483,9 +472,8 @@ async fn dns_wire_keeps_hostname_validation_and_anonymous_author_tls_scopes() {
             &wrong,
             &alice_filters,
             &mut collected,
-            Some(wrong_tls.connector(&wrong, &alice_filters).unwrap()),
+            Some(tls_tests::connector()),
             transport,
-            None,
             tokio::time::Instant::now() + Duration::from_secs(5),
         )
         .await

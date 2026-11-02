@@ -284,6 +284,7 @@ impl AppCore {
                     .filter_map(|url| RelayUrl::parse(url).ok())
                     .collect(),
             )
+            .with_relay_pool(self.discovery_relays.clone())
             .with_device_sync_authors(
                 config
                     .siblings

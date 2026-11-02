@@ -26,7 +26,7 @@ pub(super) struct MeshProtocolSubscriptions {
     retry_needed: bool,
     reconcile_pending: bool,
     replay_source: Option<Arc<storage::mesh_group_envelopes::GroupEnvelopeReplay>>,
-    discovery: privacy::PrivateMeshDiscovery,
+    pub(in crate::core) discovery: privacy::PrivateMeshDiscovery,
 }
 
 impl Default for MeshProtocolSubscriptions {

@@ -29,6 +29,7 @@ impl AppCore {
         self.relay_status_watch_urls.clear();
         self.relay_status_by_url.clear();
         self.protocol_subscription_runtime = ProtocolSubscriptionRuntime::default();
+        self.reset_public_discovery();
         self.relay_transport_runtime = RelayTransportRuntime::default();
         self.cancel_people_fetches_for_suspend();
         self.reset_direct_chat_capability_runtime();
