@@ -90,7 +90,7 @@ pub(in crate::core) fn pool() -> Arc<DiscoveryRelays> {
 
 #[derive(Clone)]
 enum Command {
-    Event(Event),
+    Event(Box<Event>),
     Disconnect,
 }
 
@@ -135,7 +135,7 @@ impl Relay {
     }
     pub fn publish(&self, event: Event) {
         self.events.lock().unwrap().push(event.clone());
-        let _ = self.commands.send(Command::Event(event));
+        let _ = self.commands.send(Command::Event(Box::new(event)));
     }
     pub fn disconnect(&self) {
         let _ = self.commands.send(Command::Disconnect);

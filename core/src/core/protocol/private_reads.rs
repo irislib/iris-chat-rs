@@ -246,6 +246,22 @@ pub(in crate::core) async fn apply_private_discovery_subscriptions(
     Ok(())
 }
 
+// Private cold reads retain separate subject scopes; public lookups bypass
+// this reader and share DiscoveryRelays with live public subscriptions.
+pub(super) fn split_public_discovery_authors(filter: Filter) -> Vec<Filter> {
+    let Some(authors) = filter.authors.as_ref().filter(|authors| authors.len() > 1) else {
+        return vec![filter];
+    };
+    authors
+        .iter()
+        .map(|author| {
+            let mut scoped = filter.clone();
+            scoped.authors = Some(BTreeSet::from([*author]));
+            scoped
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -293,20 +309,4 @@ mod tests {
         ));
         assert!(!is_public_discovery_filter(&Filter::new().author(author)));
     }
-}
-
-// Private cold reads retain separate subject scopes; public lookups bypass
-// this reader and share DiscoveryRelays with live public subscriptions.
-pub(super) fn split_public_discovery_authors(filter: Filter) -> Vec<Filter> {
-    let Some(authors) = filter.authors.as_ref().filter(|authors| authors.len() > 1) else {
-        return vec![filter];
-    };
-    authors
-        .iter()
-        .map(|author| {
-            let mut scoped = filter.clone();
-            scoped.authors = Some(BTreeSet::from([*author]));
-            scoped
-        })
-        .collect()
 }
