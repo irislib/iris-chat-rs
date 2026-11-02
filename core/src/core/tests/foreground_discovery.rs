@@ -209,9 +209,16 @@ mod foreground_discovery {
         );
         let authors = filter.authors.as_ref().expect("unscoped public discovery");
         assert!(!authors.is_empty(), "unscoped public discovery");
+        // The bounded cold collector adds exactly this limit to the same
+        // authorized selectors. Ignore only that clamp; every other field and
+        // every other limit must still match an independently allowed selector.
+        let mut selector_value = value.clone();
+        if selector_value.get("limit") == Some(&json!(16_384)) {
+            selector_value.as_object_mut().unwrap().remove("limit");
+        }
         for author in authors {
             let author = author.to_hex();
-            let selector = single_author_selector(value, &author);
+            let selector = single_author_selector(&selector_value, &author);
             if value["kinds"] == json!([37195]) {
                 assert!(
                     advert_authors.contains(&author),
@@ -390,6 +397,24 @@ mod foreground_discovery {
             assert_wire(&wire, &own, &identities, &stable, &advert_authors);
         assert_eq!(observed, BTreeSet::from([(0, peer.public_key().to_hex())]));
         assert!(!history && !recipients);
+        let with_cold_limits = |mut rows: Vec<(usize, usize, Value)>| {
+            for (_, _, frame) in &mut rows {
+                if frame[0] == "REQ" {
+                    for filter in &mut frame.as_array_mut().unwrap()[2..] {
+                        filter
+                            .as_object_mut()
+                            .unwrap()
+                            .entry("limit")
+                            .or_insert(json!(16_384));
+                    }
+                }
+            }
+            rows
+        };
+        let cold = Arc::new(Mutex::new(with_cold_limits(accepted.clone())));
+        let (_, history, recipients) =
+            assert_wire(&cold, &own, &identities, &stable, &advert_authors);
+        assert!(!history && !recipients);
         let mut rejected = Vec::new();
         for forbidden in [
             owner.public_key(),
@@ -434,14 +459,31 @@ mod foreground_discovery {
             rows[2].2[2]["authors"][0] = json!(forbidden.to_hex());
             rejected.push(rows);
         }
-        for field in ["#p", "since", "limit"] {
+        for field in ["#p", "#d", "since", "until", "search", "unexpected"] {
             let mut rows = accepted.clone();
-            rows[2].2[2][field] = if field == "#p" {
+            rows[2].2[2][field] = if field.starts_with('#') {
                 json!([owner.public_key().to_hex()])
+            } else if field == "search" {
+                json!("unapproved")
             } else {
                 json!(1)
             };
             rejected.push(rows);
+        }
+        for limit in [
+            json!(0),
+            json!(1),
+            json!(16_383),
+            json!(16_385),
+            json!(-1),
+            json!("16384"),
+            json!(null),
+        ] {
+            for request in [1, 2] {
+                let mut rows = accepted.clone();
+                rows[request].2[2]["limit"] = limit.clone();
+                rejected.push(rows);
+            }
         }
         let mut mixed_kinds = accepted.clone();
         mixed_kinds[2].2[2]["kinds"] = json!([0, 37195]);
@@ -471,6 +513,15 @@ mod foreground_discovery {
             rows.push((0, 1, private));
             rejected.push(rows);
         }
+        // Exercise every forbidden author, kind, tag, companion request,
+        // identity and publication with the cold clamp too. Preserve explicit
+        // invalid limits so normalization cannot conceal them.
+        let cold_rejected = rejected
+            .iter()
+            .cloned()
+            .map(with_cold_limits)
+            .collect::<Vec<_>>();
+        rejected.extend(cold_rejected);
         for (index, rows) in rejected.into_iter().enumerate() {
             let wire = Arc::new(Mutex::new(rows));
             assert!(
@@ -481,11 +532,14 @@ mod foreground_discovery {
                 "invalid discovery wire variant {index} was accepted"
             );
         }
-        let combined = Arc::new(Mutex::new(vec![
+        let combined = vec![
             (0, 1, auth(&anonymous)),
             (0, 1, json!(["REQ", "combined", advert, profile])),
-        ]));
-        assert_wire(&combined, &own, &identities, &stable, &advert_authors);
+        ];
+        for rows in [combined.clone(), with_cold_limits(combined)] {
+            let wire = Arc::new(Mutex::new(rows));
+            assert_wire(&wire, &own, &identities, &stable, &advert_authors);
+        }
     }
 
     struct RunningApp(Arc<crate::FfiApp>);
