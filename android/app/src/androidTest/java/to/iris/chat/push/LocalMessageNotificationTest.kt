@@ -11,11 +11,41 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.json.JSONObject
 import to.iris.chat.rust.NotificationCandidate
 import to.iris.chat.rust.buildLargeTestAppState
 
 @RunWith(AndroidJUnit4::class)
 class LocalMessageNotificationTest {
+    @Test fun new_chat_without_messages_keeps_its_control_id_and_empty_body_after_read_cleanup() {
+        val instrumentation = InstrumentationRegistry.getInstrumentation()
+        val context = instrumentation.targetContext
+        instrumentation.uiAutomation.grantRuntimePermission(context.packageName, Manifest.permission.POST_NOTIFICATIONS)
+        val manager = context.getSystemService(NotificationManager::class.java)
+        val owner = "new-chat-notification-test-${UUID.randomUUID()}"
+        val chat = buildLargeTestAppState(1u, 1u, 0u).chatList.first().copy(unreadCount = 0u)
+        val controlId = "invite:${UUID.randomUUID()}"
+        val candidate = NotificationCandidate(chatId = chat.chatId, messageId = controlId,
+            title = "New chat", body = "")
+        val tag = "local-new-chat:$owner:${chat.chatId}"
+        try {
+            MobilePushNotifier.showLocal(context, candidate, owner)
+            awaitNotification { manager.activeNotifications.any { it.tag == tag } }
+            val shown = manager.activeNotifications.single { it.tag == tag }
+            assertEquals("New chat", shown.notification.extras.getString(Notification.EXTRA_TITLE))
+            assertEquals("", shown.notification.extras.getString(Notification.EXTRA_TEXT))
+            val payload = JSONObject(shown.notification.extras.getString("iris_push_payload")!!)
+            assertEquals(chat.chatId, payload.getString("chat_id"))
+            assertEquals(controlId, payload.getString("message_id"))
+            MobilePushNotifier.dismissLocalRead(context, listOf(chat), owner)
+            assertNotificationRemains(manager, tag)
+            MobilePushNotifier.dismissLocalRead(context, emptyList(), owner)
+            assertNotificationRemains(manager, tag)
+        } finally {
+            manager.cancel(tag, 0)
+        }
+    }
+
     @Test fun delivered_messages_clear_only_after_read_or_chat_removal() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.targetContext
@@ -49,5 +79,15 @@ class LocalMessageNotificationTest {
         val deadline = SystemClock.elapsedRealtime() + 5_000
         while (!ready() && SystemClock.elapsedRealtime() < deadline) Thread.sleep(20)
         assertTrue("Android notification did not reach the expected state", ready())
+    }
+
+    private fun assertNotificationRemains(manager: NotificationManager, tag: String) {
+        // Notification cancellation is asynchronous. Observe the settled system
+        // state rather than passing on the first query before a queued cancel.
+        val deadline = SystemClock.elapsedRealtime() + 500
+        do {
+            assertTrue("New-chat notice was removed by message cleanup", manager.activeNotifications.any { it.tag == tag })
+            SystemClock.sleep(20)
+        } while (SystemClock.elapsedRealtime() < deadline)
     }
 }
