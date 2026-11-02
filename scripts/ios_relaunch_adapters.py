@@ -24,8 +24,8 @@ import ios_relaunch_lifecycle as lifecycle
 from ios_ordinary_relaunch import EvidenceError, binding, exact, finite, read_bound, require, validate_distribution, verify_binding
 
 
-HOME_DISABLED_SHA256 = '74a9a77fef0b4a5ad3699eb17a390a59e1d16247f1a920fe3e1f881a7c79f6c4'
-HOME_QUALIFICATION_SHA256 = '708b4c79ccbcea27a1152a64177cec0ce86c6b010a27c2534e57c23c1e0b1809'
+HOME_DISABLED_SHA256 = '8734ab68d1712f3cc48fa41d779f650867604ae6e9b2820486804640b5697159'
+HOME_QUALIFICATION_SHA256 = 'cf2e02eb94cd678a0602a93568fe449172daff5ea2f88e9fde02d94439f0b345'
 # This pinned idevicesyslog writes these exact bytes on its intentional SIGTERM
 # path. They are never permitted while measuring or before the owned signal.
 SYSLOG_SIGTERM_SHA256 = '5a2c3f11644b926c1829010c93274f919097e52a77dab442e0a9e477791f8f1b'
