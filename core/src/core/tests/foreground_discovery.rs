@@ -198,6 +198,7 @@ mod foreground_discovery {
         own: &HashSet<String>,
         identities: &HashSet<String>,
         stable: &BTreeMap<String, BTreeSet<String>>,
+        advert_authors: &BTreeSet<String>,
     ) -> (BTreeSet<(usize, String)>, bool, bool) {
         let rows = wire.lock().unwrap().clone();
         let mut authentication = BTreeMap::new();
@@ -216,6 +217,7 @@ mod foreground_discovery {
         }
         let mut contexts = BTreeMap::<usize, BTreeSet<String>>::new();
         let mut observed = BTreeSet::new();
+        let mut observed_siblings = BTreeSet::new();
         let mut private_history = false;
         let mut recipient_catch_up = false;
         for (relay, connection, request) in rows.iter().filter(|(_, _, value)| value[0] == "REQ") {
@@ -235,15 +237,45 @@ mod foreground_discovery {
                     .iter()
                     .filter(|author| stable.contains_key(*author))
                     .collect::<Vec<_>>();
-                if !public.is_empty() {
+                let advert = filter
+                    .kinds
+                    .as_ref()
+                    .is_some_and(|kinds| kinds.contains(&Kind::Custom(37195)));
+                if advert {
+                    // Endpoint discovery includes authorized sibling devices,
+                    // unlike protocol metadata. They may share anonymous
+                    // public reads, never authentication or private receives.
+                    assert!(
+                        signer.is_none_or(|signer| !identities.contains(signer)),
+                        "identified authentication exposed endpoint discovery"
+                    );
+                    assert!(!authors.is_empty(), "unscoped endpoint discovery");
+                    for author in &authors {
+                        assert!(
+                            advert_authors.contains(author),
+                            "unauthorized endpoint discovery author: {author}"
+                        );
+                        assert_eq!(
+                            single_author_selector(value, author),
+                            json!({"authors": [author], "kinds": [37195]}).to_string(),
+                            "endpoint discovery changed its exact public selector"
+                        );
+                        contexts
+                            .entry(*connection)
+                            .or_default()
+                            .insert(author.clone());
+                        if own.contains(author) {
+                            observed_siblings.insert(author.clone());
+                        }
+                    }
+                } else if !public.is_empty() {
                     assert!(
                         signer.is_none_or(|signer| !own.contains(signer)),
                         "account authentication exposed peer discovery"
                     );
-                    assert_eq!(
-                        authors.len(),
-                        public.len(),
-                        "public discovery mixed unrelated selectors"
+                    assert!(
+                        authors.iter().all(|author| stable.contains_key(author)),
+                        "public discovery mixed unrelated selectors: {value}"
                     );
                     assert!(
                         value.get("#p").is_none(),
@@ -260,12 +292,7 @@ mod foreground_discovery {
                         let profile_only = value["kinds"] == json!([0])
                             && value.get("since").is_none()
                             && value.get("limit").is_none();
-                        // Foreground also reconciles the isolated FIPS fixture;
-                        // its advert lookup is not protocol metadata catch-up.
-                        let mesh_only = value["kinds"] == json!([37195])
-                            && value.get("since").is_none()
-                            && value.get("limit").is_none();
-                        assert!(profile_only || mesh_only || stable[author].contains(&single_author_selector(value, author)),
+                        assert!(profile_only || stable[author].contains(&single_author_selector(value, author)),
                         "covered public metadata duplicated through broad cold catch-up: relay={relay}, filter={value}");
                         contexts
                             .entry(*connection)
@@ -290,7 +317,10 @@ mod foreground_discovery {
                     .filter(|(_, id, frame)| *id == connection && frame[0] == "REQ")
                     .flat_map(|(_, _, frame)| &frame.as_array().unwrap()[2..])
                     .all(|filter| filter.get("#p").is_none()
-                        && filter["kinds"] != json!([MESSAGE_EVENT_KIND])),
+                        && !filter["kinds"]
+                            .as_array()
+                            .unwrap()
+                            .contains(&json!(MESSAGE_EVENT_KIND))),
                 "public discovery shared a private receive context"
             );
             assert!(
@@ -299,7 +329,118 @@ mod foreground_discovery {
                 "a discovery connection also published"
             );
         }
+        assert_eq!(
+            observed_siblings,
+            advert_authors
+                .iter()
+                .filter(|author| own.contains(*author))
+                .cloned()
+                .collect::<BTreeSet<_>>(),
+            "endpoint discovery must include the exact authorized sibling devices"
+        );
         (observed, private_history, recipient_catch_up)
+    }
+
+    #[test]
+    fn endpoint_advert_wire_oracle_accepts_only_authorized_anonymous_public_reads() {
+        let owner = Keys::generate();
+        let device = Keys::generate();
+        let siblings = [Keys::generate(), Keys::generate()];
+        let peer = Keys::generate();
+        let anonymous = Keys::generate();
+        let own = [&owner, &device, &siblings[0], &siblings[1]]
+            .into_iter()
+            .map(|key| key.public_key().to_hex())
+            .collect::<HashSet<_>>();
+        let mut identities = own.clone();
+        identities.insert(peer.public_key().to_hex());
+        let profile = json!({"authors": [peer.public_key().to_hex()], "kinds": [0]});
+        let stable = BTreeMap::from([(
+            peer.public_key().to_hex(),
+            BTreeSet::from([profile.to_string()]),
+        )]);
+        let advert_authors = [&peer, &siblings[0], &siblings[1]]
+            .into_iter()
+            .map(|key| key.public_key().to_hex())
+            .collect::<BTreeSet<_>>();
+        let advert = json!({"authors": advert_authors, "kinds": [37195]});
+        let auth = |key: &Keys| {
+            json!([
+                "AUTH",
+                EventBuilder::new(Kind::Authentication, "")
+                    .sign_with_keys(key)
+                    .unwrap()
+            ])
+        };
+        let accepted = vec![
+            (0, 1, auth(&anonymous)),
+            (0, 1, json!(["REQ", "profiles", profile.clone()])),
+            (0, 1, json!(["REQ", "adverts", advert.clone()])),
+        ];
+        let wire = Arc::new(Mutex::new(accepted.clone()));
+        let (observed, history, recipients) =
+            assert_wire(&wire, &own, &identities, &stable, &advert_authors);
+        assert_eq!(observed, BTreeSet::from([(0, peer.public_key().to_hex())]));
+        assert!(!history && !recipients);
+
+        let mut rejected = Vec::new();
+        for forbidden in [
+            owner.public_key(),
+            device.public_key(),
+            Keys::generate().public_key(),
+        ] {
+            let mut rows = accepted.clone();
+            // Replace one authorized author, preserving the author count.
+            rows[2].2[2]["authors"][0] = json!(forbidden.to_hex());
+            rejected.push(rows);
+        }
+        for field in ["#p", "since", "limit"] {
+            let mut rows = accepted.clone();
+            rows[2].2[2][field] = if field == "#p" {
+                json!([owner.public_key().to_hex()])
+            } else {
+                json!(1)
+            };
+            rejected.push(rows);
+        }
+        let mut mixed_kinds = accepted.clone();
+        mixed_kinds[2].2[2]["kinds"] = json!([0, 37195]);
+        rejected.push(mixed_kinds);
+        let mut mixed_profile = accepted.clone();
+        mixed_profile[1].2[2]["authors"] = json!([
+            peer.public_key().to_hex(),
+            siblings[0].public_key().to_hex()
+        ]);
+        rejected.push(mixed_profile);
+        for key in [&owner, &device, &siblings[0], &peer] {
+            let mut rows = accepted.clone();
+            rows[0].2 = auth(key);
+            rejected.push(rows);
+        }
+        for private in [
+            json!(["REQ", "private", {"kinds": [INVITE_RESPONSE_KIND], "#p": [Keys::generate().public_key().to_hex()]}]),
+            json!(["REQ", "private", {"kinds": [MESSAGE_EVENT_KIND, 0], "authors": [Keys::generate().public_key().to_hex()]}]),
+            json!([
+                "EVENT",
+                EventBuilder::new(Kind::TextNote, "unrelated publication")
+                    .sign_with_keys(&anonymous)
+                    .unwrap()
+            ]),
+        ] {
+            let mut rows = accepted.clone();
+            rows.push((0, 1, private));
+            rejected.push(rows);
+        }
+        for (index, rows) in rejected.into_iter().enumerate() {
+            let wire = Arc::new(Mutex::new(rows));
+            assert!(
+                std::panic::catch_unwind(|| {
+                    assert_wire(&wire, &own, &identities, &stable, &advert_authors);
+                })
+                .is_err(),
+                "invalid discovery wire variant {index} was accepted"
+            );
+        }
     }
 
     struct RunningApp(Arc<crate::FfiApp>);
@@ -468,6 +609,57 @@ mod foreground_discovery {
                 .iter()
                 .map(|device| device.identity_pubkey_hex.clone()),
         );
+        // Derive endpoint lookup authority independently from the generated
+        // signed rosters, including the recovery rosters delivered later.
+        // Never learn the allowlist from the observed requests themselves.
+        let owner = local.owner_pubkey.to_hex();
+        let local_device = local.device_keys.public_key().to_hex();
+        let authorized_owners = fixture
+            .core
+            .preferences
+            .accepted_owner_pubkeys
+            .iter()
+            .cloned()
+            .chain(std::iter::once(owner.clone()))
+            .collect::<BTreeSet<_>>();
+        let mut advert_authors = BTreeSet::new();
+        for event in events
+            .iter()
+            .filter(|event| event.kind.as_u16() as u32 == APP_KEYS_EVENT_KIND)
+        {
+            event.verify().unwrap();
+            assert!(authorized_owners.contains(&event.pubkey.to_hex()));
+            advert_authors.extend(
+                AppKeys::from_event(event)
+                    .unwrap()
+                    .get_all_devices()
+                    .into_iter()
+                    .map(|device| device.identity_pubkey.to_hex())
+                    .filter(|author| author != &local_device),
+            );
+        }
+        let siblings = fixture.core.app_keys[&owner]
+            .devices
+            .iter()
+            .map(|device| device.identity_pubkey_hex.clone())
+            .filter(|author| author != &local_device)
+            .collect::<BTreeSet<_>>();
+        assert_eq!(
+            siblings.len(),
+            2,
+            "fixture must include both sibling devices"
+        );
+        assert_eq!(
+            advert_authors
+                .iter()
+                .filter(|author| own.contains(*author))
+                .cloned()
+                .collect::<BTreeSet<_>>(),
+            siblings,
+            "only the two signed sibling devices may appear in endpoint discovery"
+        );
+        assert!(!advert_authors.contains(&owner));
+        assert!(!advert_authors.contains(&local_device));
         let snapshot = fixture
             .core
             .protocol_engine
@@ -505,6 +697,15 @@ mod foreground_discovery {
             }
         }
         assert!(stable.len() >= contacts * 4);
+        assert_eq!(
+            advert_authors
+                .iter()
+                .filter(|author| !stable.contains_key(*author))
+                .cloned()
+                .collect::<BTreeSet<_>>(),
+            siblings,
+            "the only endpoint authors outside protocol discovery are the two siblings"
+        );
         if populated {
             assert!(plan.message_authors.len() >= 78);
         }
@@ -696,7 +897,7 @@ mod foreground_discovery {
         assert!(support["event_counts"]["app_keys_events"].as_u64().unwrap() > 0);
         assert_eq!(app.0.recovery.restart_count.load(Ordering::Relaxed), 0);
         let (_, private_history, recipient_catch_up) =
-            assert_wire(&wire, &own, &identities, &stable);
+            assert_wire(&wire, &own, &identities, &stable, &advert_authors);
         assert!(private_history && recipient_catch_up);
         phase(started, Some(foreground), "foreground_assertions_complete");
         if populated {
@@ -719,7 +920,7 @@ mod foreground_discovery {
                 28_648
             );
             assert_eq!(support["protocol_engine"]["pending_inbound_count"], 268);
-            assert_wire(&wire, &own, &identities, &stable);
+            assert_wire(&wire, &own, &identities, &stable, &advert_authors);
         }
         app.0.shutdown_and_wait();
         drop(app);
