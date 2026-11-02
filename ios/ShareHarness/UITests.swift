@@ -29,11 +29,16 @@ final class ShareHarnessUITests: XCTestCase {
         // The search keyboard must not cover the selected recipient's action.
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
             predicate: NSPredicate(format: "hittable == true"), object: send)], timeout: 5), .completed)
+        let keyboardScreenshot = XCTAttachment(screenshot: app.screenshot())
+        keyboardScreenshot.name = "Send remains visible above search keyboard"
+        keyboardScreenshot.lifetime = .keepAlways
+        add(keyboardScreenshot)
         send.tap()
         let result = app.staticTexts["fixture-status"]
         XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(
             predicate: NSPredicate(format: "label CONTAINS %@", "Queued: Grace Hopper"), object: result)], timeout: 5), .completed)
         XCTAssertTrue(result.label.contains("https://example.com/iris-share-test"))
+        XCTAssertTrue(result.label.contains("Attachments: 0"))
         XCTAssertTrue(result.label.contains("Send requested: true"))
     }
 

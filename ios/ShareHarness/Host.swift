@@ -89,6 +89,7 @@ final class ShareHarnessHost: UIViewController {
         let recipients = payload["suggestedChatIds"] as? [String] ?? []
         let text = payload["text"] as? String ?? ""
         let autoSend = payload["autoSend"] as? Bool ?? false
-        status.text = "Queued: \(recipients.compactMap { names[$0] }.joined(separator: ", "))\n\(text)\nSend requested: \(autoSend)"
+        let attachments = payload["attachments"] as? [[String: Any]] ?? []
+        status.text = "Queued: \(recipients.compactMap { names[$0] }.joined(separator: ", "))\n\(text)\nAttachments: \(attachments.count)\nSend requested: \(autoSend)"
     }
 }

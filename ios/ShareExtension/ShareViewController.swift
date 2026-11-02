@@ -624,19 +624,18 @@ final class ShareViewController: UIViewController {
     }
 
     private func loadURLText(from provider: NSItemProvider) async -> String? {
-        guard provider.hasItemConformingToTypeIdentifier(UTType.url.identifier) else {
+        guard provider.canLoadObject(ofClass: NSURL.self) else {
             return nil
         }
         return await withCheckedContinuation { continuation in
-            provider.loadItem(forTypeIdentifier: UTType.url.identifier, options: nil) { item, _ in
-                if let url = item as? URL {
-                    continuation.resume(returning: url.isFileURL ? nil : url.absoluteString)
-                } else if let string = item as? String {
-                    let url = URL(string: string)
-                    continuation.resume(returning: url?.isFileURL == true ? nil : string)
-                } else {
+            // loadItem may return NSURL's serialized property list as Data.
+            // Let the provider decode its URL representation before inspecting it.
+            provider.loadObject(ofClass: NSURL.self) { item, _ in
+                guard let url = item as? URL, !url.isFileURL else {
                     continuation.resume(returning: nil)
+                    return
                 }
+                continuation.resume(returning: url.absoluteString)
             }
         }
     }
