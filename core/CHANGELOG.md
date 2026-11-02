@@ -10,6 +10,11 @@
 
 ## 0.1.59
 
+- Replace periodic linked-device TCP polling with transport deadlines and peer
+  or control wakeups, preserving packet completion, reconnect timing and shutdown.
+- Notify about newly authenticated incoming chats without repeating notifications
+  for replayed invites or restored history. Preserve pending arrivals while
+  authorization is resolved, independently of unread-message counts.
 - Share public profile and device discovery on one anonymous read connection
   per message server, keeping private publication on separate anonymous connections.
 - Keep account metadata on the existing account connection, bound retained metadata,

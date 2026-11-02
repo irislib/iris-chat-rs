@@ -2,6 +2,8 @@
 
 ## 0.3.14
 
+- Expose exact signed invite-owner device authorization to notification previews,
+  including encrypted proofs ingested through the read-only preview path.
 - Avoid rewriting checkpoints when remote-device and linked-device retries only
   advance their retry clocks. Persist session, target, and delivery changes while
   preserving save-failure rollback and recovery after restart.

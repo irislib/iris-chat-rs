@@ -2,6 +2,32 @@
 
 Each release has channel-specific notes. The release tag must match the `##` heading exactly.
 
+## v2026.11.2.1
+
+### GitHub
+
+- Share public profile and device discovery subscriptions on one anonymous read connection per message server, with account lookups kept separate. Keep private-message publication on separate anonymous connections.
+- Update nostr-pubsub to 0.1.20 and its relay adapter to 0.1.16, with bounded discovery recovery and queries restricted to their configured message servers.
+- Reserve discovery capacity for authorized linked devices and finish received sync packets before waiting again, preventing background discovery and cancelled waits from delaying device sync.
+- Back off unavailable message servers and avoid rewriting unchanged pending-message state, preserving retry progress and recovery after restart.
+- Wake linked-device TCP work on transport deadlines and peer or control changes instead of polling every 25 ms, preserving packet completion and reconnect timing.
+- Add "New chat" notifications only for authenticated incoming invites. Suppress repeated invites and restored history, and preserve Android new-chat notifications with an empty message body.
+- Update the protocol source package to 0.3.14 and the CLI source package to 0.1.59.
+
+### Apple
+
+- Reduce unnecessary work while Iris is idle and when message servers are unavailable.
+- Improve message syncing between linked devices.
+- Avoid unnecessary database writes while messages are waiting to be delivered.
+- Notify you when someone starts a new chat.
+
+### Zapstore
+
+- Reduce unnecessary work while Iris is idle and when message servers are unavailable.
+- Improve message syncing between linked devices.
+- Avoid unnecessary database writes while messages are waiting to be delivered.
+- Notify you when someone starts a new chat.
+
 ## v2026.11.2
 
 ### GitHub
