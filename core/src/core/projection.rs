@@ -382,7 +382,10 @@ impl AppCore {
                         .as_deref(),
                 );
                 ChatThreadSnapshot {
-                    new_chat_notification_id: self.new_chat_notifications.get(&thread.chat_id).cloned(),
+                    new_chat_notification_id: self
+                        .new_chat_notifications
+                        .get(&thread.chat_id)
+                        .cloned(),
                     social_connection: self.social_connection(&thread.chat_id),
                     chat_id: thread.chat_id.clone(),
                     kind: thread_kind,
