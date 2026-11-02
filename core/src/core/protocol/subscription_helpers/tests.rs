@@ -1,5 +1,6 @@
 use super::*;
 use crate::core::protocol::public_discovery::{test_support, DiscoveryRelays, PublicDiscovery};
+use nostr::Tag;
 use std::sync::atomic::Ordering;
 
 fn reported_account_failure(receiver: &flume::Receiver<CoreMsg>) -> bool {
