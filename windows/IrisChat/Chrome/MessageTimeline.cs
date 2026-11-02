@@ -13,6 +13,7 @@ internal sealed class MessageTimeline
 {
     private readonly ScrollViewer _scroll;
     private readonly ItemsControl _list;
+    private readonly MessageTextSelection _selection;
     private readonly Action _loadOlder;
     private readonly Action<ChatMessageSnapshot>? _editMessage;
     private readonly Dictionary<string, Row> _rows = new();
@@ -28,6 +29,7 @@ internal sealed class MessageTimeline
         Action<ChatMessageSnapshot>? editMessage = null)
     {
         _scroll = scroll; _list = list; _loadOlder = loadOlder;
+        _selection = new MessageTextSelection(scroll, list);
         _editMessage = editMessage;
         scroll.ScrollChanged += (_, e) =>
         {
@@ -68,6 +70,7 @@ internal sealed class MessageTimeline
 
     public void Reset()
     {
+        _selection.Clear();
         _generation++; _updating = false; _following = true; _anchor = null;
         _rows.Clear(); _list.Items.Clear();
     }
@@ -114,6 +117,7 @@ internal sealed class MessageTimeline
             if (i < _list.Items.Count && ReferenceEquals(_list.Items[i], desired[i])) continue;
             _list.Items.Remove(desired[i]); _list.Items.Insert(i, desired[i]);
         }
+        _selection.Reconcile();
         SchedulePlacement();
     }
 

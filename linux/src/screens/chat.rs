@@ -1114,6 +1114,7 @@ fn append_truncatable_body(bubble: &gtk::Box, body_text: &str, manager: &Rc<AppM
     body.set_xalign(0.0);
     body.set_max_width_chars(40);
     body.set_selectable(true);
+    body.add_css_class("message-selectable-body");
     if let Some(count) = jumbomoji_count(body_text) {
         body.add_css_class(&format!("bubble-jumbomoji-{count}"));
     }

@@ -8,6 +8,9 @@ struct IrisDesktopLinkedText: NSViewRepresentable {
     let attributed: AttributedString
     let foreground: Color
     let lineLimit: Int?
+    var messageID: String? = nil
+    var pointSize: CGFloat? = nil
+    @Environment(\.irisMessageSelection) private var selection
     @Environment(\.openURL) private var openURL
 
     func makeNSView(context: Context) -> NSTextView {
@@ -16,7 +19,7 @@ struct IrisDesktopLinkedText: NSViewRepresentable {
         let container = NSTextContainer(size: .zero)
         storage.addLayoutManager(layout)
         layout.addTextContainer(container)
-        let view = NSTextView(frame: .zero, textContainer: container)
+        let view = IrisMessageTextView(frame: .zero, textContainer: container)
         view.isEditable = false
         view.isSelectable = true
         view.drawsBackground = false
@@ -32,13 +35,18 @@ struct IrisDesktopLinkedText: NSViewRepresentable {
 
     func updateNSView(_ view: NSTextView, context: Context) {
         context.coordinator.open = { openURL($0) }
-        let text = Self.nativeText(attributed, foreground: NSColor(foreground))
+        let text = Self.nativeText(attributed, foreground: NSColor(foreground), pointSize: pointSize)
         if view.textStorage?.isEqual(to: text) != true {
             view.textStorage?.setAttributedString(text)
         }
         view.linkTextAttributes = [.cursor: NSCursor.pointingHand]
         view.textContainer?.maximumNumberOfLines = lineLimit ?? 0
         view.textContainer?.lineBreakMode = lineLimit == nil ? .byWordWrapping : .byTruncatingTail
+        if let view = view as? IrisMessageTextView {
+            view.messageSelection = selection
+            view.messageID = messageID
+            if let messageID { selection?.register(view, id: messageID) }
+        }
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSTextView, context: Context) -> CGSize? {
@@ -63,9 +71,11 @@ struct IrisDesktopLinkedText: NSViewRepresentable {
         }
     }
 
-    static func nativeText(_ attributed: AttributedString, foreground: NSColor) -> NSAttributedString {
+    static func nativeText(_ attributed: AttributedString, foreground: NSColor, pointSize: CGFloat? = nil) -> NSAttributedString {
         let result = NSMutableAttributedString(attributedString: NSAttributedString(attributed))
-        let baseFont = NSFont.preferredFont(forTextStyle: .body)
+        let baseFont = pointSize.map {
+            NSFont.systemFont(ofSize: $0)
+        } ?? NSFont.preferredFont(forTextStyle: .body)
         let font = baseFont.fontDescriptor.withDesign(.rounded).flatMap { NSFont(descriptor: $0, size: baseFont.pointSize) } ?? baseFont
         result.addAttributes([.font: font, .foregroundColor: foreground], range: NSRange(location: 0, length: result.length))
         for run in attributed.runs {

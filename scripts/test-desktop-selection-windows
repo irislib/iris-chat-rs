@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$ROOT/scripts/build_common.sh"
+SELECTION_HOST="$(select_windows_ssh_host 5)"
+python3 - "$ROOT" "$SELECTION_HOST" <<'PY'
+import base64
+from pathlib import Path
+import subprocess
+import sys
+
+root, host = Path(sys.argv[1]), sys.argv[2]
+# Only this fixture's source is copied. Never reset/sync the remote app checkout.
+target = r'C:\src\iris-chat-rs\artifacts\desktop-selection\source'
+files = ['windows/SelectionTests/SelectionTests.csproj', 'windows/SelectionTests/packages.lock.json',
+         'windows/SelectionTests/Program.cs', 'windows/IrisChat/Chrome/MessageTextSelection.cs']
+commands = ["$ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue'"]
+for source in files:
+    destination = target + '\\' + source.replace('/', '\\')
+    encoded = base64.b64encode((root / source).read_bytes()).decode()
+    commands += [f"New-Item -ItemType Directory -Force -Path ([IO.Path]::GetDirectoryName('{destination}')) | Out-Null",
+                 f"[IO.File]::WriteAllBytes('{destination}',[Convert]::FromBase64String('{encoded}'))"]
+commands += [f"Set-Location '{target}'",
+             r"dotnet run --project windows/SelectionTests/SelectionTests.csproj -p:RestoreLockedMode=true -- 'C:\src\iris-chat-rs\artifacts\desktop-selection'",
+             "exit $LASTEXITCODE"]
+result = subprocess.run(['ssh', '-T', '-o', 'BatchMode=yes', host, 'powershell', '-NoProfile', '-Command', '-'],
+                        input='; '.join(commands), text=True)
+sys.exit(result.returncode)
+PY

@@ -91,7 +91,7 @@ struct ChatScreen: View {
                                             let layoutGeneration = timelineLayoutGeneration
                                             // Lay out one bounded window exactly; measured spacers
                                             // preserve the coordinates of previously visited history.
-                                            ChatTimelineMessageLayout {
+                                            ChatTimelineMessageLayout(chatID: chat.chatId, messageIDs: ids) {
                                                 Color.clear.frame(height: ChatTimelineRenderWindow.spacerHeight(
                                                     ids[..<range.lowerBound], measured: rowHeightCache))
                                                     .accessibilityHidden(true)
@@ -117,6 +117,7 @@ struct ChatScreen: View {
                                                     ids[range.upperBound...], measured: rowHeightCache))
                                                     .accessibilityHidden(true)
                                             }
+                                            .id(chat.chatId)
                                             .transformPreference(ChatMessageContentFramePreferenceKey.self) { page in
                                                 page.chatID = chat.chatId
                                                 page.firstMessageID = visibleMessages.first?.id

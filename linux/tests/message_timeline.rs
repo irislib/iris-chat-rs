@@ -6,6 +6,7 @@ use std::rc::Rc;
 mod viewport;
 
 pub fn run() {
+    viewport::test_message_selection();
     let requests = Rc::new(Cell::new(0));
     let count = requests.clone();
     let timeline = viewport::MessageTimeline::new(move || count.set(count.get() + 1));

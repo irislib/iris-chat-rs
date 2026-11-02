@@ -3,6 +3,14 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashSet;
 use std::rc::Rc;
 
+#[path = "message_selection.rs"]
+mod message_selection;
+
+#[cfg(feature = "ui-tests")]
+pub fn test_message_selection() {
+    message_selection::tests::run();
+}
+
 // Retain the viewport and unchanged rows. A visible row, rather than a guessed
 // height, anchors prepends and later attachment/text size changes.
 #[derive(Clone)]
@@ -11,6 +19,7 @@ pub struct MessageTimeline {
     list: gtk::Box,
     state: Rc<RefCell<Viewport>>,
     adjusting: Rc<Cell<bool>>,
+    selection: message_selection::MessageSelection,
 }
 #[derive(Default)]
 struct Viewport {
@@ -30,7 +39,9 @@ impl MessageTimeline {
         list.set_margin_start(10);
         list.set_margin_end(10);
         scroll.set_child(Some(&list));
+        let selection = message_selection::MessageSelection::new(&scroll);
         let timeline = Self {
+            selection,
             scroll,
             list,
             state: Rc::new(RefCell::new(Viewport {
@@ -88,6 +99,7 @@ impl MessageTimeline {
     }
 
     pub fn update(&self, rows: Vec<(String, gtk::Widget)>) {
+        self.selection.update(&rows);
         let mut state = self.state.borrow_mut();
         if state.rows == rows {
             return;
