@@ -94,6 +94,8 @@ enum Command {
     Disconnect,
 }
 
+type Responses = Arc<Mutex<Vec<(usize, String, Option<nostr::EventId>)>>>;
+
 type AcceptedSubscriptions = Arc<Mutex<BTreeMap<(usize, String), (Vec<Filter>, bool)>>>;
 
 pub(in crate::core) struct Relay {
@@ -103,6 +105,7 @@ pub(in crate::core) struct Relay {
     pub active: Arc<AtomicUsize>,
     pub events: Arc<Mutex<Vec<Event>>>,
     pub sent_bytes: Arc<AtomicUsize>,
+    pub responses: Responses,
     pub reject_subscriptions: Arc<AtomicBool>,
     pub hold_eose: Arc<AtomicBool>,
     accepted: AcceptedSubscriptions,
@@ -183,6 +186,7 @@ async fn relay_with_tls(events: Vec<Event>, tls: bool) -> Relay {
     let events = Arc::new(Mutex::new(events));
     let accepted = Arc::new(Mutex::new(BTreeMap::new()));
     let sent_bytes = Arc::new(AtomicUsize::new(0));
+    let responses = Arc::new(Mutex::new(Vec::new()));
     let reject_subscriptions = Arc::new(AtomicBool::new(false));
     let hold_eose = Arc::new(AtomicBool::new(false));
     let (commands, _) = tokio::sync::broadcast::channel(1024);
@@ -194,6 +198,7 @@ async fn relay_with_tls(events: Vec<Event>, tls: bool) -> Relay {
         let commands = commands.clone();
         let accepted = accepted.clone();
         let sent_bytes = sent_bytes.clone();
+        let responses = responses.clone();
         let reject_subscriptions = reject_subscriptions.clone();
         let hold_eose = hold_eose.clone();
         tokio::spawn(async move {
@@ -209,6 +214,7 @@ async fn relay_with_tls(events: Vec<Event>, tls: bool) -> Relay {
                         let acceptor = acceptor.clone(); let wire = wire.clone(); let events = events.clone();
                         let accepted = accepted.clone(); let sent_bytes = sent_bytes.clone(); let reject_subscriptions = reject_subscriptions.clone();
                         let hold_eose = hold_eose.clone();
+                        let responses = responses.clone();
                         let mut commands = commands.subscribe();
                         children.spawn(async move {
                             let _active = guard;
@@ -270,6 +276,10 @@ async fn relay_with_tls(events: Vec<Event>, tls: bool) -> Relay {
                                     let bytes = text.len();
                                     if socket.send(Message::Text(text)).await.is_err() { return; }
                                     sent_bytes.fetch_add(bytes, Ordering::SeqCst);
+                                    if frame[0] == "EVENT" || frame[0] == "EOSE" {
+                                        let event = (frame[0] == "EVENT").then(|| serde_json::from_value(frame[2]["id"].clone()).unwrap());
+                                        responses.lock().unwrap().push((id, frame[1].as_str().unwrap().into(), event));
+                                    }
                                     if frame[0] == "EOSE" {
                                         if let Some((_, eose)) = accepted.lock().unwrap().get_mut(&(id, frame[1].as_str().unwrap().into())) { *eose = true; }
                                     }
@@ -289,6 +299,7 @@ async fn relay_with_tls(events: Vec<Event>, tls: bool) -> Relay {
         active,
         events,
         sent_bytes,
+        responses,
         reject_subscriptions,
         hold_eose,
         accepted,

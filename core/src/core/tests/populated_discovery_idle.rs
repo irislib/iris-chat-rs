@@ -299,7 +299,11 @@ mod populated_discovery_idle {
                 let rows = relay.wire.lock().unwrap();
                 let requests = rows[before[index]..].iter().filter(|(_, frame)| frame[0] == "REQ").collect::<Vec<_>>();
                 assert!(!requests.is_empty(), "targeted recovery omitted relay {index}");
-                for (_, frame) in requests {
+                let responses = relay.responses.lock().unwrap();
+                for (connection, frame) in requests {
+                    let id = frame[1].as_str().unwrap();
+                    assert!(responses.iter().any(|(peer, subscription, event)| peer == connection && subscription == id && *event == Some(proof.id)), "relay {index} did not send the requested proof");
+                    assert!(responses.iter().any(|(peer, subscription, event)| peer == connection && subscription == id && event.is_none()), "relay {index} did not complete recovery");
                     for filter in &frame.as_array().unwrap()[2..] {
                         assert_eq!(filter["authors"], serde_json::json!([proof.pubkey.to_hex()]));
                     }
