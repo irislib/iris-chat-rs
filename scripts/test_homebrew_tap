@@ -12,6 +12,7 @@ trap cleanup EXIT
 make_iris_archive() {
   local target="$1"
   local assets_dir="$2"
+  local tag="${3:-v9.8.7}"
   local stage_dir package_dir
 
   stage_dir="$(mktemp -d)"
@@ -25,7 +26,7 @@ make_iris_archive() {
 
   (
     cd "$stage_dir"
-    tar -czf "$assets_dir/iris-v9.8.7-${target}.tar.gz" iris
+    tar -czf "$assets_dir/iris-${tag}-${target}.tar.gz" iris
   )
   rm -rf "$stage_dir"
 }
@@ -117,6 +118,34 @@ grep -F "url \"${RELEASE_BASE_URL}/iris-v9.8.7-x86_64-unknown-linux-gnu.tar.gz\"
 grep -F "sha256 \"$(sha256_file "$ASSETS_DIR/iris-v9.8.7-aarch64-apple-darwin.tar.gz")\"" "$TAP_WORK/Formula/iris.rb" >/dev/null
 grep -F 'bin.install "iris" => "iris"' "$TAP_WORK/Formula/iris.rb" >/dev/null
 grep -F 'Linux ARM64 Homebrew install is not available yet' "$TAP_WORK/Formula/iris.rb" >/dev/null
+for tag in v2026.10.30 v2026.11.1; do
+  for target in aarch64-apple-darwin x86_64-apple-darwin x86_64-unknown-linux-gnu aarch64-unknown-linux-gnu; do
+    make_iris_archive "$target" "$ASSETS_DIR" "$tag"
+  done
+  tap_args=(--version "$tag" --release-base-url "$RELEASE_BASE_URL" --assets-dir "$ASSETS_DIR" --output-dir "$TMPDIR/$tag.git")
+  "$ROOT_DIR/packaging/homebrew/create_tap.sh" "${tap_args[@]}" >/dev/null
+  git --git-dir="$TMPDIR/$tag.git" show master:Formula/iris.rb > "$TMPDIR/calendar.rb"
+  if [[ "$tag" == v2026.10.30 ]]; then
+    # A stray archive must never change a historical release's formula.
+    grep -F 'Linux ARM64 Homebrew install is not available yet' "$TMPDIR/calendar.rb" >/dev/null
+    if grep -Fq 'aarch64-unknown-linux-gnu.tar.gz' "$TMPDIR/calendar.rb"; then
+      echo "Unexpected Linux ARM64 URL for $tag" >&2
+      exit 1
+    fi
+  else
+    arm_archive="iris-${tag}-aarch64-unknown-linux-gnu.tar.gz"
+    arm_formula="$(sed -n '/^  on_linux do$/,/^    on_intel do$/p' "$TMPDIR/calendar.rb")"
+    grep -Fx '    on_arm do' <<<"$arm_formula" >/dev/null
+    grep -Fx "      url \"$RELEASE_BASE_URL/$arm_archive\"" <<<"$arm_formula" >/dev/null
+    grep -Fx "      sha256 \"$(sha256_file "$ASSETS_DIR/$arm_archive")\"" <<<"$arm_formula" >/dev/null
+    rm "$ASSETS_DIR/$arm_archive"
+    if "$ROOT_DIR/packaging/homebrew/create_tap.sh" "${tap_args[@]}" >"$TMPDIR/missing-arm.log" 2>&1; then
+      echo "Accepted an incomplete Linux ARM64 release" >&2
+      exit 1
+    fi
+    grep -F "Missing release archive: $ASSETS_DIR/$arm_archive" "$TMPDIR/missing-arm.log" >/dev/null
+  fi
+done
 grep -F 'class Htree < Formula' "$TAP_WORK/Formula/htree.rb" >/dev/null
 if command -v ruby >/dev/null 2>&1; then
   ruby -c "$TAP_WORK/Formula/iris.rb" >/dev/null

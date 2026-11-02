@@ -331,26 +331,34 @@ class DistributeTests(unittest.TestCase):
         self.assertEqual((self.global_config / "keys").read_text(), "unrelated identity\n")
         return result
 
-    def prepare_ios_excluded_release(self) -> dict[str, str]:
+    def prepare_alternate_release(self, tag: str) -> dict[str, str]:
+        manifest_tool = ROOT / "scripts/release-manifest.py"
+        expected = subprocess.check_output(
+            [str(manifest_tool), "list-assets", "--tag", tag], text=True
+        ).splitlines()
         self.manifest.unlink()
-        for path in self.release.iterdir():
-            if "-ios." in path.name:
-                path.unlink()
+        for path in list(self.release.iterdir()):
+            name = path.name.replace(TAG, tag)
+            if name in expected:
+                path.rename(path.with_name(name))
             else:
-                path.rename(path.with_name(path.name.replace(TAG, IOS_EXCLUDED_TAG)))
-        self.manifest = self.release / f"iris-chat-{IOS_EXCLUDED_TAG}-manifest.json"
+                path.unlink()
+        for name in expected:
+            if not (self.release / name).exists():
+                (self.release / name).write_bytes(name.encode())
+        self.manifest = self.release / f"iris-chat-{tag}-manifest.json"
         subprocess.run(
-            [str(ROOT / "scripts/release-manifest.py"), "create", "--tag", IOS_EXCLUDED_TAG,
+            [str(manifest_tool), "create", "--tag", tag,
              "--commit", "abc123", "--asset-dir", str(self.release), "--out", str(self.manifest)],
             check=True,
         )
-        self.notes = self.notes.replace(TAG, IOS_EXCLUDED_TAG)
+        self.notes = self.notes.replace(TAG, tag)
         env = self.environment()
         metadata = json.loads(env["FAKE_RELEASE_VIEW_JSON"])
-        metadata["tagName"] = IOS_EXCLUDED_TAG
+        metadata["tagName"] = tag
         metadata["assets"] = [{"name": path.name} for path in self.release.iterdir()]
         env["FAKE_RELEASE_VIEW_JSON"] = json.dumps(metadata)
-        env["FAKE_TAG"] = IOS_EXCLUDED_TAG
+        env["FAKE_TAG"] = tag
         return env
 
     def test_android_channels_require_upgrade_receipt(self) -> None:
@@ -371,7 +379,7 @@ class DistributeTests(unittest.TestCase):
             self.assertIn('changed runtime evidence', result.stderr)
 
     def test_ios_excluded_release_promotes_every_remaining_channel(self) -> None:
-        env = self.prepare_ios_excluded_release()
+        env = self.prepare_alternate_release(IOS_EXCLUDED_TAG)
         for channel in ("hashtree", "homebrew", "zapstore"):
             with self.subTest(channel=channel):
                 result = self.run_distribution(channel, "--check", env=env, tag=IOS_EXCLUDED_TAG)
@@ -383,7 +391,7 @@ class DistributeTests(unittest.TestCase):
         self.assertIn("haps import-release", log)
 
     def test_ios_excluded_inventory_still_rejects_other_missing_or_added_assets(self) -> None:
-        original = self.prepare_ios_excluded_release()
+        original = self.prepare_alternate_release(IOS_EXCLUDED_TAG)
         for missing in ("android-arm64.apk", "linux-x64.deb", "macos-arm64.dmg"):
             env = dict(original)
             metadata = json.loads(env["FAKE_RELEASE_VIEW_JSON"])
@@ -666,8 +674,20 @@ class DistributeTests(unittest.TestCase):
         log = self.log.read_text()
         self.assertIn(f"iris-{TAG}-aarch64-apple-darwin.tar.gz", log)
         self.assertIn(f"iris-{TAG}-x86_64-unknown-linux-gnu.tar.gz", log)
+        self.assertNotIn("aarch64-unknown-linux-gnu.tar.gz", log)
         self.assertNotIn("android-arm64.apk", log)
         self.assertNotIn("htree add", log)
+
+    def test_homebrew_verifies_linux_arm64_archive_from_its_first_release(self) -> None:
+        tag = "v2026.11.1"
+        env = self.prepare_alternate_release(tag)
+        result = self.run_distribution("homebrew", "--check", tag=tag, env=env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        name = f"iris-{tag}-aarch64-unknown-linux-gnu.tar.gz"
+        lines = self.log.read_text().splitlines()
+        for command in ("gh release download", "gh attestation verify", "gh release verify-asset"):
+            self.assertTrue(any(line.startswith(command) and name in line for line in lines), command)
+        self.assertFalse(any("android-arm64.apk" in line or "htree add" in line for line in lines))
 
     def test_rejects_hashtree_active_identity_mismatch(self) -> None:
         env = self.environment()

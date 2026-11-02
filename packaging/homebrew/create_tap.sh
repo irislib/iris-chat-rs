@@ -94,6 +94,7 @@ write_formula() {
   local formula_version="${VERSION#v}"
   local homepage_escaped desc_escaped license_escaped release_base_url_escaped
   local sha_macos_arm sha_macos_x86 sha_linux_x86
+  local linux_arm_formula='      odie "Linux ARM64 Homebrew install is not available yet; use the release install script instead."'
 
   homepage_escaped="$(escape_ruby_string "$HOMEPAGE")"
   desc_escaped="$(escape_ruby_string "$DESC")"
@@ -102,6 +103,17 @@ write_formula() {
   sha_macos_arm="$(checksum_for_target "aarch64-apple-darwin")"
   sha_macos_x86="$(checksum_for_target "x86_64-apple-darwin")"
   sha_linux_x86="$(checksum_for_target "x86_64-unknown-linux-gnu")"
+  # Calendar-tagged releases use the canonical inventory, even if the caller
+  # supplies a partial directory or leaves an extra archive beside an old tag.
+  if [[ "$VERSION" =~ ^v[0-9]{4}\. ]]; then
+    local inventory arm_archive="iris-${VERSION}-aarch64-unknown-linux-gnu.tar.gz" sha_linux_arm
+    inventory="$("$(dirname "${BASH_SOURCE[0]}")/../../scripts/release-manifest.py" list-assets --tag "$VERSION")"
+    if grep -Fxq "$arm_archive" <<<"$inventory"; then
+      sha_linux_arm="$(checksum_for_target "aarch64-unknown-linux-gnu")"
+      linux_arm_formula="$(printf '      url "%s/%s"\n      sha256 "%s"' \
+        "$release_base_url_escaped" "$arm_archive" "$sha_linux_arm")"
+    fi
+  fi
 
   cat > "$output_file" <<EOF
 class ${class_name} < Formula
@@ -111,19 +123,21 @@ class ${class_name} < Formula
   license "${license_escaped}"
 
   on_macos do
-    if Hardware::CPU.arm?
+    on_arm do
       url "${release_base_url_escaped}/iris-${VERSION}-aarch64-apple-darwin.tar.gz"
       sha256 "${sha_macos_arm}"
-    else
+    end
+    on_intel do
       url "${release_base_url_escaped}/iris-${VERSION}-x86_64-apple-darwin.tar.gz"
       sha256 "${sha_macos_x86}"
     end
   end
 
   on_linux do
-    if Hardware::CPU.arm?
-      odie "Linux ARM64 Homebrew install is not available yet; use the release install script instead."
-    else
+    on_arm do
+$linux_arm_formula
+    end
+    on_intel do
       url "${release_base_url_escaped}/iris-${VERSION}-x86_64-unknown-linux-gnu.tar.gz"
       sha256 "${sha_linux_x86}"
     end

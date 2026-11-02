@@ -308,12 +308,8 @@ publish_hashtree() {
 }
 
 publish_homebrew() {
-  local assets=(
-    "iris-${TAG}-aarch64-apple-darwin.tar.gz"
-    "iris-${TAG}-x86_64-apple-darwin.tar.gz"
-    "iris-${TAG}-x86_64-unknown-linux-gnu.tar.gz"
-  )
-  local name release_json
+  local assets=()
+  local name release_json inventory
   require_hashtree_identity
   require_command curl
   release_json="$DOWNLOAD_DIR/hashtree-release.json"
@@ -322,9 +318,12 @@ publish_homebrew() {
     echo "Hashtree $TAG must be published before Homebrew." >&2
     exit 1
   fi
-  for name in "${assets[@]}"; do
+  inventory="$(all_asset_names)"
+  while IFS= read -r name; do
+    [[ "$name" == "iris-${TAG}-"*.tar.gz ]] || continue
+    assets+=("$name")
     prepare_asset "$name"
-  done
+  done <<<"$inventory"
   verify_downloads "${assets[@]}"
   if [[ "$CHECK_ONLY" -eq 1 ]]; then
     echo "Homebrew preflight passed for $TAG ($IRIS_HASHTREE_PUBLISHER_NPUB)."
