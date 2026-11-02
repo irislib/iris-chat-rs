@@ -2851,11 +2851,15 @@ final class AppManager: ObservableObject {
 
 #if os(iOS)
     private func syncShareSuggestionsIfNeeded(chatList: [ChatThreadSnapshot]) {
-        guard iosSideEffectGate.shouldSyncShareSuggestions(chatList: chatList) else {
+        // Direct-chat rows resolve profiles separately from chat snapshots. Use
+        // that same source here, including profile-only revisions.
+        let chats = resolvedShareSuggestionChats(chatList) { profiles[$0] }
+        guard iosSideEffectGate.shouldSyncShareSuggestions(chatList: chats) else {
             return
         }
-        shareSuggestionDonor.syncRecentChats(chatList)
-        shareSuggestionsExporter.export(chats: chatList)
+        shareSuggestionsExporter.export(chats: chats, manager: self) { [weak self] avatars in
+            self?.shareSuggestionDonor.syncRecentChats(chats, avatars: avatars)
+        }
     }
 
     private func syncMobilePushIfNeeded(state: AppState) {

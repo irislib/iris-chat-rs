@@ -15,6 +15,7 @@ ios/.build/
 ios/FipsBle/.build/
 ios/Frameworks/
 ios/*.xcodeproj/
+ios/ShareHarness/*.xcodeproj/
 macos/.build/
 macos/Frameworks/
 macos/*.xcodeproj/

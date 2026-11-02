@@ -3,11 +3,28 @@ import Foundation
 #if os(iOS)
 import Intents
 
+func resolvedShareSuggestionChats(
+    _ chats: [ChatThreadSnapshot], profile: (String) -> IrisUserProfile?
+) -> [ChatThreadSnapshot] {
+    chats.filter { !$0.isRequest }.map { chat in
+        var resolved = chat
+        if chat.kind == .direct, let profile = profile(chat.chatId) {
+            resolved.displayName = profile.name
+            resolved.pictureUrl = profile.pictureUrl
+        }
+        return resolved
+    }
+}
+
+@MainActor
 final class ShareSuggestionDonor {
     private let groupIdentifier = "iris-chat-share-suggestions"
     private var donatedIdentifiers = Set<String>()
+    private var donatingIdentifiers = Set<String>()
+    private var avatars: [String: Data] = [:]
 
-    func syncRecentChats(_ chats: [ChatThreadSnapshot]) {
+    func syncRecentChats(_ chats: [ChatThreadSnapshot], avatars: [String: Data]) {
+        self.avatars = avatars
         chats
             .filter { $0.lastMessageAtSecs != nil }
             .sorted { ($0.lastMessageAtSecs ?? 0) > ($1.lastMessageAtSecs ?? 0) }
@@ -30,10 +47,12 @@ final class ShareSuggestionDonor {
         }
         let timestampKey = timestampSecs.map(String.init) ?? String(Int(Date().timeIntervalSince1970))
         let identifier = "share-\(chatId)-\(timestampKey)"
-        guard force || !donatedIdentifiers.contains(identifier) else {
+        let donationKey = "\(identifier)-\(avatars[chatId]?.hashValue ?? 0)"
+        guard !donatingIdentifiers.contains(donationKey),
+              force || !donatedIdentifiers.contains(donationKey) else {
             return
         }
-        donatedIdentifiers.insert(identifier)
+        donatingIdentifiers.insert(donationKey)
 
         let displayName = chat.displayName.trimmingCharacters(in: .whitespacesAndNewlines)
         let title = displayName.isEmpty ? "Chat" : displayName
@@ -41,7 +60,7 @@ final class ShareSuggestionDonor {
             personHandle: INPersonHandle(value: chatId, type: .unknown),
             nameComponents: nil,
             displayName: title,
-            image: nil,
+            image: avatars[chatId].map { INImage(imageData: $0) },
             contactIdentifier: nil,
             customIdentifier: chatId,
             isContactSuggestion: false,
@@ -58,6 +77,9 @@ final class ShareSuggestionDonor {
             sender: nil,
             attachments: nil
         )
+        if chat.kind == .group, let data = avatars[chatId] {
+            intent.setImage(INImage(imageData: data), forParameterNamed: \.speakableGroupName)
+        }
         let interaction = INInteraction(intent: intent, response: nil)
         interaction.direction = .outgoing
         interaction.identifier = identifier
@@ -68,60 +90,58 @@ final class ShareSuggestionDonor {
                 duration: 1
             )
         }
-        interaction.donate(completion: nil)
+        interaction.donate { [weak self] error in
+            Task { @MainActor in
+                self?.donatingIdentifiers.remove(donationKey)
+                if error == nil { self?.donatedIdentifiers.insert(donationKey) }
+            }
+        }
     }
 }
 
-private struct ShareSuggestionEntry: Codable {
-    let chatId: String
-    let displayName: String
-    let subtitle: String?
-    let pictureUrl: String?
-    let isGroup: Bool
-    let lastMessageAtSecs: UInt64?
-}
-
+@MainActor
 final class ShareSuggestionsExporter {
-    private let appGroupIdentifier: String
-    private let fileManager: FileManager
-    private let queue = DispatchQueue(label: "fi.siriusbusiness.irischat.share-suggestions", qos: .utility)
-    private var lastWritten: Data?
+    private let store: ShareSuggestionsStore
+    private let loadThumbnail: (IrisAvatarImageSource, AppManager?) async -> Data?
 
-    init(appGroupIdentifier: String, fileManager: FileManager = .default) {
-        self.appGroupIdentifier = appGroupIdentifier
-        self.fileManager = fileManager
+    init(
+        appGroupIdentifier: String, fileManager: FileManager = .default,
+        containerOverride: URL? = nil,
+        loadThumbnail: @escaping (IrisAvatarImageSource, AppManager?) async -> Data? = { source, manager in
+            await loadIrisAvatarImage(source: source, manager: manager, maxPixelSize: 120)?
+                .jpegData(compressionQuality: 0.85)
+        }
+    ) {
+        store = ShareSuggestionsStore(container: containerOverride
+            ?? fileManager.containerURL(forSecurityApplicationGroupIdentifier: appGroupIdentifier))
+        self.loadThumbnail = loadThumbnail
     }
 
-    func export(chats: [ChatThreadSnapshot]) {
-        let entries = chats
-            .sorted { ($0.lastMessageAtSecs ?? 0) > ($1.lastMessageAtSecs ?? 0) }
-            .prefix(20)
-            .map { chat in
-                ShareSuggestionEntry(
-                    chatId: chat.chatId,
-                    displayName: chat.displayName,
-                    subtitle: chat.subtitle,
-                    pictureUrl: chat.pictureUrl,
-                    isGroup: chat.kind == .group,
-                    lastMessageAtSecs: chat.lastMessageAtSecs
-                )
-            }
-        guard let data = try? JSONEncoder().encode(Array(entries)) else {
-            return
+    func export(
+        chats: [ChatThreadSnapshot], manager: AppManager?,
+        onAvatars: @escaping ([String: Data]) -> Void
+    ) {
+        let entries = chats.map { chat in
+            ShareSuggestionEntry(chatId: chat.chatId, displayName: chat.displayName,
+                subtitle: chat.subtitle, pictureUrl: chat.pictureUrl, isGroup: chat.kind == .group,
+                lastMessageAtSecs: chat.lastMessageAtSecs)
         }
-        if data == lastWritten {
-            return
+        var keys: [String: String] = [:]
+        var sources: [String: IrisAvatarImageSource] = [:]
+        var cached: [String: Data] = [:]
+        for entry in entries {
+            guard let source = irisAvatarImageSource(pictureUrl: entry.pictureUrl,
+                preferences: manager?.state.preferences, pixelSize: 120) else { continue }
+            keys[entry.chatId] = source.cacheKey
+            sources[source.cacheKey] = source
+            cached[source.cacheKey] = IrisAvatarImageCache.image(for: source.cacheKey)?.jpegData(compressionQuality: 0.85)
         }
-        lastWritten = data
-        let groupId = appGroupIdentifier
-        let fm = fileManager
-        queue.async {
-            guard let dir = fm.containerURL(forSecurityApplicationGroupIdentifier: groupId) else {
-                return
-            }
-            let url = dir.appendingPathComponent("share-suggestions.json")
-            try? data.write(to: url, options: .atomic)
-        }
+        let loader = loadThumbnail
+        store.export(entries: entries, thumbnailKeys: keys, cachedThumbnails: cached,
+            loadThumbnail: { [weak manager] key in
+                guard let source = sources[key] else { return nil }
+                return await loader(source, manager)
+            }, onAvatars: onAvatars)
     }
 }
 

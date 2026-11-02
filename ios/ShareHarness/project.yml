@@ -1,0 +1,60 @@
+name: IrisShareHarness
+options:
+  deploymentTarget:
+    iOS: "16.0"
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    CODE_SIGNING_ALLOWED: NO
+    GENERATE_INFOPLIST_FILE: YES
+    MARKETING_VERSION: "1.0"
+    CURRENT_PROJECT_VERSION: "1"
+targets:
+  IrisShareHarness:
+    type: application
+    platform: iOS
+    sources:
+      - Host.swift
+      - ../ShareExtension/ShareViewController.swift
+      - ../Sources/IrisAvatarContent.swift
+      - ../Sources/ShareSuggestionEntry.swift
+      - ../Sources/ShareSuggestionsStore.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: to.iris.tests.share-harness
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
+        TARGETED_DEVICE_FAMILY: "1,2"
+  IrisShareHarnessTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - ../Tests/ShareSuggestionsStoreTests.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: to.iris.tests.share-harness.tests
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/IrisShareHarness.app/IrisShareHarness"
+        BUNDLE_LOADER: "$(TEST_HOST)"
+    dependencies:
+      - target: IrisShareHarness
+  IrisShareHarnessUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - UITests.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: to.iris.tests.share-harness.ui-tests
+        TEST_TARGET_NAME: IrisShareHarness
+    dependencies:
+      - target: IrisShareHarness
+schemes:
+  IrisShareHarness:
+    build:
+      targets:
+        IrisShareHarness: all
+    test:
+      targets:
+        - IrisShareHarnessTests
+        - IrisShareHarnessUITests
+      gatherCoverageData: false

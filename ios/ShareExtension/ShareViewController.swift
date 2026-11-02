@@ -1,5 +1,6 @@
 import Intents
 import UIKit
+import SwiftUI
 import UniformTypeIdentifiers
 
 private let appGroupIdentifier = "group.fi.siriusbusiness.irischat"
@@ -19,16 +20,35 @@ private struct StoredSharePayload: Codable {
     let autoSend: Bool?
 }
 
-private struct ShareSuggestionEntry: Codable {
-    let chatId: String
-    let displayName: String
-    let subtitle: String?
-    let pictureUrl: String?
-    let isGroup: Bool
-    let lastMessageAtSecs: UInt64?
-}
 
 final class ShareViewController: UIViewController {
+#if DEBUG
+    private var fixtureContainer: URL?
+    private var fixtureItems: [NSExtensionItem]?
+    private var fixtureCompletion: (() -> Void)?
+
+    /// Exercise the real screen and item-provider pipeline in an isolated host.
+    convenience init(fixtureContainer: URL, items: [NSExtensionItem], completion: @escaping () -> Void) {
+        self.init(nibName: nil, bundle: nil)
+        self.fixtureContainer = fixtureContainer
+        self.fixtureItems = items
+        self.fixtureCompletion = completion
+    }
+#endif
+
+    private var sharedContainer: URL? {
+#if DEBUG
+        if let fixtureContainer { return fixtureContainer }
+#endif
+        return FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupIdentifier)
+    }
+
+    private var sharedItems: [NSExtensionItem] {
+#if DEBUG
+        if let fixtureItems { return fixtureItems }
+#endif
+        return extensionContext?.inputItems.compactMap { $0 as? NSExtensionItem } ?? []
+    }
     private let titleBar = UIView()
     private let titleLabel = UILabel()
     private let searchBar = UISearchBar(frame: .zero)
@@ -222,7 +242,7 @@ final class ShareViewController: UIViewController {
             footerStack.topAnchor.constraint(equalTo: footerView.topAnchor, constant: 9),
             footerStack.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 16),
             footerStack.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -16),
-            footerStack.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -9),
+            footerStack.bottomAnchor.constraint(equalTo: view.keyboardLayoutGuide.topAnchor, constant: -9),
 
             selectedNamesScrollView.heightAnchor.constraint(equalToConstant: 44),
             selectedNamesLabel.leadingAnchor.constraint(equalTo: selectedNamesScrollView.contentLayoutGuide.leadingAnchor, constant: 2),
@@ -433,9 +453,7 @@ final class ShareViewController: UIViewController {
     }
 
     private func rewritePayloadOnDisk(_ payload: StoredSharePayload) {
-        guard let container = FileManager.default.containerURL(
-            forSecurityApplicationGroupIdentifier: appGroupIdentifier
-        ) else {
+        guard let container = sharedContainer else {
             return
         }
         let url = container
@@ -463,9 +481,7 @@ final class ShareViewController: UIViewController {
 
     private func deleteStagedPayload() {
         guard let payload = stagedPayload else { return }
-        guard let container = FileManager.default.containerURL(
-            forSecurityApplicationGroupIdentifier: appGroupIdentifier
-        ) else {
+        guard let container = sharedContainer else {
             return
         }
         let sharesDir = container.appendingPathComponent("pending-shares", isDirectory: true)
@@ -478,9 +494,7 @@ final class ShareViewController: UIViewController {
     }
 
     private func readSuggestions() -> [ShareSuggestionEntry] {
-        guard let container = FileManager.default.containerURL(
-            forSecurityApplicationGroupIdentifier: appGroupIdentifier
-        ) else {
+        guard let container = sharedContainer else {
             return []
         }
         let url = container.appendingPathComponent("share-suggestions.json")
@@ -492,9 +506,7 @@ final class ShareViewController: UIViewController {
     }
 
     private func stageShareToDisk(suggestedChatId: String?) async -> StoredSharePayload? {
-        guard let container = FileManager.default.containerURL(
-            forSecurityApplicationGroupIdentifier: appGroupIdentifier
-        ) else {
+        guard let container = sharedContainer else {
             return nil
         }
 
@@ -536,7 +548,7 @@ final class ShareViewController: UIViewController {
         var textParts = [String]()
         var attachments = [StoredShareAttachment]()
 
-        let inputItems = extensionContext?.inputItems.compactMap { $0 as? NSExtensionItem } ?? []
+        let inputItems = sharedItems
         for item in inputItems {
             for provider in item.attachments ?? [] {
                 if let urlText = await loadURLText(from: provider) {
@@ -584,7 +596,7 @@ final class ShareViewController: UIViewController {
             personHandle: INPersonHandle(value: chatId, type: .unknown),
             nameComponents: nil,
             displayName: title,
-            image: nil,
+            image: entry.avatarData.map { INImage(imageData: $0) },
             contactIdentifier: nil,
             customIdentifier: chatId,
             isContactSuggestion: false,
@@ -601,6 +613,9 @@ final class ShareViewController: UIViewController {
             sender: nil,
             attachments: nil
         )
+        if entry.isGroup, let data = entry.avatarData {
+            intent.setImage(INImage(imageData: data), forParameterNamed: \.speakableGroupName)
+        }
         let interaction = INInteraction(intent: intent, response: nil)
         interaction.direction = .outgoing
         interaction.identifier = "share-extension-pick-\(chatId)-\(Int(Date().timeIntervalSince1970))"
@@ -695,6 +710,9 @@ final class ShareViewController: UIViewController {
     }
 
     private func complete() {
+#if DEBUG
+        if let fixtureCompletion { fixtureCompletion(); return }
+#endif
         extensionContext?.completeRequest(returningItems: nil)
     }
 }
@@ -747,93 +765,35 @@ extension ShareViewController: UISearchBarDelegate {
 private final class ShareChatCell: UITableViewCell {
     static let reuseId = "ShareChatCell"
 
-    private let selectionView = UIImageView()
-    private let avatarLabel = UILabel()
-    private let nameLabel = UILabel()
-    private let subtitleLabel = UILabel()
-
-    override init(style: UITableViewCell.CellStyle, reuseIdentifier: String?) {
-        super.init(style: style, reuseIdentifier: reuseIdentifier)
-
-        selectionStyle = .none
-        backgroundColor = ShareColors.cellBackground
-        contentView.backgroundColor = ShareColors.cellBackground
-
-        selectionView.contentMode = .scaleAspectFit
-        selectionView.preferredSymbolConfiguration = UIImage.SymbolConfiguration(
-            pointSize: 24,
-            weight: .semibold
-        )
-        selectionView.translatesAutoresizingMaskIntoConstraints = false
-
-        avatarLabel.textAlignment = .center
-        avatarLabel.textColor = .white
-        avatarLabel.font = .systemFont(ofSize: 17, weight: .semibold)
-        avatarLabel.layer.cornerRadius = 20
-        avatarLabel.layer.masksToBounds = true
-        avatarLabel.translatesAutoresizingMaskIntoConstraints = false
-
-        nameLabel.font = .systemFont(ofSize: 17)
-        nameLabel.textColor = .label
-        nameLabel.translatesAutoresizingMaskIntoConstraints = false
-
-        subtitleLabel.font = .systemFont(ofSize: 13)
-        subtitleLabel.textColor = .secondaryLabel
-        subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
-
-        contentView.addSubview(avatarLabel)
-        contentView.addSubview(nameLabel)
-        contentView.addSubview(subtitleLabel)
-        contentView.addSubview(selectionView)
-
-        NSLayoutConstraint.activate([
-            avatarLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 16),
-            avatarLabel.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
-            avatarLabel.widthAnchor.constraint(equalToConstant: 40),
-            avatarLabel.heightAnchor.constraint(equalToConstant: 40),
-
-            nameLabel.leadingAnchor.constraint(equalTo: avatarLabel.trailingAnchor, constant: 12),
-            nameLabel.trailingAnchor.constraint(equalTo: selectionView.leadingAnchor, constant: -12),
-            nameLabel.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 9),
-
-            subtitleLabel.leadingAnchor.constraint(equalTo: nameLabel.leadingAnchor),
-            subtitleLabel.trailingAnchor.constraint(equalTo: nameLabel.trailingAnchor),
-            subtitleLabel.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 2),
-
-            selectionView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -16),
-            selectionView.centerYAnchor.constraint(equalTo: contentView.centerYAnchor),
-            selectionView.widthAnchor.constraint(equalToConstant: 32),
-            selectionView.heightAnchor.constraint(equalToConstant: 40),
-        ])
-    }
-
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
     func configure(with entry: ShareSuggestionEntry, selected: Bool) {
         let display = shareDisplayName(for: entry)
-        nameLabel.text = display
-        let trimmedSubtitle = entry.subtitle?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        subtitleLabel.text = trimmedSubtitle.isEmpty ? nil : trimmedSubtitle
-        subtitleLabel.isHidden = subtitleLabel.text == nil
-
-        let firstChar = display.unicodeScalars.first.map { String($0).uppercased() } ?? "?"
-        avatarLabel.text = firstChar
-        avatarLabel.backgroundColor = avatarColor(for: entry.chatId)
-        selectionView.image = UIImage(systemName: selected ? "checkmark.circle.fill" : "circle")
-        selectionView.tintColor = selected ? ShareColors.action : .tertiaryLabel
+        let image = entry.avatarData.flatMap(UIImage.init(data:))
+        selectionStyle = .none
+        backgroundColor = ShareColors.cellBackground
+        contentConfiguration = UIHostingConfiguration {
+            HStack(spacing: 12) {
+                IrisAvatarContent(
+                    image: image.map { Image(uiImage: $0) }, label: display, size: 40,
+                    background: Color(uiColor: .secondarySystemFill),
+                    foreground: Color(uiColor: .label), border: Color(uiColor: .separator)
+                )
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(display).font(.system(size: 17)).foregroundStyle(Color(uiColor: .label)).lineLimit(1)
+                    if let subtitle = entry.subtitle?.trimmingCharacters(in: .whitespacesAndNewlines), !subtitle.isEmpty {
+                        Text(subtitle).font(.system(size: 13)).foregroundStyle(Color(uiColor: .secondaryLabel)).lineLimit(1)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 24, weight: .semibold))
+                    .foregroundStyle(Color(uiColor: selected ? ShareColors.action : .tertiaryLabel))
+                    .frame(width: 32, height: 40)
+            }
+        }.margins(.horizontal, 16).margins(.vertical, 9)
         accessibilityLabel = "\(display), \(selected ? "selected" : "not selected")"
+        accessibilityIdentifier = "share-recipient-\(entry.chatId)"
     }
 
-    private func avatarColor(for seed: String) -> UIColor {
-        var hash: UInt64 = 5381
-        for ch in seed.unicodeScalars {
-            hash = hash &* 33 &+ UInt64(ch.value)
-        }
-        let hue = CGFloat(hash % 360) / 360
-        return UIColor(hue: hue, saturation: 0.55, brightness: 0.78, alpha: 1.0)
-    }
 }
 
 private final class ShareSectionHeaderView: UITableViewHeaderFooterView {
