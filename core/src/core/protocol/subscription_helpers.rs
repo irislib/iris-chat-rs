@@ -152,16 +152,62 @@ pub(super) async fn subscribe_protocol_filters_with_id(
     }
 }
 
+/// The local account identities are captured before spawning a read. Public
+/// filter shape alone cannot distinguish own metadata from peer discovery.
+#[derive(Default)]
+pub(in crate::core) struct ReadScope {
+    account_authors: HashSet<PublicKey>,
+    failure_sender: Option<Sender<CoreMsg>>,
+}
+
+impl ReadScope {
+    pub(super) fn split_discovery(&self, filters: Vec<Filter>) -> (Vec<Filter>, Vec<Filter>) {
+        super::private_reads::split_discovery_filters(filters, &self.account_authors)
+    }
+
+    fn report_failure(&self, scope: &str, error: &str) {
+        if let Some(sender) = &self.failure_sender {
+            let _ = sender.send(CoreMsg::Internal(Box::new(InternalEvent::DebugLog {
+                category: "protocol.read.error".into(),
+                detail: format!("scope={scope} error={error}"),
+            })));
+        }
+    }
+}
+
+impl AppCore {
+    pub(in crate::core) fn cold_read_scope(&self) -> ReadScope {
+        ReadScope {
+            account_authors: self.own_public_authors(),
+            failure_sender: Some(self.core_sender.clone()),
+        }
+    }
+}
+
 pub(in crate::core) async fn fetch_events_for_filters(
     client: &Client,
     discovery: &Arc<super::public_discovery::DiscoveryRelays>,
+    scope: &ReadScope,
     filters: Vec<Filter>,
     timeout: Duration,
 ) -> Result<Vec<Event>, String> {
     let relay_urls = client.relays().await.keys().cloned().collect::<Vec<_>>();
-    let (public, private): (Vec<_>, Vec<_>) = filters
+    let (receiver, public) = scope.split_discovery(filters);
+    let (account, private): (Vec<_>, Vec<_>) = receiver
         .into_iter()
         .partition(super::private_reads::is_public_discovery_filter);
+    let requested = [!account.is_empty(), !public.is_empty(), !private.is_empty()];
+    let account = async {
+        if account.is_empty() {
+            Ok(Vec::new())
+        } else {
+            // Reuse the already configured own-account receiver. Never fall
+            // back to the anonymous peer pool on failure or authentication error.
+            discovery
+                .fetch_account(client, &relay_urls, account, timeout)
+                .await
+        }
+    };
     let public = async {
         if public.is_empty() {
             Ok(Vec::new())
@@ -176,10 +222,37 @@ pub(in crate::core) async fn fetch_events_for_filters(
             super::anonymous_reads::fetch(&relay_urls, private, timeout).await
         }
     };
-    let (public, private) = tokio::join!(public, private);
-    let mut events = public?;
-    events.extend(private?);
-    Ok(events)
+    let (account, public, private) = tokio::join!(account, public, private);
+    let mut events = Vec::new();
+    let mut failures = Vec::new();
+    let mut succeeded = false;
+    for ((name, result), requested) in [
+        ("account", account),
+        ("peer_discovery", public),
+        ("private", private),
+    ]
+    .into_iter()
+    .zip(requested)
+    {
+        if !requested {
+            continue;
+        }
+        match result {
+            Ok(mut collected) => {
+                succeeded = true;
+                events.append(&mut collected);
+            }
+            Err(error) => {
+                scope.report_failure(name, &error);
+                failures.push(format!("{name}: {error}"));
+            }
+        }
+    }
+    if succeeded || failures.is_empty() {
+        Ok(events)
+    } else {
+        Err(failures.join("; "))
+    }
 }
 
 pub(super) async fn wait_for_connected_relays(client: &Client, timeout: Duration) -> usize {
@@ -197,3 +270,6 @@ pub(super) async fn wait_for_connected_relays(client: &Client, timeout: Duration
         sleep(Duration::from_millis(100)).await;
     }
 }
+
+#[cfg(test)]
+mod tests;

@@ -37,7 +37,7 @@ impl RelayLease {
         filters: Vec<Filter>,
         timeout: Duration,
     ) -> Result<Vec<Event>, QueryFailure> {
-        fetch(&self.pool, &self.urls, filters, timeout).await
+        fetch(&self.pool, &self.pool.client, &self.urls, filters, timeout).await
     }
 }
 
@@ -48,6 +48,7 @@ impl RelayLease {
 // Only one query accumulates results per pool, including foreground recovery.
 pub(super) async fn fetch(
     pool: &DiscoveryRelays,
+    client: &Client,
     urls: &[RelayUrl],
     filters: Vec<Filter>,
     timeout: Duration,
@@ -81,8 +82,7 @@ pub(super) async fn fetch(
         let filters = &filters;
         async move {
             let response = async {
-                let relay = pool
-                    .client
+                let relay = client
                     .relay(url.clone())
                     .await
                     .map_err(|error| QueryFailure::Transport(error.to_string()))?;
@@ -206,14 +206,37 @@ struct Collection {
     bytes: usize,
 }
 
+// The account receiver retains its SDK 5 MiB transport allowance for private
+// receives. SDK signature verification happens before notifications; do not
+// repeat that crypto here. Bound metadata acceptance before retaining it, using
+// a counting writer so checking a large event does not allocate another copy.
+fn metadata_size(event: &Event) -> Option<usize> {
+    struct Size(usize);
+    impl std::io::Write for Size {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            if bytes.len() > MAX_FRAME_BYTES as usize - self.0 {
+                return Err(std::io::Error::other("metadata size limit"));
+            }
+            self.0 += bytes.len();
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut size = Size(0);
+    serde_json::to_writer(&mut size, event).ok()?;
+    Some(size.0)
+}
+
 impl Collection {
     fn insert(&mut self, event: Event) -> Result<(), QueryFailure> {
         if self.ids.contains(&event.id) {
             return Ok(());
         }
-        let size = serde_json::to_vec(&event)
-            .map_err(|error| QueryFailure::Transport(error.to_string()))?
-            .len();
+        let Some(size) = metadata_size(&event) else {
+            return Ok(());
+        };
         if self.bytes.saturating_add(size) > MAX_RESULT_BYTES
             || self.events.len() >= MAX_RESULT_EVENTS
         {
@@ -229,6 +252,28 @@ impl Collection {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn metadata_admission_keeps_exact_event_bound_without_allocating_a_copy() {
+        let keys = Keys::generate();
+        let event = |content: String| {
+            EventBuilder::new(Kind::Metadata, content)
+                .sign_with_keys(&keys)
+                .unwrap()
+        };
+        let overhead = serde_json::to_vec(&event(String::new())).unwrap().len();
+        let maximum = event("x".repeat(MAX_FRAME_BYTES as usize - overhead));
+        assert_eq!(metadata_size(&maximum), Some(MAX_FRAME_BYTES as usize));
+        let oversized = event("x".repeat(MAX_FRAME_BYTES as usize - overhead + 1));
+        assert_eq!(metadata_size(&oversized), None);
+        let mut collection = Collection::default();
+        collection.insert(oversized).unwrap();
+        assert_eq!(collection.bytes, 0);
+        assert!(collection.events.is_empty() && collection.ids.is_empty());
+        collection.insert(maximum).unwrap();
+        assert_eq!(collection.bytes, MAX_FRAME_BYTES as usize);
+        assert_eq!(collection.events.len(), 1);
+    }
 
     #[test]
     fn metadata_collection_accepts_exact_bounds_and_rejects_overflow_before_retaining() {

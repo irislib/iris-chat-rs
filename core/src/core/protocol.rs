@@ -13,7 +13,7 @@ use self::backfill::{
     NEW_MESSAGE_AUTHOR_DELAYED_BACKFILL_MS, PROTOCOL_BACKFILL_AUTHOR_BATCH_SIZE,
 };
 pub(super) use self::subscription_helpers::{
-    build_protocol_subscription_filters, fetch_events_for_filters,
+    build_protocol_subscription_filters, fetch_events_for_filters, ReadScope,
 };
 use self::subscription_helpers::{
     current_client_relay_statuses, pubkeys_from_comma_separated_hexes, pubkeys_from_hexes,
@@ -789,7 +789,8 @@ impl AppCore {
         } else {
             self.recent_protocol_metadata_filters(now)
         };
-        let (mut filters, discovery_filters) = self.split_private_discovery_filters(filters);
+        let scope = self.cold_read_scope();
+        let (mut filters, discovery_filters) = scope.split_discovery(filters);
         let requested_discovery = !discovery_filters.is_empty();
         filters.extend(self.delegate_private_discovery_catch_up(discovery_filters, &relay_urls));
         if filters.is_empty() {
@@ -812,8 +813,14 @@ impl AppCore {
         self.runtime.spawn(async move {
             ensure_session_relays_configured(&client, &relay_urls).await;
             connect_client_with_timeout(&client, Duration::from_secs(5)).await;
-            match fetch_events_for_filters(&client, &discovery, filters, Duration::from_secs(5))
-                .await
+            match fetch_events_for_filters(
+                &client,
+                &discovery,
+                &scope,
+                filters,
+                Duration::from_secs(5),
+            )
+            .await
             {
                 Ok(collected) => {
                     let _ = tx.send(CoreMsg::Internal(Box::new(InternalEvent::DebugLog {

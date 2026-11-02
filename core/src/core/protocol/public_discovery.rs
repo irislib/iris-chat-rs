@@ -77,6 +77,20 @@ impl DiscoveryRelays {
             .map_err(|e| e.to_string())
     }
 
+    // Share the bounded query collector and its admission budget, never the
+    // anonymous transport. Account reads keep the caller's existing client.
+    pub(super) async fn fetch_account(
+        &self,
+        client: &Client,
+        urls: &[RelayUrl],
+        filters: Vec<Filter>,
+        timeout: Duration,
+    ) -> Result<Vec<Event>, String> {
+        query::fetch(self, client, urls, filters, timeout)
+            .await
+            .map_err(|error| error.to_string())
+    }
+
     pub(in crate::core) fn stop(&self, runtime: &tokio::runtime::Handle) {
         self.stopped.store(true, Ordering::Release);
         let client = self.client.clone();
@@ -425,7 +439,7 @@ async fn run(
                         query = Some(Box::pin(async move {
                             let mut retry = Duration::from_secs(1);
                             loop {
-                                match query::fetch(&pool, &urls, filters.clone(), Duration::from_secs(12)).await {
+                                match query::fetch(&pool, &pool.client, &urls, filters.clone(), Duration::from_secs(12)).await {
                                     Ok(events) => return Ok(events),
                                     Err(QueryFailure::Limit) => return Err(QueryFailure::Limit),
                                     Err(QueryFailure::Transport(_)) => {}

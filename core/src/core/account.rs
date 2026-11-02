@@ -327,6 +327,7 @@ impl AppCore {
         let relay_urls = self.device_approval_relay_urls.clone();
         let tx = self.core_sender.clone();
         let discovery = self.discovery_relays.clone();
+        let scope = self.cold_read_scope();
         self.runtime.spawn(async move {
             connect_pending_device_link_client(&client, &relay_urls).await;
             for (id, filter) in ["link-device-response", "link-device-approval"]
@@ -340,6 +341,7 @@ impl AppCore {
             let events = super::protocol::fetch_events_for_filters(
                 &client,
                 &discovery,
+                &scope,
                 filters,
                 Duration::from_secs(PENDING_DEVICE_LINK_FETCH_TIMEOUT_SECS),
             )

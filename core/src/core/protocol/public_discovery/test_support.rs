@@ -107,6 +107,8 @@ pub(in crate::core) struct Relay {
     pub sent_bytes: Arc<AtomicUsize>,
     pub responses: Responses,
     pub reject_subscriptions: Arc<AtomicBool>,
+    pub reject_authentication_for: Arc<Mutex<HashSet<PublicKey>>>,
+    pub reject_requests_for: Arc<Mutex<HashSet<PublicKey>>>,
     pub hold_eose: Arc<AtomicBool>,
     accepted: AcceptedSubscriptions,
     commands: tokio::sync::broadcast::Sender<Command>,
@@ -169,7 +171,7 @@ pub(in crate::core) async fn relay(events: Vec<Event>) -> Relay {
     relay_with_tls(events, true).await
 }
 
-pub(super) async fn plain_relay(events: Vec<Event>) -> Relay {
+pub(in crate::core) async fn plain_relay(events: Vec<Event>) -> Relay {
     relay_with_tls(events, false).await
 }
 
@@ -188,6 +190,8 @@ async fn relay_with_tls(events: Vec<Event>, tls: bool) -> Relay {
     let sent_bytes = Arc::new(AtomicUsize::new(0));
     let responses = Arc::new(Mutex::new(Vec::new()));
     let reject_subscriptions = Arc::new(AtomicBool::new(false));
+    let reject_authentication_for = Arc::new(Mutex::new(HashSet::<PublicKey>::new()));
+    let reject_requests_for = Arc::new(Mutex::new(HashSet::<PublicKey>::new()));
     let hold_eose = Arc::new(AtomicBool::new(false));
     let (commands, _) = tokio::sync::broadcast::channel(1024);
     let task = {
@@ -200,6 +204,8 @@ async fn relay_with_tls(events: Vec<Event>, tls: bool) -> Relay {
         let sent_bytes = sent_bytes.clone();
         let responses = responses.clone();
         let reject_subscriptions = reject_subscriptions.clone();
+        let reject_authentication_for = reject_authentication_for.clone();
+        let reject_requests_for = reject_requests_for.clone();
         let hold_eose = hold_eose.clone();
         tokio::spawn(async move {
             let acceptor = super::super::anonymous_reads::tls_tests::acceptor(true, false);
@@ -213,6 +219,8 @@ async fn relay_with_tls(events: Vec<Event>, tls: bool) -> Relay {
                         let guard = Active { count: active.clone(), accepted: accepted.clone(), id };
                         let acceptor = acceptor.clone(); let wire = wire.clone(); let events = events.clone();
                         let accepted = accepted.clone(); let sent_bytes = sent_bytes.clone(); let reject_subscriptions = reject_subscriptions.clone();
+                        let reject_authentication_for = reject_authentication_for.clone();
+                        let reject_requests_for = reject_requests_for.clone();
                         let hold_eose = hold_eose.clone();
                         let responses = responses.clone();
                         let mut commands = commands.subscribe();
@@ -225,6 +233,7 @@ async fn relay_with_tls(events: Vec<Event>, tls: bool) -> Relay {
                             let Ok(mut socket) = tokio_tungstenite::accept_async(stream).await else { return; };
                             if socket.send(Message::Text(serde_json::json!(["AUTH", format!("fixture-{id}")]).to_string())).await.is_err() { return; }
                             let mut authenticated = false;
+                            let mut signer = None;
                             let mut subscriptions = BTreeMap::<String, Vec<Filter>>::new();
                             loop {
                                 let frames = tokio::select! {
@@ -240,11 +249,12 @@ async fn relay_with_tls(events: Vec<Event>, tls: bool) -> Relay {
                                             Some("AUTH") => {
                                                 let event: Event = serde_json::from_value(frame[1].clone()).unwrap();
                                                 event.verify().unwrap(); assert_eq!(event.kind, Kind::Authentication);
-                                                authenticated = true;
-                                                vec![serde_json::json!(["OK", event.id, true, ""])]
+                                                signer = Some(event.pubkey);
+                                                authenticated = !reject_authentication_for.lock().unwrap().contains(&event.pubkey);
+                                                vec![serde_json::json!(["OK", event.id, authenticated, if authenticated { "" } else { "restricted: fixture AUTH rejected" }])]
                                             }
                                             Some("REQ") if !authenticated => vec![serde_json::json!(["CLOSED", frame[1], "auth-required: fixture"])],
-                                            Some("REQ") if reject_subscriptions.load(Ordering::SeqCst) => vec![serde_json::json!(["CLOSED", frame[1], "error: fixture rejection"])],
+                                            Some("REQ") if reject_subscriptions.load(Ordering::SeqCst) || signer.is_some_and(|signer| reject_requests_for.lock().unwrap().contains(&signer)) => vec![serde_json::json!(["CLOSED", frame[1], "error: fixture rejection"])],
                                             Some("REQ") => {
                                                 let filters = frame.as_array().unwrap()[2..].iter().cloned().map(serde_json::from_value).collect::<Result<Vec<Filter>, _>>().unwrap();
                                                 let mut frames = events.lock().unwrap().iter().filter(|event| filters.iter().any(|filter|
@@ -301,6 +311,8 @@ async fn relay_with_tls(events: Vec<Event>, tls: bool) -> Relay {
         sent_bytes,
         responses,
         reject_subscriptions,
+        reject_authentication_for,
+        reject_requests_for,
         hold_eose,
         accepted,
         commands,

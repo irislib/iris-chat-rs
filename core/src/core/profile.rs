@@ -56,6 +56,7 @@ impl AppCore {
         );
         let tx = self.core_sender.clone();
         let discovery = self.discovery_relays.clone();
+        let scope = self.cold_read_scope();
         self.runtime.spawn(async move {
             ensure_session_relays_configured(&client, &relay_urls).await;
             connect_client_with_timeout(&client, Duration::from_secs(5)).await;
@@ -63,6 +64,7 @@ impl AppCore {
             match super::protocol::fetch_events_for_filters(
                 &client,
                 &discovery,
+                &scope,
                 vec![filter],
                 Duration::from_secs(PROFILE_METADATA_FETCH_TIMEOUT_SECS),
             )

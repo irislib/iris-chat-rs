@@ -132,6 +132,7 @@ impl AppCore {
         let tx = self.core_sender.clone();
         let owner_pubkey_hex = owner_pubkey_hex.to_string();
         let discovery = self.discovery_relays.clone();
+        let scope = self.cold_read_scope();
         self.runtime.spawn(async move {
             ensure_session_relays_configured(&client, &relay_urls).await;
             connect_client_with_timeout(&client, DIRECT_CAPABILITY_FETCH_TIMEOUT).await;
@@ -142,6 +143,7 @@ impl AppCore {
             let result = fetch_events_for_filters(
                 &client,
                 &discovery,
+                &scope,
                 vec![filter],
                 DIRECT_CAPABILITY_FETCH_TIMEOUT,
             )

@@ -278,6 +278,7 @@ fn metadata_privacy_isolates_peer_discovery_from_identity_auth_and_own_receive_f
         let events = protocol::fetch_events_for_filters(
             &receiver_client,
             &core.discovery_relays,
+            &core.cold_read_scope(),
             vec![Filter::new()
                 .kind(Kind::from(APP_KEYS_EVENT_KIND as u16))
                 .authors([peer_owner, other_owner])],

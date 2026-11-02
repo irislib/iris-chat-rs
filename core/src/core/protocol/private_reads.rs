@@ -125,13 +125,7 @@ impl AppCore {
         Ok(vec![(Arc::downgrade(worker), filters)])
     }
 
-    /// Public peer discovery must not share the own-account receive context.
-    /// Shared public discovery never authenticates with account/device keys
-    /// or publishes private events.
-    pub(in crate::core) fn split_private_discovery_filters(
-        &self,
-        filters: Vec<Filter>,
-    ) -> (Vec<Filter>, Vec<Filter>) {
+    pub(super) fn own_public_authors(&self) -> HashSet<PublicKey> {
         let mut own = HashSet::new();
         if let Some(local) = &self.logged_in {
             own.insert(local.owner_pubkey);
@@ -152,40 +146,57 @@ impl AppCore {
                 );
             }
         }
-        let mut receiver = Vec::new();
-        let mut discovery = Vec::new();
-        for filter in filters {
-            if !is_public_discovery_filter(&filter) {
-                receiver.push(filter);
-                continue;
-            }
-            let Some(authors) = filter.authors.as_ref() else {
-                receiver.push(filter);
-                continue;
-            };
-            let own_authors = authors
-                .iter()
-                .filter(|key| own.contains(key))
-                .copied()
-                .collect::<std::collections::BTreeSet<_>>();
-            let peer_authors = authors
-                .iter()
-                .filter(|key| !own.contains(key))
-                .copied()
-                .collect::<std::collections::BTreeSet<_>>();
-            if !own_authors.is_empty() {
-                let mut own_filter = filter.clone();
-                own_filter.authors = Some(own_authors);
-                receiver.push(own_filter);
-            }
-            if !peer_authors.is_empty() {
-                let mut peer_filter = filter;
-                peer_filter.authors = Some(peer_authors);
-                discovery.push(peer_filter);
-            }
-        }
-        (receiver, discovery)
+        own
     }
+
+    /// Public peer discovery must not share the own-account receive context.
+    /// Shared public discovery never authenticates with account/device keys
+    /// or publishes private events.
+    pub(in crate::core) fn split_private_discovery_filters(
+        &self,
+        filters: Vec<Filter>,
+    ) -> (Vec<Filter>, Vec<Filter>) {
+        split_discovery_filters(filters, &self.own_public_authors())
+    }
+}
+
+pub(super) fn split_discovery_filters(
+    filters: Vec<Filter>,
+    own: &HashSet<PublicKey>,
+) -> (Vec<Filter>, Vec<Filter>) {
+    let mut receiver = Vec::new();
+    let mut discovery = Vec::new();
+    for filter in filters {
+        if !is_public_discovery_filter(&filter) {
+            receiver.push(filter);
+            continue;
+        }
+        let Some(authors) = filter.authors.as_ref() else {
+            receiver.push(filter);
+            continue;
+        };
+        let own_authors = authors
+            .iter()
+            .filter(|key| own.contains(key))
+            .copied()
+            .collect::<std::collections::BTreeSet<_>>();
+        let peer_authors = authors
+            .iter()
+            .filter(|key| !own.contains(key))
+            .copied()
+            .collect::<std::collections::BTreeSet<_>>();
+        if !own_authors.is_empty() {
+            let mut own_filter = filter.clone();
+            own_filter.authors = Some(own_authors);
+            receiver.push(own_filter);
+        }
+        if !peer_authors.is_empty() {
+            let mut peer_filter = filter;
+            peer_filter.authors = Some(peer_authors);
+            discovery.push(peer_filter);
+        }
+    }
+    (receiver, discovery)
 }
 
 fn discovery_filter_is_covered(requested: &Filter, configured: &[Filter]) -> bool {

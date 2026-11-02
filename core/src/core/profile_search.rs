@@ -127,12 +127,18 @@ impl AppCore {
         let query = query.to_string();
         let tx = self.core_sender.clone();
         let discovery = self.discovery_relays.clone();
+        let scope = self.cold_read_scope();
         let task = self.runtime.spawn(async move {
             let (result, mut app_keys_events) = tokio::join!(
                 super::profile_search_remote::fetch_profile_candidates(&query, &relay_urls),
                 async {
-                    let events =
-                        fetch_search_app_keys(&client, &discovery, local_candidates.clone()).await;
+                    let events = fetch_search_app_keys(
+                        &client,
+                        &discovery,
+                        &scope,
+                        local_candidates.clone(),
+                    )
+                    .await;
                     let _ = tx.send(CoreMsg::Internal(Box::new(
                         InternalEvent::ProfileSearchCapabilitiesReady {
                             token,
@@ -157,7 +163,8 @@ impl AppCore {
                 .filter(|owner| !local_candidates.contains(owner))
                 .take(MAX_SEARCH_CAPABILITY_CANDIDATES)
                 .collect();
-            app_keys_events.extend(fetch_search_app_keys(&client, &discovery, remote_owners).await);
+            app_keys_events
+                .extend(fetch_search_app_keys(&client, &discovery, &scope, remote_owners).await);
             result.app_keys_events = app_keys_events;
             let result = Ok(result);
             let _ = tx.send(CoreMsg::Internal(Box::new(

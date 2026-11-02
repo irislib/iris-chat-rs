@@ -11,6 +11,7 @@ const SEARCH_CAPABILITY_TIMEOUT: Duration = Duration::from_secs(5);
 pub(super) async fn fetch_search_app_keys(
     client: &Client,
     discovery: &Arc<protocol::public_discovery::DiscoveryRelays>,
+    scope: &protocol::ReadScope,
     owners: Vec<PublicKey>,
 ) -> Vec<Event> {
     let owners = owners
@@ -31,9 +32,10 @@ pub(super) async fn fetch_search_app_keys(
                 .limit(32 * chunk.len())
         })
         .collect();
-    let events = fetch_events_for_filters(client, discovery, filters, SEARCH_CAPABILITY_TIMEOUT)
-        .await
-        .unwrap_or_default();
+    let events =
+        fetch_events_for_filters(client, discovery, scope, filters, SEARCH_CAPABILITY_TIMEOUT)
+            .await
+            .unwrap_or_default();
     resolve_search_app_keys(events, &owners, unix_now().get())
 }
 
@@ -130,6 +132,7 @@ mod tests {
                 fetch_search_app_keys(
                     &client,
                     &Arc::default(),
+                    &protocol::ReadScope::default(),
                     vec![owner.public_key(), unknown.public_key()]
                 )
                 .await,
@@ -138,7 +141,13 @@ mod tests {
             let revoked = app_keys(&owner, None, now + 1);
             client.send_event(&revoked).await.unwrap();
             assert_eq!(
-                fetch_search_app_keys(&client, &Arc::default(), vec![owner.public_key()]).await,
+                fetch_search_app_keys(
+                    &client,
+                    &Arc::default(),
+                    &protocol::ReadScope::default(),
+                    vec![owner.public_key()]
+                )
+                .await,
                 vec![revoked]
             );
             client.disconnect().await;
