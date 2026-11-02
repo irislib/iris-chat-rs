@@ -241,7 +241,7 @@ mod foreground_discovery {
                 // its author still belongs to this fixture's discovery scope.
                 assert!(
                     allowed.contains(&selector)
-                        || selector == json!({"authors": [author], "kinds": [0]}).to_string(),
+                        || selector == single_author_selector(&json!({"kinds": [0]}), &author),
                     "public discovery changed its exact selector: {value}"
                 );
             }
