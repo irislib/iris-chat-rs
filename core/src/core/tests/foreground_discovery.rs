@@ -193,6 +193,54 @@ mod foreground_discovery {
         }
     }
 
+    fn assert_discovery_filter(
+        value: &Value,
+        own: &HashSet<String>,
+        stable: &BTreeMap<String, BTreeSet<String>>,
+        advert_authors: &BTreeSet<String>,
+    ) {
+        let filter: Filter = serde_json::from_value(value.clone()).unwrap();
+        assert!(
+            value.get("#p").is_none()
+                && filter.kinds.as_ref().is_some_and(|kinds| {
+                    !kinds.contains(&Kind::from(MESSAGE_EVENT_KIND as u16))
+                }),
+            "public discovery shared a private receive context"
+        );
+        let authors = filter.authors.as_ref().expect("unscoped public discovery");
+        assert!(!authors.is_empty(), "unscoped public discovery");
+        for author in authors {
+            let author = author.to_hex();
+            let selector = single_author_selector(value, &author);
+            if value["kinds"] == json!([37195]) {
+                assert!(
+                    advert_authors.contains(&author),
+                    "unauthorized endpoint author: {author}"
+                );
+                assert_eq!(
+                    selector,
+                    json!({"authors": [author], "kinds": [37195]}).to_string(),
+                    "endpoint discovery changed its exact public selector"
+                );
+            } else {
+                assert!(
+                    !own.contains(&author),
+                    "own identity in non-advert public discovery"
+                );
+                let allowed = stable
+                    .get(&author)
+                    .expect("unknown public discovery author");
+                // An uncovered profile lookup is the only additional selector;
+                // its author still belongs to this fixture's discovery scope.
+                assert!(
+                    allowed.contains(&selector)
+                        || selector == json!({"authors": [author], "kinds": [0]}).to_string(),
+                    "public discovery changed its exact selector: {value}"
+                );
+            }
+        }
+    }
+
     fn assert_wire(
         wire: &Wire,
         own: &HashSet<String>,
@@ -215,7 +263,7 @@ mod foreground_discovery {
                 );
             }
         }
-        let mut contexts = BTreeMap::<usize, BTreeSet<String>>::new();
+        let mut contexts = BTreeSet::new();
         let mut observed = BTreeSet::new();
         let mut observed_siblings = BTreeSet::new();
         let mut private_history = false;
@@ -241,65 +289,20 @@ mod foreground_discovery {
                     .kinds
                     .as_ref()
                     .is_some_and(|kinds| kinds.contains(&Kind::Custom(37195)));
-                if advert {
-                    // Endpoint discovery includes authorized sibling devices,
-                    // unlike protocol metadata. They may share anonymous
-                    // public reads, never authentication or private receives.
-                    assert!(
-                        signer.is_none_or(|signer| !identities.contains(signer)),
-                        "identified authentication exposed endpoint discovery"
-                    );
-                    assert!(!authors.is_empty(), "unscoped endpoint discovery");
-                    for author in &authors {
-                        assert!(
-                            advert_authors.contains(author),
-                            "unauthorized endpoint discovery author: {author}"
+                if advert || !public.is_empty() {
+                    contexts.insert(*connection);
+                    if advert {
+                        observed_siblings.extend(
+                            authors
+                                .iter()
+                                .filter(|author| own.contains(*author))
+                                .cloned(),
                         );
-                        assert_eq!(
-                            single_author_selector(value, author),
-                            json!({"authors": [author], "kinds": [37195]}).to_string(),
-                            "endpoint discovery changed its exact public selector"
-                        );
-                        contexts
-                            .entry(*connection)
-                            .or_default()
-                            .insert(author.clone());
-                        if own.contains(author) {
-                            observed_siblings.insert(author.clone());
-                        }
-                    }
-                } else if !public.is_empty() {
-                    assert!(
-                        signer.is_none_or(|signer| !own.contains(signer)),
-                        "account authentication exposed peer discovery"
-                    );
-                    assert!(
-                        authors.iter().all(|author| stable.contains_key(author)),
-                        "public discovery mixed unrelated selectors: {value}"
-                    );
-                    assert!(
-                        value.get("#p").is_none(),
-                        "public discovery exposed a recipient"
-                    );
-                    assert!(
-                        own.iter().all(|key| !request.to_string().contains(key)),
-                        "public discovery exposed our identity"
-                    );
-                    for author in public {
-                        // Profiles may be uncovered cold lookups. Covered public
-                        // metadata must retain its exact stable selectors instead
-                        // of also issuing broad cold since/limit queries.
-                        let profile_only = value["kinds"] == json!([0])
-                            && value.get("since").is_none()
-                            && value.get("limit").is_none();
-                        assert!(profile_only || stable[author].contains(&single_author_selector(value, author)),
-                        "covered public metadata duplicated through broad cold catch-up: relay={relay}, filter={value}");
-                        contexts
-                            .entry(*connection)
-                            .or_default()
-                            .insert(author.clone());
-                        if stable[author].contains(&single_author_selector(value, author)) {
-                            observed.insert((*relay, author.clone()));
+                    } else {
+                        for author in public {
+                            if stable[author].contains(&single_author_selector(value, author)) {
+                                observed.insert((*relay, author.clone()));
+                            }
                         }
                     }
                 } else if signer.is_some_and(|signer| !own.contains(signer)) {
@@ -311,18 +314,23 @@ mod foreground_discovery {
                 }
             }
         }
-        for (connection, _) in contexts {
+        for connection in contexts {
             assert!(
-                rows.iter()
-                    .filter(|(_, id, frame)| *id == connection && frame[0] == "REQ")
-                    .flat_map(|(_, _, frame)| &frame.as_array().unwrap()[2..])
-                    .all(|filter| filter.get("#p").is_none()
-                        && !filter["kinds"]
-                            .as_array()
-                            .unwrap()
-                            .contains(&json!(MESSAGE_EVENT_KIND))),
-                "public discovery shared a private receive context"
+                authentication
+                    .get(&connection)
+                    .is_none_or(|signer| !identities.contains(signer)),
+                "identified authentication exposed public discovery"
             );
+            // Validate every filter in the entire connection, even a separate
+            // REQ sent before discovery. Unrecognized companion filters cannot
+            // fall through into the private/account receive classification.
+            for value in rows
+                .iter()
+                .filter(|(_, id, frame)| *id == connection && frame[0] == "REQ")
+                .flat_map(|(_, _, frame)| &frame.as_array().unwrap()[2..])
+            {
+                assert_discovery_filter(value, own, stable, advert_authors);
+            }
             assert!(
                 rows.iter()
                     .all(|(_, id, value)| *id != connection || value[0] != "EVENT"),
@@ -382,8 +390,40 @@ mod foreground_discovery {
             assert_wire(&wire, &own, &identities, &stable, &advert_authors);
         assert_eq!(observed, BTreeSet::from([(0, peer.public_key().to_hex())]));
         assert!(!history && !recipients);
-
         let mut rejected = Vec::new();
+        for forbidden in [
+            owner.public_key(),
+            device.public_key(),
+            siblings[0].public_key(),
+            Keys::generate().public_key(),
+        ] {
+            let companion = json!({"authors": [forbidden.to_hex()], "kinds": [0]});
+            let mut same_request = accepted.clone();
+            same_request[2]
+                .2
+                .as_array_mut()
+                .unwrap()
+                .push(companion.clone());
+            rejected.push(same_request);
+            for position in [1, accepted.len()] {
+                let mut separate_request = accepted.clone();
+                separate_request.insert(
+                    position,
+                    (0, 1, json!(["REQ", "companion", companion.clone()])),
+                );
+                rejected.push(separate_request);
+            }
+        }
+        for extra in [json!({"until": 1}), json!({"#d": ["unrelated"]})] {
+            let mut companion = profile.clone();
+            companion
+                .as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
+            let mut rows = accepted.clone();
+            rows[2].2.as_array_mut().unwrap().push(companion);
+            rejected.push(rows);
+        }
         for forbidden in [
             owner.public_key(),
             device.public_key(),
@@ -441,6 +481,11 @@ mod foreground_discovery {
                 "invalid discovery wire variant {index} was accepted"
             );
         }
+        let combined = Arc::new(Mutex::new(vec![
+            (0, 1, auth(&anonymous)),
+            (0, 1, json!(["REQ", "combined", advert, profile])),
+        ]));
+        assert_wire(&combined, &own, &identities, &stable, &advert_authors);
     }
 
     struct RunningApp(Arc<crate::FfiApp>);
