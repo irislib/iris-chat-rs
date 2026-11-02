@@ -3,6 +3,7 @@ use super::*;
 use crate::state::{ChatKind, ChatMessageKind, MutualGroupsSnapshot};
 
 mod blocked_people;
+mod devices;
 mod mention_notifications;
 
 /// Direct chats where every loaded message is incoming behave like a
@@ -1050,5 +1051,3 @@ pub(crate) fn relay_connection_status(status: RelayStatus) -> &'static str {
 #[cfg(test)]
 #[path = "tests/projection.rs"]
 mod tests;
-
-mod devices;
