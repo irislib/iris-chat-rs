@@ -3,8 +3,11 @@ use fips_core::{FipsEndpoint, PeerIdentity};
 use fips_tcp::{Config as TcpConfig, ConnectionId, MarkerStatus, SendMarker, State};
 use fips_tcp_endpoint::{AdapterError, FipsTcpEndpoint};
 use std::collections::{HashMap, HashSet, VecDeque};
+#[cfg(test)]
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant as StdInstant;
+use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 
 use control::{enqueue_control_retries, enqueue_dirty_resyncs, mark_dirty, store_control_record};
@@ -13,7 +16,6 @@ use framing::{comparison_key, elapsed_millis, frame, random_isn_seed, RecordRead
 mod control;
 mod framing;
 
-const POLL_MILLIS: u64 = 25;
 const CONNECTION_RETRY_MILLIS: u64 = 250;
 const FRAME_HEADER_BYTES: usize = 4;
 const COMMAND_CAPACITY: usize = 16;
@@ -32,6 +34,9 @@ pub(super) struct DeviceSyncTcpSender {
     max_record_bytes: usize,
     dirty: Arc<Mutex<HashSet<String>>>,
     control_retry: Arc<Mutex<HashMap<String, ControlRecord>>>,
+    changed: Arc<Notify>,
+    #[cfg(test)]
+    iterations: Arc<AtomicUsize>,
 }
 
 pub(super) struct SendBatch {
@@ -55,7 +60,10 @@ struct ControlRecord {
 impl DeviceSyncTcpSender {
     pub(super) fn update_peers(&self, peers: HashSet<String>) {
         if let Ok(mut allowed) = self.peers.lock() {
-            *allowed = peers;
+            if *allowed != peers {
+                *allowed = peers;
+                self.changed.notify_one();
+            }
         }
     }
 
@@ -79,6 +87,7 @@ impl DeviceSyncTcpSender {
             return true;
         }
         mark_dirty(&self.dirty, peer.npub());
+        self.changed.notify_one();
         false
     }
 
@@ -102,6 +111,8 @@ impl DeviceSyncTcpSender {
                 rank,
             },
         );
+        drop(records);
+        self.changed.notify_one();
         true
     }
 
@@ -118,6 +129,9 @@ impl DeviceSyncTcpSender {
                 max_record_bytes,
                 dirty: Arc::new(Mutex::new(HashSet::new())),
                 control_retry: Arc::new(Mutex::new(HashMap::new())),
+                changed: Arc::new(Notify::new()),
+                #[cfg(test)]
+                iterations: Arc::new(AtomicUsize::new(0)),
             },
             rx,
         )
@@ -152,6 +166,9 @@ pub(super) async fn start_device_sync_tcp(
     let dirty = Arc::new(Mutex::new(HashSet::new()));
     let control_retry = Arc::new(Mutex::new(HashMap::new()));
     let peers = Arc::new(Mutex::new(allowed_peers));
+    let changed = Arc::new(Notify::new());
+    #[cfg(test)]
+    let iterations = Arc::new(AtomicUsize::new(0));
     let task = tokio::spawn(run_device_sync_tcp(
         endpoint,
         peers.clone(),
@@ -159,11 +176,14 @@ pub(super) async fn start_device_sync_tcp(
         rx,
         dirty.clone(),
         control_retry.clone(),
+        changed.clone(),
         service_port,
         max_record_bytes,
         initial_request,
         resync_required,
         core_sender,
+        #[cfg(test)]
+        iterations.clone(),
     ));
     Ok((
         DeviceSyncTcpSender {
@@ -172,6 +192,9 @@ pub(super) async fn start_device_sync_tcp(
             max_record_bytes,
             dirty,
             control_retry,
+            changed,
+            #[cfg(test)]
+            iterations,
         },
         task,
     ))
@@ -185,11 +208,13 @@ async fn run_device_sync_tcp(
     commands: flume::Receiver<SendBatch>,
     dirty: Arc<Mutex<HashSet<String>>>,
     control_retry: Arc<Mutex<HashMap<String, ControlRecord>>>,
+    changed: Arc<Notify>,
     service_port: u16,
     max_record_bytes: usize,
     initial_request: Vec<u8>,
     resync_required: Vec<u8>,
     core_sender: Sender<CoreMsg>,
+    #[cfg(test)] iterations: Arc<AtomicUsize>,
 ) {
     let started = StdInstant::now();
     let local = match PeerIdentity::from_npub(endpoint.npub()) {
@@ -207,6 +232,8 @@ async fn run_device_sync_tcp(
     let mut deferred_count = 0;
 
     loop {
+        #[cfg(test)]
+        iterations.fetch_add(1, Ordering::Relaxed);
         enqueue_dirty_resyncs(&dirty, &mut pending, &mut pending_count, &resync_required);
         enqueue_control_retries(&control_retry, &mut pending, &mut pending_count);
         enqueue_deferred_records(
@@ -215,35 +242,6 @@ async fn run_device_sync_tcp(
             &mut pending,
             &mut pending_count,
         );
-        tokio::select! {
-            command = commands.recv_async() => {
-                if let Ok(command) = command {
-                    defer_batch(
-                        command,
-                        &dirty,
-                        &mut deferred,
-                        &mut deferred_count,
-                    );
-                }
-            }
-            ready = tcp.wait_for_input() => {
-                if matches!(ready, Err(AdapterError::Closed)) {
-                    break;
-                }
-                if ready.is_ok() {
-                    // Receiving advances TCP and flushes drained outbound
-                    // packets across awaits. Cancelling it for a timer or a
-                    // queued command can lose those packets. Only readiness
-                    // is cancellable; finish processing the selected batch.
-                    let received = tcp.receive(elapsed_millis(started)).await;
-                    if matches!(received, Err(AdapterError::Closed)) {
-                        break;
-                    }
-                }
-            }
-            _ = tokio::time::sleep(Duration::from_millis(POLL_MILLIS)) => {}
-        }
-
         let now = elapsed_millis(started);
         let current_peers = peers.lock().map(|peers| peers.clone()).unwrap_or_default();
         let authorization_changed = allowed_peers != current_peers;
@@ -292,6 +290,8 @@ async fn run_device_sync_tcp(
         }
 
         let _ = tcp.poll(now).await;
+        let pending_before = pending_count;
+        let connections_before = connections.len();
         progress_connections(
             &mut connections,
             &mut readers,
@@ -306,7 +306,7 @@ async fn run_device_sync_tcp(
             now,
         )
         .await;
-        accept_connections(
+        let accepted = accept_connections(
             &local,
             &allowed_peers,
             &mut connections,
@@ -318,6 +318,55 @@ async fn run_device_sync_tcp(
             max_record_bytes,
         )
         .await;
+
+        // Accepted streams need their first request; ACKs can free space for
+        // deferred records, and retirement queues a resync. Drain that ready
+        // work before sleeping, without polling blocked queues repeatedly.
+        if accepted || pending_count < pending_before || connections.len() < connections_before {
+            continue;
+        }
+        let retry_at = allowed_peers
+            .iter()
+            .any(|npub| {
+                !connections.contains_key(npub)
+                    && PeerIdentity::from_npub(npub)
+                        .is_ok_and(|peer| comparison_key(&local) < comparison_key(&peer))
+            })
+            .then_some(last_connection_retry.saturating_add(CONNECTION_RETRY_MILLIS));
+        let deadline = tcp
+            .next_poll_at(elapsed_millis(started))
+            .into_iter()
+            .chain(retry_at)
+            .min();
+        tokio::select! {
+            command = commands.recv_async() => {
+                let Ok(command) = command else { break; };
+                defer_batch(command, &dirty, &mut deferred, &mut deferred_count);
+            }
+            _ = changed.notified() => {}
+            ready = tcp.wait_for_input() => {
+                if matches!(ready, Err(AdapterError::Closed)) {
+                    break;
+                }
+                if ready.is_ok() {
+                    // Receiving advances TCP and flushes drained outbound
+                    // packets across awaits. Cancelling it for a timer or a
+                    // queued command can lose those packets. Only readiness
+                    // is cancellable; finish processing the selected batch.
+                    let received = tcp.receive(elapsed_millis(started)).await;
+                    if matches!(received, Err(AdapterError::Closed)) {
+                        break;
+                    }
+                }
+            }
+            _ = async {
+                if let Some(at) = deadline {
+                    sleep(Duration::from_millis(at.saturating_sub(elapsed_millis(started)))).await;
+                } else {
+                    std::future::pending::<()>().await;
+                }
+            } => {}
+        }
     }
 }
 
@@ -383,7 +432,8 @@ async fn accept_connections(
     dirty: &Arc<Mutex<HashSet<String>>>,
     tcp: &mut FipsTcpEndpoint,
     max_record_bytes: usize,
-) {
+) -> bool {
+    let mut changed = false;
     while let Some(id) = tcp.accept() {
         let Some(identity) = tcp.peer(id) else {
             let _ = tcp.abort(id).await;
@@ -418,6 +468,7 @@ async fn accept_connections(
                 tcp,
             )
             .await;
+            changed = true;
         }
         if canonical_dialer {
             let _ = tcp.abort(id).await;
@@ -425,7 +476,9 @@ async fn accept_connections(
         }
         connections.insert(peer, id);
         readers.insert(id, RecordReader::new(max_record_bytes));
+        changed = true;
     }
+    changed
 }
 
 #[allow(clippy::too_many_arguments)]

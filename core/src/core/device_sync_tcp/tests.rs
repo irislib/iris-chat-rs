@@ -1,4 +1,6 @@
 use super::*;
+#[path = "tests/idle.rs"]
+mod idle;
 #[path = "tests/reconnect.rs"]
 mod reconnect;
 
