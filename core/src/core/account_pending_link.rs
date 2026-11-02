@@ -116,3 +116,22 @@ pub(super) fn link_approver_is_authorized(
     };
     peer_device == owner || app_keys.get_device(&peer_device).is_some()
 }
+
+pub(super) async fn connect_pending_device_link_client(client: &Client, relay_urls: &[RelayUrl]) {
+    // SDK disconnect reports Terminated before its connection task has stopped.
+    // Reusing that relay immediately can set Pending while the old task is still
+    // running, leaving reconnect stuck in its backoff. This dedicated client uses
+    // default relay options and Client-level notifications, so replace only its
+    // terminated relay instances; normal network reconnection stays untouched.
+    for (url, relay) in client.relays().await {
+        if relay_urls.contains(&url) && relay.status() == RelayStatus::Terminated {
+            let _ = client.force_remove_relay(url).await;
+        }
+    }
+    ensure_session_relays_configured(client, relay_urls).await;
+    connect_client_with_timeout(
+        client,
+        Duration::from_secs(PENDING_DEVICE_LINK_CONNECT_TIMEOUT_SECS),
+    )
+    .await;
+}
