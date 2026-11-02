@@ -133,6 +133,29 @@ class MainReleaseCacheTests(unittest.TestCase):
                 selected.append(name)
         self.assertEqual(selected, ['rust'])
 
+    def test_focused_checks_reuse_pinned_release_inputs_without_cache_writes(self):
+        workflow = (ROOT / '.github/workflows/ci.yml').read_text()
+        focused = job(workflow, 'rust-focused', 'rust-package')
+        for name in ('Install checksum-verified release compiler',
+                     'Install native dependencies and identify compiler'):
+            self.assertEqual(step(focused, name).split('        run: ', 1)[1],
+                             step(self.ci, name).split('        run: ', 1)[1])
+        restore = step(focused, 'Restore release compiler cache')
+        main_restore = step(self.ci, 'Restore release compiler cache')
+        self.assertEqual(restore.split('        with:\n', 1)[1],
+                         main_restore.split('        with:\n', 1)[1])
+        self.assertRegex(restore, r'uses: actions/cache/restore@[0-9a-f]{40} # v6')
+        self.assertNotRegex(focused, r'uses: actions/cache(?:/save)?@')
+        self.assertNotIn('rust-focused-v1', focused)
+        self.assertNotIn('rustup toolchain install stable', focused)
+        self.assertNotIn('cache-hit', step(focused, 'Build once and run exact tests'))
+        evidence = step(focused, 'Retain full focused test evidence')
+        self.assertIn('if: always()', evidence)
+        self.assertIn('iris-chat-rs/work/rust-focused/', evidence)
+        collect = step(focused, 'Collect focused compiler input receipt')
+        self.assertIn('if: always()', collect)
+        self.assertIn('cp "$RUNNER_TEMP/iris-release-rust/receipt.json" work/rust-focused/release-inputs.json', collect)
+
     def test_automatic_ci_only_writes_the_shared_main_core_cache(self):
         workflow = (ROOT / '.github/workflows/ci.yml').read_text()
         self.assertNotRegex(workflow, r'uses: actions/cache@')
@@ -140,7 +163,7 @@ class MainReleaseCacheTests(unittest.TestCase):
         for block in re.split(r'(?=^  [\w-]+:\n)', workflow.split('\njobs:\n', 1)[1], flags=re.MULTILINE):
             if 'uses: actions/cache/save@' in block:
                 writers.append(block.split(':', 1)[0].strip())
-        self.assertEqual(writers, ['rust-focused', 'rust-package', 'rust', 'ios'])
+        self.assertEqual(writers, ['rust-package', 'rust', 'ios'])
         for name, scope in [('rust-focused', 'rust-focused'), ('rust-package', 'rust-package')]:
             body = workflow.split(f'\n  {name}:\n', 1)[1].split('\n    name:', 1)[0]
             self.assertIn(f"inputs.scope == '{scope}'", body)

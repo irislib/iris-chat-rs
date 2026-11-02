@@ -142,7 +142,8 @@ env:
   CARGO_TERM_COLOR: always
 
 # Keep automatic cache writes for the shared main core cache within the free
-# allowance. Explicit focused/package/Apple development runs may still save.
+# allowance. Focused tests reuse that cache without writing a competing copy;
+# explicit package/Apple development runs may still save.
 jobs:
   windows-restore:
     if: ${{ inputs.scope == 'windows-restore' }}
@@ -222,7 +223,7 @@ jobs:
         working-directory: iris-chat-rs
     steps:
       - name: Checkout selected source
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           path: ${{ env.APP_DIR }}
           ref: ${{ github.sha }}
@@ -246,30 +247,30 @@ jobs:
           pathlib.Path("work/rust-focused/ci-source.json").write_text(json.dumps(record, indent=2) + "\n")
           PY
 
-      - name: Install system dependencies
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libdbus-1-dev pkg-config
+      - name: Install checksum-verified release compiler
+        run: python3 scripts/release-build-inputs.py --install --work "$RUNNER_TEMP/iris-release-rust" --component rustfmt --component clippy
 
-      - name: Install Rust and identify compiler cache
+      - name: Install native dependencies and identify compiler
         id: toolchain
         run: |
-          rustup toolchain install stable --profile minimal --component rustfmt
-          rustup default stable
+          set -Eeuo pipefail
+          sudo bash linux/scripts/pinned-apt.sh ubuntu-noble cmake libdbus-1-dev pkg-config pkgconf pkgconf-bin
+          echo "CMAKE=/usr/bin/cmake" >> "$GITHUB_ENV"
+          echo "PKG_CONFIG=/usr/bin/pkg-config" >> "$GITHUB_ENV"
           echo "identity=$(rustc -Vv | sha256sum | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
 
-      - name: Restore focused compiler cache
+      - name: Restore release compiler cache
         id: cargo-cache
-        uses: actions/cache/restore@v6
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             ${{ github.workspace }}/cargo-target
-          key: rust-focused-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.identity }}-${{ inputs.focused_crate }}-${{ inputs.focused_release && 'release' || 'debug' }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock') }}-${{ github.sha }}
+          key: rust-release-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.identity }}-${{ hashFiles('iris-chat-rs/scripts/release-build-inputs.py', 'iris-chat-rs/scripts/release-build-inputs.json', 'iris-chat-rs/linux/scripts/pinned-apt.sh', 'iris-chat-rs/linux/build-inputs/apt-snapshots.tsv') }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock') }}-${{ github.sha }}-complete
           restore-keys: |
-            rust-focused-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.identity }}-${{ inputs.focused_crate }}-${{ inputs.focused_release && 'release' || 'debug' }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock') }}-
-            rust-focused-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.identity }}-
-            rust-${{ runner.os }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock') }}
-            rust-${{ runner.os }}-
+            rust-release-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.identity }}-${{ hashFiles('iris-chat-rs/scripts/release-build-inputs.py', 'iris-chat-rs/scripts/release-build-inputs.json', 'iris-chat-rs/linux/scripts/pinned-apt.sh', 'iris-chat-rs/linux/build-inputs/apt-snapshots.tsv') }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock') }}-${{ github.sha }}-
+            rust-release-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.identity }}-${{ hashFiles('iris-chat-rs/scripts/release-build-inputs.py', 'iris-chat-rs/scripts/release-build-inputs.json', 'iris-chat-rs/linux/scripts/pinned-apt.sh', 'iris-chat-rs/linux/build-inputs/apt-snapshots.tsv') }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock') }}-
 
       - name: Build once and run exact tests
         id: focused
@@ -281,19 +282,16 @@ jobs:
           python3 scripts/test-rust-focused --crate "$FOCUSED_CRATE" --tests "$FOCUSED_TESTS" \
             --online --timeout 600 --output work/rust-focused/run "${flags[@]}"
 
-      - name: Preserve compiled dependencies after test failure
-        if: ${{ !cancelled() && (steps.focused.outcome == 'success' || steps.focused.outcome == 'failure') && steps.cargo-cache.outputs.cache-hit != 'true' }}
-        uses: actions/cache/save@v6
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            ${{ github.workspace }}/cargo-target
-          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
+      - name: Collect focused compiler input receipt
+        if: always()
+        run: |
+          if [[ -f "$RUNNER_TEMP/iris-release-rust/receipt.json" ]]; then
+            cp "$RUNNER_TEMP/iris-release-rust/receipt.json" work/rust-focused/release-inputs.json
+          fi
 
       - name: Retain full focused test evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: rust-focused-${{ inputs.focused_crate }}
           path: iris-chat-rs/work/rust-focused/

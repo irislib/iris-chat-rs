@@ -352,13 +352,15 @@ Preserve the output directory containing full logs and
 source/toolchain/binary/result provenance.
 The existing CI workflow also accepts `scope=rust-focused`, `focused_crate`,
 and `focused_tests` (whitespace-separated exact names), with optional
-`focused_release` and `focused_ignored`. It retains compiled dependencies even
-after a test failure and reuses them across source revisions. These focused
-checks leave the full validation and tagged release gates unchanged.
+`focused_release` and `focused_ignored`. It uses the same checksum-pinned Rust
+compiler, native inputs and compatible main compiler cache as tagged releases.
+Focused runs restore that cache without saving a competing copy, and retain
+the compiler-input receipt with the source, binary and test evidence. They
+leave the full validation and tagged release gates unchanged.
 Automatic cache writes are reserved for the trusted main core check. Tagged
 release jobs restore compatible caches without saving tag-only copies, keeping
-the free cache allowance available for reusable main builds. Explicit focused
-development workflows may still save their existing caches. Every native
+the free cache allowance available for reusable main builds. Explicit package
+verification and Apple development workflows may still save their caches. Every native
 release cache preserves the reviewed compiler and input boundary; OS-only and
 legacy cross-input fallbacks are rejected. The main core check keeps at most
 one partial and one complete cache per source and input set. Repeated failures

@@ -529,10 +529,10 @@ class ReleaseWorkflowTests(unittest.TestCase):
     def test_focused_runner_installs_rustfmt_before_running_tests(self) -> None:
         workflow = (ROOT / ".github/workflows/ci.yml").read_text()
         focused = workflow.split("\n  rust-focused:\n", 1)[1].split("\n  rust-package:\n", 1)[0]
-        install = focused.split("      - name: Install Rust and identify compiler cache\n", 1)[1].split("      - name:", 1)[0]
-        self.assertIn("rustup toolchain install stable --profile minimal --component rustfmt", install)
-        self.assertIn("rustup default stable", install)
-        self.assertLess(focused.index("Install Rust and identify compiler cache"),
+        install = focused.split("      - name: Install checksum-verified release compiler\n", 1)[1].split("      - name:", 1)[0]
+        self.assertIn('scripts/release-build-inputs.py --install --work "$RUNNER_TEMP/iris-release-rust" --component rustfmt', install)
+        self.assertNotIn("rustup", install)
+        self.assertLess(focused.index("Install checksum-verified release compiler"),
                         focused.index("Build once and run exact tests"))
         self.assertNotIn("continue-on-error:", install)
 
