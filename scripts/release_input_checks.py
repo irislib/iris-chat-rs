@@ -14,7 +14,8 @@ ROOT = Path(__file__).resolve().parents[1]
 
 class ReleaseInputPinTests(unittest.TestCase):
     def test_release_external_actions_require_full_commit_pins(self) -> None:
-        for filename in ("release.yml", "build-artifacts.yml", "release-contract.yml"):
+        for filename in ("release.yml", "build-artifacts.yml", "release-contract.yml",
+                         "apple-validation-products.yml"):
             workflow = (ROOT / ".github/workflows" / filename).read_text()
             uses = re.findall(r"^\s*(?:- )?uses: ([^\s#]+)", workflow, re.MULTILINE)
             self.assertTrue(uses)
@@ -27,6 +28,71 @@ class ReleaseInputPinTests(unittest.TestCase):
             # A reused checkout anchor must still resolve to a pinned definition.
             if "*checkout_build" in workflow:
                 self.assertRegex(workflow, r"&checkout_build\n\s+name:[^\n]+\n\s+uses: actions/checkout@[0-9a-f]{40}")
+
+    def test_apple_validation_verifies_source_before_installing_pinned_tools(self) -> None:
+        workflow = (ROOT / ".github/workflows/apple-validation-products.yml").read_text()
+        install = workflow.split("      - name: Verify source and install build tools\n", 1)[1]
+        install = install.split("\n      - name:", 1)[0]
+        self.assertNotIn("brew", install)
+        self.assertNotIn("rustup", install)
+        self.assertLess(workflow.index("Verify source and install build tools"),
+                        workflow.index("Restore existing compiler cache"))
+        script = textwrap.dedent(install.split("        run: |\n", 1)[1])
+        commit = "a" * 40
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            fixtures = {
+                "git": '#!/bin/sh\nprintf "%s\\n" "$CHECKOUT_COMMIT"\n',
+                "python3": '#!/bin/sh\nprintf "%s\\n" "$@" > "$INSTALL_CALLS"\nexit "$INSTALL_EXIT"\n',
+            }
+            for name, content in fixtures.items():
+                path = root / name
+                path.write_text(content)
+                path.chmod(0o755)
+            for platform in ("ios", "macos", "ios-ui", "macos-ui"):
+                for source, checkout, code in ((commit, commit, 0), ("main", commit, 0),
+                                               (commit, "b" * 40, 0), (commit, commit, 17)):
+                    with self.subTest(platform=platform, source=source, checkout=checkout, installer_exit=code):
+                        calls = root / "calls"
+                        calls.unlink(missing_ok=True)
+                        env = dict(os.environ, PATH=f"{root}:{os.environ['PATH']}",
+                                   SOURCE_COMMIT=source, CHECKOUT_COMMIT=checkout,
+                                   PLATFORM=platform, RUNNER_TEMP=str(root),
+                                   INSTALL_CALLS=str(calls), INSTALL_EXIT=str(code))
+                        result = subprocess.run(["bash", "-c", script], cwd=root, env=env,
+                                                capture_output=True, text=True, timeout=5)
+                        if source != commit or checkout != commit:
+                            self.assertNotEqual(result.returncode, 0)
+                            self.assertFalse(calls.exists())
+                            continue
+                        expected = ["scripts/release-build-inputs.py", "--install", "--work",
+                                    str(root / "iris-validation-tools"), "--tools", platform.removesuffix("-ui")]
+                        if platform in ("ios", "macos"):
+                            expected += ["--target", "aarch64-apple-ios" if platform == "ios" else "aarch64-apple-darwin"]
+                        self.assertEqual(result.returncode, code, result.stderr)
+                        self.assertEqual(calls.read_text().splitlines(), expected)
+        build = workflow.split("      - name: Build unsigned products without executing tests\n", 1)[1]
+        build = build.split("\n      - name:", 1)[0]
+        receipt = 'cp "$RUNNER_TEMP/iris-validation-tools/receipt.json" work/apple-validation/build-inputs.json'
+        self.assertLess(build.index(receipt), build.index('if [[ "$PLATFORM" = ios-ui ]]'))
+        artifact = workflow.split("      - name: Retain source-bound test products\n", 1)[1]
+        artifact = artifact.split("\n      - name:", 1)[0]
+        self.assertIn("iris-chat-rs/work/apple-validation/build-inputs.json", artifact)
+        self.assertIn("retention-days: 7", artifact)
+
+    def test_apple_validation_debug_rust_builds_use_locked_dependencies(self) -> None:
+        for platform in ("ios", "macos"):
+            script = (ROOT / f"scripts/{platform}-build").read_text()
+            self.assertIn(f'PROFILE="${{IRIS_{platform.upper()}_RUST_PROFILE:-debug}}"', script)
+            host = script.split("build_host() {\n", 1)[1].split("\n}\n", 1)[0]
+            targets = script.split(f"run_{platform}_rust() {{\n", 1)[1].split("\n}\n", 1)[0]
+            for scope, body in (("host", host), ("targets", targets)):
+                with self.subTest(platform=platform, scope=scope):
+                    commands = re.findall(r"^\s*cargo build([^\n]*)$", body, re.MULTILINE)
+                    self.assertEqual(len(commands), 2)
+                    for command in commands:
+                        self.assertIn("--locked", command.split())
+                    self.assertNotIn("--release", commands[1].split())
 
 
     def test_release_contract_runs_when_reviewed_build_inputs_change(self) -> None:
@@ -237,8 +303,6 @@ class ReleaseInputPinTests(unittest.TestCase):
             if filename != "scripts/linux-release":
                 generator = next(command for command in commands if "uniffi-bindgen/Cargo.toml" in command)
                 self.assertIn("--locked", generator.split())
-                # Debug builds retain their existing profile and dependency-update behavior.
-                self.assertRegex(script, r"else\n\s+cargo build(?: --lib)?\n")
         android = (ROOT / "android/app/build.gradle.kts").read_text()
         for start, end in (("val buildRustHostDebug", "val generateRustBindings"),
                            ("val generateRustBindings", "fun registerRustAndroidTask"),

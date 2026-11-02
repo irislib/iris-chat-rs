@@ -62,7 +62,7 @@ build_host() {
     if [[ "$PROFILE" == "release" ]]; then
       cargo build --release --lib --locked
     else
-      cargo build --lib
+      cargo build --lib --locked
     fi
   )
 }
@@ -162,7 +162,7 @@ run_ios_rust() {
           IRIS_APP_VERSION="${IRIS_APP_VERSION_NAME:-}" \
           IRIS_BUILD_GIT_SHA="${IRIS_BUILD_GIT_SHA:-}" \
           IRIS_BUILD_TIMESTAMP_UTC="${IRIS_BUILD_TIMESTAMP_UTC:-}" \
-          cargo build --lib --target "$target"
+          cargo build --lib --locked --target "$target"
       fi
     done
   )

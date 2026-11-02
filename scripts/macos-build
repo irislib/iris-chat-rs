@@ -99,7 +99,7 @@ build_host() {
     if [[ "$PROFILE" == "release" ]]; then
       cargo build --release --locked
     else
-      cargo build
+      cargo build --locked
     fi
   )
 }
@@ -199,7 +199,7 @@ run_macos_rust() {
           IRIS_APP_VERSION="${IRIS_APP_VERSION_NAME:-}" \
           IRIS_BUILD_GIT_SHA="${IRIS_BUILD_GIT_SHA:-}" \
           IRIS_BUILD_TIMESTAMP_UTC="${IRIS_BUILD_TIMESTAMP_UTC:-}" \
-          cargo build --target "$target"
+          cargo build --locked --target "$target"
       fi
     done
   )
