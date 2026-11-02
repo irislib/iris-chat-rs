@@ -196,7 +196,13 @@ class OwnedWindow:
         record = {'schema': 'iris-relaunch-adapter-closure-v1', 'candidate': self.config['candidate'],
                   'device': self.config['device'], 'closed': not failures, 'failures': failures,
                   'groups': [x['group'] for x in self.children], 'measurement_cutoff_sha256': cutoff_digest}
-        (self.out / 'closure.json').write_text(json.dumps(record, sort_keys=True) + '\n')
+        # A capture-specific resource monitor may remain live through shutdown
+        # and its final receipt. Ordinary windows keep their existing behavior.
+        closure_writer = getattr(self, 'write_capacity_closure', None)
+        if closure_writer is None:
+            (self.out / 'closure.json').write_text(json.dumps(record, sort_keys=True) + '\n')
+        else:
+            closure_writer(record)
         require(not failures, 'Owned process-group closure failed')
 
     def __enter__(self): return self
