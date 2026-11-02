@@ -215,7 +215,6 @@ async fn run_device_sync_tcp(
             &mut pending,
             &mut pending_count,
         );
-        let now = elapsed_millis(started);
         tokio::select! {
             command = commands.recv_async() => {
                 if let Ok(command) = command {
@@ -227,14 +226,22 @@ async fn run_device_sync_tcp(
                     );
                 }
             }
-            received = tokio::time::timeout(
-                Duration::from_millis(POLL_MILLIS),
-                tcp.receive(now),
-            ) => {
-                if matches!(received, Ok(Err(AdapterError::Closed))) {
+            ready = tcp.wait_for_input() => {
+                if matches!(ready, Err(AdapterError::Closed)) {
                     break;
                 }
+                if ready.is_ok() {
+                    // Receiving advances TCP and flushes drained outbound
+                    // packets across awaits. Cancelling it for a timer or a
+                    // queued command can lose those packets. Only readiness
+                    // is cancellable; finish processing the selected batch.
+                    let received = tcp.receive(elapsed_millis(started)).await;
+                    if matches!(received, Err(AdapterError::Closed)) {
+                        break;
+                    }
+                }
             }
+            _ = tokio::time::sleep(Duration::from_millis(POLL_MILLIS)) => {}
         }
 
         let now = elapsed_millis(started);

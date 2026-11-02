@@ -685,6 +685,43 @@ async fn authorized_devices_exchange_records_through_a_seed_without_direct_links
         );
     }
     if received.is_ok() {
+        // Exercise command admission and inbound processing concurrently on
+        // both loops. More than one pending window must survive the routed
+        // connection, without relying on a direct sibling link.
+        let first_records = (0..128)
+            .map(|index| format!("first history record {index}").into_bytes())
+            .collect::<Vec<_>>();
+        let second_records = (0..128)
+            .map(|index| format!("second history record {index}").into_bytes())
+            .collect::<Vec<_>>();
+        let first_identity = PeerIdentity::from_npub(first.npub()).unwrap();
+        let second_identity = PeerIdentity::from_npub(second.npub()).unwrap();
+        for (outbound, peer, records) in [
+            (&first_sender, second_identity, &first_records),
+            (&second_sender, first_identity, &second_records),
+        ] {
+            for batch in records.chunks(32) {
+                assert!(outbound.send_batch(peer, batch.to_vec()));
+            }
+        }
+        tokio::time::timeout(Duration::from_secs(15), async {
+            for (rx, expected) in [(&first_rx, &second_records), (&second_rx, &first_records)] {
+                let mut records = Vec::new();
+                while records.len() < expected.len() {
+                    if let CoreMsg::Internal(event) = rx.recv_async().await.unwrap() {
+                        if let InternalEvent::DeviceSyncPacket { data, .. } = *event {
+                            if data == b"resync" {
+                                continue;
+                            }
+                            records.push(data);
+                        }
+                    }
+                }
+                assert_eq!(&records, expected);
+            }
+        })
+        .await
+        .expect("concurrent history batches must finish through the seed");
         first_sender.update_peers(HashSet::new());
         tokio::time::sleep(Duration::from_millis(300)).await;
         let first_identity = PeerIdentity::from_npub(first.npub()).unwrap();
