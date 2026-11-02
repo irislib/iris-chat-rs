@@ -39,7 +39,9 @@ object MobilePushNotifier {
         ensureChannel(manager)
 
         val title = resolution.title.ifBlank { "Iris Chat" }
-        val body = resolution.body.ifBlank { "New message" }
+        // The core has already chosen the preview. New-chat notices deliberately
+        // have no body because a handshake does not imply a message arrived.
+        val body = resolution.body
         val intent = launchIntent(context, resolution.payloadJson, owner)
         val pendingIntent =
             PendingIntent.getActivity(
@@ -68,9 +70,16 @@ object MobilePushNotifier {
     }
 
     fun showLocal(context: Context, candidate: NotificationCandidate, owner: String) {
-        val payload = JSONObject().put("chat_id", candidate.chatId).toString()
+        val payload = JSONObject().put("chat_id", candidate.chatId).apply {
+            candidate.messageId?.let { put("message_id", it) }
+        }.toString()
+        val tag = if (candidate.messageId?.startsWith("invite:") == true) {
+            "$LOCAL_NEW_CHAT_TAG_PREFIX$owner:${candidate.chatId}"
+        } else {
+            localTag(owner, candidate.chatId)
+        }
         show(context, MobilePushNotificationResolution(true, candidate.title, candidate.body, payload),
-            owner, localTag(owner, candidate.chatId), 0)
+            owner, tag, 0)
     }
 
     fun dismissLocalRead(context: Context, chats: List<ChatThreadSnapshot>, owner: String) {
@@ -83,6 +92,7 @@ object MobilePushNotifier {
     }
 
     private const val LOCAL_TAG_PREFIX = "local-message:"
+    private const val LOCAL_NEW_CHAT_TAG_PREFIX = "local-new-chat:"
     private fun localTag(owner: String, chat: String) = "$LOCAL_TAG_PREFIX$owner:$chat"
 
     internal fun launchIntent(context: Context, payload: String, owner: String?): Intent {
@@ -117,7 +127,8 @@ object MobilePushNotifier {
         val candidates = manager.activeNotifications.mapNotNull { notification ->
             // Live notifications are cleared from the authoritative chat snapshot.
             // They contain no encrypted push event and need no database/decrypt pass.
-            if (notification.tag?.startsWith(LOCAL_TAG_PREFIX) == true) return@mapNotNull null
+            if (notification.tag?.startsWith(LOCAL_TAG_PREFIX) == true ||
+                notification.tag?.startsWith(LOCAL_NEW_CHAT_TAG_PREFIX) == true) return@mapNotNull null
             notification.notification.extras.getString(PAYLOAD_KEY)?.let { payload ->
                 notification to payload
             }
