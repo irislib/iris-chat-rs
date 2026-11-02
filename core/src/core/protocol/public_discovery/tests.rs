@@ -523,7 +523,9 @@ fn account_switch_suspend_and_logout_close_old_discovery_and_rotate_anonymous_au
         .runtime
         .block_on(test_support::plain_relay(vec![metadata(&peer, "peer")]));
     let (send, incoming) = flume::unbounded();
-    core.core_sender = send;
+    core.core_sender = send.clone();
+    let next_directory = tempfile::tempdir().unwrap();
+    let mut previous_core = None;
     let mut signers = HashSet::new();
     for stage in 0..3 {
         let filters = vec![Filter::new().author(peer.public_key()).kind(Kind::Metadata)];
@@ -565,15 +567,33 @@ fn account_switch_suspend_and_logout_close_old_discovery_and_rotate_anonymous_au
             .filter(|(id, _)| id == connection)
             .all(|(_, row)| row[0] != "EVENT" && !row.to_string().contains("#p")));
         match stage {
-            0 => core
-                .start_session(
-                    next_owner.public_key(),
-                    Some(next_owner.clone()),
-                    next_device.clone(),
-                    false,
-                    false,
-                )
-                .unwrap(),
+            0 => {
+                // Account stores are deliberately bound to one identity. Switch
+                // through core shutdown and a separate account data root.
+                core.shutdown();
+                core.runtime
+                    .block_on(until(|| relay.active.load(Ordering::SeqCst) == 0));
+                assert!(core.protocol_subscription_runtime.discovery.is_none());
+                let mut replacement = AppCore::new(
+                    flume::unbounded().0,
+                    send.clone(),
+                    next_directory.path().to_string_lossy().into_owned(),
+                    Arc::new(RwLock::new(AppState::empty())),
+                );
+                replacement.preferences.nostr_relay_urls.clear();
+                replacement
+                    .start_session(
+                        next_owner.public_key(),
+                        Some(next_owner.clone()),
+                        next_device.clone(),
+                        false,
+                        false,
+                    )
+                    .unwrap();
+                // Keep its runtime alive solely for the independent fixture
+                // relay listener; its production network has already stopped.
+                previous_core = Some(std::mem::replace(&mut core, replacement));
+            }
             1 => {
                 assert!(core.prepare_for_suspend());
             }
@@ -589,4 +609,6 @@ fn account_switch_suspend_and_logout_close_old_discovery_and_rotate_anonymous_au
     }
     assert_eq!(relay.connections.load(Ordering::SeqCst), 3);
     core.shutdown();
+    drop(relay);
+    drop(previous_core);
 }
