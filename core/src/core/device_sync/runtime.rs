@@ -268,21 +268,29 @@ impl AppCore {
             update_publisher.as_deref(),
             pubsub_options.max_connected_peers,
         );
-        let private_providers = Arc::new(super::super::mesh_pubsub::PrivateMeshProviders::new(
-            options.additional_peers.clone(),
-            options.websocket.clone(),
-            private_provider::approved_providers(
-                &options.additional_peers,
-                &options.routed_peers,
-                None,
-                pubsub_options.max_connected_peers,
+        let private_providers = Arc::new(
+            super::super::mesh_pubsub::PrivateMeshProviders::new(
+                options.additional_peers.clone(),
+                options.websocket.clone(),
+                private_provider::approved_providers(
+                    &options.additional_peers,
+                    &options.routed_peers,
+                    None,
+                    pubsub_options.max_connected_peers,
+                ),
+                config
+                    .relay_urls
+                    .iter()
+                    .filter_map(|url| RelayUrl::parse(url).ok())
+                    .collect(),
+            )
+            .with_device_sync_authors(
+                config
+                    .siblings
+                    .iter()
+                    .filter_map(|peer| PublicKey::from_hex(&peer.pubkey().to_string()).ok()),
             ),
-            config
-                .relay_urls
-                .iter()
-                .filter_map(|url| RelayUrl::parse(url).ok())
-                .collect(),
-        ));
+        );
         let peer_advert_authors = config
             .peers
             .iter()

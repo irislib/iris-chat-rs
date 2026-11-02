@@ -7,6 +7,7 @@ use fips_core::config::{PeerConfig, TransportInstances, UdpConfig, WebSocketConf
 use fips_core::{Config, FipsEndpoint};
 use nostr_pubsub::QueryOptions;
 use nostr_pubsub_fips::{FipsAnonymousPublisher, FipsDiscoveryScope, FipsPubsubClientOptions};
+use std::collections::BTreeSet;
 
 const OPERATION_TIMEOUT: Duration = Duration::from_secs(12);
 
@@ -119,6 +120,8 @@ pub(in crate::core) struct PrivateMeshProviders {
     options: FipsPubsubClientOptions,
     slots: Arc<tokio::sync::Semaphore>,
     discovery_slots: Arc<tokio::sync::Semaphore>,
+    device_sync_slots: Arc<tokio::sync::Semaphore>,
+    device_sync_authors: BTreeSet<PublicKey>,
     relays: Vec<RelayUrl>,
     key: String,
     #[cfg(test)]
@@ -165,11 +168,25 @@ impl PrivateMeshProviders {
             },
             slots: Arc::new(tokio::sync::Semaphore::new(4)),
             discovery_slots: Arc::new(tokio::sync::Semaphore::new(2)),
+            device_sync_slots: Arc::new(tokio::sync::Semaphore::new(1)),
+            device_sync_authors: BTreeSet::new(),
             relays,
             key,
             #[cfg(test)]
             tls_test_roots: Vec::new(),
         }
+    }
+
+    pub(in crate::core) fn with_device_sync_authors(
+        mut self,
+        authors: impl IntoIterator<Item = PublicKey>,
+    ) -> Self {
+        self.device_sync_authors = authors.into_iter().collect();
+        // Replacing the authorized roster must also replace workers waiting for
+        // admission under the previous roster, including after revocation.
+        self.key
+            .push_str(&format!(":device-sync={:?}", self.device_sync_authors));
+        self
     }
 
     fn advert_tls(&self, filters: &[Filter]) -> Vec<Option<ScopedTlsConnector>> {
@@ -273,7 +290,19 @@ impl PrivateMeshProviders {
         let Ok(scope) = FipsDiscoveryScope::from_filter(filter) else {
             return poll;
         };
-        let Ok(_slot) = self.discovery_slots.acquire().await else {
+        // History recovery must not wait behind every contact's relay/provider
+        // timeout. One bounded lane is reserved for authorized sibling adverts;
+        // each lookup still has its own anonymous, single-author wire context.
+        let slots = match &scope {
+            FipsDiscoveryScope::Author(author)
+                if self.device_sync_authors.contains(author)
+                    && filters.iter().all(is_peer_advert_filter) =>
+            {
+                &self.device_sync_slots
+            }
+            _ => &self.discovery_slots,
+        };
+        let Ok(_slot) = slots.acquire().await else {
             return poll;
         };
         // FIPS's External mode never opens its own relay client. Cold live-peer

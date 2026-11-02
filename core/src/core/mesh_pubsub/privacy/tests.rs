@@ -385,6 +385,107 @@ fn mesh_discovery_preserves_unrelated_workers_and_refreshes_only_requested_autho
 }
 
 #[test]
+fn linked_device_discovery_bypasses_busy_contacts_without_combining_wire_contexts() {
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    runtime.block_on(async {
+        let (relay, wire, _release) = discovery_relay(true).await;
+        let own = Keys::generate().public_key();
+        let siblings = [Keys::generate().public_key(), Keys::generate().public_key()];
+        let contact = Keys::generate().public_key();
+        let peers = [siblings[0], siblings[1], contact];
+        let filters = peers
+            .map(|author| Filter::new().kind(Kind::Custom(37195)).author(author))
+            .to_vec();
+        let providers_for = |authors: Vec<PublicKey>| {
+            Arc::new(
+                PrivateMeshProviders::new(Vec::new(), None, Vec::new(), vec![relay.clone()])
+                    .with_device_sync_authors(authors),
+            )
+        };
+        let providers = providers_for(siblings.to_vec());
+        // Occupy both ordinary reads as slow/offline contact discovery would.
+        let background = providers.discovery_slots.acquire_many(2).await.unwrap();
+        let reserved = providers.device_sync_slots.acquire().await.unwrap();
+        let live = discovery_endpoint().await;
+        let mut discovery = PrivateMeshDiscovery::default();
+        discovery.update(
+            providers.clone(),
+            filters.clone(),
+            live.clone(),
+            flume::unbounded().0,
+            &runtime,
+        );
+        sleep(Duration::from_millis(100)).await;
+        assert!(
+            wire.lock().unwrap().is_empty(),
+            "admission must stay bounded"
+        );
+        drop(reserved);
+        for sibling in siblings {
+            wait_subject_closed(&wire, sibling, 1).await;
+        }
+        assert!(subject_queries(&wire, contact).is_empty());
+        discovery.refresh_author(siblings[0]);
+        wait_subject_closed(&wire, siblings[0], 2).await;
+        assert!(subject_queries(&wire, contact).is_empty());
+
+        // Roster changes replace blocked workers too. A removed sibling gets
+        // ordinary admission; it cannot retain its former reserved lane.
+        let updated = providers_for(vec![siblings[1]]);
+        let updated_background = updated.discovery_slots.acquire_many(2).await.unwrap();
+        discovery.update(
+            updated.clone(),
+            filters,
+            live.clone(),
+            flume::unbounded().0,
+            &runtime,
+        );
+        wait_subject_closed(&wire, siblings[1], 2).await;
+        assert_eq!(subject_queries(&wire, siblings[0]).len(), 2);
+        assert!(subject_queries(&wire, contact).is_empty());
+        drop(updated_background);
+        wait_subject_closed(&wire, siblings[0], 3).await;
+        wait_subject_closed(&wire, contact, 1).await;
+
+        let mut authenticated = BTreeMap::new();
+        let mut subjects = BTreeMap::<usize, HashSet<PublicKey>>::new();
+        for (connection, frame) in wire.lock().unwrap().iter() {
+            match frame[0].as_str() {
+                Some("AUTH") => {
+                    let event: Event = serde_json::from_value(frame[1].clone()).unwrap();
+                    event.verify().unwrap();
+                    assert_ne!(event.pubkey, own);
+                    assert!(!peers.contains(&event.pubkey));
+                    assert!(authenticated.insert(*connection, event.pubkey).is_none());
+                }
+                Some("REQ") => {
+                    assert_eq!(frame.as_array().unwrap().len(), 3);
+                    let query = frame[2].as_object().unwrap();
+                    assert_eq!(query.len(), 2);
+                    assert_eq!(query["kinds"], serde_json::json!([37195]));
+                    let authors = query["authors"].as_array().unwrap();
+                    assert_eq!(authors.len(), 1);
+                    let author = PublicKey::from_hex(authors[0].as_str().unwrap()).unwrap();
+                    assert!(peers.contains(&author));
+                    subjects.entry(*connection).or_default().insert(author);
+                }
+                Some("EVENT") => panic!("discovery context published an event"),
+                _ => {}
+            }
+        }
+        assert_eq!(subjects.len(), authenticated.len());
+        assert_eq!(
+            authenticated.values().collect::<HashSet<_>>().len(),
+            authenticated.len()
+        );
+        assert!(subjects.values().all(|authors| authors.len() == 1));
+        drop(discovery);
+        drop(background);
+        live.shutdown().await.unwrap();
+    });
+}
+
+#[test]
 fn mesh_discovery_demand_waits_for_busy_query_and_coalesces() {
     let runtime = tokio::runtime::Runtime::new().unwrap();
     runtime.block_on(async {
