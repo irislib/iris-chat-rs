@@ -82,22 +82,30 @@ class MainReleaseCacheTests(unittest.TestCase):
         self.assertIn("${{ job.status == 'success' && 'complete' || 'partial' }}", save)
         self.assertLess(self.ci.index("Upload verified protocol package"), self.ci.index("Preserve release compiler cache after tests"))
         partial = "compiler-inputs-lock-" + "a" * 40 + "-partial"
-        for name, trusted, cancelled, restored, status, hit, matched, expected in [
-            ("cold pass", "true", False, "success", "success", "false", "", True),
-            ("cold failure", "true", False, "success", "failure", "false", "", True),
-            ("complete hit", "true", False, "success", "success", "true", "complete", False),
-            ("partial completed", "true", False, "success", "success", "false", partial, True),
-            ("partial failed again", "true", False, "success", "failure", "false", partial, False),
-            ("cancelled", "true", True, "success", "cancelled", "false", "", False),
-            ("restore failed", "true", False, "failure", "success", "false", "", False),
-            ("PR", "false", False, "success", "success", "false", "", False),
+        for name, trusted, cancelled, restored, lint, status, hit, matched, expected in [
+            ("cold pass", "true", False, "success", "success", "success", "false", "", True),
+            ("compile failure", "true", False, "success", "failure", "failure", "false", "", True),
+            ("tests fail after compilation", "true", False, "success", "success", "failure", "false", "", True),
+            ("static checks fail before compilation", "true", False, "success", "skipped", "failure", "false", "", False),
+            ("formatting fails before compilation", "true", False, "success", "skipped", "failure", "false", "", False),
+            ("unknown lint outcome", "true", False, "success", "", "success", "false", "", False),
+            ("missing lint outcome", "true", False, "success", None, "failure", "false", "", False),
+            ("cancelled lint outcome", "true", False, "success", "cancelled", "failure", "false", "", False),
+            ("complete hit", "true", False, "success", "success", "success", "true", "complete", False),
+            ("partial completed", "true", False, "success", "success", "success", "false", partial, True),
+            ("partial failed again", "true", False, "success", "failure", "failure", "false", partial, False),
+            ("cancelled", "true", True, "success", "success", "cancelled", "false", "", False),
+            ("restore failed", "true", False, "failure", "success", "success", "false", "", False),
+            ("PR", "false", False, "success", "success", "success", "false", "", False),
         ]:
             with self.subTest(case=name):
                 self.assertEqual(evaluate(expression, {"env.RELEASE_CACHE_TRUSTED": trusted,
                     "cancelled()": cancelled, "steps.release-cargo-cache.outcome": restored,
+                    "steps.rust-lint.outcome": lint,
                     "steps.release-cargo-cache.outputs.cache-hit": hit,
                     "steps.release-cargo-cache.outputs.cache-matched-key": matched,
                     "job.status": status, "github.sha": "a" * 40}), expected)
+        self.assertIn("        id: rust-lint\n", step(self.ci, "Rust lint including test targets"))
         # Cache hits never skip the existing lint, native fixture, CPU/privacy or package checks.
         for name in ("Static checks", "Rust formatting", "Rust lint including test targets", "Rust tests", "Protocol tests", "Verify protocol package"):
             body = step(self.ci, name)

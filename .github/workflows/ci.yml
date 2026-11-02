@@ -518,6 +518,7 @@ jobs:
           cargo fmt --manifest-path linux/Cargo.toml -- --check
 
       - name: Rust lint including test targets
+        id: rust-lint
         env:
           VALIDATION_SCOPE: ${{ inputs.scope }}
         run: |
@@ -591,7 +592,7 @@ jobs:
           retention-days: 14
 
       - name: Preserve release compiler cache after tests
-        if: ${{ !cancelled() && env.RELEASE_CACHE_TRUSTED == 'true' && steps.release-cargo-cache.outcome == 'success' && steps.release-cargo-cache.outputs.cache-hit != 'true' && (job.status == 'success' || !endsWith(steps.release-cargo-cache.outputs.cache-matched-key, format('-{0}-partial', github.sha))) }}
+        if: ${{ !cancelled() && env.RELEASE_CACHE_TRUSTED == 'true' && (steps.rust-lint.outcome == 'success' || steps.rust-lint.outcome == 'failure') && steps.release-cargo-cache.outcome == 'success' && steps.release-cargo-cache.outputs.cache-hit != 'true' && (job.status == 'success' || !endsWith(steps.release-cargo-cache.outputs.cache-matched-key, format('-{0}-partial', github.sha))) }}
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
