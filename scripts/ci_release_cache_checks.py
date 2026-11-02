@@ -141,9 +141,13 @@ class MainReleaseCacheTests(unittest.TestCase):
             self.assertEqual(step(focused, name).split('        run: ', 1)[1],
                              step(self.ci, name).split('        run: ', 1)[1])
         restore = step(focused, 'Restore release compiler cache')
-        main_restore = step(self.ci, 'Restore release compiler cache')
+        release_restore = step(self.release, 'Restore release compiler cache')
         self.assertEqual(restore.split('        with:\n', 1)[1],
-                         main_restore.split('        with:\n', 1)[1])
+                         release_restore.split('        with:\n', 1)[1].replace('needs.validate.outputs.sha', 'github.sha'))
+        for prefix in filter(str.strip, restore.split('restore-keys: |\n', 1)[1].splitlines()):
+            self.assertIn('steps.toolchain.outputs.identity', prefix)
+            self.assertIn('release-build-inputs.json', prefix)
+            self.assertIn('apt-snapshots.tsv', prefix)
         self.assertRegex(restore, r'uses: actions/cache/restore@[0-9a-f]{40} # v6')
         self.assertNotRegex(focused, r'uses: actions/cache(?:/save)?@')
         self.assertNotIn('rust-focused-v1', focused)
