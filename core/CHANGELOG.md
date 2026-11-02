@@ -10,8 +10,11 @@
 
 ## 0.1.59
 
-- Back off failed message-server connections across anonymous readers while
-  keeping each author's connections, authentication, and requests separate.
+- Share public profile and device discovery on one anonymous read connection
+  per message server, keeping private publication on separate anonymous connections.
+- Bound and cancel discovery recovery queries without interrupting live updates.
+  Use `nostr-pubsub` 0.1.20 and `nostr-pubsub-relay` 0.1.16 so each shared-client
+  query stays within its configured message servers.
 - Use `iris-chat-protocol` 0.3.14 to avoid repeated checkpoint writes when queued
   delivery retries make no progress, preserving durable session and delivery
   changes.
