@@ -397,7 +397,7 @@ async fn run(
         tokio::select! {
             biased;
             changed = updates.changed() => { if changed.is_err() { break; } },
-            _ = tokio::time::sleep_until(tokio::time::Instant::from_std(retry_at.unwrap_or_else(Instant::now))), if retry_at.is_some() => {},
+            _ = tokio::time::sleep_until(retry_at.unwrap_or_else(Instant::now)), if retry_at.is_some() => {},
             Some(event) = events.recv() => {
                 // Drop bodies from a removed subscription that were queued
                 // before its CLOSE; reconfiguration cannot resurrect a peer.

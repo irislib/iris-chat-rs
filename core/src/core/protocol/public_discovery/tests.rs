@@ -63,7 +63,10 @@ async fn populated_live_and_cold_public_discovery_share_one_connection_and_auth_
     while delivered.len() < keys.len() {
         delivered.insert(receive(&receive_queue).await.id);
     }
-    assert_eq!(delivered, events.iter().map(|event| event.id).collect());
+    assert_eq!(
+        delivered,
+        events.iter().map(|event| event.id).collect::<HashSet<_>>()
+    );
     let before = relay.requests();
     sleep(Duration::from_millis(300)).await;
     assert_eq!(

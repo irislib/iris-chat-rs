@@ -112,7 +112,10 @@ fn discovery_demand_excludes_cache_only_peers_and_updates_shared_wire_on_open() 
         );
         assert_eq!(
             subjects.values().next().unwrap(),
-            &expected.iter().map(PublicKey::to_hex).collect()
+            &expected
+                .iter()
+                .map(PublicKey::to_hex)
+                .collect::<HashSet<_>>()
         );
         let mut signers = HashSet::new();
         for connection in subjects.keys() {

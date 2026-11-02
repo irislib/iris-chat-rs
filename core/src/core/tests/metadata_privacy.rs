@@ -308,7 +308,7 @@ fn metadata_privacy_isolates_peer_discovery_from_identity_auth_and_own_receive_f
     );
     assert_eq!(
         scopes.values().next().unwrap(),
-        &peers.into_iter().collect()
+        &peers.into_iter().collect::<HashSet<_>>()
     );
     for (number, event) in rows.iter().filter(|(_, event)| {
         event[0] == "REQ"

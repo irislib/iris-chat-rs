@@ -591,7 +591,9 @@ async fn anonymous_reads_keeps_validated_metadata_at_deadline_when_relay_omits_e
     let read = tokio::spawn(async move {
         read_one(&url, &[filter(author).limit(2)], budget)
             .await
-            .map_err(ReadFailure::message)
+            .map_err(|error| match error {
+                ReadFailure::Unavailable(message) | ReadFailure::Limit(message) => message,
+            })
     });
     tokio::time::timeout(Duration::from_secs(3), ready.notified())
         .await
