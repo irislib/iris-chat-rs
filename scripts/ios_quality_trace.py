@@ -188,7 +188,7 @@ def observe(records, capture, *, device, bundle, pid, executable, springboard_pi
     # transition is guaranteed to be logged.
     first = samples[0]['lifecycle_bytes']
     for line in data[first:].decode().splitlines():
-        if 'Received state update for ' in line and bundle in line:
+        if lifecycle.target_state_update(line, bundle):
             require(foreground_pid(line + '\n', bundle, springboard_pid) == pid,
                     'Intervening nonforeground app transition')
     return maximum_gap

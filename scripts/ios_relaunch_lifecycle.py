@@ -35,6 +35,18 @@ def require(condition, message):
         raise LifecycleError(message)
 
 
+def target_state_update(line, bundle_id):
+    """Select the outer process identity, never an extension or its host app."""
+    if 'Received state update for ' not in line or bundle_id not in line:
+        return False
+    identity = re.search(r'Received state update for \d+ \((app|xpcservice)<([^<(>]+)', line)
+    require(identity is not None, 'Unrecognized lifecycle process identity')
+    if identity[2] != bundle_id:
+        return False
+    require(identity[1] == 'app', 'Target lifecycle identity is not an app')
+    return True
+
+
 def _number(value):
     require(type(value) in (int, float) and math.isfinite(value), "Invalid monotonic timestamp")
     return value
@@ -220,7 +232,7 @@ def evaluate_early_background(*, startup_text, lifecycle_text, bundle_id, proces
                                r"Received state update for (\d+) \(app<" + re.escape(bundle_id) +
                                r"(?:\([^>]*\))?>, ([A-Za-z-]+)(?:[ ,].*)?$")
     def parse_state(line):
-        if "Received state update for " not in line or bundle_id not in line:
+        if not target_state_update(line, bundle_id):
             return None
         match = state_pattern.search(line)
         require(match is not None, "Unrecognized target lifecycle record")

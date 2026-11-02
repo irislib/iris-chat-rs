@@ -206,6 +206,16 @@ class QualityTests(unittest.TestCase):
             sample.update(lifecycle_bytes=len(data), lifecycle_sha256=subject.hashlib.sha256(data).hexdigest())
         self.reject()
 
+    def test_unrelated_extension_transition_does_not_hide_main_app_state(self):
+        f = self.fixture
+        extra = state(lifecycle.SUSPENDED, 1).replace(BUNDLE, f.window['bundle_id'] + '.ShareExtension')
+        extra = extra.replace('(app<', '(xpcservice<')
+        f.capture['lifecycle_text'] += extra
+        data = f.capture['lifecycle_text'].encode()
+        for sample in f.capture['samples'][1:]:
+            sample.update(lifecycle_bytes=len(data), lifecycle_sha256=subject.hashlib.sha256(data).hexdigest())
+        self.assertEqual(len(self.evaluate()['windows']), 2)
+
     def test_bad_logger_health_and_changed_prefix_fail(self):
         f = self.fixture
         f.capture['samples'][70]['loggers_alive'] = False; self.reject()

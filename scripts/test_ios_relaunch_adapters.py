@@ -51,6 +51,25 @@ class ProtocolTests(unittest.TestCase):
         with self.assertRaises(EvidenceError): adapters.foreground_pid(text, log_fixture.BUNDLE, 99)
         with self.assertRaises(EvidenceError): adapters.foreground_pid(text + log_fixture.state(adapters.lifecycle.ACTIVE, -1), log_fixture.BUNDLE, 1)
 
+    def test_foreground_ignores_other_processes_with_target_bundle_prefix(self):
+        active = log_fixture.state(adapters.lifecycle.ACTIVE, 0, pid=101)
+        extension = (f'{log_fixture.stamp(1)} SpringBoard(RunningBoardServices)[1] <Notice>: '
+                     f'Received state update for 725 (xpcservice<{log_fixture.BUNDLE}.ShareExtension('
+                     f'[app<{log_fixture.BUNDLE}(token)>:101])>{{definition:extension}}, '
+                     f'{adapters.lifecycle.SUSPENDED}\n')
+        prefixed = log_fixture.state(adapters.lifecycle.SUSPENDED, 2, pid=726).replace(
+            log_fixture.BUNDLE, log_fixture.BUNDLE + '.Other')
+        self.assertEqual(adapters.foreground_pid(active + extension + prefixed, log_fixture.BUNDLE, 1), 101)
+        self.assertIsNone(adapters.foreground_pid(extension + prefixed, log_fixture.BUNDLE, 1))
+        hidden = log_fixture.state(adapters.lifecycle.SUSPENDED, 3, pid=101)
+        self.assertIsNone(adapters.foreground_pid(active + extension + hidden, log_fixture.BUNDLE, 1))
+
+    def test_malformed_target_identity_is_not_silently_ignored(self):
+        line = log_fixture.state(adapters.lifecycle.ACTIVE, 0, pid=101)
+        for changed in (line.replace('(app<', '(unknown<'), line.replace('>, running', '> running')):
+            with self.subTest(changed=changed), self.assertRaises(ValueError):
+                adapters.foreground_pid(changed, log_fixture.BUNDLE, 1)
+
 
 class WindowTests(unittest.TestCase):
     def setUp(self):

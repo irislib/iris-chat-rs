@@ -418,7 +418,7 @@ def foreground_pid(text, bundle_id, springboard_pid):
                          + r'(?:\([^>]*\))?>, ([A-Za-z-]+)(?:[ ,].*)?$')
     last, previous_stamp = None, None
     for line in text.splitlines():
-        if 'Received state update for ' not in line or bundle_id not in line:
+        if not lifecycle.target_state_update(line, bundle_id):
             continue
         match = pattern.search(line)
         require(match is not None, 'Unrecognized foreground source record')
