@@ -329,14 +329,7 @@ fn disconnected_and_non_progressable_streams_require_retirement() {
 
 #[test]
 fn sender_rejects_oversized_records_before_the_command_queue() {
-    let (tx, rx) = flume::bounded(1);
-    let sender = DeviceSyncTcpSender {
-        tx,
-        peers: Arc::new(Mutex::new(HashSet::new())),
-        max_record_bytes: 4,
-        dirty: Arc::new(Mutex::new(HashSet::new())),
-        control_retry: Arc::new(Mutex::new(HashMap::new())),
-    };
+    let (sender, rx) = DeviceSyncTcpSender::test_channel(1, 4);
     let identity = fips_core::Identity::generate();
     let peer = PeerIdentity::from_pubkey_full(identity.pubkey_full());
     assert!(!sender.send_batch(peer, vec![vec![0; 5]]));
