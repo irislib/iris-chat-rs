@@ -66,11 +66,12 @@ class MainReleaseCacheTests(unittest.TestCase):
         self.assertIn("CARGO_TARGET_DIR: ${{ github.workspace }}/cargo-target", self.ci)
         self.assertEqual(re.search(r"uses: (actions/cache/restore@\S+)", restore).group(1),
                          re.search(r"uses: (actions/cache/restore@\S+)", release).group(1))
+        self.assertEqual(restore.split("restore-keys: |\n", 1)[1],
+                         release.split("restore-keys: |\n", 1)[1].replace("needs.validate.outputs.sha", "github.sha"))
         for prefix in filter(str.strip, restore.split("restore-keys: |\n", 1)[1].splitlines()):
             self.assertIn("steps.toolchain.outputs.identity", prefix)
             self.assertIn("release-build-inputs.json", prefix)
             self.assertIn("apt-snapshots.tsv", prefix)
-            self.assertIn("hashFiles('iris-chat-rs/**/Cargo.lock')", prefix)
         for text in (restore, save):
             self.assertNotIn("github.run_id", text); self.assertNotIn("github.run_attempt", text)
         self.assertRegex(save, r"uses: actions/cache/save@[0-9a-f]{40} # v6")
