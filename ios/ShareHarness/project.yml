@@ -2,6 +2,10 @@ name: IrisShareHarness
 options:
   deploymentTarget:
     iOS: "16.0"
+configs:
+  Debug: debug
+  DeviceDebug: debug
+  Release: release
 settings:
   base:
     SWIFT_VERSION: "5.0"
@@ -25,6 +29,13 @@ targets:
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
         TARGETED_DEVICE_FAMILY: "1,2"
+      configs:
+        DeviceDebug:
+          CODE_SIGNING_ALLOWED: YES
+          CODE_SIGN_STYLE: Manual
+          DEVELOPMENT_TEAM: ${IRIS_SHARE_TEST_TEAM}
+          CODE_SIGN_IDENTITY: ${IRIS_SHARE_APP_SIGN_IDENTITY}
+          PROVISIONING_PROFILE_SPECIFIER: ${IRIS_SHARE_APP_PROFILE_UUID}
   IrisShareHarnessTests:
     type: bundle.unit-test
     platform: iOS
@@ -46,6 +57,13 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: to.iris.tests.share-harness.ui-tests
         TEST_TARGET_NAME: IrisShareHarness
+      configs:
+        DeviceDebug:
+          CODE_SIGNING_ALLOWED: YES
+          CODE_SIGN_STYLE: Manual
+          DEVELOPMENT_TEAM: ${IRIS_SHARE_TEST_TEAM}
+          CODE_SIGN_IDENTITY: ${IRIS_SHARE_RUNNER_SIGN_IDENTITY}
+          PROVISIONING_PROFILE_SPECIFIER: ${IRIS_SHARE_RUNNER_PROFILE_UUID}
     dependencies:
       - target: IrisShareHarness
 schemes:
@@ -56,5 +74,15 @@ schemes:
     test:
       targets:
         - IrisShareHarnessTests
+        - IrisShareHarnessUITests
+      gatherCoverageData: false
+  IrisShareHarnessPhysical:
+    build:
+      targets:
+        IrisShareHarness: all
+    test:
+      config: DeviceDebug
+      debugEnabled: false
+      targets:
         - IrisShareHarnessUITests
       gatherCoverageData: false
