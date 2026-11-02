@@ -1,16 +1,20 @@
 //! Public discovery shares one anonymous SDK connection per relay. Account
 //! receiving and private publication never obtain this client.
 use super::*;
-use nostr_pubsub::{EventBus, NostrEventSubscription, QueryOptions};
+use nostr_pubsub::NostrEventSubscription;
 use nostr_pubsub_relay::RelayEventBus;
 use std::collections::BTreeSet;
 use std::sync::atomic::{AtomicBool, Ordering};
+
+mod query;
+use query::{client_options, QueryFailure};
 
 #[derive(Debug)]
 pub(in crate::core) struct DiscoveryRelays {
     client: Client,
     users: tokio::sync::Mutex<BTreeMap<RelayUrl, usize>>,
     stopped: AtomicBool,
+    queries: tokio::sync::Semaphore,
 }
 
 impl Default for DiscoveryRelays {
@@ -18,9 +22,13 @@ impl Default for DiscoveryRelays {
         Self {
             // This generated key is only for public-discovery AUTH. It is never
             // an account, device, session or publication key.
-            client: Client::new(Keys::generate()),
+            client: Client::builder()
+                .signer(Keys::generate())
+                .opts(client_options())
+                .build(),
             users: Default::default(),
             stopped: AtomicBool::new(false),
+            queries: tokio::sync::Semaphore::new(1),
         }
     }
 }
@@ -63,28 +71,10 @@ impl DiscoveryRelays {
         timeout: Duration,
     ) -> Result<Vec<Event>, String> {
         let lease = self.open(urls).await?;
-        let bus = lease.bus(timeout).await?;
-        let filters = merge_filters(filters)
-            .into_iter()
-            .map(|mut filter| {
-                filter.limit = Some(filter.limit.unwrap_or(16_384).min(16_384));
-                filter
-            })
-            .collect();
-        let report = bus
-            .query(
-                filters,
-                QueryOptions {
-                    limit: Some(16_384),
-                },
-            )
+        lease
+            .fetch(filters, timeout)
             .await
-            .map_err(|e| e.to_string())?;
-        Ok(report
-            .events
-            .into_iter()
-            .map(|delivery| delivery.event.into_event())
-            .collect())
+            .map_err(|e| e.to_string())
     }
 
     pub(in crate::core) fn stop(&self, runtime: &tokio::runtime::Handle) {
@@ -185,8 +175,7 @@ pub(in crate::core) struct PublicDiscovery {
     config: tokio::sync::watch::Sender<Option<Config>>,
     demand: Arc<std::sync::Mutex<Demand>>,
     wake: Arc<tokio::sync::Notify>,
-    task: tokio::task::JoinHandle<()>,
-    cancelled: AtomicBool,
+    cancelled: Arc<AtomicBool>,
 }
 
 impl Drop for PublicDiscovery {
@@ -220,19 +209,20 @@ impl PublicDiscovery {
         let (config, updates) = tokio::sync::watch::channel(None);
         let demand = Arc::new(std::sync::Mutex::new(Demand::default()));
         let wake = Arc::new(tokio::sync::Notify::new());
-        let task = runtime.spawn(run(
+        let cancelled = Arc::new(AtomicBool::new(false));
+        runtime.spawn(run(
             pool,
             updates,
             demand.clone(),
             wake.clone(),
             destination,
+            cancelled.clone(),
         ));
         Self {
             config,
             demand,
             wake,
-            task,
-            cancelled: AtomicBool::new(false),
+            cancelled,
         }
     }
 
@@ -242,7 +232,9 @@ impl PublicDiscovery {
 
     pub(in crate::core) fn cancel(&self) {
         self.cancelled.store(true, Ordering::Release);
-        self.task.abort();
+        // Finish subscription creation before closing it. Aborting midway can
+        // strand SDK subscriptions on the pool kept alive by the other worker.
+        let _ = self.config.send(None);
     }
 
     pub(in crate::core) fn configure(
@@ -330,6 +322,7 @@ async fn run(
     demand: Arc<std::sync::Mutex<Demand>>,
     wake: Arc<tokio::sync::Notify>,
     destination: Destination,
+    cancelled: Arc<AtomicBool>,
 ) {
     let (send, mut events) = tokio::sync::mpsc::channel::<Event>(256);
     let handler = Arc::new(move |delivery: nostr_pubsub::QueryEvent| {
@@ -344,10 +337,13 @@ async fn run(
     let mut applied: Option<Config> = None;
     let mut retry = Duration::from_secs(1);
     let mut retry_at = None;
-    let mut query = None::<nostr::util::BoxedFuture<'static, nostr_pubsub::QueryReport>>;
+    let mut query = None::<nostr::util::BoxedFuture<'static, Result<Vec<Event>, QueryFailure>>>;
     let mut seen = HashSet::new();
     let mut order = VecDeque::new();
     loop {
+        if cancelled.load(Ordering::Acquire) {
+            break;
+        }
         let current = updates.borrow_and_update().clone();
         if current != applied || retry_at.is_some_and(|at| Instant::now() >= at) {
             if let Some(old) = subscription.0.take() {
@@ -395,7 +391,11 @@ async fn run(
             }
             applied = current;
         }
+        if cancelled.load(Ordering::Acquire) {
+            break;
+        }
         tokio::select! {
+            biased;
             changed = updates.changed() => { if changed.is_err() { break; } },
             _ = tokio::time::sleep_until(tokio::time::Instant::from_std(retry_at.unwrap_or_else(Instant::now))), if retry_at.is_some() => {},
             Some(event) = events.recv() => {
@@ -419,12 +419,17 @@ async fn run(
                     Some(filter)
                 }).collect::<Vec<_>>()).unwrap_or_default();
                 if !filters.is_empty() {
-                    if let Some(bus) = &bus {
-                        let bus = bus.clone();
+                    if let Some(lease) = &lease {
+                        let pool = lease.pool.clone();
+                        let urls = lease.urls.clone();
                         query = Some(Box::pin(async move {
                             let mut retry = Duration::from_secs(1);
                             loop {
-                                if let Ok(report) = bus.query(filters.clone(), QueryOptions::default()).await { return report; }
+                                match query::fetch(&pool, &urls, filters.clone(), Duration::from_secs(12)).await {
+                                    Ok(events) => return Ok(events),
+                                    Err(QueryFailure::Limit) => return Err(QueryFailure::Limit),
+                                    Err(QueryFailure::Transport(_)) => {}
+                                }
                                 sleep(retry).await;
                                 retry = (retry * 2).min(Duration::from_secs(60));
                             }
@@ -440,10 +445,13 @@ async fn run(
             }, if query.is_some() => {
                 query = None;
                 // Explicit recovery must redeliver unchanged events.
-                for delivery in report.events { destination.deliver(delivery.event.into_event()).await; }
+                if let Ok(events) = report {
+                    for event in events { destination.deliver(event).await; }
+                }
             },
         }
     }
+    drop(query);
     if let Some(subscription) = subscription.0.take() {
         let _ = subscription.close().await;
     }

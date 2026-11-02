@@ -125,25 +125,6 @@ mod populated_discovery_idle {
         (fixture, events)
     }
 
-    fn requested_subjects(relay: &test_support::Relay) -> HashSet<String> {
-        relay
-            .wire
-            .lock()
-            .unwrap()
-            .iter()
-            .filter(|(_, row)| row[0] == "REQ")
-            .flat_map(|(_, row)| {
-                row.as_array().unwrap()[2..].iter().flat_map(|filter| {
-                    filter["authors"]
-                        .as_array()
-                        .unwrap()
-                        .iter()
-                        .map(|author| author.as_str().unwrap().to_owned())
-                })
-            })
-            .collect()
-    }
-
     fn child(relay_count: usize) {
         let (mut fixture, mut events) = restored_fixture();
         let proof_index = events
@@ -175,7 +156,30 @@ mod populated_discovery_idle {
             .collect::<HashSet<_>>();
         assert_eq!(subjects.len(), 384);
         let own = fixture.core.logged_in.as_ref().unwrap();
-        let forbidden = [own.owner_pubkey, own.device_keys.public_key()];
+        let mut forbidden = HashSet::from([own.owner_pubkey, own.device_keys.public_key()]);
+        for roster in fixture.core.app_keys.values() {
+            forbidden.insert(PublicKey::from_hex(&roster.owner_pubkey_hex).unwrap());
+            forbidden.extend(
+                roster
+                    .devices
+                    .iter()
+                    .map(|device| PublicKey::from_hex(&device.identity_pubkey_hex).unwrap()),
+            );
+        }
+        for user in &fixture
+            .core
+            .protocol_engine
+            .as_ref()
+            .unwrap()
+            .session_manager_snapshot()
+            .users
+        {
+            forbidden.extend(
+                user.devices
+                    .iter()
+                    .map(|device| PublicKey::from_slice(&device.device_pubkey.to_bytes()).unwrap()),
+            );
+        }
         let now = unix_now().get();
         let mut mesh_filters = Vec::new();
         for _ in 0..MESH_DEVICES {
@@ -229,7 +233,7 @@ mod populated_discovery_idle {
             let settling = Instant::now();
             loop {
                 dispatch_pending(&mut fixture.core, &incoming);
-                if relays.iter().all(|relay| requested_subjects(relay) == subjects)
+                if relays.iter().all(|relay| relay.ready_subjects() == subjects)
                     && expected_initial.iter().all(|id| fixture.core.has_seen_event(id))
                     && incoming.is_empty() { break; }
                 assert!(settling.elapsed() < Duration::from_secs(60), "all populated authors must become live");
@@ -254,19 +258,19 @@ mod populated_discovery_idle {
                 enqueue_discovery_replay(&mut fixture.core, &replay_events);
                 let app_before = app_writes.load(Ordering::SeqCst);
                 let protocol_before = protocol_writes.load(Ordering::SeqCst);
-                let before = relays.iter().map(|relay| (relay.wire.lock().unwrap().len(), relay.connections.load(Ordering::SeqCst))).collect::<Vec<_>>();
+                let before = relays.iter().map(|relay| (relay.wire.lock().unwrap().len(), relay.connections.load(Ordering::SeqCst), relay.sent_bytes.load(Ordering::SeqCst))).collect::<Vec<_>>();
                 let ticks = cpu_ticks(); let started = Instant::now();
                 let processed = sample_with_core(&mut fixture.core, &incoming, Duration::from_secs(125)).await;
                 let seconds = started.elapsed().as_secs_f64();
                 let cpu = (cpu_ticks() - ticks) as f64 / ticks_per_second * 100.0 / seconds;
                 let relay_samples = relays.iter().enumerate().map(|(index, relay)| {
                     let rows = relay.wire.lock().unwrap();
-                    let application_wire_bytes = rows[before[index].0..].iter().map(|(_, frame)| frame.to_string().len()).sum::<usize>();
+                    let application_wire_bytes = rows[before[index].0..].iter().map(|(_, frame)| frame.to_string().len()).sum::<usize>() + relay.sent_bytes.load(Ordering::SeqCst) - before[index].2;
                     let connections = relay.connections.load(Ordering::SeqCst) - before[index].1;
                     assert_eq!(application_wire_bytes, 0, "idle discovery sent application traffic");
                     assert_eq!(connections, 0, "idle discovery opened a connection");
                     assert_eq!(relay.active.load(Ordering::SeqCst), 1);
-                    serde_json::json!({"relay_index": index, "subjects": requested_subjects_unlocked(&rows).len(), "active_connections": 1,
+                    serde_json::json!({"relay_index": index, "subjects": relay.ready_subjects().len(), "active_connections": 1,
                         "application_wire_bytes": application_wire_bytes, "connections": connections})
                 }).collect::<Vec<_>>();
                 let app_delta = app_writes.load(Ordering::SeqCst) - app_before;
@@ -293,8 +297,12 @@ mod populated_discovery_idle {
             for (index, relay) in relays.iter().enumerate() {
                 test_support::until(|| relay.wire.lock().unwrap()[before[index]..].iter().any(|(_, frame)| frame[0] == "CLOSE")).await;
                 let rows = relay.wire.lock().unwrap();
-                for (_, frame) in rows[before[index]..].iter().filter(|(_, frame)| frame[0] == "REQ") {
-                    assert_eq!(frame[2]["authors"], serde_json::json!([proof.pubkey.to_hex()]));
+                let requests = rows[before[index]..].iter().filter(|(_, frame)| frame[0] == "REQ").collect::<Vec<_>>();
+                assert!(!requests.is_empty(), "targeted recovery omitted relay {index}");
+                for (_, frame) in requests {
+                    for filter in &frame.as_array().unwrap()[2..] {
+                        assert_eq!(filter["authors"], serde_json::json!([proof.pubkey.to_hex()]));
+                    }
                 }
             }
             let mut readiness = Vec::new();
@@ -311,7 +319,7 @@ mod populated_discovery_idle {
                         assert!(filter["authors"].as_array().unwrap().iter().all(|author| subjects.contains(author.as_str().unwrap())));
                     }}
                 }
-                readiness.push(serde_json::json!({"relay_index": index, "subjects": requested_subjects_unlocked(&rows).len(), "connections": 1, "anonymous_authentications": 1}));
+                readiness.push(serde_json::json!({"relay_index": index, "subjects": relay.ready_subjects().len(), "connections": 1, "anonymous_authentications": 1}));
             }
             println!("POPULATED_DISCOVERY_IDLE_RESULT={}", serde_json::json!({
                 "database_bytes": fixture.database_bytes, "message_rows": fixture.rows, "contacts": CONTACTS,
@@ -323,7 +331,9 @@ mod populated_discovery_idle {
                 "fixture_source_sha256": format!("{:x}", sha2::Sha256::digest(include_bytes!("synthetic_history_scale.rs"))),
                 "support_source_sha256": format!("{:x}", sha2::Sha256::digest(include_bytes!("populated_discovery_idle_support.rs"))),
                 "test_source_sha256": format!("{:x}", sha2::Sha256::digest(include_bytes!("populated_discovery_idle.rs"))),
-                "discovery_source_sha256": format!("{:x}", sha2::Sha256::digest(include_bytes!("../protocol/public_discovery.rs")))
+                "discovery_source_sha256": format!("{:x}", sha2::Sha256::digest(include_bytes!("../protocol/public_discovery.rs"))),
+                "query_source_sha256": format!("{:x}", sha2::Sha256::digest(include_bytes!("../protocol/public_discovery/query.rs"))),
+                "relay_source_sha256": format!("{:x}", sha2::Sha256::digest(include_bytes!("../protocol/public_discovery/test_support.rs")))
             }));
             fixture.core.private_discovery_subscriptions(Vec::new()).unwrap(); drop(worker);
             discovery_test_support::shutdown(&mut mesh).await;
@@ -333,20 +343,6 @@ mod populated_discovery_idle {
         fixture.core.shutdown();
     }
 
-    fn requested_subjects_unlocked(rows: &[(usize, serde_json::Value)]) -> HashSet<String> {
-        rows.iter()
-            .filter(|(_, row)| row[0] == "REQ")
-            .flat_map(|(_, row)| {
-                row.as_array().unwrap()[2..].iter().flat_map(|filter| {
-                    filter["authors"]
-                        .as_array()
-                        .unwrap()
-                        .iter()
-                        .map(|author| author.as_str().unwrap().to_owned())
-                })
-            })
-            .collect()
-    }
     #[test]
     fn populated_account_discovery_stays_quiet_and_targeted_demand_progresses() {
         run_case(1, TEST, "populated-discovery-idle");

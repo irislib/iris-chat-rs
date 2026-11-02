@@ -80,9 +80,11 @@ pub(in crate::core) fn pool() -> Arc<DiscoveryRelays> {
         client: Client::builder()
             .signer(Keys::generate())
             .websocket_transport(TestTransport)
+            .opts(client_options())
             .build(),
         users: Default::default(),
         stopped: AtomicBool::new(false),
+        queries: tokio::sync::Semaphore::new(1),
     })
 }
 
@@ -92,12 +94,18 @@ enum Command {
     Disconnect,
 }
 
+type AcceptedSubscriptions = Arc<Mutex<BTreeMap<(usize, String), (Vec<Filter>, bool)>>>;
+
 pub(in crate::core) struct Relay {
     pub url: RelayUrl,
     pub wire: Arc<Mutex<Vec<(usize, serde_json::Value)>>>,
     pub connections: Arc<AtomicUsize>,
     pub active: Arc<AtomicUsize>,
     pub events: Arc<Mutex<Vec<Event>>>,
+    pub sent_bytes: Arc<AtomicUsize>,
+    pub reject_subscriptions: Arc<AtomicBool>,
+    pub hold_eose: Arc<AtomicBool>,
+    accepted: AcceptedSubscriptions,
     commands: tokio::sync::broadcast::Sender<Command>,
     task: tokio::task::JoinHandle<()>,
 }
@@ -107,6 +115,21 @@ impl Drop for Relay {
     }
 }
 impl Relay {
+    // Only authenticated subscriptions still present on a live connection,
+    // after their initial bodies and EOSE have actually been sent.
+    pub fn ready_subjects(&self) -> HashSet<String> {
+        self.accepted
+            .lock()
+            .unwrap()
+            .values()
+            .filter(|(_, eose)| *eose)
+            .flat_map(|(filters, _)| {
+                filters
+                    .iter()
+                    .flat_map(|filter| filter.authors.iter().flatten().map(PublicKey::to_hex))
+            })
+            .collect()
+    }
     pub fn publish(&self, event: Event) {
         self.events.lock().unwrap().push(event.clone());
         let _ = self.commands.send(Command::Event(event));
@@ -124,20 +147,44 @@ impl Relay {
     }
 }
 
-struct Active(Arc<AtomicUsize>);
+struct Active {
+    count: Arc<AtomicUsize>,
+    accepted: AcceptedSubscriptions,
+    id: usize,
+}
 impl Drop for Active {
     fn drop(&mut self) {
-        self.0.fetch_sub(1, Ordering::SeqCst);
+        self.accepted
+            .lock()
+            .unwrap()
+            .retain(|(connection, _), _| *connection != self.id);
+        self.count.fetch_sub(1, Ordering::SeqCst);
     }
 }
 
 pub(in crate::core) async fn relay(events: Vec<Event>) -> Relay {
+    relay_with_tls(events, true).await
+}
+
+pub(super) async fn plain_relay(events: Vec<Event>) -> Relay {
+    relay_with_tls(events, false).await
+}
+
+trait AsyncSocket: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send {}
+impl<T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send> AsyncSocket for T {}
+
+async fn relay_with_tls(events: Vec<Event>, tls: bool) -> Relay {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let url = RelayUrl::parse(&format!("wss://{}", listener.local_addr().unwrap())).unwrap();
+    let scheme = if tls { "wss" } else { "ws" };
+    let url = RelayUrl::parse(&format!("{scheme}://{}", listener.local_addr().unwrap())).unwrap();
     let wire = Arc::new(Mutex::new(Vec::new()));
     let connections = Arc::new(AtomicUsize::new(0));
     let active = Arc::new(AtomicUsize::new(0));
     let events = Arc::new(Mutex::new(events));
+    let accepted = Arc::new(Mutex::new(BTreeMap::new()));
+    let sent_bytes = Arc::new(AtomicUsize::new(0));
+    let reject_subscriptions = Arc::new(AtomicBool::new(false));
+    let hold_eose = Arc::new(AtomicBool::new(false));
     let (commands, _) = tokio::sync::broadcast::channel(1024);
     let task = {
         let wire = wire.clone();
@@ -145,21 +192,30 @@ pub(in crate::core) async fn relay(events: Vec<Event>) -> Relay {
         let active = active.clone();
         let events = events.clone();
         let commands = commands.clone();
+        let accepted = accepted.clone();
+        let sent_bytes = sent_bytes.clone();
+        let reject_subscriptions = reject_subscriptions.clone();
+        let hold_eose = hold_eose.clone();
         tokio::spawn(async move {
             let acceptor = super::super::anonymous_reads::tls_tests::acceptor(true, false);
             let mut children = tokio::task::JoinSet::new();
             loop {
                 tokio::select! {
-                    accepted = listener.accept() => {
-                        let (stream, _) = accepted.unwrap();
+                    connection = listener.accept() => {
+                        let (stream, _) = connection.unwrap();
                         let id = count.fetch_add(1, Ordering::SeqCst);
                         active.fetch_add(1, Ordering::SeqCst);
-                        let guard = Active(active.clone());
+                        let guard = Active { count: active.clone(), accepted: accepted.clone(), id };
                         let acceptor = acceptor.clone(); let wire = wire.clone(); let events = events.clone();
+                        let accepted = accepted.clone(); let sent_bytes = sent_bytes.clone(); let reject_subscriptions = reject_subscriptions.clone();
+                        let hold_eose = hold_eose.clone();
                         let mut commands = commands.subscribe();
                         children.spawn(async move {
                             let _active = guard;
-                            let Ok(stream) = acceptor.accept(stream).await else { return; };
+                            let stream: Box<dyn AsyncSocket> = if tls {
+                                let Ok(stream) = acceptor.accept(stream).await else { return; };
+                                Box::new(stream)
+                            } else { Box::new(stream) };
                             let Ok(mut socket) = tokio_tungstenite::accept_async(stream).await else { return; };
                             if socket.send(Message::Text(serde_json::json!(["AUTH", format!("fixture-{id}")]).to_string())).await.is_err() { return; }
                             let mut authenticated = false;
@@ -182,15 +238,21 @@ pub(in crate::core) async fn relay(events: Vec<Event>) -> Relay {
                                                 vec![serde_json::json!(["OK", event.id, true, ""])]
                                             }
                                             Some("REQ") if !authenticated => vec![serde_json::json!(["CLOSED", frame[1], "auth-required: fixture"])],
+                                            Some("REQ") if reject_subscriptions.load(Ordering::SeqCst) => vec![serde_json::json!(["CLOSED", frame[1], "error: fixture rejection"])],
                                             Some("REQ") => {
                                                 let filters = frame.as_array().unwrap()[2..].iter().cloned().map(serde_json::from_value).collect::<Result<Vec<Filter>, _>>().unwrap();
                                                 let mut frames = events.lock().unwrap().iter().filter(|event| filters.iter().any(|filter|
                                                     filter.match_event(event, nostr::filter::MatchEventOptions::new())))
                                                     .map(|event| serde_json::json!(["EVENT", frame[1], event])).collect::<Vec<_>>();
+                                                accepted.lock().unwrap().insert((id, frame[1].as_str().unwrap().into()), (filters.clone(), false));
                                                 subscriptions.insert(frame[1].as_str().unwrap().into(), filters);
-                                                frames.push(serde_json::json!(["EOSE", frame[1]])); frames
+                                                if !hold_eose.load(Ordering::SeqCst) { frames.push(serde_json::json!(["EOSE", frame[1]])); } frames
                                             }
-                                            Some("CLOSE") => { subscriptions.remove(frame[1].as_str().unwrap()); vec![] },
+                                            Some("CLOSE") => {
+                                                subscriptions.remove(frame[1].as_str().unwrap());
+                                                accepted.lock().unwrap().remove(&(id, frame[1].as_str().unwrap().into()));
+                                                vec![]
+                                            },
                                             Some("EVENT") => panic!("discovery client published an event"),
                                             _ => vec![],
                                         }
@@ -203,7 +265,15 @@ pub(in crate::core) async fn relay(events: Vec<Event>) -> Relay {
                                         Err(_) => return,
                                     },
                                 };
-                                for frame in frames { if socket.send(Message::Text(frame.to_string())).await.is_err() { return; } }
+                                for frame in frames {
+                                    let text = frame.to_string();
+                                    let bytes = text.len();
+                                    if socket.send(Message::Text(text)).await.is_err() { return; }
+                                    sent_bytes.fetch_add(bytes, Ordering::SeqCst);
+                                    if frame[0] == "EOSE" {
+                                        if let Some((_, eose)) = accepted.lock().unwrap().get_mut(&(id, frame[1].as_str().unwrap().into())) { *eose = true; }
+                                    }
+                                }
                             }
                         });
                     }
@@ -218,6 +288,10 @@ pub(in crate::core) async fn relay(events: Vec<Event>) -> Relay {
         connections,
         active,
         events,
+        sent_bytes,
+        reject_subscriptions,
+        hold_eose,
+        accepted,
         commands,
         task,
     }

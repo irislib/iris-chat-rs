@@ -12,6 +12,8 @@ SOURCES = {
     "support_source_sha256": "core/src/core/tests/populated_discovery_idle_support.rs",
     "test_source_sha256": "core/src/core/tests/populated_discovery_idle.rs",
     "discovery_source_sha256": "core/src/core/protocol/public_discovery.rs",
+    "query_source_sha256": "core/src/core/protocol/public_discovery/query.rs",
+    "relay_source_sha256": "core/src/core/protocol/public_discovery/test_support.rs",
 }
 
 

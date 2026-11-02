@@ -121,6 +121,7 @@ async fn live_updates_verify_signatures_and_targeted_recovery_redelivers_only_re
     let mut forged = metadata(&a, "forged");
     forged.sig = metadata(&b, "signature").sig;
     relay.publish(forged);
+    relay.publish(metadata(&a, &"x".repeat(128 * 1024)));
     sleep(Duration::from_millis(200)).await;
     assert!(incoming.is_empty());
     let before = relay.wire.lock().unwrap().len();
@@ -226,4 +227,372 @@ async fn reconnect_restores_live_filters_and_recovers_late_stored_metadata() {
     assert_eq!(receive(&incoming).await, late);
     assert_eq!(relay.connections.load(Ordering::SeqCst), 2);
     assert_eq!(relay.active.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cancelled_setup_closes_all_its_subscriptions_without_stopping_shared_peer() {
+    let a = Keys::generate();
+    let b = Keys::generate();
+    let relay = relay(vec![metadata(&a, "a"), metadata(&b, "b")]).await;
+    let pool = pool();
+    let (send, incoming) = flume::unbounded();
+    let survivor = PublicDiscovery::new(&tokio::runtime::Handle::current(), send, pool.clone());
+    survivor
+        .configure(
+            std::slice::from_ref(&relay.url),
+            vec![Filter::new().author(a.public_key()).kind(Kind::Metadata)],
+        )
+        .unwrap();
+    receive(&incoming).await;
+    let worker = PublicDiscovery::new(
+        &tokio::runtime::Handle::current(),
+        flume::unbounded().0,
+        pool.clone(),
+    );
+    let filters = (1..=512)
+        .map(|limit| {
+            Filter::new()
+                .author(b.public_key())
+                .kind(Kind::Metadata)
+                .limit(limit)
+        })
+        .collect();
+    worker
+        .configure(std::slice::from_ref(&relay.url), filters)
+        .unwrap();
+    until(|| {
+        relay.wire.lock().unwrap().iter().any(|(_, row)| {
+            row[0] == "REQ" && row[2]["authors"] == serde_json::json!([b.public_key().to_hex()])
+        })
+    })
+    .await;
+    worker.cancel();
+    assert!(worker
+        .configure(
+            std::slice::from_ref(&relay.url),
+            vec![Filter::new().author(b.public_key())]
+        )
+        .is_err());
+    until(|| {
+        let rows = relay.wire.lock().unwrap();
+        let ids = rows
+            .iter()
+            .filter(|(_, row)| {
+                row[0] == "REQ" && row[2]["authors"] == serde_json::json!([b.public_key().to_hex()])
+            })
+            .map(|(_, row)| row[1].clone())
+            .collect::<Vec<_>>();
+        !ids.is_empty()
+            && ids.iter().all(|id| {
+                rows.iter()
+                    .any(|(_, row)| row[0] == "CLOSE" && &row[1] == id)
+            })
+    })
+    .await;
+    // Holding the cancelled worker must not retain a lease or revive filters.
+    until(|| {
+        pool.users
+            .try_lock()
+            .is_ok_and(|users| users.get(&relay.url) == Some(&1))
+    })
+    .await;
+    let changed = metadata(&a, "survives cancellation");
+    relay.publish(changed.clone());
+    assert_eq!(receive(&incoming).await, changed);
+    assert_eq!(relay.connections.load(Ordering::SeqCst), 1);
+    drop(survivor);
+    until(|| relay.active.load(Ordering::SeqCst) == 0).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn recovery_and_cold_queries_enforce_byte_budget_and_release_admission_after_flood() {
+    let peer = Keys::generate();
+    let relay = relay(Vec::new()).await;
+    let pool = pool();
+    let filter = Filter::new().author(peer.public_key()).kind(Kind::Metadata);
+    let (send, incoming) = flume::unbounded();
+    let worker = PublicDiscovery::new(&tokio::runtime::Handle::current(), send, pool.clone());
+    worker
+        .configure(std::slice::from_ref(&relay.url), vec![filter.clone()])
+        .unwrap();
+    until(|| {
+        relay.requests() > 0
+            && relay
+                .wire
+                .lock()
+                .unwrap()
+                .iter()
+                .any(|(_, row)| row[0] == "AUTH")
+    })
+    .await;
+    let body = "x".repeat(70 * 1024);
+    *relay.events.lock().unwrap() = (0..256)
+        .map(|index| metadata(&peer, &format!("{index}:{body}")))
+        .collect();
+    let error = pool
+        .fetch(
+            std::slice::from_ref(&relay.url),
+            vec![filter.clone()],
+            Duration::from_secs(3),
+        )
+        .await
+        .unwrap_err();
+    assert!(error.contains("safety bound"), "{error}");
+    worker.refresh(Some(peer.public_key()));
+    until(|| {
+        relay
+            .wire
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(_, row)| row[0] == "CLOSE")
+            .count()
+            >= 2
+    })
+    .await;
+    assert!(
+        incoming.is_empty(),
+        "overflow must not masquerade as complete metadata"
+    );
+    let before = relay.requests();
+    sleep(Duration::from_millis(300)).await;
+    assert_eq!(
+        relay.requests(),
+        before,
+        "resource rejection must not start a retry storm"
+    );
+    let small = metadata(&peer, "small recovery");
+    *relay.events.lock().unwrap() = vec![small.clone()];
+    assert_eq!(
+        pool.fetch(
+            std::slice::from_ref(&relay.url),
+            vec![filter],
+            Duration::from_secs(3)
+        )
+        .await
+        .unwrap(),
+        vec![small.clone()]
+    );
+    worker.refresh(Some(peer.public_key()));
+    assert_eq!(receive(&incoming).await, small);
+    assert_eq!(relay.connections.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn readiness_requires_every_relay_to_accept_and_finish_its_current_subscription() {
+    let peer = Keys::generate();
+    let event = metadata(&peer, "initial");
+    let subjects = HashSet::from([peer.public_key().to_hex()]);
+    let mut relays = Vec::new();
+    for _ in 0..5 {
+        relays.push(relay(vec![event.clone()]).await);
+    }
+    relays[4].reject_subscriptions.store(true, Ordering::SeqCst);
+    let (send, incoming) = flume::unbounded();
+    let worker = PublicDiscovery::new(&tokio::runtime::Handle::current(), send, pool());
+    worker
+        .configure(
+            &relays
+                .iter()
+                .map(|relay| relay.url.clone())
+                .collect::<Vec<_>>(),
+            vec![Filter::new().author(peer.public_key()).kind(Kind::Metadata)],
+        )
+        .unwrap();
+    assert_eq!(
+        receive(&incoming).await,
+        event,
+        "one relay can deliver all data"
+    );
+    until(|| {
+        relays[..4]
+            .iter()
+            .all(|relay| relay.ready_subjects() == subjects)
+            && relays[4].requests() > 0
+    })
+    .await;
+    assert!(
+        relays[4].ready_subjects().is_empty(),
+        "rejected requests cannot establish readiness"
+    );
+    assert!(!relays
+        .iter()
+        .all(|relay| relay.ready_subjects() == subjects));
+    drop(worker);
+    for relay in &relays {
+        until(|| relay.active.load(Ordering::SeqCst) == 0).await;
+        assert!(
+            relay.ready_subjects().is_empty(),
+            "closed/disconnected subscriptions remain unready"
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cancelling_query_closes_only_requested_relay_and_releases_admission() {
+    let peer = Keys::generate();
+    let event = metadata(&peer, "initial");
+    let a = relay(vec![event.clone()]).await;
+    let b = relay(vec![event.clone()]).await;
+    let pool = pool();
+    let (send, incoming) = flume::unbounded();
+    let worker = PublicDiscovery::new(&tokio::runtime::Handle::current(), send, pool.clone());
+    let filter = Filter::new().author(peer.public_key()).kind(Kind::Metadata);
+    worker
+        .configure(&[a.url.clone(), b.url.clone()], vec![filter.clone()])
+        .unwrap();
+    receive(&incoming).await;
+    until(|| a.ready_subjects().len() == 1 && b.ready_subjects().len() == 1).await;
+    a.hold_eose.store(true, Ordering::SeqCst);
+    let before_a = a.requests();
+    let before_b = b.requests();
+    let querying = {
+        let pool = pool.clone();
+        let url = a.url.clone();
+        let filter = filter.clone();
+        tokio::spawn(async move {
+            pool.fetch(&[url], vec![filter], Duration::from_secs(30))
+                .await
+        })
+    };
+    until(|| a.requests() > before_a).await;
+    let id = a
+        .wire
+        .lock()
+        .unwrap()
+        .iter()
+        .rev()
+        .find(|(_, row)| row[0] == "REQ")
+        .unwrap()
+        .1[1]
+        .clone();
+    querying.abort();
+    assert!(querying.await.unwrap_err().is_cancelled());
+    until(|| {
+        a.wire
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|(_, row)| row[0] == "CLOSE" && row[1] == id)
+    })
+    .await;
+    assert_eq!(pool.queries.available_permits(), 1);
+    assert_eq!(
+        b.requests(),
+        before_b,
+        "query escaped requested relay subset"
+    );
+    assert_eq!(a.active.load(Ordering::SeqCst), 1);
+    a.hold_eose.store(false, Ordering::SeqCst);
+    assert_eq!(
+        pool.fetch(
+            std::slice::from_ref(&a.url),
+            vec![filter.clone()],
+            Duration::from_secs(3)
+        )
+        .await
+        .unwrap(),
+        vec![event.clone()]
+    );
+    b.hold_eose.store(true, Ordering::SeqCst);
+    assert_eq!(
+        pool.fetch(
+            &[a.url.clone(), b.url.clone()],
+            vec![filter],
+            Duration::from_millis(300)
+        )
+        .await
+        .unwrap(),
+        vec![event],
+        "a stalled relay must preserve verified results from its healthy peer"
+    );
+    b.hold_eose.store(false, Ordering::SeqCst);
+    let changed = metadata(&peer, "live after cancellation");
+    b.publish(changed.clone());
+    assert_eq!(receive(&incoming).await, changed);
+    assert_eq!(a.connections.load(Ordering::SeqCst), 1);
+    assert_eq!(b.connections.load(Ordering::SeqCst), 1);
+}
+
+#[test]
+fn account_switch_suspend_and_logout_close_old_discovery_and_rotate_anonymous_auth() {
+    use crate::core::tests::logged_in_test_core_with_updates;
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let next_owner = Keys::generate();
+    let next_device = Keys::generate();
+    let peer = Keys::generate();
+    let (mut core, _, _directory) =
+        logged_in_test_core_with_updates("discovery-lifecycle", &owner, &device);
+    core.preferences.nostr_relay_urls.clear();
+    let relay = core
+        .runtime
+        .block_on(test_support::plain_relay(vec![metadata(&peer, "peer")]));
+    let (send, incoming) = flume::unbounded();
+    core.core_sender = send;
+    let mut signers = HashSet::new();
+    for stage in 0..3 {
+        let filters = vec![Filter::new().author(peer.public_key()).kind(Kind::Metadata)];
+        let subscriptions = core.private_discovery_subscriptions(filters).unwrap();
+        core.runtime
+            .block_on(
+                super::super::private_reads::apply_private_discovery_subscriptions(
+                    subscriptions,
+                    std::slice::from_ref(&relay.url),
+                ),
+            )
+            .unwrap();
+        core.runtime.block_on(async {
+            tokio::time::timeout(Duration::from_secs(30), async {
+                loop {
+                    if let CoreMsg::Internal(message) = incoming.recv_async().await.unwrap() {
+                        if let InternalEvent::RelayEvent(event) = *message {
+                            assert_eq!(event.pubkey, peer.public_key());
+                            break;
+                        }
+                    }
+                }
+            })
+            .await
+            .unwrap();
+        });
+        let rows = relay.wire.lock().unwrap().clone();
+        let (connection, auth) = rows.iter().rev().find(|(_, row)| row[0] == "AUTH").unwrap();
+        let auth: Event = serde_json::from_value(auth[1].clone()).unwrap();
+        assert!(
+            signers.insert(auth.pubkey),
+            "replacement pool reused anonymous identity"
+        );
+        assert!([&owner, &device, &next_owner, &next_device, &peer]
+            .iter()
+            .all(|key| key.public_key() != auth.pubkey));
+        assert!(rows
+            .iter()
+            .filter(|(id, _)| id == connection)
+            .all(|(_, row)| row[0] != "EVENT" && !row.to_string().contains("#p")));
+        match stage {
+            0 => core
+                .start_session(
+                    next_owner.public_key(),
+                    Some(next_owner.clone()),
+                    next_device.clone(),
+                    false,
+                    false,
+                )
+                .unwrap(),
+            1 => {
+                assert!(core.prepare_for_suspend());
+            }
+            _ => core.logout(),
+        }
+        core.runtime
+            .block_on(until(|| relay.active.load(Ordering::SeqCst) == 0));
+        assert!(core.protocol_subscription_runtime.discovery.is_none());
+        if stage == 1 {
+            core.handle_app_foregrounded();
+        }
+        while incoming.try_recv().is_ok() {}
+    }
+    assert_eq!(relay.connections.load(Ordering::SeqCst), 3);
+    core.shutdown();
 }
