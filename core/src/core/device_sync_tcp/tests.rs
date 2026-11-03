@@ -586,6 +586,27 @@ async fn authenticated_same_host_non_sibling_cannot_read_device_sync() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn authorized_devices_exchange_records_through_a_seed_without_direct_links() {
     use fips_core::config::{TransportInstances, WebSocketConfig};
+    const PORT: u16 = 39_020;
+    const FIRST_REQUEST: &[u8] = b"first history request";
+    const SECOND_REQUEST: &[u8] = b"second history request";
+
+    async fn receive_from(rx: &flume::Receiver<CoreMsg>, peer: PeerIdentity) -> Vec<u8> {
+        let CoreMsg::Internal(event) = rx.recv_async().await.unwrap() else {
+            panic!("expected an internal event");
+        };
+        let InternalEvent::DeviceSyncPacket {
+            source_pubkey_hex,
+            source_port,
+            data,
+        } = *event
+        else {
+            panic!("expected a device-sync packet");
+        };
+        assert_eq!(source_pubkey_hex, peer.pubkey().to_string());
+        assert_eq!(source_port, PORT);
+        data
+    }
+
     async fn endpoint(websocket: WebSocketConfig) -> Arc<FipsEndpoint> {
         let mut config = fips_core::Config::new();
         config.node.control.enabled = false;
@@ -622,9 +643,9 @@ async fn authorized_devices_exchange_records_through_a_seed_without_direct_links
     let (first_sender, first_task) = start_device_sync_tcp(
         first.clone(),
         HashSet::new(),
-        39_020,
+        PORT,
         1024,
-        b"first history request".to_vec(),
+        FIRST_REQUEST.to_vec(),
         b"resync".to_vec(),
         first_tx,
     )
@@ -633,9 +654,9 @@ async fn authorized_devices_exchange_records_through_a_seed_without_direct_links
     let (second_sender, second_task) = start_device_sync_tcp(
         second.clone(),
         HashSet::from([first.npub().to_string()]),
-        39_020,
+        PORT,
         1024,
-        b"second history request".to_vec(),
+        SECOND_REQUEST.to_vec(),
         b"resync".to_vec(),
         second_tx,
     )
@@ -647,22 +668,18 @@ async fn authorized_devices_exchange_records_through_a_seed_without_direct_links
         "an unapproved device cannot exchange records"
     );
     first_sender.update_peers(HashSet::from([second.npub().to_string()]));
+    let first_identity = PeerIdentity::from_npub(first.npub()).unwrap();
+    let second_identity = PeerIdentity::from_npub(second.npub()).unwrap();
     let received = tokio::time::timeout(Duration::from_secs(15), async {
-        for (rx, expected) in [
-            (&first_rx, b"second history request".as_slice()),
-            (&second_rx, b"first history request".as_slice()),
+        for (rx, peer, expected) in [
+            (&first_rx, second_identity, SECOND_REQUEST),
+            (&second_rx, first_identity, FIRST_REQUEST),
         ] {
             loop {
-                if let CoreMsg::Internal(event) = rx.recv_async().await.unwrap() {
-                    if let InternalEvent::DeviceSyncPacket { data, .. } = *event {
-                        // An authorization retry may request a fresh sync before
-                        // the initial history request on the replacement stream.
-                        if data == b"resync" {
-                            continue;
-                        }
-                        assert_eq!(data, expected);
-                        break;
-                    }
+                let data = receive_from(rx, peer).await;
+                if data != b"resync" {
+                    assert_eq!(data, expected);
+                    break;
                 }
             }
         }
@@ -689,8 +706,6 @@ async fn authorized_devices_exchange_records_through_a_seed_without_direct_links
         let second_records = (0..128)
             .map(|index| format!("second history record {index}").into_bytes())
             .collect::<Vec<_>>();
-        let first_identity = PeerIdentity::from_npub(first.npub()).unwrap();
-        let second_identity = PeerIdentity::from_npub(second.npub()).unwrap();
         for (outbound, peer, records) in [
             (&first_sender, second_identity, &first_records),
             (&second_sender, first_identity, &second_records),
@@ -700,26 +715,26 @@ async fn authorized_devices_exchange_records_through_a_seed_without_direct_links
             }
         }
         tokio::time::timeout(Duration::from_secs(15), async {
-            for (rx, expected) in [(&first_rx, &second_records), (&second_rx, &first_records)] {
-                let mut records = Vec::new();
-                while records.len() < expected.len() {
-                    if let CoreMsg::Internal(event) = rx.recv_async().await.unwrap() {
-                        if let InternalEvent::DeviceSyncPacket { data, .. } = *event {
-                            if data == b"resync" {
-                                continue;
-                            }
-                            records.push(data);
+            for (rx, peer, request, records) in [
+                (&first_rx, second_identity, SECOND_REQUEST, &second_records),
+                (&second_rx, first_identity, FIRST_REQUEST, &first_records),
+            ] {
+                for expected in records {
+                    loop {
+                        let data = receive_from(rx, peer).await;
+                        // Each replacement stream sends its own initial request.
+                        if data != request && data != b"resync" {
+                            assert_eq!(&data, expected);
+                            break;
                         }
                     }
                 }
-                assert_eq!(&records, expected);
             }
         })
         .await
         .expect("concurrent history batches must finish through the seed");
         first_sender.update_peers(HashSet::new());
         tokio::time::sleep(Duration::from_millis(300)).await;
-        let first_identity = PeerIdentity::from_npub(first.npub()).unwrap();
         second_sender.send_batch(first_identity, vec![b"revoked device data".to_vec()]);
         assert!(
             tokio::time::timeout(Duration::from_millis(500), first_rx.recv_async())
