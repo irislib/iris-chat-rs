@@ -460,6 +460,92 @@ fn direct_files_self_chat_outgoing_offer_is_received_on_another_device() {
 }
 
 #[test]
+fn direct_files_self_chat_offer_arrives_over_relay_with_one_linked_device_missing() {
+    let owner = Keys::generate();
+    let laptop = Keys::generate();
+    let desktop = Keys::generate();
+    let devices = [
+        laptop.public_key(),
+        desktop.public_key(),
+        Keys::generate().public_key(),
+    ];
+    let chat = owner.public_key().to_hex();
+    let (mut sender, _su, dir) =
+        logged_in_test_core_with_updates("self-file-laptop", &owner, &laptop);
+    let (mut receiver, _ru, _rd) =
+        logged_in_test_core_with_updates("self-file-desktop", &owner, &desktop);
+    install_two_way_local_sibling_state_for_test(
+        &mut sender,
+        &mut receiver,
+        &owner,
+        &laptop,
+        &desktop,
+    );
+    let now = unix_now().get();
+    let roster = AppKeys::new(
+        devices
+            .iter()
+            .map(|key| DeviceEntry::new(*key, now))
+            .collect(),
+    );
+    for core in [&mut sender, &mut receiver] {
+        core.preferences.nostr_relay_urls.clear();
+        core.preferences.nearby_enabled = false;
+        core.app_keys.insert(
+            chat.clone(),
+            known_app_keys_from_ndr(owner.public_key(), &roster, now),
+        );
+        observe_peer_appkeys_for_test(
+            core.protocol_engine.as_mut().unwrap(),
+            &owner,
+            &devices,
+            now,
+        );
+    }
+    let (tx, rx) = flume::unbounded();
+    sender.core_sender = tx.clone();
+    sender.priority_sender = tx;
+    let socket = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+    let std::net::SocketAddr::V4(rendezvous) = socket.local_addr().unwrap() else {
+        unreachable!()
+    };
+    drop(socket);
+    sender.reconcile_device_sync_at_rendezvous_for_test(rendezvous);
+    let file = dir.path().join("notes.txt");
+    std::fs::write(&file, b"private file contents").unwrap();
+    sender.handle_action(AppAction::SendDirectFiles {
+        chat_id: chat.clone(),
+        attachments: vec![OutgoingAttachment {
+            file_path: file.to_string_lossy().into_owned(),
+            filename: "notes.txt".into(),
+        }],
+        caption: "From my laptop".into(),
+    });
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while sender.state.busy.sending_message {
+        sender.handle_message(
+            rx.recv_deadline(deadline)
+                .expect("file preparation finished"),
+        );
+    }
+    let record = direct_files_test_records(&sender).remove(0);
+    assert_eq!(record.status, crate::DirectFileTransferStatus::Offered);
+    // Only relay events cross to the desktop. It has no live sibling-sync connection.
+    deliver_pending_relay_events_for_test(&sender, &mut receiver);
+    receiver.handle_action(AppAction::OpenChat {
+        chat_id: chat.clone(),
+    });
+    let message = direct_files_test_message(&receiver, &chat, &record.offer.id);
+    assert_eq!(message.body, "From my laptop");
+    let transfer = message.direct_transfer.unwrap();
+    assert_eq!(transfer.status, crate::DirectFileTransferStatus::Offered);
+    assert!(!transfer.is_sender);
+    assert_eq!(transfer.files[0].filename, "notes.txt");
+    assert!(transfer.files[0].local_path.is_none());
+    sender.stop_device_sync_now();
+}
+
+#[test]
 fn direct_files_failed_batch_remains_in_history_after_restart() {
     exercise_direct_files_actions(false, crate::DirectFileTransferStatus::Failed);
 }

@@ -438,15 +438,16 @@ impl ProtocolEngine {
             return DirectSendReadiness::MissingPeerAppKeys;
         }
         if peer_owner == self.local_owner {
-            return if peer_devices
-                .into_iter()
-                .filter(|device| *device != self.local_device)
-                .any(|device| !user_can_send_to_device(peer_user, device))
+            // A single-device account can keep the note locally. With linked
+            // devices, one usable session or invite is enough to start fanout.
+            if peer_devices.as_slice() == [self.local_device]
+                || peer_devices.iter().any(|device| {
+                    *device != self.local_device && user_can_send_to_device(peer_user, *device)
+                })
             {
-                DirectSendReadiness::MissingLocalSiblingInviteOrSession
-            } else {
-                DirectSendReadiness::Ready
-            };
+                return DirectSendReadiness::Ready;
+            }
+            return DirectSendReadiness::MissingLocalSiblingInviteOrSession;
         }
         if !peer_devices
             .iter()
