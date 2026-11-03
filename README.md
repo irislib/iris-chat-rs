@@ -162,15 +162,16 @@ distribution channel. See the [release and distribution playbook](RELEASE.md).
 
 ## Command Line
 
-Install the macOS/Linux CLI with Haps:
+Use Haps to install the macOS or Linux CLI from the official Iris publisher.
 
 ```bash
-haps install iris
+haps install npub1399g0q2gtwjcglyjcg3jw3rcllqhm375pwases5hkvqa56aqe5wsz2eaap/iris
 ```
 
 The CLI supports x86-64 and ARM64. Linux needs glibc 2.36 or newer and the
 D-Bus runtime library (`sudo apt install libdbus-1-3` on Debian/Ubuntu).
-The Haps package `iris-chat` installs the desktop app.
+For the desktop app, use the same command with `/iris-chat` in place of `/iris`.
+Haps checks the release against your trusted audits before installing.
 
 Or use the standalone installer:
 
