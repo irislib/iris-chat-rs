@@ -149,10 +149,8 @@ async fn missing_service_retries_handshake_at_transport_deadline() {
     .unwrap()
     .unwrap();
     assert_eq!(dropped.len(), 1);
-    assert_eq!(
-        dropped[0].source_peer,
-        PeerIdentity::from_npub(a.npub()).unwrap()
-    );
+    // The endpoint's npub identifies the sender regardless of full-key parity.
+    assert_eq!(dropped[0].source_peer.npub(), a.npub());
     let syn = fips_tcp::wire::Segment::decode(dropped[0].data.as_slice()).unwrap();
     assert!(syn.flags.contains(fips_tcp::wire::Flags::SYN));
     assert!(first.received.is_empty());
