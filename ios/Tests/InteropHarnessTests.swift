@@ -33,6 +33,21 @@ enum HarnessError: Error, CustomStringConvertible {
 final class InteropHarnessTests: XCTestCase {
     let debugSnapshotFilename = "iris_chat_runtime_debug.json"
 
+    func testPublicLinkHistoryRequiresAnExportableMessage() {
+        var seed = makeMessage(chatId: "self", id: "seed", body: "pre-link note")
+        for delivery: DeliveryState in [.queued, .pending, .failed] {
+            seed.delivery = delivery
+            XCTAssertNil(publicLinkHistorySeed(in: [seed], body: seed.body))
+        }
+        for delivery: DeliveryState in [.sent, .received, .seen] {
+            seed.delivery = delivery
+            XCTAssertEqual(publicLinkHistorySeed(in: [seed], body: seed.body)?.id, seed.id)
+        }
+        XCTAssertNil(publicLinkHistorySeed(in: [seed], body: "another note"))
+        seed.kind = .system
+        XCTAssertNil(publicLinkHistorySeed(in: [seed], body: seed.body))
+    }
+
     func testHarnessAction() async throws {
         var env = ProcessInfo.processInfo.environment
         for (key, value) in env where key.hasSuffix("_B64") {
@@ -261,16 +276,33 @@ final class InteropHarnessTests: XCTestCase {
                 throw HarnessError.unexpected("Browser linking requires isolated test storage")
             }
             let account = try await createOrLoadAccount(manager: manager, env: env)
+            manager.dispatch(.setDebugLoggingEnabled(enabled: true))
+            // SwiftUI forwards the active scene to its own manager, not this isolated account.
+            let _: Void = try await waitFor(label: "active iPhone scene before linking", timeout: 20) {
+                guard self.publicLinkHostIsActive else { return nil }
+                manager.appForegrounded()
+                return ()
+            }
+            status("public_link_scene", "foregroundActive")
             let message = try requiredEnv("IRIS_IOS_HARNESS_MESSAGE", env: env)
             let chatID = try await ensureChatOpen(
                 manager: manager, dataDir: dataDir, chatID: nil, peerInput: account.publicKeyHex
             )
             manager.dispatch(.sendMessage(chatId: chatID, text: message))
-            _ = try await waitFor(label: "history message saved before linking", timeout: 20) {
-                manager.state.currentChat?.messages.contains(where: { $0.body == message }) == true ? true : nil
+            let seed: ChatMessageSnapshot = try await waitFor(
+                label: "exportable pre-link note on a connected message server", timeout: 30
+            ) {
+                guard let chat = manager.state.currentChat, chat.chatId == chatID,
+                      (manager.state.networkStatus?.connectedRelayCount ?? 0) > 0 else { return nil }
+                return self.publicLinkHistorySeed(in: chat.messages, body: message)
             }
+            let connectedRelays = manager.state.networkStatus?.connectedRelayCount ?? 0
+            guard publicLinkHostIsActive, connectedRelays > 0 else {
+                throw HarnessError.unexpected("iPhone lost its active scene or message server before linking")
+            }
+            status("pre_link_connected_relay_count", String(connectedRelays))
+            status("pre_link_message_delivery", String(describing: seed.delivery))
             status("history_ready", "true")
-            manager.dispatch(.setDebugLoggingEnabled(enabled: true))
             let initialCount = manager.state.deviceRoster?.devices.count ?? 0
             manager.addAuthorizedDevice(
                 deviceInput: try requiredEnv("IRIS_IOS_HARNESS_DEVICE_INPUT", env: env),
@@ -284,6 +316,12 @@ final class InteropHarnessTests: XCTestCase {
                     try await Task.sleep(nanoseconds: 90_000_000_000)
                     await reportRuntimeDebugSnapshot(manager: manager, dataDir: dataDir)
                     if let debug = await liveRuntimeDebugSnapshot(manager: manager) {
+                        if let transport = dictValue(debug["fips_transport"]) {
+                            status("post_link_fips_status", stringValue(transport["status"]))
+                            if boolValue(transport["valid"]) {
+                                status("post_link_fips_peer_count", stringValue(transport["connected_peer_count"]))
+                            }
+                        }
                         let entries = arrayValue(debug["recent_log"]).compactMap { $0 as? JsonObject }
                         for entry in entries where ["device_link", "device_sync", "fips"].contains(where: {
                             stringValue(entry["category"]).hasPrefix($0)

@@ -2,6 +2,9 @@ import Foundation
 import SQLite3
 import UserNotifications
 import XCTest
+#if os(iOS)
+import UIKit
+#endif
 #if os(macOS)
 @testable import IrisChatMac
 #else
@@ -9,6 +12,27 @@ import XCTest
 #endif
 
 extension InteropHarnessTests {
+    var publicLinkHostIsActive: Bool {
+#if os(iOS)
+        UIApplication.shared.applicationState == .active && UIApplication.shared.connectedScenes.contains {
+            $0 is UIWindowScene && $0.activationState == .foregroundActive
+        }
+#else
+        false // The public link driver requires a physical iPhone.
+#endif
+    }
+
+    func publicLinkHistorySeed(in messages: [ChatMessageSnapshot], body: String) -> ChatMessageSnapshot? {
+        messages.first { message in
+            guard message.body == body, message.kind == .user else { return false }
+            // The native inventory excludes queued, pending, and failed text messages.
+            switch message.delivery {
+            case .sent, .received, .seen: return true
+            case .queued, .pending, .failed: return false
+            }
+        }
+    }
+
     func ensureLoggedIn(manager: AppManager, env: [String: String]) async throws -> AccountSnapshot {
         if let account = manager.state.account {
             return account
