@@ -10,6 +10,7 @@
 
 ## 0.1.60
 
+- Deduplicate verified public discovery events before they occupy the shared queue, while retaining recovery for events that could not be queued.
 - Reconcile stored delivery and read receipts with linked devices after time offline.
 - Catch up on unread counts when a linked device resumes its existing connection.
 - Sync new “Delete for me” actions privately across linked devices, including when a deletion arrives before the message.

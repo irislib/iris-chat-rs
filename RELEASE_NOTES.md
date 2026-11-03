@@ -9,6 +9,7 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 - Reconcile stored per-recipient delivery and read receipts between authorized linked devices, including receipts missed while offline.
 - Restore unread-count reconciliation when a linked device resumes an existing connection.
 - Sync new “Delete for me” actions as account-private events between linked devices. A deletion can arrive before its message and survives restart.
+- Avoid repeating discovery requests when several message servers return the same signed profile or device update.
 - Publish the Iris CLI source package as 0.1.60.
 
 ### Apple
@@ -16,12 +17,14 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 - Linked devices now catch up on Delivered and Seen indicators after reconnecting.
 - Reading a message on one device updates the unread count on your other linked devices.
 - Using “Delete for me” now removes that message from your other linked devices when they sync.
+- Iris avoids repeat downloads when several message servers send the same profile or device update.
 
 ### Zapstore
 
 - Linked devices now catch up on Delivered and Seen indicators after reconnecting.
 - Reading a message on one device updates the unread count on your other linked devices.
 - Using “Delete for me” now removes that message from your other linked devices when they sync.
+- Iris avoids repeat downloads when several message servers send the same profile or device update.
 
 ## v2026.11.2.1
 
