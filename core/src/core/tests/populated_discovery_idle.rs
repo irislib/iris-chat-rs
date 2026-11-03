@@ -254,20 +254,25 @@ mod populated_discovery_idle {
             for relay in &relays { assert_eq!(relay.connections.load(Ordering::SeqCst), 1); }
             let ticks_per_second = tick_rate();
             let mut samples = Vec::new();
-            for _ in 0..2 {
+            for sample_index in 0..2 {
                 enqueue_discovery_replay(&mut fixture.core, &replay_events);
                 let app_before = app_writes.load(Ordering::SeqCst);
                 let protocol_before = protocol_writes.load(Ordering::SeqCst);
-                let before = relays.iter().map(|relay| (relay.wire.lock().unwrap().len(), relay.connections.load(Ordering::SeqCst), relay.sent_bytes.load(Ordering::SeqCst))).collect::<Vec<_>>();
+                let before = relays.iter().map(|relay| (relay.wire.lock().unwrap().len(), relay.connections.load(Ordering::SeqCst), relay.sent_bytes.load(Ordering::SeqCst), relay.responses.lock().unwrap().len())).collect::<Vec<_>>();
                 let ticks = cpu_ticks(); let started = Instant::now();
                 let processed = sample_with_core(&mut fixture.core, &incoming, Duration::from_secs(125)).await;
                 let seconds = started.elapsed().as_secs_f64();
                 let cpu = (cpu_ticks() - ticks) as f64 / ticks_per_second * 100.0 / seconds;
                 let relay_samples = relays.iter().enumerate().map(|(index, relay)| {
                     let rows = relay.wire.lock().unwrap();
-                    let application_wire_bytes = rows[before[index].0..].iter().map(|(_, frame)| frame.to_string().len()).sum::<usize>() + relay.sent_bytes.load(Ordering::SeqCst) - before[index].2;
+                    let client_bytes = rows[before[index].0..].iter().map(|(_, frame)| frame.to_string().len()).sum::<usize>();
+                    let relay_bytes = relay.sent_bytes.load(Ordering::SeqCst) - before[index].2;
+                    let application_wire_bytes = client_bytes + relay_bytes;
                     let connections = relay.connections.load(Ordering::SeqCst) - before[index].1;
-                    assert_eq!(application_wire_bytes, 0, "idle discovery sent application traffic");
+                    assert_eq!(application_wire_bytes, 0,
+                        "idle discovery sent application traffic: sample_index={sample_index} relay_index={index} client_to_relay_bytes={client_bytes} relay_to_client_bytes={relay_bytes} new_connections={connections} active_connections={} frames={}",
+                        relay.active.load(Ordering::SeqCst),
+                        idle_wire_frames(&rows, before[index].0, &relay.responses.lock().unwrap()[before[index].3..]));
                     assert_eq!(connections, 0, "idle discovery opened a connection");
                     assert_eq!(relay.active.load(Ordering::SeqCst), 1);
                     serde_json::json!({"relay_index": index, "subjects": relay.ready_subjects().len(), "active_connections": 1,

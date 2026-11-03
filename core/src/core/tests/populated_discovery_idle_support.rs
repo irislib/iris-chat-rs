@@ -104,3 +104,39 @@ fn enqueue_discovery_replay(core: &mut AppCore, events: &[Event]) {
             .unwrap();
     }
 }
+
+fn idle_wire_frames(
+    rows: &[(usize, serde_json::Value)],
+    baseline: usize,
+    responses: &[(usize, String, Option<nostr::EventId>)],
+) -> serde_json::Value {
+    let mut requests = std::collections::HashMap::new();
+    let mut commands = std::collections::BTreeMap::new();
+    for (index, (connection, frame)) in rows.iter().enumerate() {
+        let command = match frame[0].as_str() {
+            Some("REQ") => match requests.insert(frame[1].as_str().unwrap(), (connection, frame)) {
+                None => "REQ_new_id",
+                Some((prior, _)) if prior != connection => "REQ_reused_id_new_connection",
+                Some((_, prior)) if prior == frame => "REQ_reused_id_same_filters",
+                Some(_) => "REQ_reused_id_changed_filters",
+            },
+            Some("AUTH") => "AUTH",
+            Some("CLOSE") => "CLOSE",
+            Some("EVENT") => "EVENT",
+            _ => "other",
+        };
+        if index >= baseline {
+            *commands.entry(command).or_insert(0_usize) += 1;
+        }
+    }
+    // The mock records outbound EVENT and EOSE here, while its byte counter
+    // also covers other text replies, including authentication acknowledgements.
+    let events = responses
+        .iter()
+        .filter(|(_, _, event)| event.is_some())
+        .count();
+    serde_json::json!({
+        "client_to_relay": commands,
+        "relay_to_client_recorded": {"EVENT": events, "EOSE": responses.len() - events},
+    })
+}
