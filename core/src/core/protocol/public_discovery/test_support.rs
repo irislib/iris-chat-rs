@@ -139,7 +139,9 @@ pub(in crate::core) struct Relay {
     pub connections: Arc<AtomicUsize>,
     pub active: Arc<AtomicUsize>,
     pub events: Arc<Mutex<Vec<Event>>>,
+    #[cfg(target_os = "linux")]
     pub sent_bytes: Arc<AtomicUsize>,
+    #[cfg(target_os = "linux")]
     pub responses: Responses,
     pub reject_subscriptions: Arc<AtomicBool>,
     pub reject_authentication_for: Arc<Mutex<HashSet<PublicKey>>>,
@@ -233,7 +235,7 @@ async fn relay_with_tls(events: Vec<Event>, tls: bool) -> Relay {
     let events = Arc::new(Mutex::new(events));
     let accepted = Arc::new(Mutex::new(BTreeMap::new()));
     let sent_bytes = Arc::new(AtomicUsize::new(0));
-    let responses = Arc::new(Mutex::new(Vec::new()));
+    let responses: Responses = Arc::new(Mutex::new(Vec::new()));
     let reject_subscriptions = Arc::new(AtomicBool::new(false));
     let reject_authentication_for = Arc::new(Mutex::new(HashSet::<PublicKey>::new()));
     let reject_requests_for = Arc::new(Mutex::new(HashSet::<PublicKey>::new()));
@@ -353,7 +355,9 @@ async fn relay_with_tls(events: Vec<Event>, tls: bool) -> Relay {
         connections,
         active,
         events,
+        #[cfg(target_os = "linux")]
         sent_bytes,
+        #[cfg(target_os = "linux")]
         responses,
         reject_subscriptions,
         reject_authentication_for,

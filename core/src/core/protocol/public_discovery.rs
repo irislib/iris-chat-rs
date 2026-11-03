@@ -343,7 +343,9 @@ impl RecentEvents {
         }
         self.order.push_back(id);
         if self.order.len() > 4096 {
-            self.ids.remove(&self.order.pop_front().unwrap());
+            if let Some(oldest) = self.order.pop_front() {
+                self.ids.remove(&oldest);
+            }
         }
         true
     }
@@ -356,7 +358,7 @@ fn live_admission(
     Arc::new(move |delivery| {
         let event = delivery.event.into_event();
         let id = event.id;
-        let mut admitted = admitted.lock().unwrap();
+        let mut admitted = admitted.lock().unwrap_or_else(|poison| poison.into_inner());
         if admitted.ids.contains(&id) {
             return true;
         }
