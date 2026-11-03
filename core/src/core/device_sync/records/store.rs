@@ -17,7 +17,11 @@ impl AppCore {
         if parts.first().is_some_and(|kind| {
             matches!(
                 kind.as_str(),
-                "privateBlock" | "privateNameApproval" | "privateEvent" | "authorization"
+                "privateMessageDeletion"
+                    | "privateBlock"
+                    | "privateNameApproval"
+                    | "privateEvent"
+                    | "authorization"
             )
         }) {
             return Some(format!(
@@ -27,10 +31,10 @@ impl AppCore {
         }
         Some(format!("{}{key}", self.sync_record_prefix()?))
     }
-    pub(in crate::core::device_sync) fn store_sync_record(
+    pub(in crate::core::device_sync) fn sync_record_entry(
         &self,
         record: &DeviceSyncRecord,
-    ) -> anyhow::Result<bool> {
+    ) -> anyhow::Result<(String, String)> {
         let key = self
             .record_storage_path(
                 &record
@@ -38,6 +42,13 @@ impl AppCore {
                     .ok_or_else(|| anyhow::anyhow!("Not a durable head"))?,
             )
             .ok_or_else(|| anyhow::anyhow!("No account"))?;
+        Ok((key, serde_json::to_string(record)?))
+    }
+    pub(in crate::core::device_sync) fn store_sync_record(
+        &self,
+        record: &DeviceSyncRecord,
+    ) -> anyhow::Result<bool> {
+        let (key, normalized) = self.sync_record_entry(record)?;
         let intervals = if let DeviceSyncRecord::PrivateBlock { event } = record {
             Some(self.block_intervals_with_event(event)?)
         } else {
@@ -56,7 +67,6 @@ impl AppCore {
                 if previous != *record {
                     return Ok(false);
                 }
-                let normalized = serde_json::to_string(record)?;
                 if previous_json != normalized {
                     conn.execute(
                         "UPDATE app_meta SET value=?2 WHERE key=?1",
@@ -70,7 +80,7 @@ impl AppCore {
             }
         }
         let tx = conn.transaction()?;
-        tx.execute("INSERT INTO app_meta(key,value) VALUES (?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value", rusqlite::params![key,serde_json::to_string(record)?])?;
+        tx.execute("INSERT INTO app_meta(key,value) VALUES (?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value", rusqlite::params![key,normalized])?;
         if let Some(intervals) = intervals {
             let owner = self
                 .logged_in
@@ -133,7 +143,7 @@ impl AppCore {
              WHERE key>=?1 AND key<?2 AND key>?3
                AND ((key>=?4 AND key<?5)
                     OR CASE WHEN json_valid(value)
-                        THEN json_extract(value, '$.type') IN ('messageMutation', 'privateBlock', 'privateNameApproval', 'privateEvent', 'authorization') END)
+                        THEN json_extract(value, '$.type') IN ('messageMutation', 'privateMessageDeletion', 'privateBlock', 'privateNameApproval', 'privateEvent', 'authorization') END)
              ORDER BY key LIMIT 256",
         )?;
         let rows = query.query_map(

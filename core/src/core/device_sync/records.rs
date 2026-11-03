@@ -57,6 +57,9 @@ pub(super) enum DeviceSyncRecord {
     Profile {
         event: Event,
     },
+    PrivateMessageDeletion {
+        event: PrivateEvent,
+    },
     PrivateBlock {
         event: PrivateEvent,
     },
@@ -118,6 +121,7 @@ impl DeviceSyncRecord {
                 read.expires_at_secs
             ]),
             Self::PrivateEvent { event }
+            | Self::PrivateMessageDeletion { event }
             | Self::PrivateBlock { event }
             | Self::PrivateNameApproval { event } => return event.id.to_bytes(),
             Self::RecipientReceipt { receipt } => return receipt.record_id(),
@@ -226,6 +230,9 @@ impl DeviceSyncRecord {
                 let (setting, target, _) =
                     nostr_identity::parse_private_setting(event, event.pubkey).ok()?;
                 serde_json::json!(["privateEvent", setting, target]).to_string()
+            }
+            Self::PrivateMessageDeletion { event } => {
+                serde_json::json!(["privateMessageDeletion", event.id.to_hex()]).to_string()
             }
             Self::PrivateNameApproval { event } => {
                 let state = super::super::contact_name_sync::name_approval(event)?;
@@ -380,6 +387,9 @@ impl AppCore {
             DeviceSyncRecord::Authorization { event } => self.authorization_record_allowed(event),
             DeviceSyncRecord::PrivateEvent { event } => {
                 self.private_setting_snapshot(event).is_some()
+            }
+            DeviceSyncRecord::PrivateMessageDeletion { event } => {
+                self.message_deletion_target(event).is_some()
             }
             DeviceSyncRecord::PrivateBlock { event } => self.private_block_event_allowed(event),
             DeviceSyncRecord::PrivateNameApproval { event } => self.name_approval_allowed(event),
@@ -552,6 +562,12 @@ impl AppCore {
         match record {
             DeviceSyncRecord::Authorization { event } => self.merge_authorization_event(&event),
             DeviceSyncRecord::PrivateEvent { event } => self.merge_private_setting(&event),
+            DeviceSyncRecord::PrivateMessageDeletion { ref event } => self
+                .message_deletion_target(event)
+                .is_some_and(|(chat, id)| {
+                    self.remove_account_message(&chat, &id, Some(&record))
+                        .is_ok()
+                }),
             DeviceSyncRecord::PrivateContactFact { fact } => self.merge_private_contact_fact(&fact),
             DeviceSyncRecord::MessageRead {
                 chat_id,

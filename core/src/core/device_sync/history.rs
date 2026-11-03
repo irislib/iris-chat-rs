@@ -59,6 +59,7 @@ struct HistorySession {
 
 #[derive(Clone, Copy)]
 struct HistoryRecordAccess {
+    message_deletions: bool,
     supported: bool,
     recipient_receipts: bool,
     receipt_link_at: Option<u64>,
@@ -214,9 +215,12 @@ impl HistorySession {
                     || !matches!(
                         record,
                         DeviceSyncRecord::PrivateBlock { .. }
+                            | DeviceSyncRecord::PrivateMessageDeletion { .. }
                             | DeviceSyncRecord::PrivateEvent { .. }
                             | DeviceSyncRecord::Authorization { .. }
                     ))
+                && (record_access.message_deletions
+                    || !matches!(record, DeviceSyncRecord::PrivateMessageDeletion { .. }))
                 && (record_access.name_approvals
                     || !matches!(record, DeviceSyncRecord::PrivateNameApproval { .. }))
                 && (record_access.private_facts
@@ -713,6 +717,7 @@ impl AppCore {
             .retain(|_, state| state.started.elapsed() < TTL);
         if let DeviceSyncPacket::HistoryOpen {
             message_mutations,
+            message_deletions,
             recipient_receipts,
             private_events,
             read_states,
@@ -783,6 +788,7 @@ impl AppCore {
                 &prefix,
                 HistoryRecordAccess {
                     supported: message_mutations == Some(1),
+                    message_deletions: message_deletions == Some(1),
                     recipient_receipts: recipient_receipts == Some(1),
                     receipt_link_at: self.receipt_history_link_at(peer, since),
                     private_events: private_events == Some(2)
@@ -976,5 +982,61 @@ impl HistoryState {
     #[cfg(test)]
     pub(super) fn session_count(&self) -> usize {
         self.sessions.len()
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn delete_for_me_inventory_requires_an_opted_in_private_state_reader() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let (mut core, _, _dir) = crate::core::tests::logged_in_test_core_with_updates(
+        "private-delete-inventory",
+        &owner,
+        &device,
+    );
+    let chat = Keys::generate().public_key().to_hex();
+    core.delete_local_message(&chat, "hidden");
+    core.delete_local_message(&chat, "42");
+    // Older releases used the same local marker for expiry and explicit removal.
+    core.app_store
+        .delete_message_locally(&chat, "legacy-or-expired", None)
+        .unwrap();
+    for (private_events, message_deletions) in [(false, true), (true, false), (true, true)] {
+        let inventory = HistorySession::snapshot(
+            &core,
+            Filter { since: 0, until: 0 },
+            false,
+            MAX_RECORDS,
+            RecordScope::State,
+            "",
+            HistoryRecordAccess {
+                supported: true,
+                recipient_receipts: false,
+                receipt_link_at: None,
+                private_events,
+                message_deletions,
+                read_states: false,
+                name_approvals: false,
+                private_facts: false,
+                target_since: 0,
+            },
+        )
+        .unwrap();
+        let events: Vec<_> = inventory
+            .records
+            .values()
+            .filter_map(|r| match r.load(&core)? {
+                DeviceSyncRecord::PrivateMessageDeletion { event } => {
+                    core.message_deletion_target(&event)
+                }
+                _ => None,
+            })
+            .collect();
+        if private_events && message_deletions {
+            assert_eq!(events, [(chat.clone(), "hidden".to_string())]);
+        } else {
+            assert!(events.is_empty());
+        }
     }
 }

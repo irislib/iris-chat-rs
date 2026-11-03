@@ -18,6 +18,7 @@ impl AppCore {
                 (matches!(
                     record,
                     DeviceSyncRecord::PrivateBlock { .. }
+                        | DeviceSyncRecord::PrivateMessageDeletion { .. }
                         | DeviceSyncRecord::PrivateEvent { .. }
                         | DeviceSyncRecord::Authorization { .. }
                 ) && !state.private_events)
@@ -46,7 +47,7 @@ impl AppCore {
         let mut target_records = Vec::new();
         self.enter_batch();
         for (hash, record) in std::mem::take(&mut state.pending_records) {
-            let blocked = match &record {
+            let suppressed = match &record {
                 DeviceSyncRecord::Message { message } => !self.block_allows_history(
                     &message.chat_id,
                     &message.author,
@@ -58,15 +59,24 @@ impl AppCore {
                     &reaction.author,
                     reaction.created_at,
                 ),
-                DeviceSyncRecord::MessageMutation { mutation } => !self.block_allows_history(
-                    &mutation.chat_id,
-                    &mutation.author,
-                    mutation.created_at,
-                ),
+                DeviceSyncRecord::MessageMutation { mutation } => {
+                    !self.block_allows_history(
+                        &mutation.chat_id,
+                        &mutation.author,
+                        mutation.created_at,
+                    ) || self
+                        .app_store
+                        .message_was_locally_deleted(
+                            &mutation.chat_id,
+                            Some(&mutation.message_id),
+                            None,
+                        )
+                        .unwrap_or(false)
+                }
                 _ => false,
             };
-            if blocked {
-                // An intentional private block resolves this requested record;
+            if suppressed {
+                // An intentional block or deletion resolves this requested record;
                 // it must not keep initial history in a perpetual waiting state.
                 state.received.insert(hash);
                 continue;

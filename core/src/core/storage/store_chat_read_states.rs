@@ -52,24 +52,7 @@ impl AppStore {
             .map_err(|_| anyhow::anyhow!("storage connection mutex poisoned"))?;
         let tx = conn.transaction()?;
         if let Some(thread) = thread {
-            tx.execute(
-                "INSERT INTO threads(chat_id, unread_count, updated_at_secs, draft)
-                 VALUES (?1, ?2, ?3, ?4)
-                 ON CONFLICT(chat_id) DO UPDATE SET
-                    unread_count = excluded.unread_count,
-                    updated_at_secs = excluded.updated_at_secs,
-                    draft = excluded.draft",
-                params![
-                    chat_id,
-                    thread.unread_count as i64,
-                    thread.updated_at_secs as i64,
-                    thread.draft
-                ],
-            )?;
-            for message in &thread.messages {
-                // The row upsert preserves a previously stored incoming Seen.
-                upsert_message_row(&tx, chat_id, message)?;
-            }
+            upsert_thread_rows(&tx, chat_id, thread)?;
         }
 
         let prior_unread: Option<i64> = tx

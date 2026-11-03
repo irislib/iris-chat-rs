@@ -200,6 +200,13 @@ fn local_message_deletion_keeps_visible_message_when_sqlite_delete_fails() {
         .app_store
         .message_exists(&chat_id, Some("kept"), None)
         .unwrap());
+    assert!(
+        core.export_sync_record_values_for_test()
+            .unwrap()
+            .iter()
+            .all(|r| r["type"] != "privateMessageDeletion"),
+        "failed delete leaked a sync event"
+    );
     core.app_store
         .shared()
         .lock()
@@ -302,4 +309,90 @@ fn local_message_deletion_rejects_late_notification_preview_and_source_alias() {
         core.threads[&chat_id].messages.is_empty(),
         "outer-event replay must stay deleted even without the canonical inner ID"
     );
+}
+
+#[test]
+fn delete_for_me_reconciles_private_events_after_offline_restart() {
+    let mut pair = chat_read_sync_pair("private-message-deletion");
+    let peer = Keys::generate();
+    let chat = peer.public_key().to_hex();
+    for core in [&mut pair.a, &mut pair.b] {
+        chat_read_sync_incoming(core, &peer, "keep", 201);
+        chat_read_sync_incoming(core, &peer, "remove", 202);
+    }
+    // One original is already on the phone. The other arrives after catch-up.
+    chat_read_sync_incoming(&mut pair.a, &peer, "late", 203);
+    for id in ["remove", "late"] {
+        pair.a.handle_action(AppAction::DeleteLocalMessage {
+            chat_id: chat.clone(),
+            message_id: id.into(),
+        });
+    }
+    drop(pair.a);
+    pair.a = logged_in_test_core_at_data_dir(
+        &pair.owner,
+        &pair.a_device,
+        pair.a_dir.path().to_string_lossy().into_owned(),
+    );
+    pair.a.load_persisted().unwrap();
+    configure_test_device_sync_profile(
+        &mut pair.a,
+        &pair.owner,
+        &pair.a_device,
+        &pair.b_device,
+        None,
+    );
+    let (a_rx, b_rx) = install_receipt_test_link(&mut pair);
+    pair.b.refresh_device_sync_on_foreground();
+    let trace = pump_receipt_test_link(&mut pair, &a_rx, &b_rx);
+    assert!(
+        pair.b.message_for_mutation(&chat, "remove").is_none(),
+        "sibling retained the deleted message"
+    );
+    assert_eq!(pair.b.threads[&chat].unread_count, 1);
+    let events: Vec<_> = trace
+        .iter()
+        .filter(|p| p["type"] == "historyRecords")
+        .flat_map(|p| p["records"].as_array().into_iter().flatten())
+        .filter(|r| r["type"] == "privateMessageDeletion")
+        .collect();
+    assert_eq!(events.len(), 2);
+    for record in events {
+        let event: nostr_identity::PrivateEvent =
+            serde_json::from_value(record["event"].clone()).unwrap();
+        let (setting, target, value) =
+            nostr_identity::parse_private_setting(&event, pair.owner.public_key()).unwrap();
+        assert_eq!(setting, "messageDeletion");
+        assert_eq!(target, chat);
+        assert!(["remove", "late"].contains(&value.as_str().unwrap()));
+    }
+    let group = "group:delete-live";
+    for core in [&mut pair.a, &mut pair.b] {
+        core.push_incoming_message_from(
+            group,
+            Some("keep".into()),
+            "group body".into(),
+            204,
+            None,
+            None,
+            Some(chat.clone()),
+            None,
+        );
+    }
+    let pending = pair.a.pending_relay_publishes.len();
+    pair.a.delete_local_message(group, "keep");
+    assert_eq!(pair.a.pending_relay_publishes.len(), pending);
+    pump_receipt_test_link(&mut pair, &a_rx, &b_rx);
+    assert!(pair.b.message_for_mutation(group, "keep").is_none());
+    assert!(pair.b.message_for_mutation(&chat, "keep").is_some());
+    drop(pair.b);
+    let mut phone = logged_in_test_core_at_data_dir(
+        &pair.owner,
+        &pair.b_device,
+        pair._b_dir.path().to_string_lossy().into_owned(),
+    );
+    phone.load_persisted().unwrap();
+    chat_read_sync_incoming(&mut phone, &peer, "late", 203);
+    assert!(phone.message_for_mutation(&chat, "late").is_none());
+    assert!(phone.message_for_mutation(&chat, "keep").is_some());
 }

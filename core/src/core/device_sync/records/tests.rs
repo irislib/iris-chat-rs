@@ -327,3 +327,46 @@ fn runtime_authorization_merge_still_commits_immediately() {
         "runtime still reports immediate save failure"
     );
 }
+
+#[test]
+fn delete_for_me_requires_a_canonical_event_for_the_current_account() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let other = Keys::generate();
+    let chat = other.public_key().to_hex();
+    let (mut core, _, _dir) = crate::core::tests::logged_in_test_core_with_updates(
+        "private-delete-auth",
+        &owner,
+        &device,
+    );
+    let record =
+        |author, setting: &str, target: &str, id: &str| DeviceSyncRecord::PrivateMessageDeletion {
+            event: nostr_identity::build_private_setting(
+                author,
+                setting,
+                target,
+                &serde_json::json!(id),
+            )
+            .unwrap(),
+        };
+    for bad in [
+        record(other.public_key(), "messageDeletion", &chat, "a"),
+        record(owner.public_key(), "chatDeletion", &chat, "a"),
+        record(owner.public_key(), "messageDeletion", "unknown", "a"),
+        record(owner.public_key(), "messageDeletion", &chat, ""),
+        record(owner.public_key(), "messageDeletion", &chat, "42"),
+    ] {
+        assert!(!core.apply_sync_record(bad));
+    }
+    assert!(!core
+        .app_store
+        .message_was_locally_deleted(&chat, Some("a"), None)
+        .unwrap());
+    let valid = record(owner.public_key(), "messageDeletion", &chat, "a");
+    assert!(core.apply_sync_record(valid.clone()));
+    assert!(core.apply_sync_record(valid.clone()));
+    assert_eq!(
+        core.load_sync_record(&valid.locator().unwrap()),
+        Some(valid)
+    );
+}
