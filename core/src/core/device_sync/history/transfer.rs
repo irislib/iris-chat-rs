@@ -28,7 +28,9 @@ impl AppCore {
                     || (matches!(record, DeviceSyncRecord::MessageRead { .. })
                         && !state.read_states)
                     || record.scope() != state.scope
-                    || !state.filter.contains(record.timestamp())
+                    || !state
+                        .filter
+                        .contains(record.sync_time(state.receipt_link_at))
                     || !state.requested.contains(&hex(&record.id()))
             })
         {
@@ -41,7 +43,7 @@ impl AppCore {
             return true;
         }
         let mut messages = Vec::new();
-        let mut mutations = Vec::new();
+        let mut target_records = Vec::new();
         self.enter_batch();
         for (hash, record) in std::mem::take(&mut state.pending_records) {
             let blocked = match &record {
@@ -50,6 +52,7 @@ impl AppCore {
                     &message.author,
                     message.created_at,
                 ),
+                DeviceSyncRecord::RecipientReceipt { receipt } => receipt.excluded(self),
                 DeviceSyncRecord::Reaction { reaction } => !self.block_allows_history(
                     &reaction.chat_id,
                     &reaction.author,
@@ -74,8 +77,12 @@ impl AppCore {
                     message.legacy_reactions = None;
                 }
                 messages.push(message);
-            } else if matches!(record, DeviceSyncRecord::MessageMutation { .. }) {
-                mutations.push((hash, record));
+            } else if matches!(
+                record,
+                DeviceSyncRecord::MessageMutation { .. }
+                    | DeviceSyncRecord::RecipientReceipt { .. }
+            ) {
+                target_records.push((hash, record));
             } else if self.apply_sync_record(record) {
                 state.received.insert(hash);
             } else {
@@ -106,7 +113,7 @@ impl AppCore {
         // Originals are admitted before any control is accepted, regardless of
         // packet/hash order within the batch. An unknown target is not stored.
         let target_since = self.device_history_mutation_target_since(peer);
-        for (hash, record) in mutations {
+        for (hash, record) in target_records {
             if self.history_mutation_target_allowed(&record, target_since)
                 && self.apply_sync_record(record)
             {

@@ -18,7 +18,7 @@ impl AppCore {
             // Resume from a fresh inventory: a broadcast or an in-flight response
             // may have been missed while inactive. Close both halves of an old
             // round so it cannot hold catch-up until the session's expiry.
-            self.clear_device_history(&peer);
+            self.interrupt_device_history(&peer);
             self.request_device_sync_snapshot(&peer, None);
         }
     }

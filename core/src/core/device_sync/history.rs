@@ -31,6 +31,7 @@ pub(super) struct HistoryState {
 }
 
 struct HistorySession {
+    receipt_link_at: Option<u64>,
     engine: Session,
     filter: Filter,
     records: BTreeMap<String, HistoryRecordRef>,
@@ -59,6 +60,8 @@ struct HistorySession {
 #[derive(Clone, Copy)]
 struct HistoryRecordAccess {
     supported: bool,
+    recipient_receipts: bool,
+    receipt_link_at: Option<u64>,
     private_events: bool,
     read_states: bool,
     name_approvals: bool,
@@ -69,6 +72,10 @@ struct HistoryRecordAccess {
 #[derive(Clone)]
 enum HistoryRecordRef {
     Message(DeviceSyncCursor),
+    Receipt {
+        id: [u8; 32],
+        receipt: RecipientReceipt,
+    },
     Typed {
         id: [u8; 32],
         timestamp: u64,
@@ -76,8 +83,9 @@ enum HistoryRecordRef {
     },
 }
 impl HistoryRecordRef {
-    fn timestamp(&self) -> u64 {
+    fn timestamp(&self, receipt_link_at: Option<u64>) -> u64 {
         match self {
+            Self::Receipt { receipt, .. } => receipt.sync_time(receipt_link_at),
             Self::Message(cursor) => cursor.created_at,
             Self::Typed { timestamp, .. } => *timestamp,
         }
@@ -85,11 +93,18 @@ impl HistoryRecordRef {
     fn id(&self) -> [u8; 32] {
         match self {
             Self::Message(cursor) => record_id(&cursor.chat_id, &cursor.id),
-            Self::Typed { id, .. } => *id,
+            Self::Typed { id, .. } | Self::Receipt { id, .. } => *id,
         }
     }
     fn load(&self, core: &AppCore) -> Option<DeviceSyncRecord> {
         match self {
+            Self::Receipt { receipt, .. } => {
+                receipt
+                    .current_on(core)
+                    .then(|| DeviceSyncRecord::RecipientReceipt {
+                        receipt: receipt.clone(),
+                    })
+            }
             Self::Message(cursor) => messages::load_history_message(core, cursor)
                 .map(|message| DeviceSyncRecord::Message { message }),
             Self::Typed { id, locator, .. } => core
@@ -170,6 +185,26 @@ impl HistorySession {
                     break;
                 }
                 cursor = next;
+            }
+        }
+        if scope == RecordScope::History && record_access.recipient_receipts {
+            let since = if record_access.receipt_link_at == Some(filter.since) {
+                record_access.target_since
+            } else {
+                filter.since
+            };
+            let within_capacity = core
+                .visit_recipient_receipts(since, filter.until, |receipt| {
+                    let id = receipt.record_id();
+                    let hash = hex(&id);
+                    if hash.starts_with(prefix) && receipt.valid() && !receipt.excluded(core) {
+                        records.insert(hash, HistoryRecordRef::Receipt { id, receipt });
+                    }
+                    records.len() <= core.device_history_record_limit().min(capacity)
+                })
+                .ok()?;
+            if !within_capacity {
+                return None;
             }
         }
         let mut add = |record: DeviceSyncRecord| {
@@ -268,7 +303,7 @@ impl HistorySession {
         let engine = Session::new(
             records.values().map(|cursor| Record {
                 id: cursor.id(),
-                timestamp: cursor.timestamp(),
+                timestamp: cursor.timestamp(record_access.receipt_link_at),
             }),
             filter,
             Limits {
@@ -279,6 +314,7 @@ impl HistorySession {
         )
         .ok()?;
         Some(Self {
+            receipt_link_at: record_access.receipt_link_at,
             engine,
             filter,
             records,
@@ -352,6 +388,20 @@ impl AppCore {
         self.device_sync.as_mut().unwrap().history.record_limit = Some(limit.max(1));
     }
     pub(in crate::core) fn clear_device_history(&mut self, peer: &str) {
+        self.interrupt_device_history(peer);
+        if let Some(runtime) = &mut self.device_sync {
+            runtime.history.agreed.remove(peer);
+            runtime.history.typed.remove(peer);
+            runtime.history.private_events.remove(peer);
+            runtime.history.read_states.remove(peer);
+            runtime.history.name_approvals.remove(peer);
+            runtime.history.private_facts.remove(peer);
+        }
+    }
+
+    // A local refresh starts a new pull. The sibling can still pull from us
+    // under its own negotiated history window on the same connection.
+    pub(super) fn interrupt_device_history(&mut self, peer: &str) {
         let cancelled = self.device_sync.as_ref().map_or_else(Vec::new, |runtime| {
             runtime
                 .history
@@ -374,12 +424,6 @@ impl AppCore {
                 .history
                 .sessions
                 .retain(|(source, _), _| source != peer);
-            runtime.history.agreed.remove(peer);
-            runtime.history.typed.remove(peer);
-            runtime.history.private_events.remove(peer);
-            runtime.history.read_states.remove(peer);
-            runtime.history.name_approvals.remove(peer);
-            runtime.history.private_facts.remove(peer);
             runtime.history.state_ready.remove(peer);
             runtime.history.deferred_history.remove(peer);
             runtime
@@ -669,6 +713,7 @@ impl AppCore {
             .retain(|_, state| state.started.elapsed() < TTL);
         if let DeviceSyncPacket::HistoryOpen {
             message_mutations,
+            recipient_receipts,
             private_events,
             read_states,
             name_approvals,
@@ -738,6 +783,8 @@ impl AppCore {
                 &prefix,
                 HistoryRecordAccess {
                     supported: message_mutations == Some(1),
+                    recipient_receipts: recipient_receipts == Some(1),
+                    receipt_link_at: self.receipt_history_link_at(peer, since),
                     private_events: private_events == Some(2)
                         && self.private_events_supported(peer),
                     read_states: read_states == Some(2) && self.read_states_supported(peer),
@@ -852,10 +899,13 @@ impl AppCore {
                             self.history_mutation_target_allowed(
                                 record,
                                 self.device_history_mutation_target_since(peer),
-                            ) && state.filter.contains(record.timestamp())
+                            ) && state
+                                .filter
+                                .contains(record.sync_time(state.receipt_link_at))
                                 && (state.scope == RecordScope::State
-                                    || current_peer_floor
-                                        .is_some_and(|floor| record.timestamp() >= floor))
+                                    || current_peer_floor.is_some_and(|floor| {
+                                        record.sync_time(state.receipt_link_at) >= floor
+                                    }))
                         }) {
                             if state.initial {
                                 if let DeviceSyncRecord::Message { message } = &mut record {

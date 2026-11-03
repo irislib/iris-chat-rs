@@ -185,6 +185,7 @@ include!("tests/device_sync_records.rs");
 include!("tests/device_sync_mutation_privacy.rs");
 include!("tests/chat_read_sync.rs");
 include!("tests/chat_read_negentropy.rs");
+include!("tests/recipient_receipt_sync.rs");
 include!("tests/mobile_push_read_sync.rs");
 include!("tests/mobile_push_controls.rs");
 include!("tests/chat_read_receipts.rs");

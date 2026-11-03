@@ -17,8 +17,10 @@ mod body;
 mod history;
 mod history_policy;
 mod messages;
+mod receipts;
 mod recent_peers;
 mod records;
+pub(super) use receipts::RecipientReceipt;
 use records::RecordScope;
 use records::{DeviceSyncRecord, RecordLocator};
 mod runtime;
@@ -122,6 +124,10 @@ enum DeviceSyncPacket {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         history_since: Option<u64>,
     },
+    RecipientReceipts {
+        v: u8,
+        receipts: Vec<RecipientReceipt>,
+    },
     HistoryPolicy {
         v: u8,
         link_at: u64,
@@ -137,6 +143,8 @@ enum DeviceSyncPacket {
         v: u8,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         message_mutations: Option<u8>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        recipient_receipts: Option<u8>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         private_events: Option<u8>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -443,7 +451,7 @@ impl AppCore {
                 self.reply_device_sync_snapshot(source_pubkey_hex, roster_at, page);
             }
             DeviceSyncPacket::ResyncRequired { v } if v == DEVICE_SYNC_VERSION => {
-                self.clear_device_history(source_pubkey_hex);
+                self.interrupt_device_history(source_pubkey_hex);
                 self.request_device_sync_snapshot(source_pubkey_hex, None);
             }
             DeviceSyncPacket::PageEnd {
@@ -471,6 +479,12 @@ impl AppCore {
                         history_since.unwrap_or(roster_at),
                     );
                 }
+            }
+            DeviceSyncPacket::RecipientReceipts {
+                v: DEVICE_SYNC_VERSION,
+                receipts,
+            } => {
+                self.receive_device_sync_receipts(source_pubkey_hex, receipts);
             }
             DeviceSyncPacket::Snapshot {
                 v,

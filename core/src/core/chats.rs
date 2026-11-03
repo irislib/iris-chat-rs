@@ -623,38 +623,38 @@ impl AppCore {
         message_id: &str,
         delivery: DeliveryState,
     ) {
-        let mut device_sync_message = None;
-        let Some(thread) = self.threads.get_mut(chat_id) else {
+        let Some(message) = self
+            .threads
+            .get_mut(chat_id)
+            .and_then(|t| t.messages.iter_mut().find(|m| m.id == message_id))
+        else {
             return;
         };
-        if let Some(message) = thread
-            .messages
-            .iter_mut()
-            .find(|message| message.id == message_id)
-        {
-            let became_sent = matches!(delivery, DeliveryState::Sent)
-                && !matches!(message.delivery, DeliveryState::Sent);
-            message.delivery = delivery.clone();
-            if matches!(delivery, DeliveryState::Sent) {
-                for recipient in &mut message.recipient_deliveries {
-                    if matches!(
-                        recipient.delivery,
-                        DeliveryState::Pending | DeliveryState::Queued
-                    ) {
-                        recipient.delivery = DeliveryState::Sent;
-                        recipient.updated_at_secs = unix_now().get();
-                    }
-                }
-            }
-            if became_sent {
-                device_sync_message = Some(message.clone());
-            }
-        }
-        if let Some(message) = device_sync_message {
-            if let Some(projected) = self.message_for_mutation(chat_id, &message.id) {
+        if set_transport_delivery(message, delivery) {
+            if let Some(projected) = self.message_for_mutation(chat_id, message_id) {
                 self.broadcast_device_sync_message(&projected);
             }
         }
+    }
+
+    fn confirm_own_message_echo(&mut self, chat: &str, id: &str) -> anyhow::Result<bool> {
+        if self
+            .threads
+            .get(chat)
+            .is_some_and(|t| t.messages.iter().any(|m| m.id == id))
+        {
+            self.update_message_delivery(chat, id, DeliveryState::Sent);
+            return Ok(true);
+        }
+        let Some(mut stored) = self.message_for_mutation_result(chat, id)? else {
+            return Ok(false);
+        };
+        if set_transport_delivery(&mut stored, DeliveryState::Sent) {
+            self.app_store
+                .save_message_receipts(chat, std::slice::from_ref(&stored), None)?;
+            self.broadcast_device_sync_message(&stored);
+        }
+        Ok(true)
     }
 
     pub(super) fn record_message_outer_event(
@@ -1408,7 +1408,7 @@ impl AppCore {
                     &message_ids_from_tags(runtime_rumor.tags.iter()),
                     delivery,
                     is_outgoing,
-                    Some(&sender_owner.to_hex()),
+                    Some(&effective_sender_owner.to_hex()),
                 );
             }
             TYPING_KIND if !is_outgoing => {
@@ -1668,23 +1668,22 @@ impl AppCore {
                 }
             }
             let message_id = message_id.unwrap_or_else(|| self.allocate_message_id());
-            if self.threads.get(&chat_id).is_some_and(|thread| {
-                thread
-                    .messages
-                    .iter()
-                    .any(|message| message.id == message_id)
-            }) {
-                self.update_message_delivery(&chat_id, &message_id, DeliveryState::Sent);
-            } else {
-                self.push_outgoing_message_with_id(
-                    message_id,
-                    &chat_id,
-                    body,
-                    created_at_secs,
-                    expires_at_secs,
-                    DeliveryState::Sent,
-                );
+            match self.confirm_own_message_echo(&chat_id, &message_id) {
+                Ok(true) => return,
+                Err(error) => {
+                    self.push_debug_log("storage.message.echo.error", error.to_string());
+                    return;
+                }
+                Ok(false) => {}
             }
+            self.push_outgoing_message_with_id(
+                message_id,
+                &chat_id,
+                body,
+                created_at_secs,
+                expires_at_secs,
+                DeliveryState::Sent,
+            );
             return;
         }
         self.push_incoming_message_from(
@@ -1744,8 +1743,48 @@ impl AppCore {
     }
 }
 
+// Transport completion can precede or follow a peer's acknowledgement.
+fn set_transport_delivery(message: &mut ChatMessageSnapshot, delivery: DeliveryState) -> bool {
+    if message.is_outgoing
+        && matches!(
+            message.delivery,
+            DeliveryState::Received | DeliveryState::Seen
+        )
+    {
+        return false;
+    }
+    let became_sent = matches!(delivery, DeliveryState::Sent) && message.delivery != delivery;
+    if matches!(delivery, DeliveryState::Sent) {
+        for recipient in &mut message.recipient_deliveries {
+            if matches!(
+                recipient.delivery,
+                DeliveryState::Pending | DeliveryState::Queued
+            ) {
+                recipient.delivery = DeliveryState::Sent;
+                recipient.updated_at_secs = unix_now().get();
+            }
+        }
+    }
+    message.delivery = delivery;
+    became_sent
+}
+
 pub(super) fn chat_message_from_persisted(message: &PersistedMessage) -> ChatMessageSnapshot {
     let (body, parsed_attachments) = extract_message_attachments(&message.body);
+    // Earlier builds could replay Sent over an outgoing receipt while keeping
+    // its per-recipient proof. Restore the same indicator as a live receipt.
+    let mut delivery = message.delivery.clone().into();
+    if message.is_outgoing {
+        for recipient in &message.recipient_deliveries {
+            if matches!(
+                recipient.delivery,
+                DeliveryState::Received | DeliveryState::Seen
+            ) && chat_receipts::should_advance_delivery(&delivery, &recipient.delivery)
+            {
+                delivery = recipient.delivery.clone();
+            }
+        }
+    }
     ChatMessageSnapshot {
         edit_history: message.edit_history.clone(),
         deleted_for_everyone: message.deleted_for_everyone,
@@ -1769,7 +1808,7 @@ pub(super) fn chat_message_from_persisted(message: &PersistedMessage) -> ChatMes
         is_outgoing: message.is_outgoing,
         created_at_secs: message.created_at_secs,
         expires_at_secs: message.expires_at_secs,
-        delivery: message.delivery.clone().into(),
+        delivery,
         recipient_deliveries: message.recipient_deliveries.clone(),
         delivery_trace: message.delivery_trace.clone(),
         source_event_id: message.source_event_id.clone(),
