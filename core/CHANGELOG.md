@@ -8,6 +8,12 @@
   and mDNS behavior, ICE consent, candidate comparison and cleanup, and native
   socket protection, preserving the compatible iOS dependencies.
 
+## 0.1.60
+
+- Reconcile stored delivery and read receipts with linked devices after time offline.
+- Catch up on unread counts when a linked device resumes its existing connection.
+- Sync new “Delete for me” actions privately across linked devices, including when a deletion arrives before the message.
+
 ## 0.1.59
 
 - Replace periodic linked-device TCP polling with transport deadlines and peer
