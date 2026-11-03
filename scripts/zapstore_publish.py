@@ -71,6 +71,23 @@ def verify_cdn(expected):
     return {"bytes": count, "sha256": digest.hexdigest()}
 
 
+def read_public_events(client, events):
+    signed = {event["id"]: event for event in events}
+    arguments = [argument for event_id in signed for argument in ("--id", event_id)]
+    # The relay can acknowledge all writes before a query can see the complete release.
+    for delay in (0, 10, 20, 30, 30):
+        if delay:
+            time.sleep(delay)
+        public = {}
+        for event in client.query(arguments):
+            event_id = event["id"]
+            require(event == signed.get(event_id), "Public event differs from the signed publication")
+            public[event_id] = event
+        if public.keys() == signed.keys():
+            return public
+    raise ValueError("Zapstore acknowledged publication but the complete release is not public")
+
+
 def complete_publication(client, captured, expected, read_apk=verify_cdn):
     require(len(captured) == 3 and {e["kind"] for e in captured} == {32267, 30063, 3063}, "zsp did not return the three signed release events")
     app, release, apk = (next(e for e in captured if e["kind"] == kind) for kind in (32267, 30063, 3063))
@@ -102,13 +119,7 @@ def complete_publication(client, captured, expected, read_apk=verify_cdn):
 
     events = [apk, release, app]
     client.publish(events)
-    # A true OK can mean only "saved when complete". Only actual public events count.
-    arguments = [argument for event in events for argument in ("--id", event["id"])]
-    public = client.query(arguments)
-    by_id = {event["id"]: event for event in public}
-    require(set(by_id) == {event["id"] for event in events}, "Zapstore acknowledged publication but the complete release is not public")
-    for event in events:
-        require(by_id[event["id"]] == event, "Public event differs from the signed publication")
+    by_id = read_public_events(client, events)
     validate_chain(by_id[app["id"]], by_id[release["id"]], by_id[apk["id"]], expected)
     require(tag(by_id[release["id"]], "a") == address, "Public release lacks its app reference")
     body = read_apk(expected)

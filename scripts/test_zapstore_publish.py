@@ -84,13 +84,51 @@ class ZapstorePublicationTests(unittest.TestCase):
         self.assertEqual(relay.public[self.app['id']], self.app)
         self.assertNotIn('a', [tag[0] for tag in self.release['tags']])
 
-    def test_true_conditional_ack_without_public_release_is_failure(self):
+    @patch.object(publish.time, 'sleep')
+    def test_true_conditional_ack_without_public_release_is_failure(self, sleep):
         relay = FakeRelay(conditional=True)
         with self.assertRaisesRegex(ValueError, 'complete release is not public'):
             publish.complete_publication(relay, self.captured, self.expected,
                                          lambda _: self.fail('must not accept/download incomplete listing'))
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [10, 20, 30, 30])
+        self.assertEqual(len(relay.acks), 3)
         self.assertTrue(all(ack[2] is True for ack in relay.acks))
         self.assertEqual(len(relay.pending), 1)
+
+    @patch.object(publish.time, 'sleep')
+    def test_delayed_visibility_requires_one_complete_read_of_the_same_ids(self, sleep):
+        relay = FakeRelay()
+        query = relay.query
+        readbacks = []
+
+        def delayed(arguments):
+            events = query(arguments)
+            if '--id' in arguments:
+                readbacks.append(list(arguments))
+                if len(readbacks) == 1:
+                    return [self.app]
+                if len(readbacks) == 2:
+                    return [event for event in events if event != self.app]
+            return events
+
+        with patch.object(relay, 'query', side_effect=delayed):
+            result = publish.complete_publication(relay, self.captured, self.expected, self.read_apk)
+        arguments = [arg for event_id in result['event_ids'] for arg in ('--id', event_id)]
+        self.assertEqual(readbacks, [arguments] * 3)
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [10, 20])
+        self.assertEqual(len(relay.acks), 3)
+        self.assertEqual(result['apk'], self.read_apk(self.expected))
+
+    @patch.object(publish.time, 'sleep')
+    def test_conflicting_event_in_partial_read_fails_immediately(self, sleep):
+        relay = FakeRelay()
+        conflict = dict(self.app, content='different')
+        with patch.object(relay, 'query', side_effect=[relay.proofs, [conflict, self.app]]):
+            with self.assertRaisesRegex(ValueError, 'Public event differs'):
+                publish.complete_publication(relay, self.captured, self.expected,
+                                             lambda _: self.fail('must not download after a conflicting event'))
+        sleep.assert_not_called()
+        self.assertEqual(len(relay.acks), 3)
 
     def test_repeat_publication_checks_public_state_and_preserves_app_and_apk(self):
         relay = FakeRelay()
