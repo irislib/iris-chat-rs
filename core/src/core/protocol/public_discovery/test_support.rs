@@ -98,6 +98,41 @@ type Responses = Arc<Mutex<Vec<(usize, String, Option<nostr::EventId>)>>>;
 
 type AcceptedSubscriptions = Arc<Mutex<BTreeMap<(usize, String), (Vec<Filter>, bool)>>>;
 
+pub(in crate::core) fn effective_filters(workers: [&[Filter]; 2]) -> BTreeSet<Filter> {
+    workers
+        .into_iter()
+        .flat_map(|filters| super::merge_filters(filters.to_vec()))
+        .collect()
+}
+
+#[tokio::test]
+async fn same_authors_different_kinds_require_separate_eose() {
+    let relay = relay(Vec::new()).await;
+    let author = Keys::generate().public_key();
+    let metadata = Filter::new().kind(Kind::Metadata).author(author);
+    let roster = Filter::new()
+        .kind(Kind::Custom(37368))
+        .author(author)
+        .limit(256);
+    let expected = effective_filters([&[metadata.clone(), roster.clone()], &[]]);
+    let roster_id = (1, "roster".to_owned());
+    {
+        let mut accepted = relay.accepted.lock().unwrap();
+        accepted.insert((1, "metadata".to_owned()), (vec![metadata], true));
+        accepted.insert(roster_id.clone(), (vec![roster], false));
+    }
+    assert_eq!(relay.ready_subjects(), HashSet::from([author.to_hex()]));
+    assert!(!relay.all_filters_ready(&expected));
+    relay
+        .accepted
+        .lock()
+        .unwrap()
+        .get_mut(&roster_id)
+        .unwrap()
+        .1 = true;
+    assert!(relay.all_filters_ready(&expected));
+}
+
 pub(in crate::core) struct Relay {
     pub url: RelayUrl,
     pub wire: Arc<Mutex<Vec<(usize, serde_json::Value)>>>,
@@ -120,6 +155,16 @@ impl Drop for Relay {
     }
 }
 impl Relay {
+    pub fn all_filters_ready(&self, expected: &BTreeSet<Filter>) -> bool {
+        let accepted = self.accepted.lock().unwrap();
+        let complete = accepted
+            .values()
+            .filter(|(_, eose)| *eose)
+            .flat_map(|(filters, _)| filters)
+            .collect::<BTreeSet<_>>();
+        complete.into_iter().eq(expected)
+    }
+
     // Only authenticated subscriptions still present on a live connection,
     // after their initial bodies and EOSE have actually been sent.
     pub fn ready_subjects(&self) -> HashSet<String> {

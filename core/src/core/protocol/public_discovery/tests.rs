@@ -7,6 +7,49 @@ fn metadata(keys: &Keys, content: &str) -> Event {
         .sign_with_keys(keys)
         .unwrap()
 }
+
+#[test]
+fn mirror_copies_do_not_fill_admission_or_hide_a_rejected_unique_event() {
+    let keys = Keys::generate();
+    let delivery = |content| nostr_pubsub::QueryEvent {
+        event: metadata(&keys, content).try_into().unwrap(),
+        source: nostr_pubsub::EventSource::relay("wss://fixture.invalid"),
+        priority: 0,
+    };
+    let [first, second, third] = ["first", "second", "third"].map(delivery);
+    let (sender, mut events) = tokio::sync::mpsc::channel(2);
+    let admit = live_admission(sender.clone());
+    let start = std::sync::Barrier::new(5);
+    std::thread::scope(|scope| {
+        for mirror in 0..5 {
+            let mut copy = first.clone();
+            copy.source =
+                nostr_pubsub::EventSource::relay(format!("wss://mirror-{mirror}.invalid"));
+            let (start, admit) = (&start, &admit);
+            scope.spawn(move || {
+                start.wait();
+                for _ in 0..20 {
+                    assert!(admit(copy.clone()));
+                }
+            });
+        }
+    });
+    assert_eq!(events.len(), 1);
+    assert!(admit(second.clone()));
+    assert!(!admit(third.clone()));
+    assert!(admit(first.clone()));
+    assert_eq!(events.try_recv().unwrap().id, first.event.as_event().id);
+    assert!(admit(third.clone()));
+    assert_eq!(events.try_recv().unwrap().id, second.event.as_event().id);
+    assert_eq!(events.try_recv().unwrap().id, third.event.as_event().id);
+
+    // A replacement subscription can enqueue even an ID its predecessor saw.
+    let replacement = live_admission(sender);
+    assert!(replacement(first.clone()));
+    assert_eq!(events.try_recv().unwrap().id, first.event.as_event().id);
+    drop(events);
+    assert!(replacement(second));
+}
 async fn receive(receiver: &flume::Receiver<CoreMsg>) -> Event {
     match tokio::time::timeout(Duration::from_secs(30), receiver.recv_async())
         .await

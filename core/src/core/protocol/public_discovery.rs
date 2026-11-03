@@ -330,6 +330,46 @@ fn merge_filters(filters: Vec<Filter>) -> Vec<Filter> {
     merged
 }
 
+#[derive(Default)]
+struct RecentEvents {
+    ids: HashSet<nostr::EventId>,
+    order: VecDeque<nostr::EventId>,
+}
+
+impl RecentEvents {
+    fn remember(&mut self, id: nostr::EventId) -> bool {
+        if !self.ids.insert(id) {
+            return false;
+        }
+        self.order.push_back(id);
+        if self.order.len() > 4096 {
+            self.ids.remove(&self.order.pop_front().unwrap());
+        }
+        true
+    }
+}
+
+fn live_admission(
+    sender: tokio::sync::mpsc::Sender<Event>,
+) -> Arc<dyn Fn(nostr_pubsub::QueryEvent) -> bool + Send + Sync> {
+    let admitted = std::sync::Mutex::new(RecentEvents::default());
+    Arc::new(move |delivery| {
+        let event = delivery.event.into_event();
+        let id = event.id;
+        let mut admitted = admitted.lock().unwrap();
+        if admitted.ids.contains(&id) {
+            return true;
+        }
+        // Reserve each verified ID only after enqueue succeeds. A full queue
+        // requests replay for genuinely missing bodies, never for mirror copies.
+        match sender.try_send(event) {
+            Ok(()) => admitted.remember(id),
+            Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => true,
+            Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => false,
+        }
+    })
+}
+
 async fn run(
     pool: Arc<DiscoveryRelays>,
     mut updates: tokio::sync::watch::Receiver<Option<Config>>,
@@ -339,12 +379,6 @@ async fn run(
     cancelled: Arc<AtomicBool>,
 ) {
     let (send, mut events) = tokio::sync::mpsc::channel::<Event>(256);
-    let handler = Arc::new(move |delivery: nostr_pubsub::QueryEvent| {
-        match send.try_send(delivery.event.into_event()) {
-            Ok(()) | Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => true,
-            Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => false,
-        }
-    });
     let mut lease: Option<RelayLease> = None;
     let mut bus: Option<RelayEventBus> = None;
     let mut subscription = LiveSubscription(None);
@@ -352,8 +386,7 @@ async fn run(
     let mut retry = Duration::from_secs(1);
     let mut retry_at = None;
     let mut query = None::<nostr::util::BoxedFuture<'static, Result<Vec<Event>, QueryFailure>>>;
-    let mut seen = HashSet::new();
-    let mut order = VecDeque::new();
+    let mut seen = RecentEvents::default();
     loop {
         if cancelled.load(Ordering::Acquire) {
             break;
@@ -383,9 +416,12 @@ async fn run(
                     }
                     if let Some(bus) = &bus {
                         subscription.0 = Some(
-                            bus.subscribe_with_admission(config.filters.clone(), handler.clone())
-                                .await
-                                .map_err(|e| e.to_string())?,
+                            bus.subscribe_with_admission(
+                                config.filters.clone(),
+                                live_admission(send.clone()),
+                            )
+                            .await
+                            .map_err(|e| e.to_string())?,
                         );
                     }
                     Ok::<_, String>(())
@@ -416,9 +452,7 @@ async fn run(
                 // Drop bodies from a removed subscription that were queued
                 // before its CLOSE; reconfiguration cannot resurrect a peer.
                 if applied.as_ref().is_some_and(|config| config.filters.iter().any(|filter|
-                    filter.match_event(&event, nostr::filter::MatchEventOptions::new()))) && seen.insert(event.id) {
-                    order.push_back(event.id);
-                    if order.len() > 4096 { if let Some(id) = order.pop_front() { seen.remove(&id); } }
+                    filter.match_event(&event, nostr::filter::MatchEventOptions::new()))) && seen.remember(event.id) {
                     destination.deliver(event).await;
                 }
             },

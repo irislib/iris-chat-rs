@@ -221,6 +221,8 @@ mod populated_discovery_idle {
             let expected_initial = events.iter().filter(|event| discovery.iter().any(|filter|
                 filter.match_event(event, nostr::filter::MatchEventOptions::new())))
                 .map(|event| event.id.to_hex()).collect::<Vec<_>>();
+            let expected_filters = test_support::effective_filters([&discovery, &mesh_filters]);
+            let all_filters_ready = || relays.iter().all(|relay| relay.all_filters_ready(&expected_filters));
             let subscriptions = fixture.core.private_discovery_subscriptions(discovery).unwrap();
             assert_eq!(subscriptions.len(), 1);
             let worker = subscriptions[0].0.upgrade().unwrap();
@@ -233,10 +235,10 @@ mod populated_discovery_idle {
             let settling = Instant::now();
             loop {
                 dispatch_pending(&mut fixture.core, &incoming);
-                if relays.iter().all(|relay| relay.ready_subjects() == subjects)
+                if all_filters_ready()
                     && expected_initial.iter().all(|id| fixture.core.has_seen_event(id))
                     && incoming.is_empty() { break; }
-                assert!(settling.elapsed() < Duration::from_secs(60), "all populated authors must become live");
+                assert!(settling.elapsed() < Duration::from_secs(60), "all populated filters must reach EOSE on every relay");
                 sleep(Duration::from_millis(20)).await;
             }
             // Finish all initial bodies and any backpressure replay before
@@ -246,7 +248,7 @@ mod populated_discovery_idle {
             while stable_since.elapsed() < Duration::from_secs(1) {
                 dispatch_pending(&mut fixture.core, &incoming);
                 let current = relays.iter().map(test_support::Relay::requests).collect::<Vec<_>>();
-                if current != requests || !incoming.is_empty() { requests = current; stable_since = Instant::now(); }
+                if current != requests || !incoming.is_empty() || !all_filters_ready() { requests = current; stable_since = Instant::now(); }
                 assert!(settling.elapsed() < Duration::from_secs(60));
                 sleep(Duration::from_millis(20)).await;
             }
