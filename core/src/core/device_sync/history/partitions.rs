@@ -116,6 +116,8 @@ impl AppCore {
                 &prefix,
                 HistoryRecordAccess {
                     supported: true,
+                    recipient_receipts: true,
+                    receipt_link_at: self.receipt_history_link_at(peer, filter.since),
                     private_events: self.private_events_supported(peer),
                     read_states: self.read_states_supported(peer),
                     name_approvals: self.name_approvals_supported(peer),
@@ -155,6 +157,7 @@ impl AppCore {
             let packet = DeviceSyncPacket::HistoryOpen {
                 v: 1,
                 message_mutations: Some(1),
+                recipient_receipts: Some(1),
                 private_events: self.private_events_supported(peer).then_some(2),
                 read_states: self.read_states_supported(peer).then_some(2),
                 name_approvals: self.name_approvals_supported(peer).then_some(2),

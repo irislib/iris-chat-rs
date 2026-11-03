@@ -42,6 +42,9 @@ pub(super) enum DeviceSyncRecord {
     MessageMutation {
         mutation: MessageMutation,
     },
+    RecipientReceipt {
+        receipt: RecipientReceipt,
+    },
     Reaction {
         reaction: DeviceSyncReaction,
     },
@@ -117,6 +120,7 @@ impl DeviceSyncRecord {
             Self::PrivateEvent { event }
             | Self::PrivateBlock { event }
             | Self::PrivateNameApproval { event } => return event.id.to_bytes(),
+            Self::RecipientReceipt { receipt } => return receipt.record_id(),
             Self::Message { message } => serde_json::json!([message.chat_id, message.id]),
             Self::MessageMutation { mutation: m } => {
                 serde_json::json!(["messageMutation", m.chat_id, m.id])
@@ -156,17 +160,25 @@ impl DeviceSyncRecord {
     }
     pub(super) fn timestamp(&self) -> u64 {
         match self {
+            Self::RecipientReceipt { receipt } => receipt.created_at,
             Self::Message { message } => message.created_at,
             Self::MessageMutation { mutation } => mutation.created_at,
             Self::Reaction { reaction } => reaction.created_at,
             _ => 0,
         }
     }
+    pub(super) fn sync_time(&self, receipt_link_at: Option<u64>) -> u64 {
+        match self {
+            Self::RecipientReceipt { receipt } => receipt.sync_time(receipt_link_at),
+            _ => self.timestamp(),
+        }
+    }
     pub(super) fn scope(&self) -> RecordScope {
         match self {
-            Self::Message { .. } | Self::Reaction { .. } | Self::MessageMutation { .. } => {
-                RecordScope::History
-            }
+            Self::Message { .. }
+            | Self::RecipientReceipt { .. }
+            | Self::Reaction { .. }
+            | Self::MessageMutation { .. } => RecordScope::History,
             _ => RecordScope::State,
         }
     }
@@ -323,6 +335,7 @@ impl AppCore {
                         .message_was_locally_deleted(chat_id, Some(message_id), None)
                         .unwrap_or(true)
             }
+            DeviceSyncRecord::RecipientReceipt { receipt } => receipt.valid(),
             DeviceSyncRecord::Message { message } => {
                 messages::history_message_allowed(self, message)
             }
@@ -395,6 +408,9 @@ impl AppCore {
         record: &DeviceSyncRecord,
         target_since: u64,
     ) -> bool {
+        if let DeviceSyncRecord::RecipientReceipt { receipt } = record {
+            return receipt.created_at >= target_since;
+        }
         let DeviceSyncRecord::MessageMutation { mutation } = record else {
             return true;
         };
@@ -566,6 +582,7 @@ impl AppCore {
                 self.apply_chat_read_state(&chat_id, state);
                 self.message_was_seen_on_own_device(&chat_id, read.created_at_secs, &message_id)
             }
+            DeviceSyncRecord::RecipientReceipt { receipt } => receipt.apply(self).is_some(),
             DeviceSyncRecord::Message { .. } => false,
             DeviceSyncRecord::Group { group } => {
                 let expected = group.clone();

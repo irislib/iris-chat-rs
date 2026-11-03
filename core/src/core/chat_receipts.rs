@@ -487,9 +487,36 @@ impl AppCore {
         else {
             return;
         };
-        stored_messages.retain_mut(|message| {
-            apply_message_receipt(message, &delivery, is_from_local_owner, receipt_author_hex)
-        });
+        let updated_at_secs = unix_now().get();
+        let mut sibling_receipts = Vec::new();
+        let mut apply = |message: &mut ChatMessageSnapshot| {
+            let changed = apply_message_receipt(
+                message,
+                &delivery,
+                is_from_local_owner,
+                receipt_author_hex,
+                updated_at_secs,
+            );
+            if changed && message.is_outgoing && !message.deleted_for_everyone {
+                if let Some(receipt) = message
+                    .recipient_deliveries
+                    .iter()
+                    .find(|r| Some(r.owner_pubkey_hex.as_str()) == receipt_author_hex)
+                    .and_then(|r| {
+                        device_sync::RecipientReceipt::from_delivery(
+                            chat_id,
+                            &message.id,
+                            message.created_at_secs,
+                            r,
+                        )
+                    })
+                {
+                    sibling_receipts.push(receipt);
+                }
+            }
+            changed
+        };
+        stored_messages.retain_mut(&mut apply);
         // Save unloaded rows directly even inside a relay-event batch. A deferred
         // full snapshot contains only the visible window and cannot save them.
         let unread_thread = (is_from_local_owner && matches!(delivery, DeliveryState::Seen))
@@ -515,7 +542,7 @@ impl AppCore {
             if !message_ids.contains(&message.id) {
                 continue;
             }
-            if apply_message_receipt(message, &delivery, is_from_local_owner, receipt_author_hex) {
+            if apply(message) {
                 if !message.is_outgoing && matches!(delivery, DeliveryState::Seen) {
                     newly_seen_incoming += u64::from(unread_ids.contains(&message.id));
                 }
@@ -530,15 +557,19 @@ impl AppCore {
         }
         if changed {
             self.persist_best_effort();
+            if !sibling_receipts.is_empty() {
+                self.broadcast_device_sync_receipts(&sibling_receipts);
+            }
         }
     }
 }
 
-fn apply_message_receipt(
+pub(super) fn apply_message_receipt(
     message: &mut ChatMessageSnapshot,
     delivery: &DeliveryState,
     is_from_local_owner: bool,
     receipt_author_hex: Option<&str>,
+    updated_at_secs: u64,
 ) -> bool {
     if is_from_local_owner == message.is_outgoing {
         return false;
@@ -557,7 +588,7 @@ fn apply_message_receipt(
             {
                 if should_advance_delivery(&recipient.delivery, delivery) {
                     recipient.delivery = delivery.clone();
-                    recipient.updated_at_secs = unix_now().get();
+                    recipient.updated_at_secs = updated_at_secs;
                     changed = true;
                 }
             } else {
@@ -568,7 +599,7 @@ fn apply_message_receipt(
                         display_name: String::new(),
                         picture_url: None,
                         delivery: delivery.clone(),
-                        updated_at_secs: unix_now().get(),
+                        updated_at_secs,
                     });
                 changed = true;
             }
@@ -605,7 +636,7 @@ fn receipt_unsigned_event(
     Some(unsigned)
 }
 
-fn should_advance_delivery(current: &DeliveryState, next: &DeliveryState) -> bool {
+pub(super) fn should_advance_delivery(current: &DeliveryState, next: &DeliveryState) -> bool {
     delivery_rank(next) > delivery_rank(current)
 }
 
