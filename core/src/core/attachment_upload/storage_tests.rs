@@ -143,7 +143,7 @@ async fn offline_attachment_is_durable_and_pending_after_reopen() {
     assert!(reopened.delete(&root.hash).await.is_err());
     let metadata = std::fs::read(storage.join("index.sqlite3")).unwrap();
     assert!(!metadata.windows(nhash.len()).any(|w| w == nhash.as_bytes()));
-    let key = root.key.unwrap();
+    let key = root.key.unwrap().raw_key();
     assert!(!metadata.windows(key.len()).any(|w| w == key));
 }
 

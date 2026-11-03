@@ -1,5 +1,8 @@
 //! Private invitation records: one standard CHK-encrypted hashtree leaf.
-use hashtree_core::{decrypt_chk, nhash_decode, nhash_encode_full, sha256, NHashData};
+use hashtree_core::{
+    decrypt_object, encrypt_object, nhash_decode, nhash_encode_full, sha256, EncryptionMode,
+    NHashData,
+};
 use serde::{Deserialize, Serialize};
 
 pub const MAX_INVITE_BYTES: usize = 16 * 1024;
@@ -107,7 +110,7 @@ impl InviteRecord {
 /// Encode exactly one private CHK leaf, compatible with the web invite codec.
 pub fn encode_record(record: &InviteRecord) -> anyhow::Result<(String, Vec<u8>)> {
     record.validate()?;
-    let (ciphertext, key) = hashtree_core::encrypt_chk(&serde_json::to_vec(record)?)?;
+    let (ciphertext, key) = encrypt_object(&serde_json::to_vec(record)?, EncryptionMode::ChkV1)?;
     anyhow::ensure!(ciphertext.len() <= MAX_INVITE_BYTES, "Invite is too large");
     let reference = nhash_encode_full(&NHashData {
         hash: sha256(&ciphertext),
@@ -145,7 +148,7 @@ pub fn decode_record(reference: &str, ciphertext: &[u8]) -> anyhow::Result<Invit
         (16..=MAX_INVITE_BYTES).contains(&ciphertext.len()) && sha256(ciphertext) == cid.hash,
         "Invalid invite record"
     );
-    let record: InviteRecord = serde_json::from_slice(&decrypt_chk(ciphertext, &key)?)?;
+    let record: InviteRecord = serde_json::from_slice(&decrypt_object(ciphertext, &key)?)?;
     record.validate()?;
     Ok(record)
 }
@@ -218,16 +221,31 @@ mod tests {
             .legacy_url()
             .unwrap()
             .starts_with("https://chat.iris.to/#"));
-        let (encrypted, key) =
-            hashtree_core::encrypt_chk(&serde_json::to_vec(&record).unwrap()).unwrap();
+        let (versioned, encrypted) = encode_record(&record).unwrap();
         assert_eq!(encrypted, ciphertext);
+        let legacy = nhash_decode(reference).unwrap().decrypt_key.unwrap();
+        let key = nhash_decode(&versioned).unwrap().decrypt_key.unwrap();
+        assert_eq!(legacy.mode(), EncryptionMode::LegacyChk);
+        assert_eq!(key.mode(), EncryptionMode::ChkV1);
+        assert_eq!(key.raw_key(), legacy.raw_key());
         assert_eq!(
-            nhash_encode_full(&NHashData {
-                hash: sha256(&encrypted),
-                decrypt_key: Some(key)
-            })
-            .unwrap(),
-            reference
+            decode_record(&versioned, &encrypted).unwrap().nonce,
+            record.nonce
+        );
+    }
+    #[test]
+    fn reads_randomized_private_invite() {
+        let record = fixture()["record"].clone();
+        let (ciphertext, key) =
+            encrypt_object(&serde_json::to_vec(&record).unwrap(), EncryptionMode::RndV1).unwrap();
+        let reference = nhash_encode_full(&NHashData {
+            hash: sha256(&ciphertext),
+            decrypt_key: Some(key),
+        })
+        .unwrap();
+        assert_eq!(
+            serde_json::to_value(decode_record(&reference, &ciphertext).unwrap()).unwrap(),
+            record
         );
     }
     #[test]

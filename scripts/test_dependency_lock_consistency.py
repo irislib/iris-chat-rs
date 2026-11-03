@@ -9,17 +9,19 @@ import unittest
 ROOT = Path(__file__).resolve().parent.parent
 PLATFORM_LOCKS = (ROOT / "core" / "Cargo.lock", ROOT / "linux" / "Cargo.lock")
 EXPECTED = {
-    "hashtree-blossom": "0.2.83",
-    "hashtree-resolver": "0.2.86",
-    "hashtree-updater": "0.2.89",
+    "hashtree-blossom": "0.3.0",
+    "hashtree-resolver": "0.3.0",
+    "hashtree-updater": "0.3.0",
     "nvpn-fips-core": "0.4.115",
     "nvpn-fips-endpoint": "0.4.115",
     "nvpn-fips-tcp": "0.2.6",
     "nvpn-fips-tcp-endpoint": "0.2.50",
     "hashtree-config": "0.2.83",
-    "hashtree-core": "0.2.91",
-    "hashtree-fips-transport": "0.4.29",
-    "hashtree-network": "0.2.88",
+    "hashtree-core": "0.3.0",
+    "hashtree-index": "0.3.0",
+    "hashtree-lmdb": "0.3.0",
+    "hashtree-fips-transport": "0.5.0",
+    "hashtree-network": "0.3.0",
     "nostr-pubsub": "0.1.20",
     "nostr-pubsub-fips": "0.5.46",
     "nostr-pubsub-relay": "0.1.16",
@@ -147,9 +149,9 @@ class DependencyLockConsistencyTests(unittest.TestCase):
         self.assertRegex(manifest, r'(?m)^nvpn-fips-tcp = \{ version = "=0\.2\.6" \}$', "fips-tcp must stay on the gated release")
         self.assertRegex(manifest, r'(?m)^nvpn-fips-tcp-endpoint = \{ version = "=0\.2\.50" \}$', "fips-tcp-endpoint must stay on the gated release")
         self.assertRegex(manifest, r'(?m)^hashtree-config = "=0\.2\.83"$', "Hashtree config must stay on the gated release")
-        self.assertRegex(manifest, r'(?m)^hashtree-core = "=0\.2\.91"$', "Hashtree core must stay on the gated release")
-        self.assertRegex(manifest, r'(?m)^hashtree-fips-transport = "=0\.4\.29"$', "Hashtree/FIPS transport must stay on the gated release")
-        self.assertRegex(manifest, r'(?m)^hashtree-network = "=0\.2\.88"$', "Hashtree network must stay on the gated release")
+        self.assertRegex(manifest, r'(?m)^hashtree-core = "=0\.3\.0"$', "Hashtree core must stay on the gated release")
+        self.assertRegex(manifest, r'(?m)^hashtree-fips-transport = "=0\.5\.0"$', "Hashtree/FIPS transport must stay on the gated release")
+        self.assertRegex(manifest, r'(?m)^hashtree-network = "=0\.3\.0"$', "Hashtree network must stay on the gated release")
         self.assertRegex(manifest, r'(?m)^nostr-identity = "=0\.6\.0"$', "nostr-identity must stay on the gated release")
         self.assertRegex(manifest, r'(?m)^nostr-pubsub = "=0\.1\.20"$', "nostr-pubsub must stay on the gated release")
         self.assertRegex(manifest, r'(?m)^nostr-pubsub-fips = "=0\.5\.46"$', "nostr-pubsub-fips must stay on the gated release")

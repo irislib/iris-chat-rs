@@ -47,7 +47,9 @@ async fn oversized_attachment_is_rejected_before_uploading_any_chunks() {
 
 #[tokio::test]
 async fn attachment_upload_encrypts_every_stored_chunk_and_requires_the_key() {
-    use hashtree_core::{decrypt_chk, try_decode_tree_node, DEFAULT_CHUNK_SIZE};
+    use hashtree_core::{
+        decrypt_object, try_decode_tree_node, EncryptionMode, ObjectKey, DEFAULT_CHUNK_SIZE,
+    };
     let dir = tempfile::tempdir().unwrap();
     // Every native attachment, including voice messages, uses this upload path.
     let large: Vec<u8> = (0..DEFAULT_CHUNK_SIZE * 2 + 123)
@@ -94,13 +96,15 @@ async fn attachment_upload_encrypts_every_stored_chunk_and_requires_the_key() {
                 continue;
             }
             let key = node.key.expect("every child and root must be encrypted");
+            assert_eq!(key.mode(), EncryptionMode::ChkV1);
             let bytes = &ciphertext[&node.hash];
             let plain =
-                decrypt_chk(bytes, &key).expect("stored bytes must authenticate with their key");
+                decrypt_object(bytes, &key).expect("stored bytes must authenticate with their key");
             assert_ne!(bytes, &plain, "{name}: plaintext reached the blob store");
-            let mut wrong_key = key;
-            wrong_key[0] ^= 1;
-            assert!(decrypt_chk(bytes, &wrong_key).is_err());
+            let mut wrong = key.as_bytes().to_vec();
+            wrong[1] ^= 1;
+            let wrong_key = ObjectKey::from_bytes(&wrong).unwrap();
+            assert!(decrypt_object(bytes, &wrong_key).is_err());
             if let Some(tree) = try_decode_tree_node(&plain) {
                 pending.extend(tree.links.iter().map(|link| link.to_cid()));
             }

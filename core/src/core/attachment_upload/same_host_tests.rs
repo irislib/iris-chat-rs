@@ -1,7 +1,7 @@
 use super::*;
 use fips_core::config::{PeerConfig, RoutingMode, TransportInstances, UdpConfig};
 use fips_core::FipsEndpoint;
-use hashtree_core::{BlobRoute, MemoryStore, StoreBlobRoute};
+use hashtree_core::{BlobRoute, EncryptionMode, MemoryStore, StoreBlobRoute};
 use hashtree_fips_transport::{TcpBlobTransport, TcpBlobTransportConfig, TCP_BLOB_CAPABILITY};
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, UdpSocket};
 use std::time::Instant;
@@ -49,8 +49,8 @@ fn wait_until(mut condition: impl FnMut() -> bool) {
     }
 }
 
-async fn seed_file(store: Arc<MemoryStore>, bytes: &[u8]) -> String {
-    let tree = HashTree::new(HashTreeConfig::new(store));
+async fn seed_file(store: Arc<MemoryStore>, bytes: &[u8], mode: EncryptionMode) -> String {
+    let tree = HashTree::new(HashTreeConfig::new(store)).with_encryption_mode(mode);
     let (cid, _) = tree.put(bytes).await.expect("seed Hashtree file");
     nhash_encode_full(&NHashData {
         hash: cid.hash,
@@ -101,8 +101,11 @@ fn single_device_without_relays_reuses_provider_and_preserves_fallback_and_outbo
     ));
     let provider_local = Arc::new(MemoryStore::new());
     let provider_data = b"attachment supplied by the same-host provider".to_vec();
-    let provider_nhash =
-        provider_runtime.block_on(seed_file(provider_local.clone(), &provider_data));
+    let provider_nhash = provider_runtime.block_on(seed_file(
+        provider_local.clone(),
+        &provider_data,
+        EncryptionMode::RndV1,
+    ));
     let provider = Arc::new(
         provider_runtime
             .block_on(TcpBlobTransport::bind_advertised_with_config(
@@ -116,8 +119,13 @@ fn single_device_without_relays_reuses_provider_and_preserves_fallback_and_outbo
     let fallback = Arc::new(MemoryStore::new());
     let before = b"standalone fallback after provider miss".to_vec();
     let after = b"standalone fallback after provider death".to_vec();
-    let before_nhash = provider_runtime.block_on(seed_file(fallback.clone(), &before));
-    let after_nhash = provider_runtime.block_on(seed_file(fallback.clone(), &after));
+    let before_nhash = provider_runtime.block_on(seed_file(
+        fallback.clone(),
+        &before,
+        EncryptionMode::LegacyChk,
+    ));
+    let after_nhash =
+        provider_runtime.block_on(seed_file(fallback.clone(), &after, EncryptionMode::ChkV1));
     let fallback: Arc<dyn BlobRoute> = Arc::new(StoreBlobRoute::new(fallback));
 
     let owner = nostr::Keys::generate();
@@ -204,7 +212,8 @@ fn single_device_without_relays_reuses_provider_and_preserves_fallback_and_outbo
         .unwrap()
         .expect("Chat serves downloaded ciphertext");
     assert_eq!(
-        hashtree_core::decrypt_chk(&cached_ciphertext, &downloaded.decrypt_key.unwrap()).unwrap(),
+        hashtree_core::decrypt_object(&cached_ciphertext, &downloaded.decrypt_key.unwrap())
+            .unwrap(),
         provider_data
     );
 
@@ -232,7 +241,7 @@ fn single_device_without_relays_reuses_provider_and_preserves_fallback_and_outbo
         .expect("Chat serves its uploaded chunk");
     assert_ne!(ciphertext, plaintext);
     assert_eq!(
-        hashtree_core::decrypt_chk(&ciphertext, &uploaded.decrypt_key.unwrap()).unwrap(),
+        hashtree_core::decrypt_object(&ciphertext, &uploaded.decrypt_key.unwrap()).unwrap(),
         plaintext
     );
     drop(provider);
@@ -342,7 +351,7 @@ fn peer_retrieves_pending_ciphertext_after_store_reopen_without_http_servers() {
         .unwrap();
     assert_ne!(bytes, plaintext);
     assert_eq!(
-        hashtree_core::decrypt_chk(&bytes, &decoded.decrypt_key.unwrap()).unwrap(),
+        hashtree_core::decrypt_object(&bytes, &decoded.decrypt_key.unwrap()).unwrap(),
         plaintext
     );
     drop(serving);

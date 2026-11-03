@@ -1,5 +1,7 @@
 use super::*;
-use hashtree_core::{decode_tree_node_by_cid, encrypted_size_chk, LinkType};
+use hashtree_core::{
+    decode_tree_node_by_cid, encrypted_size, encrypted_size_chk, EncryptionMode, LinkType,
+};
 
 #[derive(Clone)]
 pub(super) struct ReadReference {
@@ -9,13 +11,14 @@ pub(super) struct ReadReference {
 
 impl ReadReference {
     fn expected_blob_size(&self) -> Option<u64> {
-        self.link.map(|(_, size)| {
-            if self.cid.key.is_some() {
-                encrypted_size_chk(size as usize) as u64
-            } else {
-                size
-            }
-        })
+        self.link
+            .map(|(_, size)| match self.cid.key.map(|key| key.mode()) {
+                None => size,
+                Some(EncryptionMode::RndV1) => encrypted_size(size as usize) as u64,
+                Some(EncryptionMode::LegacyChk | EncryptionMode::ChkV1) => {
+                    encrypted_size_chk(size as usize) as u64
+                }
+            })
     }
 }
 

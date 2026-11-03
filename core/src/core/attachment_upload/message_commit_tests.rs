@@ -44,7 +44,7 @@ fn stage_after_caption(
         .map(|index| {
             let existing = nhash_encode_full(&NHashData {
                 hash: hashtree_core::sha256(&[if repeated { 0 } else { index }]),
-                decrypt_key: Some([7; 32]),
+                decrypt_key: Some([7; 32].into()),
             })
             .unwrap();
             format!("{existing}/old.bin")

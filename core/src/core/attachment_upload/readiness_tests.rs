@@ -32,6 +32,47 @@ async fn fixture() -> (Cid, Arc<MemoryStore>) {
     (cid, memory)
 }
 
+#[tokio::test]
+async fn reads_cached_multichunk_attachments_with_legacy_and_versioned_keys() {
+    use hashtree_core::EncryptionMode;
+    let dir = tempfile::tempdir().unwrap();
+    let local = AttachmentChunkStore::open(dir.path(), local_store::DEFAULT_BUDGET).unwrap();
+    let bytes = b"Enough data for a file tree with several encrypted chunks.";
+    for mode in [
+        EncryptionMode::LegacyChk,
+        EncryptionMode::ChkV1,
+        EncryptionMode::RndV1,
+    ] {
+        let tree = HashTree::new(HashTreeConfig::new(local.clone()).with_chunk_size(12))
+            .with_encryption_mode(mode);
+        let (cid, _) = tree.put(bytes).await.unwrap();
+        let reference = nhash_encode_full(&NHashData {
+            hash: cid.hash,
+            decrypt_key: cid.key,
+        })
+        .unwrap();
+        let (_, attachments) = extract_message_attachments(&format!("{reference}/file.bin"));
+        let attachment = nhash_decode(&attachments[0].nhash).unwrap();
+        assert_eq!(attachment.decrypt_key.unwrap().mode(), mode);
+        let received = Cid {
+            hash: attachment.hash,
+            key: attachment.decrypt_key,
+        };
+        assert_eq!(
+            read(
+                &received,
+                Some(local.clone()),
+                local.clone(),
+                bytes.len() as u64,
+                Duration::ZERO
+            )
+            .await
+            .unwrap(),
+            bytes
+        );
+    }
+}
+
 fn route(
     local: Arc<AttachmentChunkStore>,
     source: Arc<MemoryStore>,
