@@ -223,7 +223,8 @@ work_repo="$tmp_dir/homebrew-tap"
 trap 'rm -rf "$tmp_dir"' EXIT
 
 if [[ -n "$SEED_REPO" ]]; then
-  tap_git clone -q "$SEED_REPO" "$work_repo" >/dev/null
+  # Keep the seed's other published branches when exporting the updated tap.
+  tap_git clone -q -c 'remote.origin.fetch=+refs/heads/*:refs/heads/*' "$SEED_REPO" "$work_repo" >/dev/null
 else
   mkdir -p "$work_repo"
   tap_git -C "$work_repo" init -q -b master >/dev/null
@@ -242,10 +243,16 @@ write_formula "$work_repo/Formula/${FORMULA_NAME}.rb" "$class_name"
 )
 
 rm -rf "$OUTPUT_DIR"
-tap_git clone -q --bare "$work_repo" "$OUTPUT_DIR" >/dev/null
-# Static HTTP publication exposes config; the temporary clone source is private
-# packaging state, not a remote that belongs in the public tap.
-tap_git --git-dir="$OUTPUT_DIR" remote remove origin
+default_branch="$(tap_git -C "$work_repo" symbolic-ref --short HEAD)"
+object_format="$(tap_git -C "$work_repo" rev-parse --show-object-format)"
+tap_git init -q --bare --template= --object-format="$object_format" -b "$default_branch" "$OUTPUT_DIR"
+# Serve every reachable object at its loose HTTP URL. A new bare destination
+# also keeps unreachable seed data and the private clone URL out of the tap.
+tap_git -C "$work_repo" rev-list --objects --branches --tags --no-object-names |
+  tap_git -C "$work_repo" pack-objects --stdout |
+  tap_git --git-dir="$OUTPUT_DIR" unpack-objects -q --strict
+tap_git -C "$work_repo" for-each-ref --format='create %(refname) %(objectname)' refs/heads refs/tags |
+  tap_git --git-dir="$OUTPUT_DIR" update-ref --stdin
 GIT_DIR="$OUTPUT_DIR" tap_git update-server-info
 
 cat <<EOF

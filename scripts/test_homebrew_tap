@@ -77,16 +77,24 @@ git -C "$SEED_WORK" add Formula/htree.rb >/dev/null
 git -C "$SEED_WORK" -c user.name='Test User' -c user.email='test@example.com' \
   commit -m "Seed htree formula" >/dev/null
 git -C "$SEED_WORK" tag seed-v1
+git -C "$SEED_WORK" branch previous-release
 printf 'Existing tap history\n' > "$SEED_WORK/README.md"
 git -C "$SEED_WORK" add README.md
 git -C "$SEED_WORK" -c user.name='Test User' -c user.email='test@example.com' \
   commit -m "Preserve a second seed commit" >/dev/null
 git clone -q --bare "$SEED_WORK" "$SEED_BARE" >/dev/null
+# A local seed can contain packed objects outside its advertised history.
+private_object="$(printf 'unpublished seed data\n' | git --git-dir="$SEED_BARE" hash-object -w --stdin)"
+git --git-dir="$SEED_BARE" update-ref refs/tags/private-fixture "$private_object"
+git --git-dir="$SEED_BARE" repack -adq
+git --git-dir="$SEED_BARE" update-ref -d refs/tags/private-fixture
 seed_head="$(git --git-dir="$SEED_BARE" rev-parse master)"
 seed_refs="$(git --git-dir="$SEED_BARE" show-ref)"
 seed_config_sha="$(sha256_file "$SEED_BARE/config")"
 
-"$ROOT_DIR/packaging/homebrew/create_tap.sh" \
+mkdir -p "$TMPDIR/private-template"
+printf 'local template data\n' > "$TMPDIR/private-template/private-marker"
+GIT_TEMPLATE_DIR="$TMPDIR/private-template" "$ROOT_DIR/packaging/homebrew/create_tap.sh" \
   --version v9.8.7 \
   --release-base-url "$RELEASE_BASE_URL" \
   --assets-dir "$ASSETS_DIR" \
@@ -101,9 +109,16 @@ if git --git-dir="$TAP_BARE" config --local --get-regexp '^remote\.'; then
 fi
 test "$(git --git-dir="$SEED_BARE" show-ref)" = "$seed_refs"
 test "$(sha256_file "$SEED_BARE/config")" = "$seed_config_sha"
+test ! -e "$TAP_BARE/private-marker"
 git --git-dir="$TAP_BARE" merge-base --is-ancestor "$seed_head" master
 test "$(git --git-dir="$TAP_BARE" rev-parse refs/tags/seed-v1)" = \
   "$(git --git-dir="$SEED_BARE" rev-parse refs/tags/seed-v1)"
+test "$(git --git-dir="$TAP_BARE" rev-parse refs/heads/previous-release)" = \
+  "$(git --git-dir="$SEED_BARE" rev-parse refs/heads/previous-release)"
+if git --git-dir="$TAP_BARE" cat-file -e "$private_object"; then
+  echo "Generated public tap contains an unreachable seed object" >&2
+  exit 1
+fi
 test "$(git --git-dir="$TAP_BARE" rev-parse master:Formula/htree.rb)" = \
   "$(git --git-dir="$SEED_BARE" rev-parse master:Formula/htree.rb)"
 
@@ -184,6 +199,12 @@ from threading import Thread
 from urllib.request import urlopen
 
 root, bare, clone = map(Path, sys.argv[1:])
+
+# A static client must be able to fetch every reachable object by its loose URL.
+objects = subprocess.check_output(["git", f"--git-dir={bare}", "rev-list", "--objects", "--all",
+                                   "--no-object-names"], text=True).splitlines()
+assert all((bare / "objects" / oid[:2] / oid[2:]).is_file() for oid in objects)
+assert not (bare / "objects/info/packs").read_bytes().strip()
 
 class QuietHandler(SimpleHTTPRequestHandler):
     def log_message(self, *args):
