@@ -195,6 +195,12 @@ def main(argv=None):
     os.umask(0o077)
     args.output.mkdir(parents=True, exist_ok=False)
     env = {**os.environ, "CARGO_TARGET_DIR": str(args.target_dir), "CARGO_BUILD_JOBS": str(args.jobs), "CARGO_TERM_COLOR": "never"}
+    if args.release:
+        # Match the optimized test binaries built by scripts/test_rust.sh so
+        # Cargo can reuse those dependencies for a focused regression run.
+        env.setdefault("CARGO_PROFILE_RELEASE_OPT_LEVEL", "3")
+        env.setdefault("CARGO_PROFILE_RELEASE_DEBUG", "1")
+        env.setdefault("CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS", "false")
     runner = Runner(args.output, args.target_dir, args.timeout,
                     None if args.min_free_gib is None else args.min_free_gib * 1024**3,
                     None if args.max_growth_gib is None else args.max_growth_gib * 1024**3)

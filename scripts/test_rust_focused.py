@@ -178,13 +178,28 @@ class FocusedRunnerTests(unittest.TestCase):
             self.assertTrue(run["closure"]["closed"])
 
     def test_online_release_and_ignored_execution_are_explicit(self):
+        expected_profile = {
+            "CARGO_PROFILE_RELEASE_OPT_LEVEL": "3",
+            "CARGO_PROFILE_RELEASE_DEBUG": "1",
+            "CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS": "false",
+        }
+        for key in expected_profile:
+            self.env.pop(key, None)
         result = self.run_fixture("--test", "tests::ignored", "--online", "--release", "--include-ignored")
         self.assertEqual(result.returncode, 0, result.stderr)
+        recorded = self.receipt()["build_environment"]
+        self.assertEqual({key: recorded[key] for key in expected_profile}, expected_profile)
         build = next(call for call in self.calls() if call["tool"] == "cargo" and call["args"][0] == "test")
         self.assertNotIn("--offline", build["args"])
         self.assertIn("--release", build["args"])
         self.assertIn("--locked", build["args"])
         self.assertTrue(self.receipt()["passed"])
+
+    def test_release_preserves_explicit_profile_override(self):
+        self.env["CARGO_PROFILE_RELEASE_DEBUG"] = "2"
+        result = self.run_fixture("--test", "tests::one", "--release")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.receipt()["build_environment"]["CARGO_PROFILE_RELEASE_DEBUG"], "2")
 
     def test_zero_match_and_ignored_only_are_failures(self):
         for name in ("missing", "ignored"):
