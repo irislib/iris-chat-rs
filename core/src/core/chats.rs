@@ -3,7 +3,6 @@ use super::*;
 mod direct_queue;
 mod group_send;
 mod helpers;
-mod local_delete;
 mod page_merge;
 
 use self::direct_queue::is_queued_direct_text_message;

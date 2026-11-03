@@ -1,7 +1,7 @@
 use super::*;
 
-// This database belongs to the active account. These markers stay on this
-// install; they neither retract published events nor sync deletion to siblings.
+// Replay guards are account-local. Explicit deletions also store a private
+// sync record. Expiry and legacy guards have no record to export.
 fn deletion_key(chat_id: &str, kind: &str, id: &str) -> String {
     format!("message_deleted:{}:{chat_id}:{kind}:{id}", chat_id.len())
 }
@@ -180,17 +180,53 @@ impl AppStore {
         Ok(result)
     }
 
+    #[cfg(test)]
     pub(crate) fn delete_message_locally(
         &mut self,
         chat_id: &str,
         message_id: &str,
         source_event_id: Option<&str>,
     ) -> anyhow::Result<()> {
+        self.remove_message_for_me(chat_id, message_id, source_event_id, None, None)
+            .map(|_| ())
+    }
+
+    pub(crate) fn remove_message_for_me(
+        &mut self,
+        chat_id: &str,
+        message_id: &str,
+        source_event_id: Option<&str>,
+        thread: Option<&ThreadRecord>,
+        sync_entry: Option<(String, String)>,
+    ) -> anyhow::Result<bool> {
         let mut conn = self
             .conn
             .lock()
             .map_err(|_| anyhow::anyhow!("storage connection mutex poisoned"))?;
         let tx = conn.transaction()?;
+        // Pending UI/relay updates may still exist only in memory. Include
+        // them in the same transaction before deciding which row owns a badge.
+        if let Some(thread) = thread.filter(|thread| {
+            thread.unread_count > 0 && self.cache.threads.get(chat_id) != Some(&hash_thread(thread))
+        }) {
+            upsert_thread_rows(&tx, chat_id, thread)?;
+        }
+        if let Some((key, value)) = sync_entry {
+            tx.execute(
+                "INSERT OR IGNORE INTO app_meta(key,value) VALUES (?1,?2)",
+                params![key, value],
+            )?;
+        }
+        // The badge counts the most recent unread rows. Removing an older row
+        // whose badge was already cleared must not decrement it again.
+        let removed_unread = tx.execute(
+            "UPDATE threads SET unread_count = unread_count - 1
+             WHERE chat_id = ?1 AND unread_count > 0 AND ?2 IN (
+                SELECT id FROM messages WHERE chat_id = ?1 AND is_outgoing = 0 AND delivery != 'seen'
+                ORDER BY created_at_secs DESC, rowid DESC
+                LIMIT (SELECT unread_count FROM threads WHERE chat_id = ?1))",
+            params![chat_id, message_id],
+        )? > 0;
         let stored_source: Option<String> = tx
             .query_row(
                 "SELECT source_event_id FROM messages WHERE chat_id = ?1 AND id = ?2",
@@ -226,7 +262,7 @@ impl AppStore {
         )?;
         tx.commit()?;
         self.cache.threads.remove(chat_id);
-        Ok(())
+        Ok(removed_unread)
     }
 
     pub(crate) fn message_was_locally_deleted(

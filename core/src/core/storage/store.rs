@@ -669,29 +669,11 @@ impl SavePlan {
             // Cascades to messages.
             tx.execute("DELETE FROM threads WHERE chat_id = ?1", [chat_id])?;
         }
-        if !self.threads_to_write.is_empty() {
-            let mut thread_stmt = tx.prepare_cached(
-                "INSERT INTO threads(chat_id, unread_count, updated_at_secs, draft)
-                 VALUES (?1, ?2, ?3, ?4)
-                 ON CONFLICT(chat_id) DO UPDATE SET
-                    unread_count = excluded.unread_count,
-                    updated_at_secs = excluded.updated_at_secs,
-                    draft = excluded.draft",
-            )?;
-            for chat_id in self.threads_to_write.keys() {
-                let Some(thread) = snapshot.threads.get(chat_id) else {
-                    return Err(anyhow::anyhow!("persist plan missing thread {chat_id}"));
-                };
-                thread_stmt.execute(params![
-                    chat_id,
-                    thread.unread_count as i64,
-                    thread.updated_at_secs as i64,
-                    thread.draft,
-                ])?;
-                for message in &thread.messages {
-                    upsert_message_row(tx, chat_id, message)?;
-                }
-            }
+        for chat_id in self.threads_to_write.keys() {
+            let Some(thread) = snapshot.threads.get(chat_id) else {
+                return Err(anyhow::anyhow!("persist plan missing thread {chat_id}"));
+            };
+            upsert_thread_rows(tx, chat_id, thread)?;
         }
         Ok(())
     }
@@ -887,6 +869,32 @@ fn serialize_authorization_state(state: Option<&PersistedAuthorizationState>) ->
         Some(PersistedAuthorizationState::Revoked) => "revoked",
         None => "",
     }
+}
+
+fn upsert_thread_rows(
+    tx: &Transaction,
+    chat_id: &str,
+    thread: &ThreadRecord,
+) -> anyhow::Result<()> {
+    tx.prepare_cached(
+        "INSERT INTO threads(chat_id, unread_count, updated_at_secs, draft)
+         VALUES (?1, ?2, ?3, ?4)
+         ON CONFLICT(chat_id) DO UPDATE SET
+            unread_count = excluded.unread_count,
+            updated_at_secs = excluded.updated_at_secs,
+            draft = excluded.draft",
+    )?
+    .execute(params![
+        chat_id,
+        thread.unread_count as i64,
+        thread.updated_at_secs as i64,
+        thread.draft
+    ])?;
+    for message in &thread.messages {
+        // The row upsert preserves a previously stored incoming Seen.
+        upsert_message_row(tx, chat_id, message)?;
+    }
+    Ok(())
 }
 
 fn upsert_message_row(

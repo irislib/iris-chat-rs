@@ -16,6 +16,7 @@ mod anti_entropy;
 mod body;
 mod history;
 mod history_policy;
+mod message_deletions;
 mod messages;
 mod receipts;
 mod recent_peers;
@@ -143,6 +144,8 @@ enum DeviceSyncPacket {
         v: u8,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         message_mutations: Option<u8>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        message_deletions: Option<u8>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         recipient_receipts: Option<u8>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
