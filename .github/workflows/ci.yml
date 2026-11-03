@@ -263,6 +263,27 @@ jobs:
           echo "PKG_CONFIG=/usr/bin/pkg-config" >> "$GITHUB_ENV"
           echo "identity=$(rustc -Vv | sha256sum | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
 
+      # The release cache can exhaust a fresh runner during extraction. This
+      # Rust-only job owns its disposable VM and never uses its Android SDK.
+      - name: Make room for the compiler cache on the hosted runner
+        if: runner.environment == 'github-hosted'
+        run: |
+          set -Eeuo pipefail
+          df -h "$GITHUB_WORKSPACE"
+          sdk=/usr/local/lib/android/sdk
+          test "${ANDROID_HOME:-}" = "$sdk"
+          if findmnt -rn -o TARGET | awk -v path="$sdk" '$0 == path || index($0,path "/") == 1 {mounted=1} END {exit !mounted}'; then
+            echo "Android SDK contains a mount" >&2
+            exit 1
+          fi
+          sudo lsof -nP > "$RUNNER_TEMP/open-files" 2>/dev/null
+          if grep -Fq "$sdk/" "$RUNNER_TEMP/open-files"; then
+            echo "Android SDK is in use" >&2
+            exit 1
+          fi
+          sudo rm -rf --one-file-system -- "$sdk"
+          df -h "$GITHUB_WORKSPACE"
+
       - name: Restore release compiler cache
         id: cargo-cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
