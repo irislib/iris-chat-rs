@@ -58,7 +58,10 @@ impl ProviderRoute {
             .explicit
             .read()
             .unwrap_or_else(|error| error.into_inner())
-            .clone();
+            .iter()
+            .copied()
+            .filter(|peer| !discovered.contains(&peer.npub()))
+            .collect::<Vec<_>>();
         // Interleave the discovery ranking with explicit candidates, then let
         // the shared route apply its bounded per-hash attempt window.
         let mut peers = Vec::new();

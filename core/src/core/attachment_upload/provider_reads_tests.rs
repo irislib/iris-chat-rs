@@ -43,6 +43,17 @@ async fn capture_requests(
     flume::Receiver<(PeerIdentity, Vec<u8>)>,
     tokio::task::JoinHandle<()>,
 ) {
+    capture_requests_with_reply(endpoint, advertise, true).await
+}
+
+async fn capture_requests_with_reply(
+    endpoint: Arc<FipsEndpoint>,
+    advertise: bool,
+    reply: bool,
+) -> (
+    flume::Receiver<(PeerIdentity, Vec<u8>)>,
+    tokio::task::JoinHandle<()>,
+) {
     let mut tcp = if advertise {
         FipsTcpEndpoint::bind_with_capability(
             endpoint,
@@ -91,6 +102,10 @@ async fn capture_requests(
                     bytes.clone(),
                 ))
                 .unwrap();
+                if !reply {
+                    pending.remove(&connection);
+                    continue;
+                }
                 let response = encode_blob_reply_header(&BlobReply::NoResult).unwrap();
                 assert_eq!(
                     tcp.write(connection, &response, now).await.unwrap(),
@@ -302,7 +317,9 @@ async fn identified_cache_wire_rejects_contacts_and_revoked_siblings() {
 
         // Updating the verified sibling set revokes old device keys without
         // making every known contact eligible for identified cache access.
-        attachments.set_peers(vec![contact_id, sibling_id, rotated_id], vec![rotated_id]);
+        attachments
+            .set_peers(vec![contact_id, sibling_id, rotated_id], vec![rotated_id])
+            .await;
         assert!(sibling_tcp.fetch_from_peer(&hash, live_id).await.is_err());
         assert_eq!(
             rotated_tcp.fetch_from_peer(&hash, live_id).await.unwrap(),

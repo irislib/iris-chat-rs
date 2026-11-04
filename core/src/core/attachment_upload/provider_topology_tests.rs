@@ -216,7 +216,9 @@ async fn newly_linked_peer_closes_reader_before_next_get_and_recreation_recovers
             .unwrap()
             .iter()
             .any(|peer| peer.connected && peer.npub == becoming_sibling.npub()));
-        attachments.set_peers(vec![provider_id], vec![sibling_id]);
+        attachments
+            .set_peers(vec![provider_id], vec![sibling_id])
+            .await;
         // Directly exercise the unrelated-provider route: verified device reads
         // are a different authorized route and may still use live identity.
         let request = hashtree_core::BlobRequest { hash, htl: 1 };
@@ -268,4 +270,74 @@ async fn newly_linked_peer_closes_reader_before_next_get_and_recreation_recovers
     })
     .await
     .expect("bounded reader revocation/recreation wire test");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn linking_cancels_already_prepared_hedged_provider_gets() {
+    tokio::time::timeout(Duration::from_secs(30), async {
+        let live = identified_endpoint(&Keys::generate(), network(vec![])).await;
+        let stalled = identified_endpoint(&Keys::generate(), network(vec![])).await;
+        let linking = identified_endpoint(&Keys::generate(), network(vec![])).await;
+        let stalled_id = PeerIdentity::from_npub(stalled.npub()).unwrap();
+        let linking_id = PeerIdentity::from_npub(linking.npub()).unwrap();
+        let public = vec![
+            PeerConfig::new(
+                stalled.npub(),
+                "udp",
+                stalled.bound_udp_listen_addrs().await.unwrap()[0].to_string(),
+            ),
+            PeerConfig::new(
+                linking.npub(),
+                "udp",
+                linking.bound_udp_listen_addrs().await.unwrap()[0].to_string(),
+            ),
+        ];
+        let (started, stalled_capture) =
+            capture_requests_with_reply(stalled.clone(), false, false).await;
+        let (forbidden, linking_capture) = capture_requests(linking.clone(), false).await;
+        let directory = tempfile::tempdir().unwrap();
+        let primary = AttachmentChunkStore::open(directory.path(), 8 * 1024 * 1024).unwrap();
+        let attachments = bind_same_host_attachment_store(
+            live.clone(),
+            ProviderReadOptions::new(&network(vec![]), public),
+            Arc::new(StoreBlobRoute::new(Arc::new(MemoryStore::new()))),
+            vec![stalled_id, linking_id],
+            vec![],
+            primary,
+        )
+        .await
+        .unwrap();
+        let hash = hashtree_core::sha256(b"already prepared hedged GET");
+        let route = attachments.provider.clone();
+        let pending = tokio::spawn(async move {
+            route
+                .route(hashtree_core::BlobRequest { hash, htl: 1 })
+                .await
+        });
+        assert_eq!(
+            observed(&started, hash).await.npub(),
+            attachments.reads.endpoint.npub()
+        );
+        attachments
+            .set_peers(vec![stalled_id], vec![linking_id])
+            .await;
+        assert!(
+            attachments.reads.endpoint.is_stopped().await,
+            "transition waits for endpoint closure"
+        );
+        assert!(pending.await.unwrap().is_err());
+        assert!(
+            forbidden.try_recv().is_err(),
+            "queued hedge transmitted a GET after device linking"
+        );
+        stalled_capture.abort();
+        linking_capture.abort();
+        let _ = stalled_capture.await;
+        let _ = linking_capture.await;
+        for endpoint in [live, stalled, linking] {
+            endpoint.shutdown().await.unwrap();
+        }
+    })
+    .await
+    .expect("bounded in-flight policy transition test");
 }

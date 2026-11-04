@@ -57,11 +57,24 @@ impl AttachmentBlobRuntime {
         self.store.clone()
     }
 
-    pub(super) fn set_peers(
+    pub(super) async fn set_peers(
         &self,
         peers: Vec<fips_core::PeerIdentity>,
         siblings: Vec<fips_core::PeerIdentity>,
     ) {
+        let adds_linked_device = {
+            let current = self
+                .allowed_siblings
+                .read()
+                .unwrap_or_else(|error| error.into_inner());
+            siblings.iter().any(|peer| !current.contains(peer))
+        };
+        if adds_linked_device {
+            // Close before committing the new policy, including requests that
+            // already passed preparation and are waiting in a hedged GET queue.
+            // Public peer updates alone do not interrupt ongoing transfers.
+            self.reads.shutdown().await;
+        }
         *self
             .allowed_siblings
             .write()

@@ -403,7 +403,8 @@ impl AppCore {
                     }
                 }
                 if let Some(blobs) = &runtime._attachment_blobs {
-                    blobs.set_peers(config.peers.clone(), config.siblings.clone());
+                    self.runtime
+                        .block_on(blobs.set_peers(config.peers.clone(), config.siblings.clone()));
                 }
                 if let Ok(mut payloads) = runtime.nearby_bootstrap_payloads.write() {
                     *payloads = refreshed_bootstrap.unwrap_or_default();
