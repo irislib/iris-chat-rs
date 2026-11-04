@@ -150,7 +150,9 @@ installation. Under the same exclusive custody, return to the original chat
 without editing and run `testRestoreEscrowedSelfDraftAndReturn` in
 `escrow-self-restore` mode with the same bindings. Recovery accepts an already
 restored witness, the run's confirmed empty state, or its exact fresh typed body.
-Unexpected text, partial typing, missing run evidence or an account mismatch
+Before replacing any text, recovery requires the loaded self-chat header and the
+same allowed value on two independent opens. Unexpected text, partial typing,
+missing run evidence or an account mismatch
 stops the test. Do not resend. Independently verify retained state after an
 ordinary relaunch. A missing, reinstalled or differently bound runner leaves the
 host escrow for a separately reviewed recovery.

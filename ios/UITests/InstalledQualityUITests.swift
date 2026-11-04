@@ -251,13 +251,13 @@ final class InstalledQualityUITests: XCTestCase {
 
         // Reopen from the original real conversation for the same first-load typing scenario.
         try returnToPreserved(original)
+        try escrow.record("typing", in: directory)
         let reopened = try openBoundSelf(escrow, from: original)
         try requireEmptyComposer(reopened, reason: "Empty self draft did not persist")
+        _ = try capture("self-before-typing")
         reopened.tap()
         try requireSelfChat()
-        try requirePlainComposer()
         try requireEmptyComposer(reopened, reason: "Draft changed before typing")
-        try escrow.record("typing", in: directory)
         reopened.typeText(escrow.body)
         try sendPendingSelfMessage(escrow.body, input: reopened, original: original) {
             try escrow.record("send", in: directory)
@@ -324,14 +324,35 @@ final class InstalledQualityUITests: XCTestCase {
         try verifyOriginal(original, name: "original-restored")
     }
 
+    private func recoveryState(_ escrow: InstalledSelfDraftEscrow, input: XCUIElement,
+                               directory: URL) throws -> InstalledSelfDraftEscrow.Recovery {
+        // RootView exposes this button only after currentChat is available. The early "Chat"
+        // placeholder and a transient empty input cannot establish that a saved draft is empty.
+        let title = app.buttons["chatHeaderTitleButton"]
+        try require(title.waitForExistence(timeout: 10) && title.isHittable
+                    && title.label.components(separatedBy: ", ").contains("Note to self"),
+                    "Wait for the loaded own-chat model before recovery")
+        try requireSelfChat()
+        try requirePlainComposer()
+        let current = input.value as? String
+        if current == nil || current == "" || current == "Message" {
+            try requireEmptyComposer(input, reason: "Cannot prove an empty self draft")
+            return try escrow.recovery("", in: directory)
+        }
+        return try escrow.recovery(XCTUnwrap(current), in: directory)
+    }
+
     private func restoreEscrow(_ escrow: InstalledSelfDraftEscrow, original: Original, directory: URL) throws {
         try escrow.requireRecord("escrow", in: directory)
-        let input = try openBoundSelf(escrow, from: original)
-        let current = input.value as? String
-        // A missing AX value or the placeholder is only empty if the plain UI independently proves it.
-        let empty = current == nil || current == "" || current == "Message"
-        if empty { try requireEmptyComposer(input, reason: "Cannot prove an empty self draft") }
-        switch try escrow.recovery(empty ? "" : try XCTUnwrap(current), in: directory) {
+        var input = try openBoundSelf(escrow, from: original)
+        let prior = try recoveryState(escrow, input: input, directory: directory)
+        if prior != .alreadyRestored {
+            try returnToPreserved(original)
+            input = try openBoundSelf(escrow, from: original)
+            try require(try recoveryState(escrow, input: input, directory: directory) == prior,
+                        "Self draft changed across the independent reopen")
+        }
+        switch prior {
         case .alreadyRestored:
             break
         case .empty:
