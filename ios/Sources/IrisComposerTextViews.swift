@@ -85,25 +85,7 @@ struct IrisUIKitComposerTextView: UIViewRepresentable {
         (uiView as? IrisComposerUITextView)?.hasCompletions = hasCompletions
         Self.activeTextView = uiView
         context.coordinator.parent = self
-        var needsSelectionReveal = false
-        if uiView.markedTextRange == nil, uiView.text != text {
-            needsSelectionReveal = true
-            let selectedRange = uiView.selectedRange
-            uiView.undoManager?.removeAllActions()
-            context.coordinator.applyingModelText = true
-            uiView.text = text
-            context.coordinator.applyingModelText = false
-            let textLength = (text as NSString).length
-            if uiView.isFirstResponder, selectedRange.location <= textLength {
-                uiView.selectedRange = NSRange(
-                    location: selectedRange.location,
-                    length: min(selectedRange.length, textLength - selectedRange.location)
-                )
-            } else {
-                uiView.selectedRange = NSRange(location: textLength, length: 0)
-            }
-        }
-        if needsSelectionReveal { (uiView as? IrisComposerUITextView)?.revealSelectionAfterNextLayout() }
+        context.coordinator.reconcile(uiView)
         if isFocused && !uiView.isFirstResponder {
             DispatchQueue.main.async { [weak uiView, weak coordinator = context.coordinator] in
                 guard let uiView, coordinator?.parent.isFocused == true else { return }
@@ -143,6 +125,28 @@ struct IrisUIKitComposerTextView: UIViewRepresentable {
 
         init(parent: IrisUIKitComposerTextView) {
             self.parent = parent
+        }
+
+        func reconcile(_ uiView: UITextView) {
+            var needsSelectionReveal = false
+            if uiView.markedTextRange == nil, uiView.text != parent.text {
+                needsSelectionReveal = true
+                let selectedRange = uiView.selectedRange
+                uiView.undoManager?.removeAllActions()
+                applyingModelText = true
+                uiView.text = parent.text
+                applyingModelText = false
+                let textLength = (parent.text as NSString).length
+                if uiView.isFirstResponder, selectedRange.location <= textLength {
+                    uiView.selectedRange = NSRange(
+                        location: selectedRange.location,
+                        length: min(selectedRange.length, textLength - selectedRange.location)
+                    )
+                } else {
+                    uiView.selectedRange = NSRange(location: textLength, length: 0)
+                }
+            }
+            if needsSelectionReveal { (uiView as? IrisComposerUITextView)?.revealSelectionAfterNextLayout() }
         }
 
         func textView(
