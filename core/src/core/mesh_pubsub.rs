@@ -127,7 +127,17 @@ impl AppCore {
     pub(super) fn has_private_mesh_discovery_demand(&self, author: PublicKey) -> bool {
         self.active_call_targets_device(author)
             || self.device_sync.as_ref().is_some_and(|mesh| {
-                let Some(peer) = super::device_sync::fips_peer_from_hex(&author.to_hex()) else {
+                let peer_hex = author.to_hex();
+                // A new sibling may need its first history policy before there is a
+                // ratchet envelope or call in the outbox to drive route recovery.
+                if self.device_sync_peer_is_authorized(&peer_hex)
+                    && self
+                        .device_history_transfer(&peer_hex)
+                        .is_some_and(|pair| !pair.complete)
+                {
+                    return true;
+                }
+                let Some(peer) = super::device_sync::fips_peer_from_hex(&peer_hex) else {
                     return false;
                 };
                 mesh.nearby_outbox
