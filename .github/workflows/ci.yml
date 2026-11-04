@@ -106,7 +106,7 @@ on:
         description: Checks to run; retain exact source-bound coverage for unchanged components
         type: choice
         default: all
-        options: [all, cli, core, protocol, android, windows, windows-keyboard, windows-restore, apple, ios, ios-unit, macos, linux, apple-products, ios-products, macos-products, ios-ui-runner, macos-ui-runner, rust-focused, rust-package]
+        options: [all, cli, core, protocol, android, windows, windows-keyboard, windows-restore, apple, apple-codec, ios, ios-unit, macos, linux, apple-products, ios-products, macos-products, ios-ui-runner, macos-ui-runner, rust-focused, rust-package]
       ios_core_seed_run:
         description: Optional exact successful core build/cache producer for Swift-only unit validation
         type: string
@@ -754,6 +754,62 @@ jobs:
         with:
           name: linux-clipboard-tests-${{ matrix.toolchain }}
           path: iris-chat-rs/work/clipboard/
+          retention-days: 14
+
+  apple-codec:
+    if: ${{ inputs.scope == 'apple-codec' }}
+    name: Focused Apple video codec tests
+    runs-on: macos-15
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      # The system Xcode/VideoToolbox framework is a recorded runner input.
+      # This standalone regression downloads no tools, builds no Rust/app,
+      # writes no shared cache and cannot produce a release artifact.
+      - name: Run the three real codec tests and retain exact inputs
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p work/apple-codec
+          python3 - <<'PY'
+          import hashlib, json, os, pathlib, shutil, subprocess
+          root = pathlib.Path.cwd()
+          assert shutil.disk_usage(root).free >= 2 * 1024**3
+          source = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
+          assert source == os.environ['GITHUB_SHA']
+          files = ['scripts/test_call_video_quality.sh', 'ios/Sources/IrisH264Wire.swift',
+                   'ios/Sources/IrisH264Encoder.swift', 'ios/Sources/IrisH264Decoder.swift',
+                   'ios/Sources/IrisCallVideoReceiver.swift', 'ios/Tests/CallVideoTestSupport.swift',
+                   'ios/Tests/CallVideoQualityTests.swift']
+          commands = {'xcode': ['xcodebuild', '-version'], 'swift': ['xcrun', 'swiftc', '-version'],
+                      'sdk': ['xcrun', '--sdk', 'macosx', '--show-sdk-version'],
+                      'os': ['sw_vers'], 'architecture': ['uname', '-m']}
+          receipt = {'source': source, 'release_artifact': False,
+                     'inputs': {name: hashlib.sha256((root/name).read_bytes()).hexdigest() for name in files},
+                     'runner_inputs': {name: subprocess.check_output(command, text=True, timeout=30).strip()
+                                       for name, command in commands.items()}}
+          (root/'work/apple-codec/inputs.json').write_text(json.dumps(receipt, indent=2) + '\n')
+          PY
+          ./scripts/test_call_video_quality.sh codec 2>&1 | tee work/apple-codec/tests.log
+          python3 - <<'PY'
+          import hashlib, json, pathlib, re
+          log = pathlib.Path('work/apple-codec/tests.log')
+          text = log.read_text()
+          tests = ['testDelayedKeyframeRepairStillDecodesBufferedVideo',
+                   'testLiveBitrateReductionChangesEncodedTrafficAndRecovers', 'testSustainedVideoLatency']
+          assert all(re.search(r"Test Case .*" + name + r".* passed", text) for name in tests)
+          assert not re.search(r'Test Case .* skipped|[1-9][0-9]* tests? skipped', text)
+          pathlib.Path('work/apple-codec/result.json').write_text(json.dumps({
+              'passed': True, 'tests': tests, 'log_sha256': hashlib.sha256(log.read_bytes()).hexdigest()
+          }, indent=2) + '\n')
+          PY
+      - name: Retain codec evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: apple-codec-tests
+          path: work/apple-codec/
+          if-no-files-found: error
           retention-days: 14
 
   macos:
