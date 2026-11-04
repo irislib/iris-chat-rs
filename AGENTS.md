@@ -15,6 +15,9 @@ peer-discovery filter. Payload encryption alone does not hide those fields.
 Live FIPS connections to the intended recipient may use device identities, as
 may trusted same-account device sync. This does not authorize identified
 publication, discovery, or store-and-forward delivery through unrelated peers.
+Attachment hashes also reveal relationships: unrelated provider reads must use
+anonymous endpoints, and identified private caches must reject unrelated peers
+before looking up a requested hash. Test both fetches and active cache probes.
 User-to-user relay traffic must use double-ratchet sessions and their invite
 handshakes. Never reveal the identities of both participants through event
 signers, tags, notification filters, authentication, or correlations between them.

@@ -8,19 +8,25 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 
 - Preserve typed text and the insertion point on iOS when a chat’s saved draft arrives after typing has begun.
 - Deliver a Note to Self file offer to each ready linked device immediately. Retry the missing copies across restarts.
+- Resume pending history transfer after discovering an authorized linked device, using anonymous device discovery.
+- Fetch attachments from unrelated file providers anonymously and restrict identified private-cache access to verified linked devices.
 - Read versioned Hashtree keys in native attachments and invites.
 - Update the FIPS transport to 0.4.117. Malformed coordinate headers are rejected and relayed sender routes are learned only after the inner session authenticates.
-- Update the protocol library to 0.3.15 and the CLI to 0.1.61.
+- Update the protocol library to 0.3.15 and the CLI to 0.1.62.
 
 ### Apple
 
 - Keep letters in order and the cursor in place when you start typing as a chat opens on iPhone.
 - Send files to yourself on a connected device even when another linked device is offline.
+- Restore message history more reliably when linking a new device.
+- Improve privacy when downloading files and sharing cached files between your devices.
 - Open attachments and invites that use the updated Hashtree format.
 
 ### Zapstore
 
 - Send files to yourself on a connected device even when another linked device is offline.
+- Restore message history more reliably when linking a new device.
+- Improve privacy when downloading files and sharing cached files between your devices.
 - Open attachments and invites that use the updated Hashtree format.
 
 ## v2026.11.3
