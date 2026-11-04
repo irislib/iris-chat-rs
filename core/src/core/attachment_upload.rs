@@ -22,9 +22,11 @@ use tokio_util::compat::TokioAsyncReadCompatExt;
 
 mod local_store;
 mod message_commit;
+mod provider_reads;
 mod readiness;
 mod replication;
 use local_store::AttachmentChunkStore;
+pub(in crate::core) use provider_reads::ProviderReadOptions;
 pub(super) use replication::AttachmentService;
 
 fn active_local_store() -> &'static RwLock<Option<Weak<AttachmentChunkStore>>> {
@@ -43,7 +45,10 @@ fn current_local_store() -> Option<Arc<AttachmentChunkStore>> {
 pub(super) struct AttachmentBlobRuntime {
     store: Arc<RoutedStore<AttachmentChunkStore>>,
     _transport: Arc<TcpBlobTransport<AttachmentChunkStore>>,
+    reads: provider_reads::ProviderReads,
     provider: Arc<FipsBlobRoute<AttachmentChunkStore>>,
+    siblings: Arc<FipsBlobRoute<AttachmentChunkStore>>,
+    allowed_siblings: Arc<RwLock<Vec<fips_core::PeerIdentity>>>,
 }
 
 impl AttachmentBlobRuntime {
@@ -51,37 +56,83 @@ impl AttachmentBlobRuntime {
         self.store.clone()
     }
 
-    pub(super) fn set_peers(&self, peers: Vec<fips_core::PeerIdentity>) {
-        self.provider.set_explicit_peers(peers);
+    pub(super) fn set_peers(
+        &self,
+        peers: Vec<fips_core::PeerIdentity>,
+        siblings: Vec<fips_core::PeerIdentity>,
+    ) {
+        *self
+            .allowed_siblings
+            .write()
+            .unwrap_or_else(|error| error.into_inner()) = siblings.clone();
+        self.provider.set_explicit_peers(
+            peers
+                .into_iter()
+                .filter(|peer| !siblings.contains(peer))
+                .collect(),
+        );
+        self.siblings.set_explicit_peers(siblings);
+    }
+
+    pub(super) async fn update_read_peers(&self, peers: Vec<fips_core::config::PeerConfig>) {
+        self.reads.update_peers(peers).await;
+    }
+
+    pub(super) async fn shutdown_reads(&self) {
+        self.reads.shutdown().await;
     }
 }
 
 pub(super) async fn bind_same_host_attachment_store(
     endpoint: Arc<FipsEndpoint>,
+    read_options: ProviderReadOptions,
     standalone: Arc<dyn BlobRoute>,
     peers: Vec<fips_core::PeerIdentity>,
+    siblings: Vec<fips_core::PeerIdentity>,
     primary: Arc<AttachmentChunkStore>,
 ) -> anyhow::Result<Arc<AttachmentBlobRuntime>> {
+    // A public provider can otherwise probe a known upload hash at this device
+    // and identify its recipient, even when the original download was anonymous.
+    let allowed_siblings = Arc::new(RwLock::new(siblings.clone()));
+    let admission = allowed_siblings.clone();
     let transport = Arc::new(
-        TcpBlobTransport::bind_advertised_with_config(
+        TcpBlobTransport::bind_advertised_route_with_config_and_policy(
             endpoint.clone(),
             primary.clone(),
+            Arc::new(StoreBlobRoute::new(primary.clone())),
             TcpBlobTransportConfig::default(),
             25,
+            Arc::new(move |peer| {
+                admission
+                    .read()
+                    .unwrap_or_else(|error| error.into_inner())
+                    .contains(&peer)
+            }),
         )
         .await?,
     );
+    let reads = provider_reads::ProviderReads::bind(read_options, primary.clone()).await?;
     let provider = Arc::new(FipsBlobRoute::discovered_and_explicit(
-        endpoint,
-        transport.clone(),
-        peers,
+        reads.endpoint.clone(),
+        reads.transport()?,
+        peers
+            .into_iter()
+            .filter(|peer| !siblings.contains(peer))
+            .collect(),
         4,
     )?);
+    // Only verified same-account devices may use the identified read path.
+    // Ordinary contacts/providers never enter this route, including retries.
+    let siblings = Arc::new(FipsBlobRoute::explicit(transport.clone(), siblings, 4)?);
     let router = Arc::new(BlobRouter::new(
         vec![
             BlobRouteEntry::new(
                 "attachment-cache",
                 Arc::new(StoreBlobRoute::new(primary.clone())),
+            ),
+            BlobRouteEntry::new(
+                "linked-devices",
+                super::support::offline_lan::route(siblings.clone(), true),
             ),
             BlobRouteEntry::new(
                 "same-host-fips",
@@ -98,7 +149,10 @@ pub(super) async fn bind_same_host_attachment_store(
     let runtime = Arc::new(AttachmentBlobRuntime {
         store: Arc::new(RoutedStore::new(primary, router)),
         _transport: transport,
+        reads,
         provider,
+        siblings,
+        allowed_siblings,
     });
     runtime.store.primary().transport_ready(&runtime.store)?;
     Ok(runtime)
@@ -106,13 +160,16 @@ pub(super) async fn bind_same_host_attachment_store(
 
 pub(super) async fn start_same_host_attachment_reuse(
     endpoint: Arc<FipsEndpoint>,
+    read_options: ProviderReadOptions,
     peers: Vec<fips_core::PeerIdentity>,
+    siblings: Vec<fips_core::PeerIdentity>,
     primary: Arc<AttachmentChunkStore>,
 ) -> anyhow::Result<Arc<AttachmentBlobRuntime>> {
     let standalone: Arc<dyn BlobRoute> = Arc::new(StoreBlobRoute::new(
         blossom_read_store_with_local(Some(primary.clone()))?,
     ));
-    bind_same_host_attachment_store(endpoint, standalone, peers, primary).await
+    bind_same_host_attachment_store(endpoint, read_options, standalone, peers, siblings, primary)
+        .await
 }
 
 impl AppCore {

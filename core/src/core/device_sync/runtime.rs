@@ -403,7 +403,7 @@ impl AppCore {
                     }
                 }
                 if let Some(blobs) = &runtime._attachment_blobs {
-                    blobs.set_peers(config.peers.clone());
+                    blobs.set_peers(config.peers.clone(), config.siblings.clone());
                 }
                 if let Ok(mut payloads) = runtime.nearby_bootstrap_payloads.write() {
                     *payloads = refreshed_bootstrap.unwrap_or_default();
@@ -425,7 +425,11 @@ impl AppCore {
                         recent_peers.merge_into(&mut peer_config);
                     }
                 }
+                let blobs = runtime._attachment_blobs.clone();
                 self.runtime.spawn(async move {
+                    if let Some(blobs) = blobs {
+                        blobs.update_read_peers(peer_config.clone()).await;
+                    }
                     let _ = endpoint.update_peers(peer_config).await;
                 });
                 self.reconcile_mesh_protocol_subscriptions();
@@ -552,6 +556,10 @@ impl AppCore {
             &fips_config,
             &config.relay_urls,
             host_ble_requested,
+            options.same_host_hashtree,
+        );
+        let blob_read_options = super::super::attachment_upload::ProviderReadOptions::new(
+            &fips_config,
             options.same_host_hashtree,
         );
         let mut builder = FipsEndpoint::builder()
@@ -694,15 +702,19 @@ impl AppCore {
                 Some(route) => self.runtime.block_on(
                     super::super::attachment_upload::bind_same_host_attachment_store(
                         endpoint.clone(),
+                        blob_read_options,
                         route,
                         config.peers.clone(),
+                        config.siblings.clone(),
                         local_attachments.clone(),
                     ),
                 ),
                 None => self.runtime.block_on(
                     super::super::attachment_upload::start_same_host_attachment_reuse(
                         endpoint.clone(),
+                        blob_read_options,
                         config.peers.clone(),
+                        config.siblings.clone(),
                         local_attachments,
                     ),
                 ),
@@ -868,6 +880,7 @@ impl AppCore {
         self.update_fips_connection_links(Vec::new());
         let DeviceSyncRuntime {
             endpoint,
+            _attachment_blobs: blobs,
             pubsub,
             recent_peers,
             tasks,
@@ -879,7 +892,12 @@ impl AppCore {
         for task in tasks {
             task.abort();
         }
-        Some(shutdown_shared_fips(endpoint, pubsub, recent_peers))
+        Some(async move {
+            if let Some(blobs) = blobs {
+                blobs.shutdown_reads().await;
+            }
+            shutdown_shared_fips(endpoint, pubsub, recent_peers).await;
+        })
     }
 
     fn same_host_endpoint_config(&self) -> Option<DeviceSyncConfig> {

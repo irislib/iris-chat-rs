@@ -207,14 +207,11 @@ fn single_device_without_relays_reuses_provider_and_preserves_fallback_and_outbo
     });
     let consumer_identity = fips_core::PeerIdentity::from_npub(consumer.npub()).unwrap();
     let downloaded = nhash_decode(&provider_nhash).unwrap();
-    let cached_ciphertext = provider_runtime
-        .block_on(provider.fetch_from_peer(&downloaded.hash, consumer_identity))
-        .unwrap()
-        .expect("Chat serves downloaded ciphertext");
-    assert_eq!(
-        hashtree_core::decrypt_object(&cached_ciphertext, &downloaded.decrypt_key.unwrap())
-            .unwrap(),
-        provider_data
+    assert!(
+        provider_runtime
+            .block_on(provider.fetch_from_peer(&downloaded.hash, consumer_identity))
+            .is_err(),
+        "an unrelated provider cannot probe the identified private cache"
     );
 
     // Exercise the real encrypted upload path, then fetch its ciphertext from Chat.
@@ -235,10 +232,17 @@ fn single_device_without_relays_reuses_provider_and_preserves_fallback_and_outbo
         .unwrap();
     upload_server.join().unwrap();
     let uploaded = nhash_decode(&uploaded).unwrap();
-    let ciphertext = provider_runtime
-        .block_on(provider.fetch_from_peer(&uploaded.hash, consumer_identity))
+    assert!(
+        provider_runtime
+            .block_on(provider.fetch_from_peer(&uploaded.hash, consumer_identity))
+            .is_err(),
+        "uploaded ciphertext is also private to authorized siblings"
+    );
+    let ciphertext = core
+        .runtime
+        .block_on(store.store.primary().get(&uploaded.hash))
         .unwrap()
-        .expect("Chat serves its uploaded chunk");
+        .unwrap();
     assert_ne!(ciphertext, plaintext);
     assert_eq!(
         hashtree_core::decrypt_object(&ciphertext, &uploaded.decrypt_key.unwrap()).unwrap(),
@@ -361,7 +365,7 @@ fn peer_retrieves_pending_ciphertext_after_store_reopen_without_http_servers() {
 }
 
 #[test]
-fn software_update_blocks_use_attachment_peers_and_are_reshared() {
+fn software_update_blocks_use_anonymous_reads_without_public_cache_probes() {
     let executor = tokio::runtime::Runtime::new().unwrap();
     executor.block_on(async {
         let SocketAddr::V4(rendezvous) = reserve_udp_addr() else {
@@ -385,9 +389,14 @@ fn software_update_blocks_use_attachment_peers_and_are_reshared() {
         .unwrap();
         let directory = tempfile::tempdir().unwrap();
         let primary = AttachmentChunkStore::open(directory.path(), 8 * 1024 * 1024).unwrap();
+        let mut read_config = fips_core::Config::new();
+        read_config.node.discovery.local.rendezvous_addr = rendezvous;
+        read_config.node.discovery.lan.enabled = false;
         let runtime = bind_same_host_attachment_store(
             app_endpoint.clone(),
+            ProviderReadOptions::new(&read_config, true),
             Arc::new(StoreBlobRoute::new(Arc::new(MemoryStore::new()))),
+            Vec::new(),
             Vec::new(),
             primary.clone(),
         )
@@ -427,10 +436,14 @@ fn software_update_blocks_use_attachment_peers_and_are_reshared() {
             .await
             .unwrap();
         let peer = fips_core::PeerIdentity::from_npub(app_endpoint.npub()).unwrap();
-        assert_eq!(receiver.get(&hash, peer).await.unwrap(), Some(bytes));
+        assert!(
+            receiver.get(&hash, peer).await.is_err(),
+            "public updates must not expose a general identified private-cache probe"
+        );
         receiver.shutdown().await.unwrap();
         receiver_endpoint.shutdown().await.unwrap();
         drop(updates);
+        runtime.shutdown_reads().await;
         drop(runtime);
         app_endpoint.shutdown().await.unwrap();
     });
