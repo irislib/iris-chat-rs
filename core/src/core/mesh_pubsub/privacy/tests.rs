@@ -389,7 +389,11 @@ fn pending_link_history_refreshes_only_the_approved_siblings_advert() {
     configure_test_device_sync_profile(&mut core, &owner, &local, &sibling, None);
     let peer = sibling.public_key();
     let other = Keys::generate().public_key();
-    let runtime = tokio::runtime::Runtime::new().unwrap();
+    // Deliver the burst in one event-loop turn, then let the real relay worker drain it.
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
     runtime.block_on(async {
         let relay = test_support::relay(vec![]).await;
         let live = tls_tests::endpoint().await;
@@ -410,7 +414,7 @@ fn pending_link_history_refreshes_only_the_approved_siblings_advert() {
                     .to_vec(),
                 live.clone(),
                 core.core_sender.clone(),
-                &core.runtime,
+                &runtime,
             );
         wait_subject_closed(&relay.wire, peer, 1).await;
         wait_subject_closed(&relay.wire, other, 1).await;
@@ -474,7 +478,9 @@ fn pending_link_history_refreshes_only_the_approved_siblings_advert() {
             !core.has_private_mesh_discovery_demand(peer),
             "a revoked local device cannot request a peer's advert"
         );
-        inject_route_need(&mut core, peer, 7, true);
+        for _ in 0..128 {
+            inject_route_need(&mut core, peer, 7, true);
+        }
         sleep(Duration::from_millis(100)).await;
         assert_eq!(subject_queries(&relay.wire, peer).len(), 2);
         for (_, frame) in relay.wire.lock().unwrap().iter() {
@@ -486,6 +492,7 @@ fn pending_link_history_refreshes_only_the_approved_siblings_advert() {
             if frame[0] == "AUTH" {
                 let auth: Event = serde_json::from_value(frame[1].clone()).unwrap();
                 auth.verify().unwrap();
+                assert_ne!(auth.pubkey.to_bech32().unwrap(), live.npub());
                 assert!(
                     ![owner.public_key(), local.public_key(), peer, other].contains(&auth.pubkey)
                 );
