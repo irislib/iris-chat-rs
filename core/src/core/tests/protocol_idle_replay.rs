@@ -52,7 +52,7 @@ mod protocol_idle_replay {
             completion.as_mut().now_or_never().is_none(),
             "another relay cannot acknowledge the observed subscription"
         );
-        sender.send(eose(first)).unwrap();
+        sender.send(eose(first.clone())).unwrap();
         assert!(completion.await.is_empty());
     }
 
