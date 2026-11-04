@@ -394,7 +394,7 @@ fn software_update_blocks_use_anonymous_reads_without_public_cache_probes() {
         read_config.node.discovery.lan.enabled = false;
         let runtime = bind_same_host_attachment_store(
             app_endpoint.clone(),
-            ProviderReadOptions::new(&read_config, true),
+            ProviderReadOptions::new(&read_config, vec![]),
             Arc::new(StoreBlobRoute::new(Arc::new(MemoryStore::new()))),
             Vec::new(),
             Vec::new(),

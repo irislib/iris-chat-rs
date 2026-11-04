@@ -419,6 +419,7 @@ impl AppCore {
                         ..PeerConfig::default()
                     })
                     .collect::<Vec<_>>();
+                let public_read_peers = options.additional_peers.clone();
                 peer_config.extend(options.additional_peers);
                 if let Some(recent_peers) = &runtime.recent_peers {
                     if let Ok(recent_peers) = recent_peers.read() {
@@ -428,7 +429,7 @@ impl AppCore {
                 let blobs = runtime._attachment_blobs.clone();
                 self.runtime.spawn(async move {
                     if let Some(blobs) = blobs {
-                        blobs.update_read_peers(peer_config.clone()).await;
+                        blobs.update_read_peers(public_read_peers).await;
                     }
                     let _ = endpoint.update_peers(peer_config).await;
                 });
@@ -457,6 +458,7 @@ impl AppCore {
             })
             .collect::<Vec<_>>();
         let configured_direct_peers = configured_direct_peer_ids(&options.additional_peers);
+        let public_read_peers = options.additional_peers.clone();
         peer_config.extend(options.additional_peers);
         let recent_peers = match DeviceSyncRecentPeers::load(
             self.data_dir.join(RECENT_PEERS_FILE_NAME),
@@ -560,7 +562,7 @@ impl AppCore {
         );
         let blob_read_options = super::super::attachment_upload::ProviderReadOptions::new(
             &fips_config,
-            options.same_host_hashtree,
+            public_read_peers,
         );
         let mut builder = FipsEndpoint::builder()
             .config(fips_config)

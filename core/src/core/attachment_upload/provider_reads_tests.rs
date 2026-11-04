@@ -166,7 +166,7 @@ async fn provider_wire_hides_device_identity_on_first_read_retry_and_restart() {
             let live = identified_endpoint(&device, config.clone()).await;
             let attachments = bind_same_host_attachment_store(
                 live.clone(),
-                ProviderReadOptions::new(&config, false),
+                ProviderReadOptions::new(&config, config.peers.clone()),
                 Arc::new(StoreBlobRoute::new(Arc::new(MemoryStore::new()))),
                 vec![provider_id],
                 Vec::new(),
@@ -239,7 +239,7 @@ async fn identified_cache_wire_rejects_contacts_and_revoked_siblings() {
         primary.put(hash, bytes.clone()).await.unwrap();
         let attachments = bind_same_host_attachment_store(
             live.clone(),
-            ProviderReadOptions::new(&network(vec![]), false),
+            ProviderReadOptions::new(&network(vec![]), vec![]),
             Arc::new(StoreBlobRoute::new(Arc::new(MemoryStore::new()))),
             vec![contact_id, sibling_id],
             vec![sibling_id],
@@ -369,7 +369,7 @@ async fn first_read_uses_existing_directory_but_anonymous_wire_identity() {
         let primary = AttachmentChunkStore::open(directory.path(), 8 * 1024 * 1024).unwrap();
         let attachments = bind_same_host_attachment_store(
             live.clone(),
-            ProviderReadOptions::new(&read_config, false),
+            ProviderReadOptions::new(&read_config, read_config.peers.clone()),
             Arc::new(StoreBlobRoute::new(Arc::new(MemoryStore::new()))),
             vec![],
             vec![],
@@ -411,87 +411,8 @@ async fn first_read_uses_existing_directory_but_anonymous_wire_identity() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn provider_wire_never_uses_the_identified_local_anchor() {
-    tokio::time::timeout(Duration::from_secs(30), async {
-        let reservation = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
-        let std::net::SocketAddr::V4(rendezvous) = reservation.local_addr().unwrap() else {
-            unreachable!("IPv4 reservation")
-        };
-        drop(reservation);
-        let local = || {
-            let mut config = network(vec![]);
-            config.node.discovery.local.enabled = true;
-            config.node.discovery.local.rendezvous_addr = rendezvous;
-            config
-        };
-        // The identified app wins the fixed local rendezvous socket. A file
-        // provider and the anonymous reader subsequently join that anchor.
-        let live = identified_endpoint(&Keys::generate(), local()).await;
-        let provider = identified_endpoint(&Keys::generate(), local()).await;
-        let provider_id = PeerIdentity::from_npub(provider.npub()).unwrap();
-        let (requests, capture) = capture_requests(provider.clone(), true).await;
-        tokio::time::timeout(Duration::from_secs(8), async {
-            while !live
-                .local_instance_advertisements()
-                .unwrap()
-                .iter()
-                .any(|advert| {
-                    advert.npub == provider.npub()
-                        && advert.capability(TCP_BLOB_CAPABILITY).is_some()
-                })
-            {
-                tokio::time::sleep(Duration::from_millis(20)).await;
-            }
-        })
-        .await
-        .expect("provider registered with the identified anchor");
-        let directory = tempfile::tempdir().unwrap();
-        let primary = AttachmentChunkStore::open(directory.path(), 8 * 1024 * 1024).unwrap();
-        let attachments = bind_same_host_attachment_store(
-            live.clone(),
-            ProviderReadOptions::new(&local(), true),
-            Arc::new(StoreBlobRoute::new(Arc::new(MemoryStore::new()))),
-            vec![],
-            vec![],
-            primary,
-        )
-        .await
-        .unwrap();
-        let hash = hashtree_core::sha256(b"provider knows the upload identity for this hash");
-        assert_eq!(attachments.store.get(&hash).await.unwrap(), None);
-        let requester = observed(&requests, hash).await;
-        assert_eq!(requester.npub(), attachments.reads.endpoint.npub());
-        assert_ne!(requester.npub(), live.npub());
-        let provider_adjacent = provider
-            .peers()
-            .await
-            .unwrap()
-            .into_iter()
-            .filter(|peer| peer.connected)
-            .map(|peer| peer.npub)
-            .collect::<Vec<_>>();
-        let carrier = attachments
-            .reads
-            .endpoint
-            .source_route_quality(provider_id, Duration::from_secs(5))
-            .await
-            .unwrap()
-            .next_hop;
-        let used_identified_anchor = carrier == Some(*live.node_addr());
-        eprintln!(
-            "provider_wire.anchor_route anonymous_request=true identified_carrier={used_identified_anchor} provider_only_identified_neighbor={}",
-            provider_adjacent == vec![live.npub().to_string()]
-        );
-        attachments.shutdown_reads().await;
-        drop(attachments);
-        capture.abort();
-        let _ = capture.await;
-        provider.shutdown().await.unwrap();
-        live.shutdown().await.unwrap();
-        assert!(
-            !used_identified_anchor,
-            "fresh application keys do not hide an identified carrier from the file provider"
-        );
-    })
-    .await
-    .expect("bounded identified-anchor privacy test");
+    topology::check_local_topology(topology::StartsFirst::App).await;
 }
+
+#[path = "provider_topology_tests.rs"]
+mod topology;

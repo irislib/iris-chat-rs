@@ -23,6 +23,7 @@ use tokio_util::compat::TokioAsyncReadCompatExt;
 mod local_store;
 mod message_commit;
 mod provider_reads;
+mod provider_route;
 mod readiness;
 mod replication;
 use local_store::AttachmentChunkStore;
@@ -45,18 +46,13 @@ fn current_local_store() -> Option<Arc<AttachmentChunkStore>> {
 pub(super) struct AttachmentBlobRuntime {
     store: Arc<RoutedStore<AttachmentChunkStore>>,
     _transport: Arc<TcpBlobTransport<AttachmentChunkStore>>,
-    reads: provider_reads::ProviderReads,
-    provider: Arc<FipsBlobRoute<AttachmentChunkStore>>,
+    reads: Arc<provider_reads::ProviderReads>,
+    provider: Arc<provider_route::ProviderRoute>,
     siblings: Arc<FipsBlobRoute<AttachmentChunkStore>>,
     allowed_siblings: Arc<RwLock<Vec<fips_core::PeerIdentity>>>,
 }
 
 impl AttachmentBlobRuntime {
-    #[cfg(test)]
-    pub(in crate::core) fn provider_read_endpoint_for_test(&self) -> Arc<FipsEndpoint> {
-        self.reads.endpoint.clone()
-    }
-
     pub(in crate::core) fn update_store(&self) -> Arc<dyn Store> {
         self.store.clone()
     }
@@ -80,7 +76,7 @@ impl AttachmentBlobRuntime {
     }
 
     pub(super) async fn update_read_peers(&self, peers: Vec<fips_core::config::PeerConfig>) {
-        self.reads.update_peers(peers).await;
+        self.reads.update_peers(peers);
     }
 
     pub(super) async fn shutdown_reads(&self) {
@@ -116,19 +112,19 @@ pub(super) async fn bind_same_host_attachment_store(
         )
         .await?,
     );
-    let reads = provider_reads::ProviderReads::bind(read_options, primary.clone()).await?;
-    let provider = Arc::new(FipsBlobRoute::discovered_and_explicit(
-        // Reuse only the existing in-memory public capability directory. The
-        // anonymous endpoint's new directory can still be empty on first read.
-        // FipsBlobRoute never sends through this discovery endpoint: every GET
-        // uses the separate anonymous transport below. Its own cache is excluded.
+    let reads = Arc::new(
+        provider_reads::ProviderReads::bind(
+            read_options,
+            primary.clone(),
+            endpoint.npub().to_string(),
+            allowed_siblings.clone(),
+        )
+        .await?,
+    );
+    let provider = Arc::new(provider_route::ProviderRoute::new(
         endpoint,
-        reads.transport()?,
-        peers
-            .into_iter()
-            .filter(|peer| !siblings.contains(peer))
-            .collect(),
-        4,
+        reads.clone(),
+        peers,
     )?);
     // Only verified same-account devices may use the identified read path.
     // Ordinary contacts/providers never enter this route, including retries.
