@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.15
+
+- Deliver Note to Self to each reachable linked device. Retry missing copies across restarts while honoring device removals.
+
 ## 0.3.14
 
 - Expose exact signed invite-owner device authorization to notification previews,

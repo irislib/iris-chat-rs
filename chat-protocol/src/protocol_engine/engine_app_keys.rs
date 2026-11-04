@@ -152,6 +152,20 @@ impl ProtocolEngine {
             }
         }
         self.invalidate_known_message_author_cache();
+        if owner == self.local_owner && roster_changed {
+            if let Some(roster) = self.session_manager.roster(owner) {
+                // Remove old delivery rights when the membership change is observed,
+                // even if a retry is held until after the device links again.
+                let source_authorized = roster.get_device(&self.local_device).is_some();
+                for pending in &mut self.pending_local_sibling_sends {
+                    if let Some(eligible) = &mut pending.eligible_devices {
+                        eligible.retain(|device| {
+                            source_authorized && roster.get_device(device).is_some()
+                        });
+                    }
+                }
+            }
+        }
         self.wake_pending_protocol_for_owner(owner);
         if let Err(error) = self.persist() {
             self.restore_checkpoint(checkpoint);

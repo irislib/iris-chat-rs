@@ -618,25 +618,55 @@ impl ProtocolEngine {
         let remote_payload = serde_json::to_vec(&rumor)?;
         let sibling_payload = local_sibling_payload(peer_pubkey, &remote_payload)?;
         self.with_state_checkpoint(|engine| {
-            if peer_pubkey == engine.owner_pubkey {
-                engine.send_local_sibling_payload_inner(
-                    chat_id,
-                    sibling_payload,
-                    Some(message_id.clone()),
-                    message_id,
-                    now,
-                )
+            let self_chat = peer_pubkey == engine.owner_pubkey;
+            let (mut event_ids, mut effects) = if self_chat {
+                (Vec::new(), Vec::new())
             } else {
-                engine.send_direct_payloads_inner(
+                engine.queue_remote_payload(
                     peer_pubkey,
                     chat_id,
                     remote_payload,
-                    sibling_payload,
                     Some(message_id.clone()),
-                    message_id,
+                    &message_id,
                     now,
-                )
-            }
+                )?
+            };
+            let siblings: BTreeSet<_> = engine
+                .session_manager
+                .roster(engine.local_owner)
+                .into_iter()
+                .flat_map(|roster| roster.devices())
+                .map(|entry| entry.device_pubkey)
+                .filter(|device| *device != engine.local_device)
+                .collect();
+            let needs_sibling_delivery = self_chat && !siblings.is_empty();
+            let sibling_effects = engine.queue_local_sibling_payload(
+                chat_id,
+                sibling_payload,
+                &message_id,
+                now,
+                Some(siblings),
+            );
+            // A self-chat delivery tracks message envelopes, excluding handshakes.
+            event_ids.extend(
+                sibling_effects
+                    .iter()
+                    .filter(|ProtocolEffect::Publish(publish)| {
+                        !self_chat || publish.inner_event_id.is_some()
+                    })
+                    .map(|ProtocolEffect::Publish(publish)| publish.event.id.to_string()),
+            );
+            anyhow::ensure!(
+                !needs_sibling_delivery || !event_ids.is_empty(),
+                "no linked device delivery prepared"
+            );
+            effects.extend(sibling_effects);
+            engine.persist()?;
+            Ok(ProtocolDirectSendResult {
+                message_id,
+                event_ids,
+                effects,
+            })
         })
     }
 
@@ -758,88 +788,6 @@ impl ProtocolEngine {
             &message_id,
             now,
         )?;
-        self.persist()?;
-        Ok(ProtocolDirectSendResult {
-            message_id,
-            event_ids,
-            effects,
-        })
-    }
-
-    fn send_local_sibling_payload_inner(
-        &mut self,
-        chat_id: &str,
-        local_sibling_payload: Vec<u8>,
-        inner_event_id: Option<String>,
-        message_id: String,
-        now: UnixSeconds,
-    ) -> anyhow::Result<ProtocolDirectSendResult> {
-        let mut rng = OsRng;
-        let mut ctx = ProtocolContext::new(NdrUnixSeconds(now.get()), &mut rng);
-        let local = self
-            .session_manager
-            .prepare_local_sibling_send_reusing_sessions(&mut ctx, local_sibling_payload.clone())?;
-
-        let mut event_ids = Vec::new();
-        let effects = protocol_effects_from_prepared(
-            &local,
-            self,
-            inner_event_id.clone(),
-            chat_id.to_string(),
-            &mut event_ids,
-        )?;
-
-        if !local.relay_gaps.is_empty() {
-            anyhow::bail!(
-                "direct send readiness invariant failed: local sibling relay gaps remain"
-            );
-        }
-        self.persist()?;
-        Ok(ProtocolDirectSendResult {
-            message_id,
-            event_ids,
-            effects,
-        })
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn send_direct_payloads_inner(
-        &mut self,
-        peer_pubkey: PublicKey,
-        chat_id: &str,
-        remote_payload: Vec<u8>,
-        local_sibling_payload: Vec<u8>,
-        inner_event_id: Option<String>,
-        message_id: String,
-        now: UnixSeconds,
-    ) -> anyhow::Result<ProtocolDirectSendResult> {
-        let (mut event_ids, mut effects) = self.queue_remote_payload(
-            peer_pubkey,
-            chat_id,
-            remote_payload,
-            inner_event_id,
-            &message_id,
-            now,
-        )?;
-        let snapshot = self.session_manager.snapshot();
-        let eligible_devices = user_record_snapshot(&snapshot, self.local_owner)
-            .and_then(roster_device_pubkeys)
-            .unwrap_or_default()
-            .into_iter()
-            .filter(|device| *device != self.local_device)
-            .collect();
-        let sibling_effects = self.queue_local_sibling_payload(
-            chat_id,
-            local_sibling_payload,
-            &message_id,
-            now,
-            Some(eligible_devices),
-        );
-        event_ids.extend(sibling_effects.iter().map(|effect| match effect {
-            ProtocolEffect::Publish(publish) => publish.event.id.to_string(),
-        }));
-        effects.extend(sibling_effects);
-
         self.persist()?;
         Ok(ProtocolDirectSendResult {
             message_id,

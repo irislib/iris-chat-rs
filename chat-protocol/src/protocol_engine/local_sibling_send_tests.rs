@@ -216,6 +216,105 @@ fn own_seen_sync_delivers_ready_sibling_and_retries_missing_sibling_after_restar
 }
 
 #[test]
+fn note_to_self_delivers_to_ready_device_and_retries_only_the_missing_copy() {
+    let owner = Keys::generate();
+    let source = Keys::generate();
+    let ready_device = Keys::generate();
+    let late_device = Keys::generate();
+    let removed_device = Keys::generate();
+    let account = owner.public_key();
+    let store = Arc::new(InMemoryStorage::new());
+    let mut sender =
+        ProtocolEngine::load_or_create_for_local_device(store.clone(), account, &source).unwrap();
+    let mut ready = test_engine(&owner, &ready_device);
+    let mut late = test_engine(&owner, &late_device);
+    let roster = signed_app_keys(
+        &owner,
+        &[
+            source.public_key(),
+            ready_device.public_key(),
+            late_device.public_key(),
+            removed_device.public_key(),
+        ],
+        1,
+    );
+    for engine in [&mut sender, &mut ready, &mut late] {
+        engine.ingest_app_keys_event(&roster).unwrap();
+    }
+    assert_eq!(
+        sender.direct_send_readiness(account),
+        DirectSendReadiness::MissingLocalSiblingInviteOrSession
+    );
+    observe_sibling_invite(&mut sender, &ready, &ready_device);
+    assert_eq!(
+        sender.direct_send_readiness(account),
+        DirectSendReadiness::Ready
+    );
+    let note = "private note for my other devices";
+    let sent = sender
+        .send_direct_text(account, &account.to_hex(), note, None, UnixSeconds(10))
+        .unwrap();
+    assert_eq!(
+        sent.event_ids,
+        sent.effects
+            .iter()
+            .filter(|ProtocolEffect::Publish(p)| p.event.kind.as_u16() as u32 == MESSAGE_EVENT_KIND)
+            .map(|ProtocolEffect::Publish(p)| p.event.id.to_hex())
+            .collect::<Vec<_>>()
+    );
+    let receive = |receiver: &mut ProtocolEngine, target: &Keys, effects: Vec<ProtocolEffect>| {
+        let invite_key = receiver.local_invite_response_pubkey().unwrap();
+        for ProtocolEffect::Publish(publish) in &effects {
+            let event = &publish.event;
+            let recipient = match event.kind.as_u16() as u32 {
+                INVITE_RESPONSE_KIND => invite_key,
+                MESSAGE_EVENT_KIND => target.public_key(),
+                _ => panic!("unexpected note-to-self publication"),
+            };
+            assert_eq!(
+                event.tags.public_keys().copied().collect::<Vec<_>>(),
+                [recipient]
+            );
+            let wire = serde_json::to_string(event).unwrap();
+            for private in [account.to_hex(), source.public_key().to_hex(), note.into()] {
+                assert!(!wire.contains(&private));
+            }
+            assert_ne!(event.pubkey, target.public_key());
+        }
+        let messages = decrypt_own_sync_effects(receiver, effects);
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].conversation_owner, Some(account));
+        let rumor: UnsignedEvent = serde_json::from_str(&messages[0].content).unwrap();
+        assert_eq!(rumor.content, note);
+        assert_eq!(rumor.id.unwrap().to_hex(), sent.message_id);
+    };
+    receive(&mut ready, &ready_device, sent.effects);
+    let remaining = [
+        source.public_key(),
+        ready_device.public_key(),
+        late_device.public_key(),
+    ];
+    sender
+        .ingest_app_keys_event(&signed_app_keys(&owner, &remaining, 20))
+        .unwrap();
+    let mut relinked = remaining.to_vec();
+    relinked.push(removed_device.public_key());
+    sender
+        .ingest_app_keys_event(&signed_app_keys(&owner, &relinked, 30))
+        .unwrap();
+    sender = ProtocolEngine::load_or_create_for_local_device(store, account, &source).unwrap();
+    let removed = test_engine(&owner, &removed_device);
+    assert!(
+        observe_sibling_invite(&mut sender, &removed, &removed_device)
+            .effects
+            .is_empty()
+    );
+    let retry = observe_sibling_invite(&mut sender, &late, &late_device);
+    receive(&mut late, &late_device, retry.effects);
+    assert!(!sender.has_pending_retry_work());
+}
+
+#[test]
 fn own_seen_sync_waits_for_local_roster_and_recovers_after_restart() {
     let owner = Keys::generate();
     let device = Keys::generate();
