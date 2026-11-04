@@ -5,6 +5,7 @@ mod protocol_idle_replay {
 
     async fn received_eose(
         notifications: &mut tokio::sync::broadcast::Receiver<RelayPoolNotification>,
+        _expected_relay: &nostr::RelayUrl,
     ) -> Vec<EventId> {
         tokio::time::timeout(Duration::from_secs(3), async {
             let mut events = Vec::new();
@@ -26,6 +27,28 @@ mod protocol_idle_replay {
         })
         .await
         .expect("protocol subscription EOSE")
+    }
+
+    #[tokio::test]
+    async fn another_relays_eose_does_not_complete_the_observed_subscription() {
+        use futures_util::FutureExt;
+
+        let first = nostr::RelayUrl::parse("ws://127.0.0.1:18001").unwrap();
+        let second = nostr::RelayUrl::parse("ws://127.0.0.1:18002").unwrap();
+        let (sender, mut receiver) = tokio::sync::broadcast::channel(2);
+        let eose = |relay_url| RelayPoolNotification::Message {
+            relay_url,
+            message: RelayMessage::eose(SubscriptionId::new("ndr-protocol")),
+        };
+        sender.send(eose(second)).unwrap();
+        let completion = received_eose(&mut receiver, &first);
+        tokio::pin!(completion);
+        assert!(
+            completion.as_mut().now_or_never().is_none(),
+            "another relay cannot acknowledge the observed subscription"
+        );
+        sender.send(eose(first)).unwrap();
+        assert!(completion.await.is_empty());
     }
 
     fn tick(core: &mut AppCore, incoming: &flume::Receiver<CoreMsg>) {
@@ -106,7 +129,9 @@ mod protocol_idle_replay {
         core.refresh_relay_connection_status();
         core.reconcile_protocol_subscriptions("fixture_start", false);
         reconcile(core, &rx);
-        let received = core.runtime.block_on(received_eose(&mut notifications));
+        let received = core
+            .runtime
+            .block_on(received_eose(&mut notifications, &urls[0]));
         assert!(
             received.contains(&event.id),
             "retained encrypted message must arrive"
@@ -142,11 +167,12 @@ mod protocol_idle_replay {
                 .count(),
             0
         );
-        assert!(core
-            .protocol_engine
-            .as_ref()
-            .unwrap()
-            .has_pending_retry_work());
+        assert!(
+            core.protocol_engine
+                .as_ref()
+                .unwrap()
+                .has_pending_retry_work()
+        );
         core.shutdown();
     }
 
@@ -193,7 +219,8 @@ mod protocol_idle_replay {
         ));
         core.reconcile_protocol_subscriptions("fixture_start", false);
         reconcile(&mut core, &rx);
-        core.runtime.block_on(received_eose(&mut notifications));
+        core.runtime
+            .block_on(received_eose(&mut notifications, &urls[0]));
         let mut requests = 1;
         for reason in [
             "error: try later",
@@ -203,7 +230,8 @@ mod protocol_idle_replay {
             assert_eq!(relay.close_subscription("ndr-protocol", reason), 1);
             wait_until(|| core.runtime.block_on(sdk_relay.subscription(&id)).is_none());
             tick(&mut core, &rx);
-            core.runtime.block_on(received_eose(&mut notifications));
+            core.runtime
+                .block_on(received_eose(&mut notifications, &urls[0]));
             requests += 1;
             assert_eq!(protocol_requests(&relay), requests);
             for _ in 0..3 {
@@ -214,7 +242,8 @@ mod protocol_idle_replay {
         // A missing local SDK entry must also be repaired with an unchanged plan.
         core.runtime.block_on(sdk_relay.unsubscribe(&id)).unwrap();
         tick(&mut core, &rx);
-        core.runtime.block_on(received_eose(&mut notifications));
+        core.runtime
+            .block_on(received_eose(&mut notifications, &urls[0]));
         requests += 1;
         assert_eq!(protocol_requests(&relay), requests);
 
@@ -236,7 +265,8 @@ mod protocol_idle_replay {
         });
         core.refresh_relay_connection_status();
         tick(&mut core, &rx);
-        core.runtime.block_on(received_eose(&mut notifications));
+        core.runtime
+            .block_on(received_eose(&mut notifications, &both_urls[1]));
         assert_eq!(protocol_requests(&second), 1);
         assert_eq!(protocol_requests(&relay), requests);
 
@@ -251,7 +281,8 @@ mod protocol_idle_replay {
                 && !core.protocol_subscription_runtime.refresh_in_flight
                 && core.runtime.block_on(sdk_relay.subscription(&id)).is_some()
         });
-        core.runtime.block_on(received_eose(&mut notifications));
+        core.runtime
+            .block_on(received_eose(&mut notifications, &urls[0]));
         // Some reconnects also trigger the SDK's own catch-up; neither path may
         // re-request history on subsequent healthy liveness checks.
         requests = protocol_requests(&relay);
@@ -268,7 +299,8 @@ mod protocol_idle_replay {
         ));
         core.reconcile_protocol_subscriptions("fixture_changed", false);
         reconcile(&mut core, &rx);
-        core.runtime.block_on(received_eose(&mut notifications));
+        core.runtime
+            .block_on(received_eose(&mut notifications, &urls[0]));
         requests += 1;
         assert_eq!(protocol_requests(&relay), requests);
         let last_request = relay
@@ -278,12 +310,16 @@ mod protocol_idle_replay {
             .find(|(_, f)| f[0] == "REQ" && f[1] == "ndr-protocol")
             .unwrap()
             .1;
-        assert!(last_request
-            .to_string()
-            .contains(&next_author.public_key().to_hex()));
-        assert!(!last_request
-            .to_string()
-            .contains(&author.public_key().to_hex()));
+        assert!(
+            last_request
+                .to_string()
+                .contains(&next_author.public_key().to_hex())
+        );
+        assert!(
+            !last_request
+                .to_string()
+                .contains(&author.public_key().to_hex())
+        );
 
         // New live traffic still crosses the unchanged subscription after idle.
         for _ in 0..3 {
