@@ -52,6 +52,11 @@ pub(super) struct AttachmentBlobRuntime {
 }
 
 impl AttachmentBlobRuntime {
+    #[cfg(test)]
+    pub(in crate::core) fn provider_read_endpoint_for_test(&self) -> Arc<FipsEndpoint> {
+        self.reads.endpoint.clone()
+    }
+
     pub(in crate::core) fn update_store(&self) -> Arc<dyn Store> {
         self.store.clone()
     }

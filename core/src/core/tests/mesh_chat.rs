@@ -301,14 +301,38 @@ fn encrypted_chat_crosses_fips_transit_by_direct_recipient_route_without_message
         .any(|channel| channel.contains("FIPS nearby")));
     for core in [&alice, &bob] {
         let endpoint = core.device_sync_endpoint_for_test().unwrap();
+        let reader = core
+            .same_host_runtime_for_test()
+            .map(|(_, _, _, blobs)| blobs.provider_read_endpoint_for_test());
+        let mut local_readers = 0;
         let direct = runtime
             .block_on(endpoint.peers())
             .unwrap()
             .into_iter()
             .filter(|peer| peer.connected)
+            .filter(|peer| {
+                if reader
+                    .as_ref()
+                    .is_none_or(|reader| peer.npub != reader.npub())
+                {
+                    return true;
+                }
+                // Each simulated machine now has its own anonymous attachment
+                // reader. Only that exact endpoint may join its private loopback
+                // rendezvous; all external peers must still be the transit node.
+                assert_eq!(peer.transport_type.as_deref(), Some("udp"));
+                assert!(peer
+                    .transport_addr
+                    .as_deref()
+                    .and_then(|value| value.parse::<std::net::SocketAddr>().ok())
+                    .is_some_and(|addr| addr.ip().is_loopback()));
+                local_readers += 1;
+                false
+            })
             .map(|peer| peer.npub)
             .collect::<Vec<_>>();
         assert_eq!(direct, vec![transit.npub().to_string()]);
+        eprintln!("mesh_chat.transport_layout local_readers={local_readers} external_peers=1");
     }
     runtime.block_on(transit.shutdown()).unwrap();
     let burst = 70;
