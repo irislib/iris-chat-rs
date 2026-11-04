@@ -113,7 +113,11 @@ pub(super) async fn bind_same_host_attachment_store(
     );
     let reads = provider_reads::ProviderReads::bind(read_options, primary.clone()).await?;
     let provider = Arc::new(FipsBlobRoute::discovered_and_explicit(
-        reads.endpoint.clone(),
+        // Reuse only the existing in-memory public capability directory. The
+        // anonymous endpoint's new directory can still be empty on first read.
+        // FipsBlobRoute never sends through this discovery endpoint: every GET
+        // uses the separate anonymous transport below. Its own cache is excluded.
+        endpoint,
         reads.transport()?,
         peers
             .into_iter()

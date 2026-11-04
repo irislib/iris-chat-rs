@@ -4,7 +4,7 @@ use fips_tcp_endpoint::FipsTcpEndpoint;
 use hashtree_core::{
     decode_blob_request, encode_blob_reply_header, BlobReply, MemoryStore, BLOB_REQUEST_BYTES,
 };
-use hashtree_fips_transport::TCP_BLOB_SERVICE_PORT;
+use hashtree_fips_transport::{TCP_BLOB_CAPABILITY, TCP_BLOB_SERVICE_PORT};
 
 fn network(peers: Vec<PeerConfig>) -> fips_core::Config {
     let mut config = fips_core::Config::new();
@@ -23,33 +23,48 @@ fn network(peers: Vec<PeerConfig>) -> fips_core::Config {
 }
 
 async fn identified_endpoint(keys: &Keys, config: fips_core::Config) -> Arc<FipsEndpoint> {
-    Arc::new(
-        FipsEndpoint::builder()
-            .config(config)
-            .identity_nsec(keys.secret_key().to_secret_hex())
-            .without_system_tun()
-            .bind()
-            .await
-            .unwrap(),
-    )
+    let local_rendezvous = config.node.discovery.local.enabled;
+    let mut builder = FipsEndpoint::builder()
+        .config(config)
+        .identity_nsec(keys.secret_key().to_secret_hex())
+        .without_system_tun();
+    if local_rendezvous {
+        builder = builder.local_rendezvous();
+    }
+    Arc::new(builder.bind().await.unwrap())
 }
 
 /// Observe the authenticated remote peer and bytes actually delivered through
 /// FIPS/TCP. A config check or a ciphertext roundtrip would miss this regression.
 async fn capture_requests(
     endpoint: Arc<FipsEndpoint>,
+    advertise: bool,
 ) -> (
     flume::Receiver<(PeerIdentity, Vec<u8>)>,
     tokio::task::JoinHandle<()>,
 ) {
-    let mut tcp = FipsTcpEndpoint::bind(
-        endpoint,
-        TCP_BLOB_SERVICE_PORT,
-        fips_tcp::Config::default(),
-        718,
-    )
-    .await
-    .unwrap();
+    let mut tcp = if advertise {
+        FipsTcpEndpoint::bind_with_capability(
+            endpoint,
+            fips_core::discovery::local::LocalInstanceCapability::service(
+                TCP_BLOB_CAPABILITY,
+                TCP_BLOB_SERVICE_PORT,
+            ),
+            fips_tcp::Config::default(),
+            718,
+        )
+        .await
+        .unwrap()
+    } else {
+        FipsTcpEndpoint::bind(
+            endpoint,
+            TCP_BLOB_SERVICE_PORT,
+            fips_tcp::Config::default(),
+            718,
+        )
+        .await
+        .unwrap()
+    };
     let (tx, rx) = flume::unbounded();
     let task = tokio::spawn(async move {
         let started = std::time::Instant::now();
@@ -118,7 +133,7 @@ async fn provider_wire_hides_device_identity_on_first_read_retry_and_restart() {
             "udp",
             address.to_string(),
         )]);
-        let (requests, capture) = capture_requests(provider.clone()).await;
+        let (requests, capture) = capture_requests(provider.clone(), false).await;
         let directory = tempfile::tempdir().unwrap();
         let primary = AttachmentChunkStore::open(directory.path(), 8 * 1024 * 1024).unwrap();
         let hash = hashtree_core::sha256(b"private attachment ciphertext");
@@ -305,4 +320,91 @@ async fn identified_cache_wire_rejects_contacts_and_revoked_siblings() {
     })
     .await
     .expect("bounded cache authorization wire test");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn first_read_uses_existing_directory_but_anonymous_wire_identity() {
+    tokio::time::timeout(Duration::from_secs(20), async {
+        let reservation = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        let std::net::SocketAddr::V4(rendezvous) = reservation.local_addr().unwrap() else {
+            unreachable!("IPv4 reservation")
+        };
+        drop(reservation);
+        let local = || {
+            let mut config = network(vec![]);
+            config.node.discovery.local.enabled = true;
+            config.node.discovery.local.rendezvous_addr = rendezvous;
+            config
+        };
+        let provider = identified_endpoint(&Keys::generate(), local()).await;
+        let device = Keys::generate();
+        let live = identified_endpoint(&device, local()).await;
+        let (requests, capture) = capture_requests(provider.clone(), true).await;
+        tokio::time::timeout(Duration::from_secs(8), async {
+            while !live
+                .local_instance_advertisements()
+                .unwrap()
+                .iter()
+                .any(|advert| {
+                    advert.npub == provider.npub()
+                        && advert.capability(TCP_BLOB_CAPABILITY).is_some()
+                })
+            {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("existing endpoint knows the local provider");
+
+        // The new anonymous endpoint has no capability directory at all. A
+        // first fetch must use the existing public snapshot, not wait for a
+        // second discovery cycle or fall back to identified transport.
+        let address = provider.bound_udp_listen_addrs().await.unwrap()[0];
+        let read_config = network(vec![PeerConfig::new(
+            provider.npub(),
+            "udp",
+            address.to_string(),
+        )]);
+        let directory = tempfile::tempdir().unwrap();
+        let primary = AttachmentChunkStore::open(directory.path(), 8 * 1024 * 1024).unwrap();
+        let attachments = bind_same_host_attachment_store(
+            live.clone(),
+            ProviderReadOptions::new(&read_config, false),
+            Arc::new(StoreBlobRoute::new(Arc::new(MemoryStore::new()))),
+            vec![],
+            vec![],
+            primary,
+        )
+        .await
+        .unwrap();
+        assert!(attachments
+            .reads
+            .endpoint
+            .local_instance_advertisements()
+            .unwrap()
+            .is_empty());
+        assert!(
+            !attachments
+                .provider
+                .discovered_provider_ids()
+                .unwrap()
+                .iter()
+                .any(|provider| provider == live.npub()),
+            "never probe our identified cache"
+        );
+        let hash = hashtree_core::sha256(b"first read before anonymous discovery");
+        assert_eq!(attachments.store.get(&hash).await.unwrap(), None);
+        let requester = observed(&requests, hash).await;
+        assert_eq!(requester.npub(), attachments.reads.endpoint.npub());
+        assert_ne!(requester.npub(), device.public_key().to_bech32().unwrap());
+
+        attachments.shutdown_reads().await;
+        drop(attachments);
+        capture.abort();
+        let _ = capture.await;
+        live.shutdown().await.unwrap();
+        provider.shutdown().await.unwrap();
+    })
+    .await
+    .expect("bounded first-read directory wire test");
 }
