@@ -124,3 +124,33 @@ and checks the unchanged draft and absence of an exact matching message. It type
 nothing and never clears or replaces a draft. It sends once, records the same
 visibility bounds, and verifies the original conversation again. Any failure
 preserves evidence and state; there is no automatic retry.
+
+### Reserved synthetic self draft
+
+The opt-in `escrow-self-send` mode runs `testReplaceEscrowedSelfDraftSendOnceAndReturn`.
+Use it only on the independently verified in-place upgrade, with exclusive device
+custody, the original chat in the foreground, and a private host copy of the
+exact synthetic draft from before the upgrade. Supply the usual original chat,
+candidate and fresh run bindings. Set `IRIS_QUALITY_PENDING_RUN_ID` to the old
+test's UUID. Supply `IRIS_QUALITY_SELF_ESCROW_BASE64` and
+`IRIS_QUALITY_SELF_ESCROW_SHA256` from the observed UTF-8 bytes, and
+`IRIS_QUALITY_ACCOUNT_QR_SHA256` from the full previously decoded own-profile
+code payload. Never put these private run values in source, public logs or
+release artifacts.
+
+The runner reads the current account code through the profile UI, takes the
+dedicated Note to self route and compares the actual composer bytes with the
+old synthetic witness. It records its escrow before any edit, refuses a second
+start for the same run, clears only that exact draft, reopens the empty chat,
+types once and sends only the exact fresh body once. It verifies the original
+chat and restores the old synthetic draft, including a navigation readback.
+
+After interruption, retain the private result, original host escrow and runner
+installation. Under the same exclusive custody, return to the original chat
+without editing and run `testRestoreEscrowedSelfDraftAndReturn` in
+`escrow-self-restore` mode with the same bindings. Recovery accepts an already
+restored witness, the run's confirmed empty state, or its exact fresh typed body.
+Unexpected text, partial typing, missing run evidence or an account mismatch
+stops the test. Do not resend. Independently verify retained state after an
+ordinary relaunch. A missing, reinstalled or differently bound runner leaves the
+host escrow for a separately reviewed recovery.

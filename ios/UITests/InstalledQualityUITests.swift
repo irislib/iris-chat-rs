@@ -1,4 +1,7 @@
 import XCTest
+#if os(iOS)
+import Vision
+#endif
 
 /// Standalone, opt-in observations of an independently verified installed app.
 /// All attachments contain private UI evidence; never publish the xcresult.
@@ -224,13 +227,143 @@ final class InstalledQualityUITests: XCTestCase {
         try sendPendingSelfMessage(body, input: input, original: original)
     }
 
+    #if os(iOS)
+    /// An explicitly admitted existing account with a recorded, test-created self draft.
+    func testReplaceEscrowedSelfDraftSendOnceAndReturn() throws {
+        let original = try configure("escrow-self-send")
+        defer { finish() }
+        let escrow = try InstalledSelfDraftEscrow(environment: environment, originalRow: original.row)
+        let directory = try escrowDirectory()
+        try require(app.state == .runningForeground && !original.draft.isEmpty
+                    && Data(original.draft.utf8) != escrow.saved, "Require the separate preserved conversation")
+        try verifyOriginal(original, name: "original-before")
+        try returnToPreserved(original)
+        let input = try openBoundSelf(escrow, from: original)
+        try escrow.checkSaved(input.value as? String)
+        try requireNoMatchingMessage(escrow.body)
+        _ = try capture("matched-synthetic-self-draft")
+        // Retain the bytes before the first edit. An existing run cannot start twice.
+        try escrow.record("escrow", in: directory)
+        try selectSelfText(input, exact: escrow.saved)
+        input.typeKey(.delete, modifierFlags: [])
+        try requireEmptyComposer(input, reason: "The exact test draft did not clear")
+        try escrow.record("cleared", in: directory)
+
+        // Reopen from the original real conversation for the same first-load typing scenario.
+        try returnToPreserved(original)
+        let reopened = try openBoundSelf(escrow, from: original)
+        try requireEmptyComposer(reopened, reason: "Empty self draft did not persist")
+        reopened.tap()
+        try requireSelfChat()
+        try requirePlainComposer()
+        try requireEmptyComposer(reopened, reason: "Draft changed before typing")
+        try escrow.record("typing", in: directory)
+        reopened.typeText(escrow.body)
+        try sendPendingSelfMessage(escrow.body, input: reopened, original: original) {
+            try escrow.record("send", in: directory)
+        }
+        try restoreEscrow(escrow, original: original, directory: directory)
+    }
+
+    /// After a stopped test the operator must re-establish exclusive custody and the original chat.
+    /// This mode can only restore the same run. It cannot send, retry or erase unknown text.
+    func testRestoreEscrowedSelfDraftAndReturn() throws {
+        let original = try configure("escrow-self-restore")
+        defer { finish() }
+        let escrow = try InstalledSelfDraftEscrow(environment: environment, originalRow: original.row)
+        try restoreEscrow(escrow, original: original, directory: escrowDirectory())
+    }
+
+    private func escrowDirectory() throws -> URL {
+        try FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+    }
+
+    private func openBoundSelf(_ escrow: InstalledSelfDraftEscrow, from original: Original) throws -> XCUIElement {
+        ownProfileRouteSelected = false
+        try require(app.state == .runningForeground, "Start in the original foreground chat")
+        try verifyOriginal(original, name: "original-before-own-profile")
+        try requirePlainComposer()
+        try tap("navigationBackButton")
+        try tap("chatListProfileButton")
+        try tap("settingsProfileRow")
+        try tap("myProfileQrButton")
+        let done = app.buttons["profileQrDoneButton"]
+        try require(done.waitForExistence(timeout: 10) && done.isHittable, "Open the account's own code")
+        let image = try XCTUnwrap(XCUIScreen.main.screenshot().image.cgImage)
+        let codes = VNDetectBarcodesRequest()
+        codes.symbologies = [.qr]
+        try VNImageRequestHandler(cgImage: image).perform([codes])
+        try escrow.checkAccount((codes.results ?? []).map { $0.payloadStringValue ?? "" })
+        try tap("profileQrDoneButton")
+        try tap("myProfileNoteToSelfButton")
+        ownProfileRouteSelected = true
+        let input = app.textViews["chatMessageInput"]
+        try require(input.waitForExistence(timeout: 10) && input.isHittable, "Require the own-chat composer")
+        try requireSelfChat()
+        try requirePlainComposer()
+        return input
+    }
+
+    private func selectSelfText(_ input: XCUIElement, exact: Data) throws {
+        func check() throws {
+            try requireSelfChat()
+            try requirePlainComposer()
+            let text = try XCTUnwrap(input.value as? String)
+            try require(input.isHittable && Data(text.utf8) == exact, "Preserve different composer text")
+        }
+        try check()
+        input.tap()
+        try check()
+        input.typeKey("a", modifierFlags: .command)
+        try check()
+    }
+
+    private func returnToPreserved(_ original: Original) throws {
+        try tap("navigationBackButton")
+        try tap(original.row)
+        try verifyOriginal(original, name: "original-restored")
+    }
+
+    private func restoreEscrow(_ escrow: InstalledSelfDraftEscrow, original: Original, directory: URL) throws {
+        try escrow.requireRecord("escrow", in: directory)
+        let input = try openBoundSelf(escrow, from: original)
+        let current = input.value as? String
+        // A missing AX value or the placeholder is only empty if the plain UI independently proves it.
+        let empty = current == nil || current == "" || current == "Message"
+        if empty { try requireEmptyComposer(input, reason: "Cannot prove an empty self draft") }
+        switch try escrow.recovery(empty ? "" : try XCTUnwrap(current), in: directory) {
+        case .alreadyRestored:
+            break
+        case .empty:
+            input.tap()
+            try requireSelfChat()
+            try requirePlainComposer()
+            try requireEmptyComposer(input, reason: "Self draft changed before restoration")
+            input.typeText(String(decoding: escrow.saved, as: UTF8.self))
+        case .freshBody:
+            try selectSelfText(input, exact: Data(escrow.body.utf8))
+            input.typeText(String(decoding: escrow.saved, as: UTF8.self))
+        }
+        try escrow.checkSaved(input.value as? String)
+        if !FileManager.default.fileExists(atPath: escrow.file("restored", in: directory).path) {
+            try escrow.record("restored", in: directory)
+        }
+        try returnToPreserved(original)
+        let reopened = try openBoundSelf(escrow, from: original)
+        try escrow.checkSaved(reopened.value as? String)
+        _ = try capture("restored-synthetic-self-draft")
+        try returnToPreserved(original)
+    }
+    #endif
+
     private func requireNoMatchingMessage(_ body: String) throws {
         let matches = app.staticTexts.matching(NSPredicate(
             format: "identifier BEGINSWITH %@ AND label == %@", "chatMessage-", body))
         try require(!matches.firstMatch.exists, "Matching message already exists; do not send again")
     }
 
-    private func sendPendingSelfMessage(_ body: String, input: XCUIElement, original: Original) throws {
+    private func sendPendingSelfMessage(_ body: String, input: XCUIElement, original: Original,
+                                        beforeTap: () throws -> Void = {}) throws {
         try requireSelfChat()
         try requirePlainComposer()
         try require(input.exists && input.isHittable && (input.value as? String) == body,
@@ -239,6 +372,12 @@ final class InstalledQualityUITests: XCTestCase {
         let send = app.buttons["chatSendButton"]
         try require(send.exists && send.isHittable && send.isEnabled, "Send must be ready")
         _ = try capture("self-before-send")
+        try requireSelfChat()
+        try requirePlainComposer()
+        let pending = try XCTUnwrap(input.value as? String)
+        try require(Data(pending.utf8) == Data(body.utf8), "Pending text changed before Send")
+        try requireNoMatchingMessage(body)
+        try beforeTap()
         let before = clock
         events.append(["event": "send-tap-start", "uptime": before, "wall": Date().timeIntervalSince1970])
         send.tap() // Exactly one send; no retry, newline-submit, deletion or draft replacement.
