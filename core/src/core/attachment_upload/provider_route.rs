@@ -53,33 +53,20 @@ impl ProviderRoute {
     }
 
     async fn prepare(&self) -> Result<(), StoreError> {
-        let discovered = self.discovered_provider_ids()?;
+        let discovered = self
+            .discovered_provider_ids()?
+            .iter()
+            .filter_map(|npub| PeerIdentity::from_npub(npub).ok())
+            .collect();
         let explicit = self
             .explicit
             .read()
             .unwrap_or_else(|error| error.into_inner())
             .iter()
             .copied()
-            .filter(|peer| !discovered.contains(&peer.npub()))
-            .collect::<Vec<_>>();
-        // Interleave the discovery ranking with explicit candidates, then let
-        // the shared route apply its bounded per-hash attempt window.
-        let mut peers = Vec::new();
-        for index in 0..discovered.len().max(explicit.len()) {
-            for peer in [
-                discovered
-                    .get(index)
-                    .and_then(|npub| PeerIdentity::from_npub(npub).ok()),
-                explicit.get(index).copied(),
-            ]
-            .into_iter()
-            .flatten()
-            {
-                if self.reads.permits(&peer.npub()) && !peers.contains(&peer) {
-                    peers.push(peer);
-                }
-            }
-        }
+            .filter(|peer| self.reads.permits(&peer.npub()))
+            .collect();
+        let peers = ordered_provider_peers(discovered, explicit);
         self.reads
             .prepare_paths(
                 &self.discovery,
@@ -89,6 +76,25 @@ impl ProviderRoute {
         self.route.set_explicit_peers(peers);
         Ok(())
     }
+}
+
+// Keep the shared route's candidate order: deduplicate each input and remove
+// overlaps before interleaving. Filtering only afterward changes which peers
+// fit into its four-attempt window. Attempts and retry rotation remain there.
+fn ordered_provider_peers(
+    mut discovered: Vec<PeerIdentity>,
+    mut explicit: Vec<PeerIdentity>,
+) -> Vec<PeerIdentity> {
+    let mut discovered_ids = HashSet::new();
+    discovered.retain(|peer| discovered_ids.insert(*peer));
+    let mut explicit_ids = HashSet::new();
+    explicit.retain(|peer| !discovered_ids.contains(peer) && explicit_ids.insert(*peer));
+    let mut peers = Vec::with_capacity(discovered.len() + explicit.len());
+    for index in 0..discovered.len().max(explicit.len()) {
+        peers.extend(discovered.get(index));
+        peers.extend(explicit.get(index));
+    }
+    peers
 }
 
 #[async_trait]
@@ -105,5 +111,27 @@ impl BlobRoute for ProviderRoute {
     ) -> Result<BlobReply, StoreError> {
         self.prepare().await?;
         self.route.route_with_context(request, context).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn discovery_overlap_and_duplicates_preserve_the_provider_attempt_window() {
+        let [a, b, c, d, e] = std::array::from_fn(|_| {
+            PeerIdentity::from_npub(&Keys::generate().public_key().to_bech32().unwrap()).unwrap()
+        });
+        let expected = vec![a, d, b, e, c];
+        assert_eq!(
+            ordered_provider_peers(vec![a, b, c], vec![a, d, e]),
+            expected
+        );
+        assert_eq!(
+            ordered_provider_peers(vec![a, a, b, c], vec![d, d, e]),
+            expected
+        );
+        assert_eq!(ordered_provider_peers(vec![], vec![d, d, e]), vec![d, e]);
     }
 }
