@@ -60,38 +60,70 @@ final class CallVideoQualityTests: XCTestCase {
 
     func testDelayedKeyframeRepairStillDecodesBufferedVideo() throws {
         try CallVideoTestSupport.requireHardwareH264Encoder()
+        let frameCount = 12
+        let timestamps = (0..<frameCount).map { 1_000_000 + UInt64($0) * 1_000_000 / 30 }
+        let lock = NSLock()
+        let emitted = DispatchSemaphore(value: 0)
+        var packets: [(data: Data, timestamp: UInt64, key: Bool)] = []
+        let encoder = IrisH264Encoder { data, timestamp, key, _ in
+            lock.lock(); packets.append((data, timestamp, key)); lock.unlock()
+            emitted.signal()
+        }
+        defer { encoder.stop() }
+        let pixel = try Self.movingFrame(0)
+        var fixtureDeadline: DispatchTime?
+        for frame in 0..<frameCount {
+            // Cold session setup must not turn a camera schedule into a burst
+            // that fills the encoder's three pending-frame slots. Confirm each
+            // output before the next submission, without flushing the encoder.
+            if frame > 0 { Thread.sleep(forTimeInterval: 1.0 / 30) }
+            try encoder.encode(pixel, timestampUs: timestamps[frame])
+            // One readiness deadline after synchronous cold initialization;
+            // fixed media timestamps keep startup out of the IDR interval too.
+            let deadline = fixtureDeadline ?? (.now() + 2)
+            fixtureDeadline = deadline
+            guard emitted.wait(timeout: deadline) == .success else {
+                XCTFail("encoder did not produce repair fixture frame \(frame) before the shared deadline")
+                return
+            }
+        }
+        lock.lock(); let fixture = packets; lock.unlock()
+        XCTAssertEqual(fixture.count, frameCount)
+        guard fixture.count == frameCount else { return }
+        XCTAssertEqual(fixture.map { $0.timestamp }, timestamps)
+        guard fixture[0].key, fixture[1...3].allSatisfy({ !$0.key }) else {
+            XCTFail("repair fixture must start with an IDR followed by three dependent frames")
+            return
+        }
+
         let queue = DispatchQueue(label: "iris.call.repair.decode")
         let decoded = expectation(description: "all frames decode after repaired reference")
-        let lock = NSLock()
+        decoded.expectedFulfillmentCount = frameCount
         var count = 0
         let receiver = IrisCallVideoReceiver(queue: queue, output: { _ in
-            lock.lock(); count += 1; let first = count == 1; lock.unlock()
-            if first { decoded.fulfill() }
-        }, requestKeyFrame: {})
-        var sequence: UInt32 = 0
-        let encoder = IrisH264Encoder { data, timestamp, key, _ in
-            queue.async {
-                let seq = sequence; sequence &+= 1
-                // A repaired first IDR arrives after several dependent frames.
-                queue.asyncAfter(deadline: .now() + .milliseconds(seq == 0 ? 120 : 0)) {
-                    receiver.receive(sequence: seq, timestampUs: timestamp, keyFrame: key, data: data)
+            lock.lock(); count += 1; lock.unlock()
+            decoded.fulfill()
+        }, requestKeyFrame: { XCTFail("the repaired reference must arrive before gap recovery discards dependent frames") })
+        defer { queue.sync { receiver.stop() } }
+        queue.sync {
+            // Establish actual reordering independently of encoder startup and
+            // callback timing, within the receiver's eight-frame repair window.
+            for index in 1...3 {
+                let packet = fixture[index]
+                receiver.receive(sequence: UInt32(index), timestampUs: packet.timestamp, keyFrame: packet.key, data: packet.data)
+            }
+            lock.lock(); let beforeRepair = count; lock.unlock()
+            XCTAssertEqual(beforeRepair, 0, "dependent frames must wait for their missing reference")
+            queue.asyncAfter(deadline: .now() + .milliseconds(120)) {
+                for index in [0] + Array(4..<frameCount) {
+                    let packet = fixture[index]
+                    receiver.receive(sequence: UInt32(index), timestampUs: packet.timestamp, keyFrame: packet.key, data: packet.data)
                 }
             }
         }
-        defer { encoder.stop(); queue.sync { receiver.stop() } }
-        let pixel = try Self.movingFrame(0)
-        let began = ProcessInfo.processInfo.systemUptime
-        for frame in 0..<12 {
-            let wait = began + Double(frame) / 30 - ProcessInfo.processInfo.systemUptime
-            if wait > 0 { Thread.sleep(forTimeInterval: wait) }
-            try encoder.encode(pixel, timestampUs: UInt64(ProcessInfo.processInfo.systemUptime * 1_000_000))
-        }
         wait(for: [decoded], timeout: 2)
-        Thread.sleep(forTimeInterval: 0.1)
         lock.lock(); let total = count; lock.unlock()
-        let encoded = queue.sync { sequence }
-        XCTAssertGreaterThanOrEqual(encoded, 4, "need dependent frames to exercise repair")
-        XCTAssertEqual(total, Int(encoded), "repaired reference must unlock every emitted frame")
+        XCTAssertEqual(total, fixture.count, "repaired reference must unlock every emitted frame")
     }
 
     func testSustainedVideoLatency() throws {
