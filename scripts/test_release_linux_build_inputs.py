@@ -66,7 +66,7 @@ else:
         (self.root / "metadata.json").write_text(json.dumps(metadata))
         self.stub("apt-get", """
 args = sys.argv[1:]
-command = 'update' if 'update' in args else 'install'
+command = 'update' if 'update' in args else 'download' if '--download-only' in args else 'install'
 options = dict(arg.split('=', 1) for arg in args if '=' in arg)
 sources = Path(options['Dir::Etc::sourcelist']).read_text().splitlines()
 mirrors = [Path(line.split('mirror+file:')[1].split()[0]).read_text() for line in sources if 'mirror+file:' in line]
@@ -76,6 +76,12 @@ mode = os.environ['INPUT_TEST_MODE']
 fallback = any('target=Packages' in source for source in sources)
 if not fallback and command == 'update' and mode in ('index-outage', 'bad-archive', 'bad-fallback-index'):
     sys.exit(100)
+if not fallback and command == 'update' and mode == 'noisy-transfer':
+    for _ in range(6000):
+        print('repeated APT warning')
+    sys.exit(100)
+if command == 'download':
+    sys.exit(100 if not fallback and mode == 'package-outage' else 0)
 if command == 'update':
     if os.environ['INPUT_TEST_MODE'] == 'signature-failure':
         sys.exit(42)
@@ -152,7 +158,8 @@ sys.exit(0 if parts(sys.argv[2]) > parts(sys.argv[4]) else 1)
                 result = self.run_helper("pinned-apt.sh", profile, "example-package")
                 self.assertEqual(result.returncode, 0, result.stderr)
                 calls = self.recorded()
-                self.assertEqual([row["command"] for row in calls], ["update", "install"])
+                self.assertEqual([row["command"] for row in calls],
+                                 ["update", "install"] if profile == "debian" else ["update", "download", "install"])
                 for row in calls:
                     for flag in ("Dir::Etc::sourceparts=-", "APT::Update::Error-Mode=any",
                                  "Acquire::AllowInsecureRepositories=false",
@@ -173,23 +180,31 @@ sys.exit(0 if parts(sys.argv[2]) > parts(sys.argv[4]) else 1)
                     self.assertNotEqual(result.returncode, 0)
                     self.assertEqual([row["command"] for row in self.recorded()], ["update"])
 
-    def test_ubuntu_mirror_recovers_an_index_outage(self):
+    def test_ubuntu_mirror_recovers_before_installing(self):
         for profile in ("ubuntu", "ubuntu-noble"):
-            with self.subTest(profile=profile):
-                self.calls.unlink(missing_ok=True)
-                self.env["INPUT_TEST_MODE"] = "index-outage"
-                result = self.run_helper("pinned-apt.sh", profile, "example-package")
-                self.assertEqual(result.returncode, 0, result.stderr)
-                calls = self.recorded()
-                self.assertEqual([r["command"] for r in calls], ["update", "fetch-archive", "update", "install"])
-                for mirror in calls[0]["mirrors"]:
-                    self.assertEqual(mirror.strip(), "http://snapshot.example/fixed/")
-                for mirror in calls[-2]["mirrors"]:
-                    self.assertTrue(mirror.strip().startswith("file:"))
-                    self.assertNotIn("archive.ubuntu.com", mirror)
-                for mirror in calls[-1]["mirrors"]:
-                    self.assertIn("https://archive.ubuntu.com/ubuntu/\tpriority:1 type:deb", mirror)
-                    self.assertIn("http://snapshot.example/fixed/\tpriority:2 type:deb", mirror)
+            for mode, primary in (("index-outage", ["update"]), ("package-outage", ["update", "download"]),
+                                  ("noisy-transfer", ["update"])):
+                with self.subTest(profile=profile, mode=mode):
+                    self.calls.unlink(missing_ok=True)
+                    self.env["INPUT_TEST_MODE"] = mode
+                    result = self.run_helper("pinned-apt.sh", profile, "example-package")
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    calls = self.recorded()
+                    self.assertEqual([r["command"] for r in calls],
+                                     primary + ["fetch-archive", "update", "download", "install"])
+                    self.assertFalse(calls[0]["mirrors"])
+                    for mirror in calls[-3]["mirrors"]:
+                        self.assertTrue(mirror.strip().startswith("file:"))
+                        self.assertNotIn("archive.ubuntu.com", mirror)
+                    for mirror in calls[-2]["mirrors"]:
+                        self.assertIn("https://archive.ubuntu.com/ubuntu/\tpriority:1 type:deb", mirror)
+                        self.assertIn("http://snapshot.example/fixed/\tpriority:2 type:deb", mirror)
+                        self.assertEqual("https://ubuntu.vpsttt.com/ubuntu/\tpriority:3 type:deb" in mirror,
+                                         profile == "ubuntu")
+                    self.assertIn("--no-download", calls[-1]["args"])
+                    if mode == "noisy-transfer":
+                        self.assertLessEqual(result.stdout.count("repeated APT warning"), 4096)
+                        self.assertIn("diagnostic limit", result.stdout)
 
     def test_unverified_fallback_never_installs(self):
         for mode in ("bad-archive", "bad-fallback-index"):
@@ -231,7 +246,7 @@ sys.exit(0 if parts(sys.argv[2]) > parts(sys.argv[4]) else 1)
         self.env["INPUT_TEST_MODE"] = "stale-installed"
         result = self.run_helper("pinned-apt.sh", "ubuntu-noble", "example-package")
         self.assertNotEqual(result.returncode, 0)
-        self.assertEqual([row["command"] for row in self.recorded()], ["update", "install"])
+        self.assertEqual([row["command"] for row in self.recorded()], ["update", "download", "install"])
 
     def test_same_or_older_installed_package_is_reinstalled_from_snapshot(self):
         for mode in ("same-installed", "older-installed"):

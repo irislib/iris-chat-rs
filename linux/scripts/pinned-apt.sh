@@ -22,11 +22,22 @@ verify_lists() {
   [[ "$checked" == 3 ]]
 }
 
+run_transfer() {
+  local seconds="$1"
+  shift
+  timeout --kill-after=5s "${seconds}s" "$@" 2>&1 | awk '
+    { bytes += length($0) + 1 }
+    NR > 4096 || bytes > 524288 { print "APT transfer exceeded its diagnostic limit"; exit 75 }
+    { print; fflush() }
+  '
+}
+
 use_snapshot_archive() {
-  local state="$1" distribution="$2" digest="$3" archive="$1/snapshot.tar.gz"
-  shift 3
+  local status="$1" state="$2" distribution="$3" digest="$4" archive="$2/snapshot.tar.gz"
+  shift 4
+  case "$status" in 75|100|124) ;; *) return "$status" ;; esac
   echo "Using the verified $distribution snapshot mirror." >&2
-  /usr/lib/apt/apt-helper "$@" download-file \
+  run_transfer 180 /usr/lib/apt/apt-helper "$@" download-file \
     "https://upload.iris.to/$digest.bin" "$archive" "SHA256:$digest"
   mkdir "$state/mirror"
   tar -xzf "$archive" -C "$state/mirror" --no-same-owner --no-same-permissions
@@ -35,13 +46,13 @@ use_snapshot_archive() {
   mv "$state/lists" "$state/primary-lists"
   mkdir -m 755 -p "$state/lists/partial"
   mv "$state/mirror.sources.list" "$state/sources.list"
-  apt-get "$@" update
+  run_transfer 180 apt-get "$@" update
   verify_lists "$distribution" "$state/lists"
 }
 
 main() (
   local distribution="${1:-}" keyring profile suite uri expected components count=0 state
-  local package version installed selection mirror_digest= source_uri status
+  local package version installed selection mirror_digest=
   [[ $# -ge 2 ]] || { echo 'usage: pinned-apt.sh ubuntu|ubuntu-noble|debian package ...' >&2; exit 2; }
   shift
   case "$distribution" in
@@ -63,17 +74,13 @@ main() (
   while IFS=$'\t' read -r profile suite uri expected components; do
     [[ "$profile" == "$distribution" ]] || continue
     [[ "$expected" =~ ^[0-9a-f]{64}$ && "$suite" =~ ^[a-z-]+$ ]] || exit 1
-    source_uri="$uri"
     if [[ -n "$mirror_digest" ]]; then
-      # During metadata acquisition each list contains exactly one origin.
-      printf '%s/\n' "$uri" > "$state/$suite.primary"
-      source_uri="mirror+file:$state/$suite.primary"
       printf 'file:%s/mirror/\n' "$state" > "$state/$suite.secondary"
       printf 'deb [signed-by=%s check-valid-until=no target=Packages] mirror+file:%s/%s.secondary %s %s\n' \
         "$keyring" "$state" "$suite" "$suite" "$components" >> "$state/mirror.sources.list"
     fi
     printf 'deb [signed-by=%s check-valid-until=no] %s %s %s\n' \
-      "$keyring" "$source_uri" "$suite" "$components" >> "$state/sources.list"
+      "$keyring" "$uri" "$suite" "$components" >> "$state/sources.list"
     count=$((count + 1))
   done < "$PIN_FILE"
   [[ "$count" == 3 ]] || { echo 'Incomplete snapshot pins' >&2; exit 1; }
@@ -88,25 +95,13 @@ main() (
   )
   # APT must verify signatures, then these fixed InRelease hashes bind Packages
   # and .deb hashes, including on the Debian snapshot's HTTP transport.
-  if apt-get "${options[@]}" update; then
-    verify_lists "$distribution" "$state/lists"
-  else
-    status=$?
-    [[ "$status" == 100 && -n "$mirror_digest" ]] || exit "$status"
-    use_snapshot_archive "$state" "$distribution" "$mirror_digest" "${options[@]}"
-  fi
-  # The trusted indexes are now local. Permit the ordinary Ubuntu pool to
-  # supply .debs only for the install, keeping source-list identities stable.
   if [[ -n "$mirror_digest" ]]; then
-    while IFS=$'\t' read -r profile suite uri expected components; do
-      [[ "$profile" == "$distribution" ]] || continue
-      if [[ -d "$state/mirror" ]]; then
-        printf 'https://archive.ubuntu.com/ubuntu/\tpriority:1 type:deb\n%s/\tpriority:2 type:deb\n' "$uri" > "$state/$suite.secondary"
-      else
-        printf '%s/\tpriority:1 type:deb\nhttps://archive.ubuntu.com/ubuntu/\tpriority:2 type:deb\n' "$uri" > "$state/$suite.primary"
-      fi
-    done < "$PIN_FILE"
+    run_transfer 180 apt-get "${options[@]}" update || \
+      use_snapshot_archive "$?" "$state" "$distribution" "$mirror_digest" "${options[@]}"
+  else
+    apt-get "${options[@]}" update
   fi
+  verify_lists "$distribution" "$state/lists"
   local -a selected=()
   for package in "$@"; do
     [[ "$package" =~ ^[a-z0-9][a-z0-9+.-]*(:[a-z0-9-]+)?$ ]] || {
@@ -130,8 +125,28 @@ main() (
   done
   # Reinstall requested roots even at the same version, so their executable
   # bytes come from the verified package chain, not an ambient modification.
-  DEBIAN_FRONTEND=noninteractive apt-get "${options[@]}" install -y --no-install-recommends \
-    --no-remove --reinstall -- "${selected[@]}"
+  local -a install=(install -y --no-install-recommends --no-remove --reinstall)
+  if [[ -n "$mirror_digest" ]]; then
+    # Finish every transfer before dpkg can modify the installed system.
+    if [[ ! -d "$state/mirror" ]]; then
+      run_transfer 600 apt-get "${options[@]}" "${install[@]}" --download-only -- "${selected[@]}" || \
+        use_snapshot_archive "$?" "$state" "$distribution" "$mirror_digest" "${options[@]}"
+    fi
+    if [[ -d "$state/mirror" ]]; then
+      # Indexes were verified locally. Only now may the ordinary Ubuntu pool
+      # supply package bytes matching those signed indexes.
+      while IFS=$'\t' read -r profile suite uri expected components; do
+        [[ "$profile" == "$distribution" ]] || continue
+        printf 'https://archive.ubuntu.com/ubuntu/\tpriority:1 type:deb\n%s/\tpriority:2 type:deb\n' "$uri" > "$state/$suite.secondary"
+        if [[ "$distribution" == ubuntu ]]; then
+          printf 'https://ubuntu.vpsttt.com/ubuntu/\tpriority:3 type:deb\n' >> "$state/$suite.secondary"
+        fi
+      done < "$PIN_FILE"
+      run_transfer 600 apt-get "${options[@]}" "${install[@]}" --download-only -- "${selected[@]}"
+    fi
+    install+=(--no-download)
+  fi
+  DEBIAN_FRONTEND=noninteractive apt-get "${options[@]}" "${install[@]}" -- "${selected[@]}"
   for selection in "${selected[@]}"; do
     package="${selection%%=*}"; version="${selection#*=}"
     installed="$(dpkg-query -W -f='${Status}\t${Version}' "$package")"
