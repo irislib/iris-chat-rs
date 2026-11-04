@@ -376,3 +376,123 @@ fn mesh_route_retry_core_guard_requires_exact_private_work_on_actual_wire() {
         live.shutdown().await.unwrap();
     });
 }
+
+#[test]
+fn pending_link_history_refreshes_only_the_approved_siblings_advert() {
+    use crate::core::tests::{
+        configure_test_device_sync_profile, logged_in_test_core_with_updates,
+    };
+
+    let (owner, local, sibling) = (Keys::generate(), Keys::generate(), Keys::generate());
+    let (mut core, _updates, _directory) =
+        logged_in_test_core_with_updates("history-route", &owner, &local);
+    configure_test_device_sync_profile(&mut core, &owner, &local, &sibling, None);
+    let peer = sibling.public_key();
+    let other = Keys::generate().public_key();
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    runtime.block_on(async {
+        let relay = test_support::relay(vec![]).await;
+        let live = tls_tests::endpoint().await;
+        core.install_device_sync_endpoint_for_test(live.clone());
+        core.fips_connection_generation = 7;
+        core.device_sync
+            .as_mut()
+            .unwrap()
+            .protocol_subscriptions
+            .discovery
+            .update(
+                Arc::new(
+                    PrivateMeshProviders::new(vec![], None, vec![], vec![relay.url.clone()])
+                        .with_relay_pool(test_support::pool()),
+                ),
+                [peer, other]
+                    .map(|author| Filter::new().kind(Kind::Custom(37195)).author(author))
+                    .to_vec(),
+                live.clone(),
+                core.core_sender.clone(),
+                &core.runtime,
+            );
+        wait_subject_closed(&relay.wire, peer, 1).await;
+        wait_subject_closed(&relay.wire, other, 1).await;
+
+        // As on a newly signed-in device, the approver is durable but its history policy
+        // has not arrived. There are no ordinary envelopes or calls waiting for the peer.
+        core.record_device_history_approver(&peer.to_hex(), 1, "pair".into())
+            .unwrap();
+        assert!(
+            core.has_private_mesh_discovery_demand(peer),
+            "pending link history must wake its approver"
+        );
+        assert!(!core.has_private_mesh_discovery_demand(other));
+        let stored_advert = tls_tests::advert(
+            &sibling,
+            unix_now().get(),
+            unix_now().get() + 3600,
+            "peer.invalid:9000",
+        );
+        relay.events.lock().unwrap().push(stored_advert.clone());
+        inject_route_need(&mut core, peer, 6, true);
+        for _ in 0..128 {
+            inject_route_need(&mut core, peer, 7, true);
+            inject_route_need(&mut core, other, 7, true);
+        }
+        wait_subject_closed(&relay.wire, peer, 2).await;
+        assert_eq!(subject_queries(&relay.wire, other).len(), 1);
+        #[cfg(target_os = "linux")]
+        assert!(relay
+            .responses
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|(_, _, id)| *id == Some(stored_advert.id)));
+        core.handle_device_history_policy(&peer.to_hex(), 1, 1, "pair".into());
+        assert!(
+            !core.has_private_mesh_discovery_demand(peer),
+            "negotiated no-history grant is complete"
+        );
+
+        core.create_device_history_transfer(peer, true, "outbound".into())
+            .unwrap();
+        assert!(
+            core.has_private_mesh_discovery_demand(peer),
+            "the approver also needs a route"
+        );
+        core.handle_device_history_complete(&peer.to_hex(), 100, "outbound".into());
+        assert!(
+            !core.has_private_mesh_discovery_demand(peer),
+            "completed history must stay quiet"
+        );
+
+        core.create_device_history_transfer(peer, true, "revoked".into())
+            .unwrap();
+        core.app_keys
+            .get_mut(&owner.public_key().to_hex())
+            .unwrap()
+            .devices
+            .retain(|device| device.identity_pubkey_hex != local.public_key().to_hex());
+        assert!(
+            !core.has_private_mesh_discovery_demand(peer),
+            "a revoked local device cannot request a peer's advert"
+        );
+        inject_route_need(&mut core, peer, 7, true);
+        sleep(Duration::from_millis(100)).await;
+        assert_eq!(subject_queries(&relay.wire, peer).len(), 2);
+        for (_, frame) in relay.wire.lock().unwrap().iter() {
+            if frame[0] == "REQ" && frame[2].get("limit").is_some() {
+                assert_eq!(frame[2]["authors"], serde_json::json!([peer]));
+                assert_eq!(frame[2]["kinds"], serde_json::json!([37195]));
+                assert!(frame[2].get("#p").is_none());
+            }
+            if frame[0] == "AUTH" {
+                let auth: Event = serde_json::from_value(frame[1].clone()).unwrap();
+                auth.verify().unwrap();
+                assert!(
+                    ![owner.public_key(), local.public_key(), peer, other].contains(&auth.pubkey)
+                );
+            }
+        }
+        assert_eq!(relay.connections.load(Ordering::SeqCst), 1);
+        drop(core.device_sync.take());
+        live.shutdown().await.unwrap();
+    });
+}
