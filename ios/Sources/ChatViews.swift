@@ -719,11 +719,8 @@ struct ChatScreen: View {
             stopTypingIfNeeded()
             flushDraftImmediately()
         }
-        .task(id: chatId) {
-            seedDraftFromPersistedState(replaceExisting: true)
-        }
         .task(id: persistedDraftToken) {
-            seedDraftFromPersistedState(replaceExisting: false)
+            composerState.restore(persistedDraftForCurrentChat(), forChat: chatId)
         }
         .task(id: seenReceiptToken(for: chat)) {
             guard let chat else { return }
@@ -1056,10 +1053,6 @@ struct ChatScreen: View {
             return currentChat.draft
         }
         return manager.state.chatList.first { $0.chatId == chatId }?.draft ?? ""
-    }
-
-    private func seedDraftFromPersistedState(replaceExisting: Bool) {
-        composerState.restore(persistedDraftForCurrentChat(), replaceExisting: replaceExisting)
     }
 
     private func flushDraftImmediately() {

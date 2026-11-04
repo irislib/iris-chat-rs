@@ -385,6 +385,7 @@ struct IrisComposerBar: View {
             IrisUIKitComposerTextView(
                 text: userEditingDraft,
                 isFocused: $isFocused,
+                draftRevision: composerState.draftRevision,
                 onPasteAttachments: canPrepareAttachments ? pasteAttachments : nil,
                 onNativeEdit: composerState.prepareNativeEdit,
                 onCompletionUpdate: updateCompletions,

@@ -32,6 +32,7 @@ struct IrisUIKitComposerTextView: UIViewRepresentable {
 
     @Binding var text: String
     @Binding var isFocused: Bool
+    var draftRevision: UUID? = nil
     var onPasteAttachments: ((IrisClipboardAttachments) -> Void)? = nil
     var onNativeEdit: ((IrisComposerNativeEdit) -> Void)? = nil
     var onCompletionUpdate: ((IrisComposerCompletionContext) -> Void)? = nil
@@ -127,26 +128,34 @@ struct IrisUIKitComposerTextView: UIViewRepresentable {
             self.parent = parent
         }
 
+        private var lastNativeText: String?
+        private var reconciledRevision: UUID?
+
         func reconcile(_ uiView: UITextView) {
-            var needsSelectionReveal = false
-            if uiView.markedTextRange == nil, uiView.text != parent.text {
-                needsSelectionReveal = true
-                let selectedRange = uiView.selectedRange
-                uiView.undoManager?.removeAllActions()
-                applyingModelText = true
-                uiView.text = parent.text
-                applyingModelText = false
-                let textLength = (parent.text as NSString).length
-                if uiView.isFirstResponder, selectedRange.location <= textLength {
-                    uiView.selectedRange = NSRange(
-                        location: selectedRange.location,
-                        length: min(selectedRange.length, textLength - selectedRange.location)
-                    )
-                } else {
-                    uiView.selectedRange = NSRange(location: textLength, length: 0)
-                }
+            let modelText = parent.text
+            let changedDraft = reconciledRevision != parent.draftRevision
+            if uiView.text == modelText {
+                lastNativeText = nil
+                reconciledRevision = parent.draftRevision
+                return
             }
-            if needsSelectionReveal { (uiView as? IrisComposerUITextView)?.revealSelectionAfterNextLayout() }
+            guard uiView.markedTextRange == nil else { return }
+            // SwiftUI can still be rendering an earlier value while UIKit owns a newer edit.
+            guard changedDraft || lastNativeText != uiView.text else { return }
+            reconciledRevision = parent.draftRevision
+            lastNativeText = nil
+            let selection = uiView.selectedRange
+            uiView.undoManager?.removeAllActions()
+            applyingModelText = true
+            uiView.text = modelText
+            applyingModelText = false
+            let length = (modelText as NSString).length
+            if !changedDraft, uiView.isFirstResponder, selection.location <= length {
+                uiView.selectedRange = NSRange(location: selection.location, length: min(selection.length, length - selection.location))
+            } else {
+                uiView.selectedRange = NSRange(location: length, length: 0)
+            }
+            (uiView as? IrisComposerUITextView)?.revealSelectionAfterNextLayout()
         }
 
         func textView(
@@ -160,7 +169,10 @@ struct IrisUIKitComposerTextView: UIViewRepresentable {
         }
 
         func textViewDidChange(_ textView: UITextView) {
-            if parent.text != textView.text { parent.text = textView.text }
+            if parent.text != textView.text {
+                lastNativeText = textView.text
+                parent.text = textView.text
+            }
             (textView as? IrisComposerUITextView)?.revealSelectionAfterNextLayout()
             publishCompletion(textView)
         }
@@ -172,6 +184,7 @@ struct IrisUIKitComposerTextView: UIViewRepresentable {
         func textStorage(_ textStorage: NSTextStorage, didProcessEditing editedMask: NSTextStorage.EditActions,
                          range editedRange: NSRange, changeInLength delta: Int) {
             guard editedMask.contains(.editedCharacters), !applyingModelText else { return }
+            lastNativeText = textStorage.string
             parent.onNativeEdit?(IrisComposerNativeEdit(text: textStorage.string,
                 range: NSRange(location: editedRange.location, length: editedRange.length - delta),
                 replacementLength: editedRange.length, undoManager: nativeTextView?.undoManager))

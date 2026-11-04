@@ -20,8 +20,9 @@ final class IrisUIKitComposerReconciliationTests: XCTestCase {
         }()
         let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 844))
         lazy var parent = IrisUIKitComposerTextView(
-            text: Binding(get: { self.rendered }, set: { self.state.text = $0 }),
-            isFocused: .constant(true)
+            text: Binding(get: { [unowned self] in rendered }, set: { [unowned self] in state.text = $0 }),
+            isFocused: .constant(true),
+            onNativeEdit: state.prepareNativeEdit
         )
         lazy var coordinator = parent.makeCoordinator()
 
@@ -42,6 +43,7 @@ final class IrisUIKitComposerReconciliationTests: XCTestCase {
         @MainActor
         func render(_ text: String) {
             rendered = text
+            parent.draftRevision = state.draftRevision
             coordinator.parent = parent
             coordinator.reconcile(editor)
         }
@@ -81,5 +83,50 @@ final class IrisUIKitComposerReconciliationTests: XCTestCase {
         XCTAssertEqual(fixture.editor.text, "heXllo")
         XCTAssertEqual(fixture.editor.selectedRange, NSRange(location: 3, length: 0))
     }
+    func testIntentionalClearAndDifferentChatReplaceAnUnacknowledgedEdit() {
+        let fixture = Harness()
+        fixture.start()
+        defer { fixture.window.isHidden = true }
+        fixture.state.restore("", forChat: "self")
+        fixture.type("Iri")
+        fixture.state.clearForSend { _ in }
+        fixture.render("")
+        XCTAssertEqual(fixture.editor.text, "")
+        XCTAssertEqual(fixture.editor.selectedRange, NSRange(location: 0, length: 0))
+
+        fixture.type("new local note")
+        fixture.state.restore("restored elsewhere", forChat: "other")
+        fixture.render(fixture.state.text)
+        XCTAssertEqual(fixture.editor.text, "restored elsewhere")
+        XCTAssertEqual(fixture.editor.selectedRange.location, "restored elsewhere".utf16.count)
+    }
+
+    func testDelayedInitialSelfChatLoadPreservesLocalTextAndCaret() {
+        let fixture = Harness()
+        fixture.start()
+        defer { fixture.window.isHidden = true }
+        fixture.type("Iri")
+        fixture.state.restore("", forChat: "self")
+        fixture.render(fixture.state.text)
+        fixture.state.restore("stale saved text", forChat: "self")
+        fixture.render(fixture.state.text)
+        fixture.type("s")
+        XCTAssertEqual(fixture.editor.text, "Iris")
+        XCTAssertEqual(fixture.editor.selectedRange, NSRange(location: 4, length: 0))
+    }
+
+    func testFirstSnapshotBetweenNativeStorageChangeAndBindingCannotApplyAnOldDraft() {
+        let state = IrisComposerState()
+        let revision = state.draftRevision
+        state.prepareNativeEdit(IrisComposerNativeEdit(text: "I", range: NSRange(location: 0, length: 0),
+                                                       replacementLength: 1, undoManager: nil))
+        state.restore("old draft", forChat: "self")
+        XCTAssertEqual(state.text, "")
+        XCTAssertEqual(state.draftRevision, revision)
+        state.text = "I"
+        state.restore("old draft", forChat: "self")
+        XCTAssertEqual(state.text, "I")
+    }
+
 }
 #endif
