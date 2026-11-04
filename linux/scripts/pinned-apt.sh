@@ -22,9 +22,26 @@ verify_lists() {
   [[ "$checked" == 3 ]]
 }
 
+use_snapshot_archive() {
+  local state="$1" distribution="$2" digest="$3" archive="$1/snapshot.tar.gz"
+  shift 3
+  echo "Using the verified $distribution snapshot mirror." >&2
+  /usr/lib/apt/apt-helper "$@" download-file \
+    "https://upload.iris.to/$digest.bin" "$archive" "SHA256:$digest"
+  mkdir "$state/mirror"
+  tar -xzf "$archive" -C "$state/mirror" --no-same-owner --no-same-permissions
+  chmod -R a+rX "$state/mirror"
+  # Start again with empty lists so a partial primary update cannot supply any index.
+  mv "$state/lists" "$state/primary-lists"
+  mkdir -m 755 -p "$state/lists/partial"
+  mv "$state/mirror.sources.list" "$state/sources.list"
+  apt-get "$@" update
+  verify_lists "$distribution" "$state/lists"
+}
+
 main() (
   local distribution="${1:-}" keyring profile suite uri expected components count=0 state
-  local package version installed selection
+  local package version installed selection mirror_digest= source_uri status
   [[ $# -ge 2 ]] || { echo 'usage: pinned-apt.sh ubuntu|ubuntu-noble|debian package ...' >&2; exit 2; }
   shift
   case "$distribution" in
@@ -32,6 +49,13 @@ main() (
     debian) keyring=/usr/share/keyrings/debian-archive-keyring.gpg ;;
     *) echo 'Unsupported snapshot distribution' >&2; exit 2 ;;
   esac
+  # These archives contain only amd64 indexes from the committed Ubuntu snapshot.
+  if [[ "$distribution" != debian && "$(dpkg --print-architecture)" == amd64 && -z "$(dpkg --print-foreign-architectures)" ]]; then
+    case "$distribution" in
+      ubuntu-noble) mirror_digest=01e5a5305b6c6138f5938ca287ee36f19ed859931be446feb4588facaf581b03 ;;
+      ubuntu) mirror_digest=62f52a3021f171e53cd73f41b8ea457bac48f4a6f3a76051af5d031992e9d1b8 ;;
+    esac
+  fi
   state="$(mktemp -d)"
   trap 'rm -rf "$state"' EXIT
   mkdir -p "$state/lists/partial" "$state/archives/partial"
@@ -39,8 +63,17 @@ main() (
   while IFS=$'\t' read -r profile suite uri expected components; do
     [[ "$profile" == "$distribution" ]] || continue
     [[ "$expected" =~ ^[0-9a-f]{64}$ && "$suite" =~ ^[a-z-]+$ ]] || exit 1
+    source_uri="$uri"
+    if [[ -n "$mirror_digest" ]]; then
+      # During metadata acquisition each list contains exactly one origin.
+      printf '%s/\n' "$uri" > "$state/$suite.primary"
+      source_uri="mirror+file:$state/$suite.primary"
+      printf 'file:%s/mirror/\n' "$state" > "$state/$suite.secondary"
+      printf 'deb [signed-by=%s check-valid-until=no target=Packages] mirror+file:%s/%s.secondary %s %s\n' \
+        "$keyring" "$state" "$suite" "$suite" "$components" >> "$state/mirror.sources.list"
+    fi
     printf 'deb [signed-by=%s check-valid-until=no] %s %s %s\n' \
-      "$keyring" "$uri" "$suite" "$components" >> "$state/sources.list"
+      "$keyring" "$source_uri" "$suite" "$components" >> "$state/sources.list"
     count=$((count + 1))
   done < "$PIN_FILE"
   [[ "$count" == 3 ]] || { echo 'Incomplete snapshot pins' >&2; exit 1; }
@@ -55,8 +88,25 @@ main() (
   )
   # APT must verify signatures, then these fixed InRelease hashes bind Packages
   # and .deb hashes, including on the Debian snapshot's HTTP transport.
-  apt-get "${options[@]}" update
-  verify_lists "$distribution" "$state/lists"
+  if apt-get "${options[@]}" update; then
+    verify_lists "$distribution" "$state/lists"
+  else
+    status=$?
+    [[ "$status" == 100 && -n "$mirror_digest" ]] || exit "$status"
+    use_snapshot_archive "$state" "$distribution" "$mirror_digest" "${options[@]}"
+  fi
+  # The trusted indexes are now local. Permit the ordinary Ubuntu pool to
+  # supply .debs only for the install, keeping source-list identities stable.
+  if [[ -n "$mirror_digest" ]]; then
+    while IFS=$'\t' read -r profile suite uri expected components; do
+      [[ "$profile" == "$distribution" ]] || continue
+      if [[ -d "$state/mirror" ]]; then
+        printf 'https://archive.ubuntu.com/ubuntu/\tpriority:1 type:deb\n%s/\tpriority:2 type:deb\n' "$uri" > "$state/$suite.secondary"
+      else
+        printf '%s/\tpriority:1 type:deb\nhttps://archive.ubuntu.com/ubuntu/\tpriority:2 type:deb\n' "$uri" > "$state/$suite.primary"
+      fi
+    done < "$PIN_FILE"
+  fi
   local -a selected=()
   for package in "$@"; do
     [[ "$package" =~ ^[a-z0-9][a-z0-9+.-]*(:[a-z0-9-]+)?$ ]] || {

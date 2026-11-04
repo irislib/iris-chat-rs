@@ -91,6 +91,13 @@ other preinstalled/transitive OS packages remain runner inputs.
 The APT helper uses isolated sources and lists, requires signatures from the
 base image's archive keyring, and checks every InRelease SHA256 before installing
 anything. Those roots bind the Packages indexes and downloaded .deb hashes.
+On native Ubuntu amd64, the installer tries the dated Ubuntu snapshot first.
+If APT cannot update its indexes, it downloads the digest-pinned Iris archive
+for that Ubuntu release and verifies the same three signed roots again. The
+archive contains the original package indexes for all four components.
+APT can fetch packages from the ordinary Ubuntu archive or the snapshot and
+checks each file against those indexes. The Iris archive contains no packages.
+
 The Ubuntu Dockerfile bootstraps normal TLS with the dated 2026-10-20 official
 curl/Mozilla CA bundle, verified by `ADD --checksum` before use. The bundle goes
 in the existing `/tmp` directory and `SSL_CERT_FILE` selects it only for the

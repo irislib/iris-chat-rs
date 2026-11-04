@@ -27,6 +27,20 @@ class LinuxBuildInputsTests(unittest.TestCase):
             path.mkdir(parents=True)
         for name in ("pinned-apt.sh", "install-cargo-deb.sh"):
             shutil.copyfile(ROOT / "linux/scripts" / name, self.scripts / name)
+        helper = self.scripts / "pinned-apt.sh"
+        helper.write_text(helper.read_text().replace("/usr/lib/apt/apt-helper", str(self.bin / "apt-helper")))
+        self.stub("apt-helper", """
+import tarfile
+url, path, expected = sys.argv[-3:]
+digest = expected.removeprefix('SHA256:')
+assert sys.argv[-4] == 'download-file' and url == 'https://upload.iris.to/' + digest + '.bin'
+with (root / 'calls.jsonl').open('a') as log:
+    log.write(json.dumps({'command': 'fetch-archive', 'digest': expected}) + '\\n')
+if os.environ['INPUT_TEST_MODE'] == 'bad-archive':
+    sys.exit(100)
+with tarfile.open(path, 'w:gz'):
+    pass
+""")
         self.calls = self.root / "calls.jsonl"
         self.env = dict(os.environ, PATH=str(self.bin) + os.pathsep + os.environ["PATH"],
                         INPUT_TEST_ROOT=str(self.root), INPUT_TEST_MODE="good")
@@ -53,8 +67,15 @@ else:
         self.stub("apt-get", """
 args = sys.argv[1:]
 command = 'update' if 'update' in args else 'install'
+options = dict(arg.split('=', 1) for arg in args if '=' in arg)
+sources = Path(options['Dir::Etc::sourcelist']).read_text().splitlines()
+mirrors = [Path(line.split('mirror+file:')[1].split()[0]).read_text() for line in sources if 'mirror+file:' in line]
 with (root / 'calls.jsonl').open('a') as log:
-    log.write(json.dumps({'command': command, 'args': args}) + '\\n')
+    log.write(json.dumps({'command': command, 'args': args, 'mirrors': mirrors}) + '\\n')
+mode = os.environ['INPUT_TEST_MODE']
+fallback = any('target=Packages' in source for source in sources)
+if not fallback and command == 'update' and mode in ('index-outage', 'bad-archive', 'bad-fallback-index'):
+    sys.exit(100)
 if command == 'update':
     if os.environ['INPUT_TEST_MODE'] == 'signature-failure':
         sys.exit(42)
@@ -65,7 +86,7 @@ if command == 'update':
     for index, source in enumerate(sources):
         suite = source.split()[-2]
         raw = metadata[suite]
-        if index == 0 and os.environ['INPUT_TEST_MODE'] == 'corrupt':
+        if index == 0 and (mode == 'corrupt' or (fallback and mode == 'bad-fallback-index')):
             raw += 'changed'
         if index == 0 and os.environ['INPUT_TEST_MODE'] == 'missing':
             continue
@@ -99,6 +120,12 @@ if sys.argv[-1] not in versions:
 print('install ok installed\\t' + versions[sys.argv[-1]], end='')
 """)
         self.stub("dpkg", """
+if sys.argv[1] == '--print-architecture':
+    print(os.environ.get('INPUT_APT_ARCH', 'amd64'))
+    sys.exit(0)
+if sys.argv[1] == '--print-foreign-architectures':
+    print(os.environ.get('INPUT_APT_FOREIGN', ''))
+    sys.exit(0)
 assert sys.argv[1] == '--compare-versions' and sys.argv[3] == 'gt'
 parts = lambda value: tuple(int(part) for part in value.split('.'))
 sys.exit(0 if parts(sys.argv[2]) > parts(sys.argv[4]) else 1)
@@ -145,6 +172,43 @@ sys.exit(0 if parts(sys.argv[2]) > parts(sys.argv[4]) else 1)
                     result = self.run_helper("pinned-apt.sh", profile, "example-package")
                     self.assertNotEqual(result.returncode, 0)
                     self.assertEqual([row["command"] for row in self.recorded()], ["update"])
+
+    def test_ubuntu_mirror_recovers_an_index_outage(self):
+        for profile in ("ubuntu", "ubuntu-noble"):
+            with self.subTest(profile=profile):
+                self.calls.unlink(missing_ok=True)
+                self.env["INPUT_TEST_MODE"] = "index-outage"
+                result = self.run_helper("pinned-apt.sh", profile, "example-package")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                calls = self.recorded()
+                self.assertEqual([r["command"] for r in calls], ["update", "fetch-archive", "update", "install"])
+                for mirror in calls[0]["mirrors"]:
+                    self.assertEqual(mirror.strip(), "http://snapshot.example/fixed/")
+                for mirror in calls[-2]["mirrors"]:
+                    self.assertTrue(mirror.strip().startswith("file:"))
+                    self.assertNotIn("archive.ubuntu.com", mirror)
+                for mirror in calls[-1]["mirrors"]:
+                    self.assertIn("https://archive.ubuntu.com/ubuntu/\tpriority:1 type:deb", mirror)
+                    self.assertIn("http://snapshot.example/fixed/\tpriority:2 type:deb", mirror)
+
+    def test_unverified_fallback_never_installs(self):
+        for mode in ("bad-archive", "bad-fallback-index"):
+            with self.subTest(mode=mode):
+                self.calls.unlink(missing_ok=True)
+                self.env["INPUT_TEST_MODE"] = mode
+                result = self.run_helper("pinned-apt.sh", "ubuntu-noble", "example-package")
+                self.assertNotEqual(result.returncode, 0)
+                self.assertNotIn("install", [r["command"] for r in self.recorded()])
+
+    def test_only_native_ubuntu_amd64_uses_the_archive(self):
+        for profile, arch, foreign in (("debian", "amd64", ""), ("ubuntu", "arm64", ""),
+                                       ("ubuntu-noble", "amd64", "i386")):
+            with self.subTest(profile=profile, arch=arch, foreign=foreign):
+                self.calls.unlink(missing_ok=True)
+                self.env.update(INPUT_TEST_MODE="index-outage", INPUT_APT_ARCH=arch, INPUT_APT_FOREIGN=foreign)
+                result = self.run_helper("pinned-apt.sh", profile, "example-package")
+                self.assertEqual(result.returncode, 100)
+                self.assertEqual([r["command"] for r in self.recorded()], ["update"])
 
     def test_unsupported_profile_cannot_reach_apt(self):
         result = self.run_helper("pinned-apt.sh", "mutable", "example-package")
