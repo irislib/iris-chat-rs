@@ -13,6 +13,21 @@ if [[ "$MODE" != transport ]]; then
         echo 'The native codec benchmark requires macOS; use transport on other hosts.' >&2
         exit 2
     fi
+    XCODE_DEVELOPER="${DEVELOPER_DIR:-$(xcode-select -p)}"
+    TEST_FRAMEWORKS="$XCODE_DEVELOPER/Platforms/MacOSX.platform/Developer/Library/Frameworks"
+    TEST_PRIVATE_FRAMEWORKS="$XCODE_DEVELOPER/Platforms/MacOSX.platform/Developer/Library/PrivateFrameworks"
+    TEST_LIBRARIES="$XCODE_DEVELOPER/Platforms/MacOSX.platform/Developer/usr/lib"
+    # XCTest's Swift support loads XCTestCore and XCTestSupport transitively.
+    # Keep their runtime lookup in the same selected Xcode as the public SDK.
+    for library in "$TEST_FRAMEWORKS/XCTest.framework/XCTest" \
+        "$TEST_LIBRARIES/libXCTestSwiftSupport.dylib" \
+        "$TEST_PRIVATE_FRAMEWORKS/XCTestCore.framework/XCTestCore" \
+        "$TEST_PRIVATE_FRAMEWORKS/XCTestSupport.framework/XCTestSupport"; do
+        if [[ ! -f "$library" || ! -r "$library" ]]; then
+            echo "Missing selected Xcode test runtime: $library" >&2
+            exit 2
+        fi
+    done
     BUILD_DIR="$(mktemp -d)"
     trap 'rm -rf "$BUILD_DIR"' EXIT
     cat > "$BUILD_DIR/main.swift" <<'SWIFT'
@@ -21,13 +36,11 @@ let suite = CallVideoQualityTests.defaultTestSuite
 suite.run()
 exit(suite.testRun?.hasSucceeded == true && suite.testCaseCount > 0 ? 0 : 1)
 SWIFT
-    XCODE_DEVELOPER="${DEVELOPER_DIR:-$(xcode-select -p)}"
-    TEST_FRAMEWORKS="$XCODE_DEVELOPER/Platforms/MacOSX.platform/Developer/Library/Frameworks"
-    TEST_LIBRARIES="$XCODE_DEVELOPER/Platforms/MacOSX.platform/Developer/usr/lib"
     xcrun swiftc -O -D CALL_VIDEO_STANDALONE \
         -I "$TEST_LIBRARIES" -L "$TEST_LIBRARIES" \
         -Xlinker -rpath -Xlinker "$TEST_LIBRARIES" \
         -F "$TEST_FRAMEWORKS" -Xlinker -rpath -Xlinker "$TEST_FRAMEWORKS" \
+        -Xlinker -rpath -Xlinker "$TEST_PRIVATE_FRAMEWORKS" \
         "$ROOT/ios/Sources/IrisH264Wire.swift" \
         "$ROOT/ios/Sources/IrisH264Encoder.swift" \
         "$ROOT/ios/Sources/IrisH264Decoder.swift" \
