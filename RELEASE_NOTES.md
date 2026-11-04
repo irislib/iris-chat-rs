@@ -2,6 +2,27 @@
 
 Each release has channel-specific notes. The release tag must match the `##` heading exactly.
 
+## v2026.11.4
+
+### GitHub
+
+- Preserve typed text and the insertion point on iOS when a chat’s saved draft arrives after typing has begun.
+- Deliver a Note to Self file offer to each ready linked device immediately. Retry the missing copies across restarts.
+- Read versioned Hashtree keys in native attachments and invites.
+- Update the FIPS transport to 0.4.117. Malformed coordinate headers are rejected and relayed sender routes are learned only after the inner session authenticates.
+- Update the protocol library to 0.3.15 and the CLI to 0.1.61.
+
+### Apple
+
+- Keep letters in order and the cursor in place when you start typing as a chat opens on iPhone.
+- Send files to yourself on a connected device even when another linked device is offline.
+- Open attachments and invites that use the updated Hashtree format.
+
+### Zapstore
+
+- Send files to yourself on a connected device even when another linked device is offline.
+- Open attachments and invites that use the updated Hashtree format.
+
 ## v2026.11.3
 
 ### GitHub
