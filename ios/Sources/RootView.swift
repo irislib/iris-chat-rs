@@ -259,6 +259,7 @@ struct RootView: View {
             SettingsScreen(manager: manager, focusedSection: $settingsFocus)
         case .chat(let chatId):
             ChatScreen(manager: manager, chatId: chatId)
+                .id(chatId)
         case .directChatInfo(let chatId):
             DirectChatInfoScreen(
                 manager: manager,

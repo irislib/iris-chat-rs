@@ -21,6 +21,7 @@ final class IrisComposerState: ObservableObject {
     private var mentionRevisionPending = false
 
     func prepareNativeEdit(_ edit: IrisComposerNativeEdit) {
+        hasLocalEdits = true
         pendingNativeText = edit.text
         guard edit.undoManager?.isUndoing != true, edit.undoManager?.isRedoing != true else { return }
         let previous = mentions
@@ -64,11 +65,19 @@ final class IrisComposerState: ObservableObject {
     var lastTypingSentAt: Date?
     var sentTypingIndicator = false
     private(set) var attachmentGeneration = UUID()
+    private(set) var draftRevision = UUID()
+    private var chatId: String?
     private var lastPersistedText: String?
     private var pendingSave: DispatchWorkItem?
     // An empty composer can be a local edit (delete/send), not an invitation
     // to restore an older snapshot. Reset ownership only when opening a chat.
     private var hasLocalEdits = false
+
+    func restore(_ persisted: String, forChat id: String) {
+        let switchedChat = chatId != nil && chatId != id
+        chatId = id
+        restore(persisted, replaceExisting: switchedChat)
+    }
 
     func restore(_ persisted: String, replaceExisting: Bool) {
         if replaceExisting { invalidatePendingAttachments() }
@@ -83,7 +92,9 @@ final class IrisComposerState: ObservableObject {
                 return IrisMentionDraft.Span(range: range, label: mention.label,
                     token: encoded.substring(with: range), owner: mention.ownerPubkeyHex)
             }
-            text = mentions.restore(wireText: persisted, encodedSpans: spans)
+            let restored = mentions.restore(wireText: persisted, encodedSpans: spans)
+            if replaceExisting || restored != text { draftRevision = UUID() }
+            text = restored
             restoringMentions = false
             hasLocalEdits = false
         } else if wireText == persisted {
@@ -93,6 +104,7 @@ final class IrisComposerState: ObservableObject {
 
     func clearForSend(_ persist: (String) -> Void) {
         invalidatePendingAttachments()
+        draftRevision = UUID()
         hasLocalEdits = true
         text = ""
         // Cancel the old debounce immediately, before queued core updates or
