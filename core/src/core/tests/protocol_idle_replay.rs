@@ -47,7 +47,7 @@ mod protocol_idle_replay {
             completion.as_mut().now_or_never().is_none(),
             "another relay cannot acknowledge the observed subscription"
         );
-        sender.send(eose(first)).unwrap();
+        sender.send(eose(first.clone())).unwrap();
         assert!(completion.await.is_empty());
     }
 
@@ -167,12 +167,11 @@ mod protocol_idle_replay {
                 .count(),
             0
         );
-        assert!(
-            core.protocol_engine
-                .as_ref()
-                .unwrap()
-                .has_pending_retry_work()
-        );
+        assert!(core
+            .protocol_engine
+            .as_ref()
+            .unwrap()
+            .has_pending_retry_work());
         core.shutdown();
     }
 
@@ -310,16 +309,12 @@ mod protocol_idle_replay {
             .find(|(_, f)| f[0] == "REQ" && f[1] == "ndr-protocol")
             .unwrap()
             .1;
-        assert!(
-            last_request
-                .to_string()
-                .contains(&next_author.public_key().to_hex())
-        );
-        assert!(
-            !last_request
-                .to_string()
-                .contains(&author.public_key().to_hex())
-        );
+        assert!(last_request
+            .to_string()
+            .contains(&next_author.public_key().to_hex()));
+        assert!(!last_request
+            .to_string()
+            .contains(&author.public_key().to_hex()));
 
         // New live traffic still crosses the unchanged subscription after idle.
         for _ in 0..3 {
