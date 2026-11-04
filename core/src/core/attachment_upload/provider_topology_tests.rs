@@ -120,7 +120,14 @@ async fn unsolicited_identified_peers_cannot_join_anonymous_reader() {
         }
         let (requests, capture) = capture_requests(provider.clone(), false).await;
         let hash = hashtree_core::sha256(b"provider request while identified peers try to join");
-        assert_eq!(attachments.store.get(&hash).await.unwrap(), None);
+        assert!(matches!(
+            attachments
+                .provider
+                .route(hashtree_core::BlobRequest { hash, htl: 1 })
+                .await
+                .unwrap(),
+            BlobReply::NoResult,
+        ));
         assert_eq!(observed(&requests, hash).await.npub(), reader.npub());
         // Require actual failed dial attempts, rather than checking before the
         // requesters had a chance to transmit their authenticated handshakes.
