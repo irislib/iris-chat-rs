@@ -8,6 +8,10 @@
   and mDNS behavior, ICE consent, candidate comparison and cleanup, and native
   socket protection, preserving the compatible iOS dependencies.
 
+## 0.1.61
+
+- Let a linked device receive a Note to Self file offer while another device is unavailable.
+
 ## 0.1.60
 
 - Deduplicate verified public discovery events before they occupy the shared queue, while retaining recovery for events that could not be queued.
