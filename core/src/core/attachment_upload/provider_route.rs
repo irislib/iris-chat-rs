@@ -86,9 +86,12 @@ fn ordered_provider_peers(
     mut explicit: Vec<PeerIdentity>,
 ) -> Vec<PeerIdentity> {
     let mut discovered_ids = HashSet::new();
-    discovered.retain(|peer| discovered_ids.insert(*peer));
+    discovered.retain(|peer| discovered_ids.insert(peer.npub()));
     let mut explicit_ids = HashSet::new();
-    explicit.retain(|peer| !discovered_ids.contains(peer) && explicit_ids.insert(*peer));
+    explicit.retain(|peer| {
+        let npub = peer.npub();
+        !discovered_ids.contains(&npub) && explicit_ids.insert(npub)
+    });
     let mut peers = Vec::with_capacity(discovered.len() + explicit.len());
     for index in 0..discovered.len().max(explicit.len()) {
         peers.extend(discovered.get(index));
