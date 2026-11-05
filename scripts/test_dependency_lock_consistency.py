@@ -26,7 +26,7 @@ EXPECTED = {
     "nostr-pubsub-fips": "0.5.51",
     "nostr-pubsub-relay": "0.1.16",
     "nostr-pubsub-social-graph": "0.2.4",
-    "nostr-social-graph": "0.1.4",
+    "nostr-social-graph": {"0.1.4", "0.2.0"},
 }
 
 
@@ -127,7 +127,11 @@ class DependencyLockConsistencyTests(unittest.TestCase):
             with self.subTest(lock=lock_path.relative_to(ROOT)):
                 versions = package_versions(lock_path)
                 for package, expected in EXPECTED.items():
-                    self.assertEqual(versions.get(package), {expected}, f"{package} in {lock_path}")
+                    self.assertEqual(
+                        versions.get(package),
+                        {expected} if isinstance(expected, str) else expected,
+                        f"{package} in {lock_path}",
+                    )
                 self.assertIn(
                     "0.6.0",
                     versions.get("nostr-identity", set()),
@@ -156,6 +160,15 @@ class DependencyLockConsistencyTests(unittest.TestCase):
         self.assertRegex(manifest, r'(?m)^nostr-pubsub = "=0\.1\.20"$', "nostr-pubsub must stay on the gated release")
         self.assertRegex(manifest, r'(?m)^nostr-pubsub-fips = "=0\.5\.51"$', "nostr-pubsub-fips must stay on the gated release")
         self.assertRegex(manifest, r'(?m)^nostr-pubsub-relay = "=0\.1\.16"$', "nostr-pubsub-relay must stay on the gated release")
+        self.assertRegex(manifest, r'(?m)^nostr-social-graph = "=0\.2\.0"$', "Direct graph consumer needs revision-aware lists")
+        # Existing pubsub/memory consumers retain their compatible 0.1 API.
+        # The direct native consumer uses the reviewed 0.2 registry archive.
+        for lock_path in PLATFORM_LOCKS:
+            entries = [block for block in lock_path.read_text().split("[[package]]")
+                       if re.search(r'(?m)^name = "nostr-social-graph"$', block)
+                       and re.search(r'(?m)^version = "0.2.0"$', block)]
+            self.assertEqual(len(entries), 1)
+            self.assertIn('checksum = "83a7c3e6dedf8c0474c9e09938496abde4a9c77cd38ec4832d9b56ee9602b8f8"', entries[0])
 
     def test_linux_build_inherits_the_pinned_core_manifest(self):
         manifest = (ROOT / "linux" / "Cargo.toml").read_text(encoding="utf-8")
