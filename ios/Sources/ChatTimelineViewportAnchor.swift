@@ -235,8 +235,69 @@ struct ChatTimelineHistoryAnchor {
 final class ChatTimelineHistoryDiagnostics {
     static let capacity = 160
     private var entries: [String] = []
+    private var snapshots: [String: String] = [:]
     private var sequence = 0
     private let started = ProcessInfo.processInfo.systemUptime
+
+    struct Snapshot {
+        var generation = 0
+        var pageGeneration = 0
+        var panState = 0
+        var dragging = false
+        var decelerating = false
+        var offsetY: CGFloat = 0
+        var extent: CGFloat = 0
+        var originalY: CGFloat?
+        var contentY: CGFloat?
+        var anchorHeight: CGFloat?
+        var clampY: CGFloat?
+        var baseY: CGFloat?
+        var translationY: CGFloat?
+        var completedTranslationY: CGFloat?
+        var targetY: CGFloat?
+        var correctionPanY: CGFloat?
+
+        private func integer(_ value: Int) -> String {
+            let encoded = String(value)
+            return encoded.count <= 8 ? encoded : "ovf"
+        }
+
+        private func number(_ value: CGFloat?) -> String {
+            guard let value else { return "-" }
+            if value.isNaN { return "nan" }
+            if !value.isFinite { return value < 0 ? "-inf" : "inf" }
+            // Ordinary geometry retains hundredths. Exceptional magnitudes
+            // use bounded scientific notation instead of hiding later fields.
+            let locale = Locale(identifier: "en_US_POSIX")
+            for format in ["%.2f", "%.0f", "%.0e"] {
+                let encoded = String(format: format, locale: locale, Double(value))
+                if encoded.count <= 8 { return encoded }
+            }
+            return "ovf"
+        }
+
+        func encoded(_ kind: String, sequence: Int) -> String {
+            let common = [integer(sequence), integer(generation), integer(pageGeneration)]
+            let geometry = [number(offsetY), number(extent)]
+            switch kind {
+            case "C":
+                return "C[n,g,p,o,h,y,b,t]=" + (common + geometry
+                    + [number(originalY), number(baseY), number(translationY)]).joined(separator: ",")
+            case "R":
+                return "R[n,g,p,o,h,y,y2,ah]=" + (common + geometry
+                    + [number(originalY), number(contentY), number(anchorHeight)]).joined(separator: ",")
+            case "A":
+                return "A[n,g,p,o,h,y,y2,c,b,t,end,to,pan]=" + (common + geometry
+                    + [number(originalY), number(contentY), number(clampY), number(baseY),
+                       number(translationY), number(completedTranslationY), number(targetY),
+                       number(correctionPanY)]).joined(separator: ",")
+            default:
+                return "N[n,g,p,s,d,i,o,h,ah]=" + (common
+                    + [integer(panState), dragging ? "1" : "0", decelerating ? "1" : "0"]
+                    + geometry + [number(anchorHeight)]).joined(separator: ",")
+            }
+        }
+    }
 
     static func configured(environment: [String: String]) -> ChatTimelineHistoryDiagnostics? {
         guard environment["IRIS_UI_TEST_TIMELINE_TRACE"] == "1",
@@ -247,11 +308,25 @@ final class ChatTimelineHistoryDiagnostics {
 
     var text: String { entries.joined(separator: "\n") }
 
-    func record(_ event: String, fields: String) {
+    // XCTest truncates each snapshot value to 512 characters. Keep the latest
+    // correction boundaries separately from noisy offset/pan events, with the
+    // final native state first. These four numeric records are bounded below
+    // that limit even for nonfinite coordinates or overflowing counters.
+    var accessibilityText: String {
+        (["HT1"] + ["N", "C", "R", "A"].map { snapshots[$0] ?? "\($0)=-" }).joined(separator: "\n")
+    }
+
+    func record(_ event: String, fields: String, snapshot: Snapshot? = nil) {
         sequence += 1
         let elapsed = (ProcessInfo.processInfo.systemUptime - started) * 1_000
         entries.append("\(sequence) \(String(format: "%.1f", elapsed)) \(event) \(fields)")
         if entries.count > Self.capacity { entries.removeFirst(entries.count - Self.capacity) }
+        if let snapshot {
+            snapshots["N"] = snapshot.encoded("N", sequence: sequence)
+            if let kind = ["capture": "C", "restore": "R", "apply": "A"][event] {
+                snapshots[kind] = snapshot.encoded(kind, sequence: sequence)
+            }
+        }
     }
 }
 
@@ -300,7 +375,8 @@ extension ChatTimelineInteractionCoordinator {
         return historyViewportAnchor?.panPosition?.completedTranslationY
     }
 
-    func recordHistoryDiagnostic(_ event: String, extra: @autoclosure () -> String = "") {
+    func recordHistoryDiagnostic(_ event: String, targetY: CGFloat? = nil,
+                                 correctionPanY: CGFloat? = nil, extra: @autoclosure () -> String = "") {
         guard let historyDiagnostics, let scrollView else { return }
         func number(_ value: CGFloat?) -> String { value.map { String(format: "%.2f", Double($0)) } ?? "-" }
         func token(_ value: String?) -> String { value.map { String($0.hashValue, radix: 16) } ?? "-" }
@@ -312,8 +388,17 @@ extension ChatTimelineInteractionCoordinator {
             "anchor=\(token(anchor?.messageID)) y=\(number(anchor?.originalContentY))->\(number(anchor?.contentY)) " +
             "height=\(number(anchor?.contentHeight)) clamp=\(number(anchor?.clampCorrectionY)) " +
             "base=\(number(anchor?.panPosition?.offsetY)) translation=\(number(anchor?.panPosition?.translationY)) " +
-            "end=\(number(anchor?.panPosition?.completedTranslationY)) \(extra())")
-        scrollView.accessibilityValue = historyDiagnostics.text
+            "end=\(number(anchor?.panPosition?.completedTranslationY)) \(extra())",
+            snapshot: .init(generation: historyPanState.generation, pageGeneration: latestPage.layoutGeneration,
+                panState: scrollView.panGestureRecognizer.state.rawValue,
+                dragging: scrollView.isDragging, decelerating: scrollView.isDecelerating,
+                offsetY: scrollView.contentOffset.y, extent: scrollView.contentSize.height,
+                originalY: anchor?.originalContentY, contentY: anchor?.contentY,
+                anchorHeight: anchor?.contentHeight, clampY: anchor?.clampCorrectionY,
+                baseY: anchor?.panPosition?.offsetY, translationY: anchor?.panPosition?.translationY,
+                completedTranslationY: anchor?.panPosition?.completedTranslationY,
+                targetY: targetY, correctionPanY: correctionPanY))
+        scrollView.accessibilityValue = historyDiagnostics.accessibilityText
     }
 
     func captureHistoryPanPosition() -> ChatTimelineHistoryPanPosition<CGFloat>? {
@@ -423,7 +508,8 @@ extension ChatTimelineInteractionCoordinator {
             clampCorrectionY: anchor.clampCorrectionY, panPosition: panPosition,
             panGeneration: historyPanState.generation, panTranslationY: panTranslation,
             minimumOffsetY: minimum, maximumOffsetY: maximum)
-        recordHistoryDiagnostic("apply", extra: "target=\(offset) pan=\(String(describing: panTranslation))")
+        recordHistoryDiagnostic("apply", targetY: offset, correctionPanY: panTranslation,
+                                extra: "target=\(offset) pan=\(String(describing: panTranslation))")
         historyViewportAnchor = nil
         if offset.isFinite, abs(offset - scrollView.contentOffset.y) > 1 {
             UIView.performWithoutAnimation { scrollView.contentOffset.y = offset }
