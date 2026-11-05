@@ -141,7 +141,9 @@ fn relay_fetch_keeps_all_follows_and_preserves_social_order_until_root_changes()
     assert_eq!(second.cache.users.len(), owners.len());
     assert_eq!(positions(&second.cache, &owners), [1, 2, 0]);
     assert_eq!(second.cache.social_friend_support, first_social_support);
-    assert!(second.detail.contains("social_failed_chunks=1"));
+    // The retained signed head remains usable when a relay only returns a future revision.
+    assert!(second.detail.contains("social_failed_chunks=0"));
+    assert!(!second.cache.social_opinion_events.is_empty());
     store.replace_user_discovery(&second.cache).unwrap();
     assert_eq!(
         positions(&store.load_user_discovery().unwrap(), &owners),

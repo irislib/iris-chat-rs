@@ -11,7 +11,7 @@ impl AppStore {
         let mut cache = conn
             .query_row(
                 "SELECT owner_pubkey_hex, follow_event_id, follow_created_at_secs,
-                        social_rank_ready, follow_event_json, social_graph
+                        social_rank_ready, follow_event_json, social_graph, social_opinion_events_json
                  FROM user_discovery_state WHERE id = 1",
                 [],
                 |row| {
@@ -22,6 +22,8 @@ impl AppStore {
                         social_rank_ready: row.get(3)?,
                         follow_event_json: row.get(4)?,
                         social_graph: row.get(5)?,
+                        social_opinion_events: serde_json::from_str(&row.get::<_, String>(6)?)
+                            .unwrap_or_default(),
                         ..Default::default()
                     })
                 },
@@ -74,8 +76,8 @@ impl AppStore {
         tx.execute(
             "INSERT INTO user_discovery_state(
                  id, owner_pubkey_hex, follow_event_id, follow_created_at_secs,
-                 social_rank_ready, social_graph, follow_event_json
-             ) VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6)",
+                 social_rank_ready, social_graph, follow_event_json, social_opinion_events_json
+             ) VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             params![
                 cache.owner_pubkey_hex,
                 cache.follow_event_id,
@@ -83,6 +85,7 @@ impl AppStore {
                 cache.social_rank_ready,
                 cache.social_graph,
                 cache.follow_event_json,
+                serde_json::to_string(&cache.social_opinion_events)?,
             ],
         )?;
         {

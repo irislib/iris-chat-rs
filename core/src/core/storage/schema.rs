@@ -7,7 +7,7 @@ use rusqlite::{params, Connection, Transaction};
 // Bump when a non-additive change to the schema lands and migrate
 // inside `ensure_schema` below. Greenfield: version 1 is the initial
 // shape and there is no previous JSON layout to migrate from.
-const SCHEMA_VERSION: u32 = 46;
+const SCHEMA_VERSION: u32 = 47;
 
 const INITIAL_SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS direct_file_transfers (
@@ -701,6 +701,9 @@ pub(super) fn ensure_schema(conn: &mut Connection) -> anyhow::Result<()> {
     }
     if !column_exists(&tx, "preferences", "silent_mention_chat_ids_json")? {
         tx.execute_batch("ALTER TABLE preferences ADD COLUMN silent_mention_chat_ids_json TEXT NOT NULL DEFAULT '[]';")?;
+    }
+    if !column_exists(&tx, "user_discovery_state", "social_opinion_events_json")? {
+        tx.execute_batch("ALTER TABLE user_discovery_state ADD COLUMN social_opinion_events_json TEXT NOT NULL DEFAULT '[]';")?;
     }
     tx.pragma_update(None, "user_version", SCHEMA_VERSION as i64)?;
     tx.commit()?;
