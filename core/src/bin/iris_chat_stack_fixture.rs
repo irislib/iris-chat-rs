@@ -66,6 +66,12 @@ fn main() -> Result<()> {
     } else {
         stack_mesh_fixture()
     };
+    // Enable the existing local counters before announcing fixture readiness.
+    // No waits or network work are introduced by this snapshot.
+    let traffic = mesh
+        .as_ref()
+        .map(|mesh| mesh.traffic_snapshot())
+        .transpose()?;
     let runtime = tokio::runtime::Runtime::new()?;
     let mut subscription = mesh
         .as_ref()
@@ -75,6 +81,7 @@ fn main() -> Result<()> {
         "event": "ready",
         "npub": account.device_npub,
         "owner_npub": account.npub,
+        "traffic": traffic,
     }))?;
 
     for line in io::stdin().lock().lines() {

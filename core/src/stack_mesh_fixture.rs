@@ -9,6 +9,8 @@ use nostr_pubsub::{EventBus, EventSource, Filter, VerifiedEvent};
 use nostr_pubsub_fips::{FipsPubsubClient, FipsPubsubSubscription};
 use serde_json::{json, Value};
 
+mod traffic;
+
 struct RegisteredMesh {
     endpoint: Weak<FipsEndpoint>,
     client: Weak<FipsPubsubClient>,
@@ -83,10 +85,16 @@ impl StackMeshFixture {
             "pubkey": event.pubkey.to_hex(), "kind": kind, "content": event.content}))
     }
 
+    /// Enable/read fixed counters only when the process fixture opts in.
+    pub fn traffic_snapshot(&self) -> anyhow::Result<Value> {
+        traffic::snapshot(&self.endpoint, &self.client)
+    }
+
     pub async fn status(&self) -> anyhow::Result<Value> {
         let peers = self.endpoint.peers().await?;
         Ok(json!({
             "event": "status", "npub": self.endpoint.npub(),
+            "traffic": self.traffic_snapshot()?,
             "direct_peers": peers.into_iter().map(|peer| json!({
                 "npub": peer.npub, "connected": peer.connected,
                 "transport_addr": peer.transport_addr, "transport_type": peer.transport_type,
