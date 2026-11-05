@@ -190,14 +190,17 @@ async fn private_provider_discovery_wire_is_single_author_anonymous_and_fresh_on
         assert!(!serialized.contains(&keys.public_key().to_hex()));
         assert!(!serialized.contains(&keys.public_key().to_bech32().unwrap()));
     }
-    let requests = transcript
+    // The released client reserves this exact bounded public bootstrap query
+    // for every role. It has no subject; it is not an application query result.
+    let bootstrap_filter = json!({"kinds": [37195], "#d": ["fips-overlay-v1"], "limit": 1});
+    let (bootstrap, requests): (Vec<_>, Vec<_>) = transcript
         .iter()
         .filter(|(_, frame)| frame[0] == "REQ")
-        .collect::<Vec<_>>();
+        .partition(|(_, frame)| frame[2] == bootstrap_filter);
     assert_eq!(
         requests.len(),
         2,
-        "no extra author or generic discovery subscriptions"
+        "exactly one subject query on the first connection and on its retry"
     );
     let sources = requests
         .iter()
@@ -210,6 +213,18 @@ async fn private_provider_discovery_wire_is_single_author_anonymous_and_fresh_on
     );
     for keys in [&own_keys, &sibling_keys, &subject_keys] {
         assert!(!sources.contains(&keys.public_key().to_bech32().unwrap()));
+    }
+    let mut bootstrap_sources = BTreeSet::new();
+    for (source, request) in bootstrap {
+        assert_eq!(request.as_array().unwrap().len(), 3);
+        assert!(
+            sources.contains(source),
+            "bootstrap stays on the same anonymous operation"
+        );
+        assert!(
+            bootstrap_sources.insert(source),
+            "at most one bootstrap request per operation"
+        );
     }
     for (_, request) in requests {
         assert_eq!(request.as_array().unwrap().len(), 3);
@@ -265,7 +280,8 @@ async fn discovery_wire(
                         break;
                     };
                     let message = codec.decode_frame(frame).unwrap();
-                    transcript.push((source.clone(), serde_json::from_slice(frame).unwrap()));
+                    let request: Value = serde_json::from_slice(frame).unwrap();
+                    transcript.push((source.clone(), request.clone()));
                     input.drain(..4 + length);
                     match message {
                         FipsPubsubWireMessage::Req {
@@ -273,6 +289,17 @@ async fn discovery_wire(
                             filters,
                         } => {
                             assert_eq!(filters.len(), 1);
+                            assert_eq!(request.as_array().unwrap().len(), 3);
+                            if request[2]
+                                == json!({
+                                    "kinds": [37195], "#d": ["fips-overlay-v1"], "limit": 1
+                                })
+                            {
+                                // This reserved public stream has no events in
+                                // the fixture. The FIPS codec has no EOSE record;
+                                // leave it empty and await the actual subject REQ.
+                                continue;
+                            }
                             assert_eq!(
                                 filters[0],
                                 Filter::new()

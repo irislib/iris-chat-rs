@@ -10,7 +10,7 @@ fn linked_device_reconciliation_recovers_closed_anonymous_reader_without_restart
 }
 
 fn check_provider_reader_reconciliation(close_reader: bool) {
-    use fips_core::config::{PeerConfig, TransportInstances, UdpConfig};
+    use fips_core::config::{TransportInstances, UdpConfig};
     use hashtree_core::{MemoryStore, Store, StoreBlobRoute};
     use hashtree_fips_transport::{TcpBlobTransport, TcpBlobTransportConfig};
 
@@ -84,20 +84,16 @@ fn check_provider_reader_reconciliation(close_reader: bool) {
             ),
         )
         .unwrap();
-    let public_peers = vec![PeerConfig::new(
-        provider.npub(),
-        "udp",
-        core.runtime
-            .block_on(provider.bound_udp_listen_addrs())
-            .unwrap()[0]
-            .to_string(),
-    )];
     let fallback: Arc<dyn hashtree_core::BlobRoute> =
         Arc::new(StoreBlobRoute::new(Arc::new(MemoryStore::new())));
-    core.reconcile_same_host_hashtree_for_test(rendezvous, fallback.clone(), public_peers.clone());
+    // These lifecycle cases discover the provider through the real local
+    // directory, including its accepting listener hints. Explicit public-hint
+    // reads have separate coverage; mixed-path roster readiness is not proven
+    // by this fixture.
+    core.reconcile_same_host_hashtree_for_test(rendezvous, fallback.clone(), vec![]);
     let (live, _, _, blobs) = core.same_host_runtime_for_test().unwrap();
     core.runtime.block_on(async {
-        tokio::time::timeout(std::time::Duration::from_secs(8), async {
+        let readiness = tokio::time::timeout(std::time::Duration::from_secs(8), async {
             while !live
                 .local_instance_advertisements()
                 .unwrap()
@@ -112,8 +108,18 @@ fn check_provider_reader_reconciliation(close_reader: bool) {
                 tokio::time::sleep(std::time::Duration::from_millis(20)).await;
             }
         })
-        .await
-        .unwrap();
+        .await;
+        if let Err(error) = readiness {
+            let paths = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+                tokio::join!(live.peers(), provider.peers())
+            })
+            .await;
+            panic!(
+                "local provider readiness failed: {error}; live/provider peer paths={paths:?}; live directory={:?}; provider directory={:?}",
+                live.local_instance_advertisements(),
+                provider.local_instance_advertisements(),
+            );
+        }
         assert!(live.routing_status().await.unwrap().client_only);
         assert_eq!(
             blobs.update_store().get(&before_hash).await.unwrap(),
@@ -136,10 +142,10 @@ fn check_provider_reader_reconciliation(close_reader: bool) {
     // endpoint/reader lifecycle; the live FIPS endpoint must survive the update.
     core.host_ble_attached = true;
     configure_test_device_sync_profile(&mut core, &owner, &local, &new_sibling, None);
-    core.reconcile_same_host_hashtree_for_test(rendezvous, fallback.clone(), public_peers.clone());
+    core.reconcile_same_host_hashtree_for_test(rendezvous, fallback.clone(), vec![]);
     // Repeat ordinary reconciliation: matching keys must not leave a closed
     // reader permanently installed after the first policy transition.
-    core.reconcile_same_host_hashtree_for_test(rendezvous, fallback, public_peers);
+    core.reconcile_same_host_hashtree_for_test(rendezvous, fallback, vec![]);
     let (same_live, _, sibling_count, refreshed) = core.same_host_runtime_for_test().unwrap();
     assert!(
         Arc::ptr_eq(&live, &same_live),

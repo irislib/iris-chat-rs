@@ -76,6 +76,43 @@ async fn unrelated_anchor_preserves_anonymous_offline_provider_access() {
     check_local_topology(StartsFirst::Other).await;
 }
 
+// Keep the tap open until the final admission checks so a reader response
+// cannot disappear when the forwarding socket closes. Any response fails the
+// test: an outbound-only reader must reject these unsolicited handshakes.
+async fn forward_reader_join_attempts(
+    endpoint: &FipsEndpoint,
+    reader_npub: &str,
+    reader_addr: std::net::SocketAddr,
+) -> (tokio::net::UdpSocket, std::net::SocketAddr) {
+    let tap = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let source = endpoint.bound_udp_listen_addrs().await.unwrap()[0];
+    endpoint
+        .update_peers(vec![PeerConfig::new(
+            reader_npub,
+            "udp",
+            tap.local_addr().unwrap().to_string(),
+        )])
+        .await
+        .unwrap();
+    tokio::time::timeout(Duration::from_secs(8), async {
+        let mut packet = [0u8; 2048];
+        // Observe both the actual initial Noise IK msg1 and its retransmit.
+        // direct_probe_retry_count only changes after a failed connection;
+        // it does not count these packets during the 30-second handshake.
+        for _ in 0..2 {
+            let (len, from) = tap.recv_from(&mut packet).await.unwrap();
+            assert_eq!(from, source, "reader answered an unsolicited handshake");
+            assert_eq!(len, 8 + fips_core::noise::HANDSHAKE_MSG1_SIZE);
+            assert_eq!(&packet[..2], &[0x01, 0x00], "FMP Noise IK msg1");
+            assert_eq!(u16::from_le_bytes([packet[2], packet[3]]) as usize, len - 4);
+            assert_eq!(tap.send_to(&packet[..len], reader_addr).await.unwrap(), len);
+        }
+    })
+    .await
+    .expect("captured and forwarded initial and retransmitted UDP handshakes");
+    (tap, source)
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn unsolicited_identified_peers_cannot_join_anonymous_reader() {
     tokio::time::timeout(Duration::from_secs(30), async {
@@ -132,36 +169,27 @@ async fn unsolicited_identified_peers_cannot_join_anonymous_reader() {
             .parse::<std::net::SocketAddr>()
             .unwrap()
             .port();
-        for endpoint in [&live, &sibling, &unrelated] {
-            endpoint
-                .update_peers(vec![PeerConfig::new(
-                    reader.npub(),
-                    "udp",
-                    format!("127.0.0.1:{port}"),
-                )])
+        let reader_addr = format!("127.0.0.1:{port}").parse().unwrap();
+        let (live_tap, sibling_tap, unrelated_tap) = tokio::join!(
+            forward_reader_join_attempts(&live, reader.npub(), reader_addr),
+            forward_reader_join_attempts(&sibling, reader.npub(), reader_addr),
+            forward_reader_join_attempts(&unrelated, reader.npub(), reader_addr),
+        );
+        // After all three real attempts reached the reader's socket, require a
+        // new provider request to prove the anonymous reader remains usable.
+        let after_hash = hashtree_core::sha256(b"provider request after unsolicited handshakes");
+        assert!(matches!(
+            attachments
+                .provider
+                .route(hashtree_core::BlobRequest {
+                    hash: after_hash,
+                    htl: 1,
+                })
                 .await
-                .unwrap();
-        }
-        // Require actual failed dial attempts, rather than checking before the
-        // requesters had a chance to transmit their authenticated handshakes.
-        tokio::time::timeout(Duration::from_secs(8), async {
-            for endpoint in [&live, &sibling, &unrelated] {
-                loop {
-                    if endpoint
-                        .peers()
-                        .await
-                        .unwrap()
-                        .iter()
-                        .any(|peer| peer.npub == reader.npub() && peer.direct_probe_retry_count > 0)
-                    {
-                        break;
-                    }
-                    tokio::time::sleep(Duration::from_millis(25)).await;
-                }
-            }
-        })
-        .await
-        .expect("identified peers attempted their UDP handshakes");
+                .unwrap(),
+            BlobReply::NoResult,
+        ));
+        assert_eq!(observed(&requests, after_hash).await.npub(), reader.npub());
         assert!(
             reader
                 .peers()
@@ -172,6 +200,26 @@ async fn unsolicited_identified_peers_cannot_join_anonymous_reader() {
                 .all(|peer| peer.npub == provider.npub()),
             "only approved public peers may authenticate to the reader"
         );
+        for endpoint in [&live, &sibling, &unrelated] {
+            assert!(endpoint
+                .peers()
+                .await
+                .unwrap()
+                .iter()
+                .all(|peer| !peer.connected || peer.npub != reader.npub()));
+        }
+        for (tap, source) in [live_tap, sibling_tap, unrelated_tap] {
+            let mut packet = [0u8; 2048];
+            loop {
+                match tap.try_recv_from(&mut packet) {
+                    Ok((_, from)) => {
+                        assert_eq!(from, source, "reader answered an unsolicited handshake");
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => break,
+                    Err(error) => panic!("UDP admission tap failed: {error}"),
+                }
+            }
+        }
         attachments.shutdown_reads().await;
         capture.abort();
         let _ = capture.await;
