@@ -69,17 +69,15 @@ pub(super) fn update_people_graph(
                     created_at: event.created_at.as_secs(),
                     tags,
                     content: String::new(),
-                    // A projection must never advertise the complete signed event as present.
-                    id: if incomplete {
-                        String::new()
-                    } else {
-                        event.id.to_hex()
-                    },
+                    id: event.id.to_hex(),
                     sig: String::new(),
                 },
                 true,
                 1.0,
             );
+            if incomplete {
+                graph.mark_list_incomplete(&event.pubkey.to_hex(), kind.as_u16().into());
+            }
         }
     }
     graph.to_binary().ok()
@@ -154,5 +152,38 @@ mod tests {
         )
         .unwrap();
         assert!(!read(&unmuted));
+    }
+
+    #[test]
+    fn projected_head_keeps_its_id_but_is_not_advertised_complete() {
+        let root = Keys::generate();
+        let friend = Keys::generate();
+        let targets = (0..1001)
+            .map(|_| Keys::generate().public_key())
+            .collect::<Vec<_>>();
+        let root_head = event(&root, Kind::ContactList, 1, &[friend.public_key()]);
+        let friend_head = event(&friend, Kind::ContactList, 2, &targets);
+        let bytes = update_people_graph(
+            root.public_key(),
+            Some(&root_head),
+            &[friend.public_key()],
+            &[friend_head.clone()],
+            Vec::new(),
+            None,
+            100,
+        )
+        .unwrap();
+        let graph = SocialGraph::from_binary(&root.public_key().to_hex(), &bytes).unwrap();
+        let revision = graph
+            .get_list_revision(&friend.public_key().to_hex(), 3)
+            .unwrap();
+        assert_eq!(revision.id, friend_head.id.to_hex());
+        assert!(!revision.complete);
+        assert_eq!(
+            graph
+                .get_followed_by_user(&friend.public_key().to_hex())
+                .len(),
+            1000
+        );
     }
 }
