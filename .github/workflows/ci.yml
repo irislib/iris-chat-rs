@@ -106,7 +106,7 @@ on:
         description: Checks to run; retain exact source-bound coverage for unchanged components
         type: choice
         default: all
-        options: [all, cli, core, protocol, android, windows, windows-keyboard, windows-restore, apple, apple-codec, ios, ios-unit, macos, linux, apple-products, ios-products, macos-products, ios-ui-runner, macos-ui-runner, rust-focused, rust-package]
+        options: [all, cli, core, protocol, android, windows, windows-keyboard, windows-restore, apple, apple-codec, ios, ios-unit, ios-pagination, macos, linux, apple-products, ios-products, macos-products, ios-ui-runner, macos-ui-runner, rust-focused, rust-package]
       ios_core_seed_run:
         description: Optional exact successful core build/cache producer for Swift-only unit validation
         type: string
@@ -875,7 +875,7 @@ jobs:
           retention-days: 14
 
   ios:
-    if: ${{ inputs.scope == '' || inputs.scope == 'all' || inputs.scope == 'apple' || inputs.scope == 'ios' || inputs.scope == 'ios-unit' }}
+    if: ${{ inputs.scope == '' || inputs.scope == 'all' || inputs.scope == 'apple' || inputs.scope == 'ios' || inputs.scope == 'ios-unit' || (github.event_name == 'workflow_dispatch' && inputs.scope == 'ios-pagination') }}
     name: iOS simulator build and composer tests
     runs-on: macos-15
     timeout-minutes: 75
@@ -916,6 +916,7 @@ jobs:
         id: ios-build
         env:
           GH_TOKEN: ${{ github.token }}
+          IOS_VALIDATION_SCOPE: ${{ inputs.scope }}
           IOS_CORE_SEED_RUN: ${{ inputs.ios_core_seed_run }}
           IOS_CORE_CACHE_HIT: ${{ steps.ios_cargo_cache.outputs.cache-hit }}
           IOS_CORE_CACHE_KEY: ${{ steps.ios_cargo_cache.outputs.cache-primary-key }}
@@ -929,6 +930,12 @@ jobs:
             IRIS_IOS_NOTIFICATION_DEBUG_SIGNING_STYLE=Automatic \
               IRIS_IOS_NOTIFICATION_DEBUG_PROFILE_SPECIFIER= \
               sh -c 'cd ios && xcodegen generate --spec project.yml'
+            xcodebuild -project ios/IrisChat.xcodeproj -scheme IrisChat \
+              -destination "$(./scripts/ios-simulator-destination)" -jobs 2 build
+          elif [[ "$IOS_VALIDATION_SCOPE" == ios-pagination ]]; then
+            CARGO_BUILD_JOBS=2 IRIS_IOS_RUST_TARGETS=aarch64-apple-ios-sim \
+              ./scripts/ios-build ios-xcframework
+            ./scripts/ios-build ios-xcodeproj
             xcodebuild -project ios/IrisChat.xcodeproj -scheme IrisChat \
               -destination "$(./scripts/ios-simulator-destination)" -jobs 2 build
           else
@@ -946,7 +953,7 @@ jobs:
           key: ${{ steps.ios_cargo_cache.outputs.cache-primary-key }}
 
       - name: iOS device linking progress test
-        if: inputs.scope != 'ios-unit'
+        if: inputs.scope != 'ios-unit' && inputs.scope != 'ios-pagination'
         run: |
           mkdir -p work/clipboard
           xcodebuild -project ios/IrisChat.xcodeproj -scheme IrisChat \
@@ -956,7 +963,7 @@ jobs:
             -resultBundlePath work/clipboard/ios-device-link.xcresult test
 
       - name: iOS native composer, clipboard, and timeline tests
-        if: ${{ !cancelled() && steps.ios-build.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.ios-build.outcome == 'success' && inputs.scope != 'ios-pagination' }}
         env:
           IOS_VALIDATION_SCOPE: ${{ inputs.scope }}
           IOS_CORE_SEED_RUN: ${{ inputs.ios_core_seed_run }}
@@ -979,6 +986,17 @@ jobs:
             -parallel-testing-enabled NO \
             "${selectors[@]}" \
             -resultBundlePath work/clipboard/ios.xcresult test
+
+      - name: iOS pagination diagnostics
+        if: ${{ !cancelled() && steps.ios-build.outcome == 'success' && inputs.scope == 'ios-pagination' }}
+        run: |
+          mkdir -p work/clipboard
+          xcodebuild -project ios/IrisChat.xcodeproj -scheme IrisChat \
+            -destination "$(./scripts/ios-simulator-destination)" \
+            -parallel-testing-enabled NO -jobs 2 \
+            -only-testing:IrisChatTests/ChatTimelineHistoryDiagnosticsTests \
+            -only-testing:IrisChatUITests/ChatPaginationUITests/testMixedHeightHistoryPrependPreservesVisibleMessage \
+            -resultBundlePath work/clipboard/ios-pagination.xcresult test
 
       - name: Upload iOS test results
         if: always()

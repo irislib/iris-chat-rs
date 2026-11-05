@@ -138,7 +138,7 @@ class MainReleaseCacheTests(unittest.TestCase):
         workflow = (ROOT / '.github/workflows/ci.yml').read_text().split('\njobs:\n', 1)[1]
         selected = []
         for name, expression in re.findall(r'^  ([\w-]+):\n    if: \$\{\{ (.+) \}\}', workflow, re.MULTILINE):
-            if evaluate(expression, {'inputs.scope': 'core'}):
+            if evaluate(expression, {'inputs.scope': 'core', 'github.event_name': 'workflow_dispatch'}):
                 selected.append(name)
         self.assertEqual(selected, ['rust'])
 
