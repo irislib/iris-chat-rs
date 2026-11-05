@@ -45,7 +45,7 @@ fn relay_people_graph_fetches_mutes_and_restores_them_offline() {
             .unwrap();
         client.send_event(&muted).await.unwrap();
         let result = fetch_user_discovery(
-            client.clone(),
+            Arc::new(DiscoveryRelays::default()),
             relay_urls,
             owner.public_key(),
             UserDiscoveryCache::default(),
@@ -98,7 +98,7 @@ fn relay_fetch_keeps_all_follows_and_preserves_social_order_until_root_changes()
         publisher.send_event(&root_follow).await.unwrap();
         publisher.send_event(&alice_follows_carol).await.unwrap();
         fetch_user_discovery(
-            discovery_client.clone(),
+            Arc::new(DiscoveryRelays::default()),
             relay_urls.clone(),
             root.public_key(),
             UserDiscoveryCache::default(),
@@ -130,7 +130,7 @@ fn relay_fetch_keeps_all_follows_and_preserves_social_order_until_root_changes()
         );
         publisher.send_event(&future).await.unwrap();
         let result = fetch_user_discovery(
-            discovery_client.clone(),
+            Arc::new(DiscoveryRelays::default()),
             relay_urls.clone(),
             root.public_key(),
             first.cache,
@@ -168,7 +168,7 @@ fn relay_fetch_keeps_all_follows_and_preserves_social_order_until_root_changes()
         publisher.send_event(&changed_root).await.unwrap();
         publisher.send_event(&future).await.unwrap();
         let result = fetch_user_discovery(
-            discovery_client.clone(),
+            Arc::new(DiscoveryRelays::default()),
             relay_urls,
             root.public_key(),
             second.cache,
@@ -223,7 +223,7 @@ fn local_relay_ignores_future_root_and_preserves_metadata_and_unfollow() {
         publisher.send_event(&follow).await.unwrap();
         publisher.send_event(&metadata).await.unwrap();
         fetch_user_discovery(
-            discovery_client.clone(),
+            Arc::new(DiscoveryRelays::default()),
             relay_urls.clone(),
             local_owner.public_key(),
             UserDiscoveryCache::default(),
@@ -254,7 +254,7 @@ fn local_relay_ignores_future_root_and_preserves_metadata_and_unfollow() {
     let second = runtime.block_on(async {
         publisher.send_event(&future).await.unwrap();
         fetch_user_discovery(
-            discovery_client.clone(),
+            Arc::new(DiscoveryRelays::default()),
             relay_urls.clone(),
             local_owner.public_key(),
             poisoned,
@@ -272,7 +272,7 @@ fn local_relay_ignores_future_root_and_preserves_metadata_and_unfollow() {
     let third = runtime.block_on(async {
         publisher.send_event(&unfollow).await.unwrap();
         let result = fetch_user_discovery(
-            discovery_client.clone(),
+            Arc::new(DiscoveryRelays::default()),
             relay_urls,
             local_owner.public_key(),
             second.cache,
@@ -284,4 +284,24 @@ fn local_relay_ignores_future_root_and_preserves_metadata_and_unfollow() {
     });
     assert!(third.cache.users.is_empty());
     assert_eq!(third.cache.follow_event_id, Some(unfollow.id.to_hex()));
+}
+
+#[test]
+fn opinion_cache_filters_future_mutes_before_replacement_and_keeps_valid_head() {
+    let owner = Keys::generate();
+    let valid = EventBuilder::new(Kind::MuteList, "valid")
+        .custom_created_at(Timestamp::from(100))
+        .sign_with_keys(&owner)
+        .unwrap();
+    let future = EventBuilder::new(Kind::MuteList, "future")
+        .custom_created_at(Timestamp::from(
+            unix_now().get() + CLEARLY_FUTURE_OFFSET_SECS,
+        ))
+        .sign_with_keys(&owner)
+        .unwrap();
+    let records = encode_opinion_cache(
+        [valid.clone(), future].into_iter(),
+        &HashSet::from([owner.public_key()]),
+    );
+    assert_eq!(decode_opinion_cache(&records), vec![valid]);
 }

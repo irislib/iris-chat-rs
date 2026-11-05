@@ -2605,6 +2605,7 @@ dependencies = [
  "interprocess",
  "iris-chat-protocol",
  "libc",
+ "negentropy",
  "nokhwa",
  "nostr",
  "nostr-double-ratchet",

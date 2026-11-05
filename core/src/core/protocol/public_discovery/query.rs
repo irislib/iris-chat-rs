@@ -9,8 +9,18 @@ const MAX_RESULT_EVENTS: usize = 16_384;
 
 pub(super) fn client_options() -> ClientOptions {
     let mut limits = RelayLimits::default();
-    limits.messages.max_size = Some(MAX_FRAME_BYTES);
+    limits.messages.max_size = Some(super::transport::MAX_MESSAGE_BYTES as u32);
     limits.events.max_size = Some(MAX_FRAME_BYTES);
+    for kind in [Kind::ContactList, Kind::MuteList] {
+        limits
+            .events
+            .max_size_per_kind
+            .insert(kind, Some(super::transport::MAX_GRAPH_EVENT_BYTES as u32));
+        limits
+            .events
+            .max_num_tags_per_kind
+            .insert(kind, Some(10_000));
+    }
     ClientOptions::default()
         .relay_limits(limits)
         .verify_subscriptions(true)
@@ -58,6 +68,31 @@ pub(super) async fn fetch(
         .acquire()
         .await
         .map_err(|error| QueryFailure::Transport(error.to_string()))?;
+    fetch_admitted(pool, client, urls, filters, timeout, None)
+        .await
+        .map(|result| result.events)
+}
+
+pub(super) struct QueryResult {
+    pub(super) events: Vec<Event>,
+    pub(super) complete: bool,
+}
+
+pub(super) struct GraphQuery<'a> {
+    pub(super) budget: &'a super::graph::GraphBudget,
+    pub(super) max_events: usize,
+}
+
+// The caller owns the shared query permit. Graph reconciliation keeps that same
+// permit from NEG-OPEN through its bounded missing-event download.
+pub(super) async fn fetch_admitted(
+    pool: &DiscoveryRelays,
+    client: &Client,
+    urls: &[RelayUrl],
+    filters: Vec<Filter>,
+    timeout: Duration,
+    graph: Option<GraphQuery<'_>>,
+) -> Result<QueryResult, QueryFailure> {
     if pool.stopped.load(Ordering::Acquire) {
         return Err(QueryFailure::Transport("public discovery stopped".into()));
     }
@@ -74,9 +109,16 @@ pub(super) async fn fetch(
         })
         .collect::<Vec<_>>();
     if filters.is_empty() || urls.is_empty() {
-        return Ok(Vec::new());
+        return Ok(QueryResult {
+            events: Vec::new(),
+            complete: true,
+        });
+    }
+    if let Some(graph) = &graph {
+        graph.budget.check()?;
     }
     let result = std::sync::Mutex::new(Collection::default());
+    let graph = graph.as_ref();
     let queries = urls.iter().map(|url| {
         let result = &result;
         let filters = &filters;
@@ -86,6 +128,14 @@ pub(super) async fn fetch(
                     .relay(url.clone())
                     .await
                     .map_err(|error| QueryFailure::Transport(error.to_string()))?;
+                if graph.is_some() {
+                    relay.wait_for_connection(timeout).await;
+                    if !matches!(relay.status(), nostr_sdk::RelayStatus::Connected) {
+                        return Err(QueryFailure::Transport(
+                            "graph relay did not connect".into(),
+                        ));
+                    }
+                }
                 let mut notifications = relay.notifications();
                 let subscription = QuerySubscription {
                     relay,
@@ -100,12 +150,20 @@ pub(super) async fn fetch(
                     )
                     .await
                     .map_err(|error| QueryFailure::Transport(error.to_string()))?;
+                let mut budget_poll = tokio::time::interval(Duration::from_millis(50));
                 loop {
-                    match notifications
-                        .recv()
-                        .await
-                        .map_err(|error| QueryFailure::Transport(error.to_string()))?
-                    {
+                    if let Some(graph) = graph {
+                        graph.budget.check()?;
+                    }
+                    let notification = tokio::select! {
+                        notification = notifications.recv() => notification
+                            .map_err(|error| QueryFailure::Transport(error.to_string()))?,
+                        _ = budget_poll.tick(), if graph.is_some() => { continue; }
+                    };
+                    if let Some(graph) = graph {
+                        graph.budget.check()?;
+                    }
+                    match notification {
                         RelayNotification::Message { message } => match message {
                             RelayMessage::Event {
                                 subscription_id,
@@ -125,7 +183,13 @@ pub(super) async fn fetch(
                                                 "discovery collection unavailable".into(),
                                             )
                                         })?
-                                        .insert(event)?;
+                                        .insert_bounded(
+                                            event,
+                                            graph.map_or(MAX_RESULT_EVENTS, |graph| {
+                                                graph.max_events
+                                            }),
+                                            graph.is_some(),
+                                        )?;
                                 }
                             }
                             RelayMessage::EndOfStoredEvents(id)
@@ -162,14 +226,17 @@ pub(super) async fn fetch(
         }
     });
     let completed = match tokio::time::timeout(timeout, try_join_all(queries)).await {
-        Ok(Ok(completed)) => completed.into_iter().any(|completed| completed),
+        Ok(Ok(completed)) => (
+            completed.iter().any(|completed| *completed),
+            completed.iter().all(|completed| *completed),
+        ),
         Ok(Err(error)) => return Err(error),
-        Err(_) => false,
+        Err(_) => (false, false),
     };
     let mut result = result
         .into_inner()
         .map_err(|_| QueryFailure::Transport("discovery collection unavailable".into()))?;
-    if !completed && result.events.is_empty() {
+    if !completed.0 && result.events.is_empty() {
         return Err(QueryFailure::Transport(
             "no relay completed discovery".into(),
         ));
@@ -180,7 +247,13 @@ pub(super) async fn fetch(
             .cmp(&left.created_at)
             .then_with(|| left.id.cmp(&right.id))
     });
-    Ok(result.events)
+    if let Some(graph) = graph {
+        graph.budget.check()?;
+    }
+    Ok(QueryResult {
+        events: result.events,
+        complete: completed.1,
+    })
 }
 
 // Construct before the first subscription await: cancellation during setup,
@@ -211,35 +284,58 @@ struct Collection {
 // repeat that crypto here. Bound metadata acceptance before retaining it, using
 // a counting writer so checking a large event does not allocate another copy.
 fn metadata_size(event: &Event) -> Option<usize> {
-    struct Size(usize);
+    event_size(event, MAX_FRAME_BYTES as usize)
+}
+
+fn event_size(event: &Event, max_bytes: usize) -> Option<usize> {
+    struct Size {
+        bytes: usize,
+        max: usize,
+    }
     impl std::io::Write for Size {
         fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-            if bytes.len() > MAX_FRAME_BYTES as usize - self.0 {
+            if bytes.len() > self.max - self.bytes {
                 return Err(std::io::Error::other("metadata size limit"));
             }
-            self.0 += bytes.len();
+            self.bytes += bytes.len();
             Ok(bytes.len())
         }
         fn flush(&mut self) -> std::io::Result<()> {
             Ok(())
         }
     }
-    let mut size = Size(0);
+    let mut size = Size {
+        bytes: 0,
+        max: max_bytes,
+    };
     serde_json::to_writer(&mut size, event).ok()?;
-    Some(size.0)
+    Some(size.bytes)
 }
 
 impl Collection {
+    #[cfg(test)]
     fn insert(&mut self, event: Event) -> Result<(), QueryFailure> {
+        self.insert_bounded(event, MAX_RESULT_EVENTS, false)
+    }
+
+    fn insert_bounded(
+        &mut self,
+        event: Event,
+        max_events: usize,
+        graph: bool,
+    ) -> Result<(), QueryFailure> {
         if self.ids.contains(&event.id) {
             return Ok(());
         }
-        let Some(size) = metadata_size(&event) else {
+        let size = if graph && matches!(event.kind.as_u16(), 3 | 10000) {
+            event_size(&event, super::transport::MAX_GRAPH_EVENT_BYTES)
+        } else {
+            metadata_size(&event)
+        };
+        let Some(size) = size else {
             return Ok(());
         };
-        if self.bytes.saturating_add(size) > MAX_RESULT_BYTES
-            || self.events.len() >= MAX_RESULT_EVENTS
-        {
+        if self.bytes.saturating_add(size) > MAX_RESULT_BYTES || self.events.len() >= max_events {
             return Err(QueryFailure::Limit);
         }
         self.bytes += size;

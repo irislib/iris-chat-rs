@@ -3079,6 +3079,7 @@ version = "0.1.63"
 dependencies = [
  "anyhow",
  "async-trait",
+ "async-wsocket",
  "base64 0.22.1",
  "clap",
  "cpal",
@@ -3098,6 +3099,7 @@ dependencies = [
  "interprocess",
  "iris-chat-protocol",
  "libc",
+ "negentropy",
  "nokhwa",
  "nostr",
  "nostr-double-ratchet",

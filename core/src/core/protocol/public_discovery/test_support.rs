@@ -1,91 +1,19 @@
 //! Real TLS/serialized Nostr fixture. Trust is local to the test pool; production
 //! certificate verification and transport options are unchanged.
 use super::*;
-use futures_util::{SinkExt, StreamExt, TryStreamExt};
-use nostr_sdk::pool::transport::{
-    error::TransportError,
-    websocket::{WebSocketSink, WebSocketStream, WebSocketTransport},
-};
+use futures_util::{SinkExt, StreamExt};
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
     Mutex,
 };
-use tokio_tungstenite::{tungstenite::Message, Connector};
-
-#[derive(Debug)]
-struct TestTransport;
-impl WebSocketTransport for TestTransport {
-    fn support_ping(&self) -> bool {
-        true
-    }
-    fn connect<'a>(
-        &'a self,
-        url: &'a nostr::Url,
-        _mode: &'a nostr_sdk::pool::ConnectionMode,
-        timeout: Duration,
-    ) -> nostr::util::BoxedFuture<'a, Result<(WebSocketSink, WebSocketStream), TransportError>>
-    {
-        Box::pin(async move {
-            assert_eq!(
-                url.host_str(),
-                Some("127.0.0.1"),
-                "fixture must remain local"
-            );
-            let config = rustls::ClientConfig::builder()
-                .with_root_certificates(super::super::anonymous_reads::tls_tests::roots())
-                .with_no_client_auth();
-            let (socket, _) = tokio::time::timeout(
-                timeout,
-                tokio_tungstenite::connect_async_tls_with_config(
-                    url.as_str(),
-                    None,
-                    false,
-                    Some(Connector::Rustls(Arc::new(config))),
-                ),
-            )
-            .await
-            .map_err(TransportError::backend)?
-            .map_err(TransportError::backend)?;
-            let (send, receive) = socket.split();
-            let sink: WebSocketSink = Box::new(send.sink_map_err(TransportError::backend).with(
-                |message: async_wsocket::Message| {
-                    futures_util::future::ready(Ok::<_, TransportError>(match message {
-                        async_wsocket::Message::Text(value) => Message::Text(value),
-                        async_wsocket::Message::Binary(value) => Message::Binary(value),
-                        async_wsocket::Message::Ping(value) => Message::Ping(value),
-                        async_wsocket::Message::Pong(value) => Message::Pong(value),
-                        async_wsocket::Message::Close(_) => Message::Close(None),
-                    }))
-                },
-            ));
-            let stream: WebSocketStream = Box::pin(
-                receive
-                    .map_ok(|message| match message {
-                        Message::Text(value) => async_wsocket::Message::Text(value),
-                        Message::Binary(value) => async_wsocket::Message::Binary(value),
-                        Message::Ping(value) => async_wsocket::Message::Ping(value),
-                        Message::Pong(value) => async_wsocket::Message::Pong(value),
-                        Message::Close(_) => async_wsocket::Message::Close(None),
-                        Message::Frame(_) => panic!("raw frames cannot be received"),
-                    })
-                    .map_err(TransportError::backend),
-            );
-            Ok((sink, stream))
-        })
-    }
-}
+use tokio_tungstenite::tungstenite::Message;
 
 pub(in crate::core) fn pool() -> Arc<DiscoveryRelays> {
-    Arc::new(DiscoveryRelays {
-        client: Client::builder()
-            .signer(Keys::generate())
-            .websocket_transport(TestTransport)
-            .opts(client_options())
-            .build(),
-        users: Default::default(),
-        stopped: AtomicBool::new(false),
-        queries: tokio::sync::Semaphore::new(1),
-    })
+    Arc::new(DiscoveryRelays::with_transport(
+        super::transport::DiscoveryTransport::trusted_test_roots(
+            super::super::anonymous_reads::tls_tests::roots(),
+        ),
+    ))
 }
 
 #[derive(Clone)]

@@ -49,6 +49,8 @@ openh264-sys2 = { version = "=0.9.9", optional = true }
 openh264 = { version = "=0.9.9", optional = true }
 image = { version = "0.25", default-features = false, optional = true }
 async-trait = "0.1"
+# Existing SDK transport message types; keep the resolved SDK version.
+async-wsocket = "=0.13.2"
 base64 = "0.22"
 clap = { version = "4", features = ["derive", "env"] }
 futures-util = "0.3"
@@ -75,6 +77,7 @@ nostr-pubsub-reconcile = "=0.1.1"
 nostr-pubsub-fips = "=0.5.51"
 nostr-pubsub-relay = "=0.1.16"
 nostr-social-graph = "=0.2.0"
+negentropy = "=0.5.2"
 nostr-identity = "=0.6.0"
 nostr-double-ratchet = "0.0.176"
 nostr-double-ratchet-pairwise-codec = "0.0.168"
@@ -100,8 +103,6 @@ webpki-roots = "0.26"
 interprocess = { version = "2.4.4", default-features = false }
 
 [dev-dependencies]
-# Existing SDK transport types, used only by the real TLS discovery fixture.
-async-wsocket = "=0.13.2"
 tempfile = "3"
 tokio-rustls = { version = "0.26", default-features = false }
 
