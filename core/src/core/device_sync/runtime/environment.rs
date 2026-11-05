@@ -1,5 +1,14 @@
 use super::*;
 
+pub(super) fn fips_client_config() -> Config {
+    let mut config = Config::new();
+    // Never export live contact ancestry to public seeds.
+    config.node.strict_client_only = true;
+    config.node.routing.mode = fips_core::config::RoutingMode::ReplyLearned;
+    config.node.control.enabled = false;
+    config
+}
+
 pub(super) fn configure_fips_lan(config: &mut Config, enabled: bool) {
     config.node.discovery.lan.enabled = enabled;
     config.transports.udp = if enabled {

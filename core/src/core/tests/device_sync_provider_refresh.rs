@@ -1,5 +1,15 @@
 #[test]
 fn linked_device_reconciliation_preserves_anonymous_provider_reads_with_live_host_bridge() {
+    check_provider_reader_reconciliation(false);
+}
+
+#[test]
+fn linked_device_reconciliation_recovers_closed_anonymous_reader_without_restarting_live_endpoint()
+{
+    check_provider_reader_reconciliation(true);
+}
+
+fn check_provider_reader_reconciliation(close_reader: bool) {
     use fips_core::config::{PeerConfig, TransportInstances, UdpConfig};
     use hashtree_core::{MemoryStore, Store, StoreBlobRoute};
     use hashtree_fips_transport::{TcpBlobTransport, TcpBlobTransportConfig};
@@ -16,7 +26,9 @@ fn linked_device_reconciliation_preserves_anonymous_provider_reads_with_live_hos
         unreachable!("IPv4 fixture")
     };
     drop(reservation);
+    core.test_fips_rendezvous_addr = Some(rendezvous);
     let mut config = fips_core::Config::new();
+    config.node.routing.mode = fips_core::config::RoutingMode::ReplyLearned;
     config.node.control.enabled = false;
     config.node.discovery.lan.enabled = false;
     config.node.discovery.nostr.enabled = false;
@@ -41,13 +53,18 @@ fn linked_device_reconciliation_preserves_anonymous_provider_reads_with_live_hos
     let provider_cache = Arc::new(MemoryStore::new());
     let before = b"provider block before linking".to_vec();
     let after = b"uncached provider block after linking".to_vec();
+    let recovered = b"uncached provider block after reader-only failure".to_vec();
     let before_hash = hashtree_core::sha256(&before);
     let after_hash = hashtree_core::sha256(&after);
+    let recovered_hash = hashtree_core::sha256(&recovered);
     core.runtime
         .block_on(provider_cache.put(before_hash, before.clone()))
         .unwrap();
     core.runtime
         .block_on(provider_cache.put(after_hash, after.clone()))
+        .unwrap();
+    core.runtime
+        .block_on(provider_cache.put(recovered_hash, recovered.clone()))
         .unwrap();
     let requesters = Arc::new(std::sync::Mutex::new(Vec::new()));
     let captured = requesters.clone();
@@ -97,6 +114,7 @@ fn linked_device_reconciliation_preserves_anonymous_provider_reads_with_live_hos
         })
         .await
         .unwrap();
+        assert!(live.routing_status().await.unwrap().client_only);
         assert_eq!(
             blobs.update_store().get(&before_hash).await.unwrap(),
             Some(before)
@@ -107,6 +125,11 @@ fn linked_device_reconciliation_preserves_anonymous_provider_reads_with_live_hos
         requesters.lock().unwrap().last().unwrap().npub(),
         initial_reader.npub()
     );
+    if close_reader {
+        // Exercise a real failed admission barrier, not a mock recovery flag.
+        // The live app endpoint, host bridge and cache remain operational.
+        core.runtime.block_on(initial_reader.shutdown()).unwrap();
+    }
 
     // Exercise the production in-place branch used by a single-use host BLE
     // bridge. This fixture needs no physical radio or bridge I/O to prove its
@@ -124,8 +147,18 @@ fn linked_device_reconciliation_preserves_anonymous_provider_reads_with_live_hos
     );
     assert_eq!(sibling_count, 1);
     let current_reader = refreshed.provider_read_endpoint_for_test();
+    if close_reader {
+        assert!(!Arc::ptr_eq(&initial_reader, &current_reader));
+        assert_ne!(initial_reader.npub(), current_reader.npub());
+    } else {
+        assert!(
+            Arc::ptr_eq(&initial_reader, &current_reader),
+            "the admission barrier preserves the healthy reader"
+        );
+    }
     core.runtime.block_on(async {
         assert!(!same_live.is_stopped().await);
+        assert!(same_live.routing_status().await.unwrap().client_only);
         let result = tokio::time::timeout(
             std::time::Duration::from_secs(12),
             refreshed.update_store().get(&after_hash),
@@ -145,6 +178,48 @@ fn linked_device_reconciliation_preserves_anonymous_provider_reads_with_live_hos
         same_live.npub(),
         "recovery must stay anonymous"
     );
+    if close_reader {
+        // A second real endpoint failure has no roster change to trigger a
+        // reconciliation. An ordinary request must repair only its reader.
+        core.runtime.block_on(current_reader.shutdown()).unwrap();
+        core.runtime.block_on(async {
+            assert_eq!(
+                tokio::time::timeout(
+                    std::time::Duration::from_secs(12),
+                    refreshed.update_store().get(&recovered_hash),
+                )
+                .await
+                .unwrap()
+                .unwrap(),
+                Some(recovered),
+            );
+        });
+        let request_reader = refreshed.provider_read_endpoint_for_test();
+        assert_ne!(current_reader.npub(), request_reader.npub());
+        assert_eq!(
+            requesters.lock().unwrap().last().unwrap().npub(),
+            request_reader.npub(),
+        );
+        let (retained_live, _, _, _) = core.same_host_runtime_for_test().unwrap();
+        assert!(Arc::ptr_eq(&same_live, &retained_live));
+        core.runtime.block_on(async {
+            assert!(!retained_live.is_stopped().await);
+            // The provider knows the hashes it served. Neither the identified
+            // cache nor the replacement client may answer its active probes.
+            for target in [retained_live.npub(), request_reader.npub()] {
+                assert!(tokio::time::timeout(
+                    std::time::Duration::from_secs(8),
+                    serving.fetch_from_peer(
+                        &recovered_hash,
+                        fips_core::PeerIdentity::from_npub(target).unwrap(),
+                    ),
+                )
+                .await
+                .expect("bounded cache probe")
+                .is_err());
+            }
+        });
+    }
     core.host_ble_attached = false;
     core.stop_device_sync_now();
     core.runtime.block_on(serving.shutdown()).unwrap();

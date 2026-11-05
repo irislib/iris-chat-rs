@@ -284,6 +284,7 @@ impl AppCore {
                     .filter_map(|url| RelayUrl::parse(url).ok())
                     .collect(),
             )
+            .with_excluded_peers(&config.local_npub, &config.siblings)
             .with_relay_pool(self.discovery_relays.clone())
             .with_device_sync_authors(
                 config
@@ -403,7 +404,8 @@ impl AppCore {
                     }
                 }
                 if let Some(blobs) = &runtime._attachment_blobs {
-                    self.runtime
+                    let _ = self
+                        .runtime
                         .block_on(blobs.set_peers(config.peers.clone(), config.siblings.clone()));
                 }
                 if let Ok(mut payloads) = runtime.nearby_bootstrap_payloads.write() {
@@ -484,8 +486,7 @@ impl AppCore {
             }
         }
 
-        let mut fips_config = Config::new();
-        fips_config.node.control.enabled = false;
+        let mut fips_config = fips_client_config();
         fips_config.peers = peer_config;
         let webrtc_enabled = super::settings::webrtc_enabled(
             device_sync_enabled || config.nearby_ip_enabled || !config.peers.is_empty(),

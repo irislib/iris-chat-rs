@@ -49,13 +49,12 @@ pub(super) struct AttachmentBlobRuntime {
     reads: Arc<provider_reads::ProviderReads>,
     provider: Arc<provider_route::ProviderRoute>,
     siblings: Arc<FipsBlobRoute<AttachmentChunkStore>>,
-    allowed_siblings: Arc<RwLock<Vec<fips_core::PeerIdentity>>>,
 }
 
 impl AttachmentBlobRuntime {
     #[cfg(test)]
     pub(in crate::core) fn provider_read_endpoint_for_test(&self) -> Arc<FipsEndpoint> {
-        self.reads.endpoint.clone()
+        self.reads.endpoint()
     }
 
     pub(in crate::core) fn update_store(&self) -> Arc<dyn Store> {
@@ -66,24 +65,13 @@ impl AttachmentBlobRuntime {
         &self,
         peers: Vec<fips_core::PeerIdentity>,
         siblings: Vec<fips_core::PeerIdentity>,
-    ) {
-        let adds_linked_device = {
-            let current = self
-                .allowed_siblings
-                .read()
-                .unwrap_or_else(|error| error.into_inner());
-            siblings.iter().any(|peer| !current.contains(peer))
-        };
-        if adds_linked_device {
-            // Close before committing the new policy, including requests that
-            // already passed preparation and are waiting in a hedged GET queue.
-            // Public peer updates alone do not interrupt ongoing transfers.
-            self.reads.shutdown().await;
+    ) -> anyhow::Result<()> {
+        // Apply the admission barrier before publishing the new sibling/cache
+        // policy. An active unrelated provider remains usable after linking.
+        let result = self.reads.set_siblings(siblings.clone()).await;
+        if let Err(error) = &result {
+            crate::perflog!("attachment.provider.admission.error={error}");
         }
-        *self
-            .allowed_siblings
-            .write()
-            .unwrap_or_else(|error| error.into_inner()) = siblings.clone();
         self.provider.set_explicit_peers(
             peers
                 .into_iter()
@@ -91,6 +79,7 @@ impl AttachmentBlobRuntime {
                 .collect(),
         );
         self.siblings.set_explicit_peers(siblings);
+        result
     }
 
     pub(super) async fn update_read_peers(&self, peers: Vec<fips_core::config::PeerConfig>) {
@@ -175,7 +164,6 @@ pub(super) async fn bind_same_host_attachment_store(
         reads,
         provider,
         siblings,
-        allowed_siblings,
     });
     runtime.store.primary().transport_ready(&runtime.store)?;
     Ok(runtime)

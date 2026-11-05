@@ -1,6 +1,8 @@
 use super::*;
 use crate::core::protocol::public_discovery::{DiscoveryRelays, PublicDiscovery};
-use fips_core::config::{PeerConfig, TransportInstances, UdpConfig, WebSocketConfig};
+use fips_core::config::{
+    PeerAdmissionConfig, PeerConfig, TransportInstances, UdpConfig, WebSocketConfig,
+};
 use fips_core::{Config, FipsEndpoint};
 use nostr_pubsub::QueryOptions;
 use nostr_pubsub_fips::{FipsAnonymousPublisher, FipsDiscoveryScope, FipsPubsubClientOptions};
@@ -134,6 +136,8 @@ impl DiscoveryPoll {
 }
 
 #[cfg(test)]
+mod provider_wire_tests;
+#[cfg(test)]
 mod tests;
 #[cfg(test)]
 pub(in crate::core) mod tls_tests;
@@ -162,8 +166,9 @@ impl PrivateMeshProviders {
     ) -> Self {
         let key = format!("{peers:?}:{websocket:?}:{providers:?}:{relays:?}");
         let mut config = Config::new();
-        // Disposable clients must not volunteer to route unrelated traffic.
-        config.node.leaf_only = true;
+        // Disposable publishers and readers never export routing ancestry.
+        config.node.strict_client_only = true;
+        config.node.routing.mode = fips_core::config::RoutingMode::ReplyLearned;
         config.node.control.enabled = false;
         config.node.discovery.nostr.enabled = false;
         config.node.discovery.nostr.advertise = false;
@@ -173,7 +178,7 @@ impl PrivateMeshProviders {
         config.transports.udp = TransportInstances::Single(UdpConfig {
             bind_addr: Some("0.0.0.0:0".into()),
             advertise_on_nostr: Some(false),
-            accept_connections: Some(true),
+            accept_connections: Some(false),
             public: Some(false),
             ..Default::default()
         });
@@ -210,6 +215,46 @@ impl PrivateMeshProviders {
         // admission under the previous roster, including after revocation.
         self.key
             .push_str(&format!(":device-sync={:?}", self.device_sync_authors));
+        self
+    }
+
+    pub(in crate::core) fn with_excluded_peers(
+        mut self,
+        local_npub: &str,
+        siblings: &[fips_core::PeerIdentity],
+    ) -> Self {
+        let mut denied_npubs = vec![local_npub.to_owned()];
+        denied_npubs.extend(siblings.iter().map(|peer| peer.npub()));
+        denied_npubs.sort();
+        denied_npubs.dedup();
+        let allowed = |npub: &str| {
+            PublicKey::parse(npub)
+                .ok()
+                .and_then(|key| key.to_bech32().ok())
+                .filter(|npub| !denied_npubs.contains(npub))
+        };
+        self.config.peers = self
+            .config
+            .peers
+            .into_iter()
+            .filter_map(|mut peer| {
+                peer.npub = allowed(&peer.npub)?;
+                Some(peer)
+            })
+            .collect();
+        self.options.routed_peers = self
+            .options
+            .routed_peers
+            .iter()
+            .filter_map(|npub| allowed(npub))
+            .collect();
+        self.key.push_str(&format!(":excluded={denied_npubs:?}"));
+        self.config.node.peer_admission = PeerAdmissionConfig {
+            // URL-only public WSS seeds have no identity until authenticated.
+            // Denials apply on every carrier without excluding those providers.
+            configured_only: false,
+            denied_npubs,
+        };
         self
     }
 

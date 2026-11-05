@@ -8,6 +8,8 @@ use hashtree_fips_transport::{TCP_BLOB_CAPABILITY, TCP_BLOB_SERVICE_PORT};
 
 fn network(peers: Vec<PeerConfig>) -> fips_core::Config {
     let mut config = fips_core::Config::new();
+    // Match the deployed providers that serve strict anonymous clients.
+    config.node.routing.mode = fips_core::config::RoutingMode::ReplyLearned;
     config.node.control.enabled = false;
     config.node.discovery.local.enabled = false;
     config.node.discovery.lan.enabled = false;
@@ -254,7 +256,14 @@ async fn identified_cache_wire_rejects_contacts_and_revoked_siblings() {
         primary.put(hash, bytes.clone()).await.unwrap();
         let attachments = bind_same_host_attachment_store(
             live.clone(),
-            ProviderReadOptions::new(&network(vec![]), vec![]),
+            ProviderReadOptions::new(
+                &network(vec![]),
+                vec![PeerConfig::new(
+                    contact.npub(),
+                    "udp",
+                    contact.bound_udp_listen_addrs().await.unwrap()[0].to_string(),
+                )],
+            ),
             Arc::new(StoreBlobRoute::new(Arc::new(MemoryStore::new()))),
             vec![contact_id, sibling_id],
             vec![sibling_id],
@@ -294,22 +303,29 @@ async fn identified_cache_wire_rejects_contacts_and_revoked_siblings() {
 
         // The anonymous outbound endpoint shares the cache only as a client;
         // probing it must not become a second way to extract that cache.
-        let anonymous_id = PeerIdentity::from_npub(attachments.reads.endpoint.npub()).unwrap();
-        let anonymous_port = attachments
+        let anonymous_id = PeerIdentity::from_npub(attachments.reads.endpoint().npub()).unwrap();
+        // Probe over the reader's already established OUTGOING link: it has
+        // no accepting listener and must expose no cache service on that link.
+        assert!(attachments
             .reads
-            .endpoint
+            .endpoint()
             .bound_udp_listen_addrs()
             .await
-            .unwrap()[0]
-            .port();
-        contact
-            .update_peers(vec![PeerConfig::new(
-                attachments.reads.endpoint.npub(),
-                "udp",
-                format!("127.0.0.1:{anonymous_port}"),
-            )])
-            .await
-            .unwrap();
+            .unwrap()
+            .is_empty());
+        tokio::time::timeout(Duration::from_secs(8), async {
+            while !contact
+                .peers()
+                .await
+                .unwrap()
+                .iter()
+                .any(|peer| peer.connected && peer.npub == attachments.reads.endpoint().npub())
+            {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("anonymous outbound link established");
         assert!(contact_tcp
             .fetch_from_peer(&hash, anonymous_id)
             .await
@@ -319,7 +335,8 @@ async fn identified_cache_wire_rejects_contacts_and_revoked_siblings() {
         // making every known contact eligible for identified cache access.
         attachments
             .set_peers(vec![contact_id, sibling_id, rotated_id], vec![rotated_id])
-            .await;
+            .await
+            .unwrap();
         assert!(sibling_tcp.fetch_from_peer(&hash, live_id).await.is_err());
         assert_eq!(
             rotated_tcp.fetch_from_peer(&hash, live_id).await.unwrap(),
@@ -396,7 +413,7 @@ async fn first_read_uses_existing_directory_but_anonymous_wire_identity() {
         .unwrap();
         assert!(attachments
             .reads
-            .endpoint
+            .endpoint()
             .local_instance_advertisements()
             .unwrap()
             .is_empty());
@@ -412,7 +429,7 @@ async fn first_read_uses_existing_directory_but_anonymous_wire_identity() {
         let hash = hashtree_core::sha256(b"first read before anonymous discovery");
         assert_eq!(attachments.store.get(&hash).await.unwrap(), None);
         let requester = observed(&requests, hash).await;
-        assert_eq!(requester.npub(), attachments.reads.endpoint.npub());
+        assert_eq!(requester.npub(), attachments.reads.endpoint().npub());
         assert_ne!(requester.npub(), device.public_key().to_bech32().unwrap());
 
         attachments.shutdown_reads().await;

@@ -15,6 +15,7 @@ async fn block_carrier_endpoint(
 ) -> Arc<fips_core::FipsEndpoint> {
     use fips_core::config::{PeerConfig, TransportInstances, UdpConfig};
     let mut config = fips_core::Config::new();
+    config.node.routing.mode = fips_core::config::RoutingMode::ReplyLearned;
     config.node.control.enabled = false;
     config.node.discovery.nostr.enabled = false;
     config.node.discovery.lan.enabled = false;

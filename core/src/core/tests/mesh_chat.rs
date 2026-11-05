@@ -6,6 +6,7 @@ fn idle_mesh_liveness_replaces_a_closed_callback_with_unchanged_filters() {
         logged_in_test_core_with_updates("closed-mesh-subscription", &owner, &device);
     core.logged_in.as_mut().unwrap().relay_urls.clear();
     let mut config = fips_core::Config::new();
+    config.node.routing.mode = fips_core::config::RoutingMode::ReplyLearned;
     config.node.control.enabled = false;
     config.node.discovery.nostr.enabled = false;
     config.node.discovery.lan.enabled = false;
@@ -85,6 +86,7 @@ fn mesh_subscriptions_wait_for_the_outermost_catchup_batch() {
     let (mut core, _, _dir) =
         logged_in_test_core_with_updates("batched-mesh-subscriptions", &owner, &device);
     let mut config = fips_core::Config::new();
+    config.node.routing.mode = fips_core::config::RoutingMode::ReplyLearned;
     config.node.control.enabled = false;
     config.node.discovery.nostr.enabled = false;
     config.node.discovery.lan.enabled = false;
@@ -220,6 +222,7 @@ fn encrypted_chat_crosses_fips_transit_by_direct_recipient_route_without_message
     let transit_keys = Keys::generate();
     let runtime = tokio::runtime::Runtime::new().unwrap();
     let mut config = fips_core::Config::new();
+    config.node.routing.mode = fips_core::config::RoutingMode::ReplyLearned;
     config.node.control.enabled = false;
     config.node.discovery.nostr.enabled = false;
     config.node.discovery.lan.enabled = false;
@@ -309,6 +312,23 @@ fn encrypted_chat_crosses_fips_transit_by_direct_recipient_route_without_message
             .map(|peer| peer.npub)
             .collect::<Vec<_>>();
         assert_eq!(direct, vec![transit.npub().to_string()]);
+        if let Some((_, _, _, blobs)) = core.same_host_runtime_for_test() {
+            let reader = blobs.provider_read_endpoint_for_test();
+            runtime.block_on(async {
+                tokio::time::timeout(std::time::Duration::from_secs(8), async {
+                    while !reader.peers().await.unwrap().iter().any(|peer| {
+                        peer.connected
+                            && peer.npub == transit.npub()
+                            && peer.transport_type.as_deref() == Some("websocket")
+                    }) {
+                        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                    }
+                })
+                .await
+                .expect("anonymous reader admits its URL-only public WebSocket seed");
+                assert!(reader.routing_status().await.unwrap().client_only);
+            });
+        }
     }
     runtime.block_on(transit.shutdown()).unwrap();
     let burst = 70;

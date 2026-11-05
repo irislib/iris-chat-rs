@@ -10,7 +10,12 @@ pub(super) struct ProviderRoute {
     discovery: Arc<FipsEndpoint>,
     reads: Arc<provider_reads::ProviderReads>,
     explicit: RwLock<Vec<PeerIdentity>>,
-    route: FipsBlobRoute<AttachmentChunkStore>,
+    route: RwLock<ReaderRoute>,
+}
+
+struct ReaderRoute {
+    transport: Weak<TcpBlobTransport<AttachmentChunkStore>>,
+    route: Arc<FipsBlobRoute<AttachmentChunkStore>>,
 }
 
 impl ProviderRoute {
@@ -19,9 +24,13 @@ impl ProviderRoute {
         reads: Arc<provider_reads::ProviderReads>,
         explicit: Vec<PeerIdentity>,
     ) -> anyhow::Result<Self> {
+        let transport = reads.transport()?;
         Ok(Self {
             discovery,
-            route: FipsBlobRoute::explicit(reads.transport()?, Vec::new(), 4)?,
+            route: RwLock::new(ReaderRoute {
+                transport: Arc::downgrade(&transport),
+                route: Arc::new(FipsBlobRoute::explicit(transport, Vec::new(), 4)?),
+            }),
             reads,
             explicit: RwLock::new(explicit),
         })
@@ -52,9 +61,9 @@ impl ProviderRoute {
             .collect())
     }
 
-    async fn prepare(&self) -> Result<(), StoreError> {
-        let discovered = self
-            .discovered_provider_ids()?
+    async fn prepare(&self) -> Result<Arc<FipsBlobRoute<AttachmentChunkStore>>, StoreError> {
+        let local_providers = self.discovered_provider_ids()?;
+        let discovered = local_providers
             .iter()
             .filter_map(|npub| PeerIdentity::from_npub(npub).ok())
             .collect();
@@ -66,15 +75,37 @@ impl ProviderRoute {
             .copied()
             .filter(|peer| self.reads.permits(&peer.npub()))
             .collect();
-        let peers = ordered_provider_peers(discovered, explicit);
-        self.reads
+        let mut peers = ordered_provider_peers(discovered, explicit);
+        let transport = self
+            .reads
             .prepare_paths(
                 &self.discovery,
+                &local_providers,
                 &peers.iter().map(|peer| peer.npub()).collect::<Vec<_>>(),
             )
             .await?;
-        self.route.set_explicit_peers(peers);
-        Ok(())
+        peers.retain(|peer| self.reads.permits(&peer.npub()));
+        let mut current = self
+            .route
+            .write()
+            .unwrap_or_else(|error| error.into_inner());
+        if !current
+            .transport
+            .upgrade()
+            .is_some_and(|previous| Arc::ptr_eq(&previous, &transport))
+        {
+            // In-flight requests retain only the retired reader. A replacement
+            // can never redirect their private GETs onto the identified endpoint.
+            *current = ReaderRoute {
+                transport: Arc::downgrade(&transport),
+                route: Arc::new(
+                    FipsBlobRoute::explicit(transport, Vec::new(), 4)
+                        .map_err(|error| StoreError::Other(error.to_string()))?,
+                ),
+            };
+        }
+        current.route.set_explicit_peers(peers);
+        Ok(current.route.clone())
     }
 }
 
@@ -103,8 +134,7 @@ fn ordered_provider_peers(
 #[async_trait]
 impl BlobRoute for ProviderRoute {
     async fn route(&self, request: BlobRequest) -> Result<BlobReply, StoreError> {
-        self.prepare().await?;
-        self.route.route(request).await
+        self.prepare().await?.route(request).await
     }
 
     async fn route_with_context(
@@ -112,8 +142,10 @@ impl BlobRoute for ProviderRoute {
         request: BlobRequest,
         context: BlobRouteContext,
     ) -> Result<BlobReply, StoreError> {
-        self.prepare().await?;
-        self.route.route_with_context(request, context).await
+        self.prepare()
+            .await?
+            .route_with_context(request, context)
+            .await
     }
 }
 

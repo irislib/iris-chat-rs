@@ -388,16 +388,20 @@ an older build against that profile to create a pre-upgrade witness. Record the
 actual last-opening build and upgrade directly from that state. Older-version
 tests must use a separately owned profile created under that version.
 
-Reserve an explicit quiet scope for local CPU checks, separate from compilation,
-using the same verified app bundle and a bounded runtime lease. Open that exact bundle through Finder's
-normal Open action, then confirm its executable, process start identity, and
-foreground status before starting the settling period. Accessibility window
-raises and clicks can reach a background app without activating it. A visible
-window alone does not establish foreground readiness. Keep the Mac unlocked
-and foreground checks active throughout measurement; if focus changes, retain
-the failed result. Quit normally afterward and verify the process and leases
-have closed before releasing the quiet scope. A launch or focus failure
-does not require rebuilding unchanged inputs.
+Measure desktop idle CPU in the background. Confirm the exact verified app
+bundle, executable, process start identity and populated profile before the
+settling period. Wait for a qualifying quiet interval without reserving the
+host; acquire a bounded
+measurement lease only when starting. Do not require window focus or stop other
+workloads to create a quiet interval. Retain failed or incomplete measurements,
+then verify that the measurement processes and leases have closed. A noisy
+interval does not require rebuilding
+unchanged inputs.
+
+The release owner records explicit release-specific acceptance decisions in
+the private coverage record. An authorized CPU or server-availability exception
+does not waive metadata privacy, source integrity, signing, resource admission,
+required physical-device coverage or separate public Apple distribution holds.
 
 For version-only package verification, dispatch `scope=rust-package` with
 `package_crate=chat-protocol` or `core`. This runs locked package verification

@@ -3,6 +3,7 @@ async fn nearby_privacy_endpoint(
     peers: Vec<fips_core::config::PeerConfig>,
 ) -> Arc<fips_core::FipsEndpoint> {
     let mut config = fips_core::Config::new();
+    config.node.routing.mode = fips_core::config::RoutingMode::ReplyLearned;
     config.node.control.enabled = false;
     config.node.discovery.local.enabled = false;
     config.node.discovery.lan.enabled = false;

@@ -332,7 +332,8 @@ async fn standalone_fips_update_provider(
     mut config: fips_core::Config,
 ) -> Result<Arc<dyn NostrEventSubscriber>, UpdateError> {
     // Reading updates does not require carrying unrelated network traffic.
-    config.node.leaf_only = true;
+    config.node.strict_client_only = true;
+    config.node.routing.mode = fips_core::config::RoutingMode::ReplyLearned;
     let pubsub_options = update_pubsub_options(reference)?;
     let endpoint = fips_core::FipsEndpoint::builder()
         .config(config)
@@ -420,6 +421,7 @@ mod tests {
         // The WebSocket seed cannot reach the local-only publisher. Joining
         // local rendezvous is the only path to its retained signed event.
         let mut seed_config = fips_core::Config::new();
+        seed_config.node.routing.mode = fips_core::config::RoutingMode::ReplyLearned;
         seed_config.node.control.enabled = false;
         seed_config.node.discovery.nostr.enabled = false;
         seed_config.node.discovery.lan.enabled = false;
@@ -441,6 +443,7 @@ mod tests {
             path: Some("latest".into()),
         };
         let mut config = fips_core::Config::new();
+        config.node.routing.mode = fips_core::config::RoutingMode::ReplyLearned;
         config.node.control.enabled = false;
         config.node.discovery.nostr.enabled = false;
         config.node.discovery.nostr.advertise = false;

@@ -44,17 +44,17 @@ pub(super) async fn check_local_topology(first: StartsFirst) {
         for _ in 0..2 {
             assert_eq!(attachments.store.get(&hash).await.unwrap(), None);
             let requester = observed(&requests, hash).await;
-            assert_eq!(requester.npub(), attachments.reads.endpoint.npub());
+            assert_eq!(requester.npub(), attachments.reads.endpoint().npub());
             assert_ne!(requester.npub(), live.npub());
         }
         let provider_adjacent = provider.peers().await.unwrap().into_iter()
             .filter(|peer| peer.connected).map(|peer| peer.npub).collect::<Vec<_>>();
-        let carrier = attachments.reads.endpoint.source_route_quality(provider_id, Duration::from_secs(5))
+        let carrier = attachments.reads.endpoint().source_route_quality(provider_id, Duration::from_secs(5))
             .await.unwrap().next_hop;
         let used_identified_anchor = carrier == Some(*live.node_addr());
         assert!(carrier.is_some(), "recorded actual request carrier");
-        assert!(attachments.reads.endpoint.local_instance_advertisements().unwrap().is_empty());
-        assert!(attachments.reads.endpoint.peers().await.unwrap().iter()
+        assert!(attachments.reads.endpoint().local_instance_advertisements().unwrap().is_empty());
+        assert!(attachments.reads.endpoint().peers().await.unwrap().iter()
             .all(|peer| !peer.connected || peer.npub != live.npub()), "reader must never join its identified app");
         eprintln!("provider_wire.anchor_route anonymous_request=true identified_carrier={used_identified_anchor} provider_only_identified_neighbor={}", provider_adjacent == vec![live.npub().to_string()]);
         attachments.shutdown_reads().await;
@@ -81,6 +81,7 @@ async fn unsolicited_identified_peers_cannot_join_anonymous_reader() {
     tokio::time::timeout(Duration::from_secs(30), async {
         let live = identified_endpoint(&Keys::generate(), network(vec![])).await;
         let sibling = identified_endpoint(&Keys::generate(), network(vec![])).await;
+        let unrelated = identified_endpoint(&Keys::generate(), network(vec![])).await;
         let provider = identified_endpoint(&Keys::generate(), network(vec![])).await;
         let provider_id = PeerIdentity::from_npub(provider.npub()).unwrap();
         let address = provider.bound_udp_listen_addrs().await.unwrap()[0];
@@ -106,18 +107,7 @@ async fn unsolicited_identified_peers_cannot_join_anonymous_reader() {
         )
         .await
         .unwrap();
-        let reader = attachments.reads.endpoint.clone();
-        let port = reader.bound_udp_listen_addrs().await.unwrap()[0].port();
-        for endpoint in [&live, &sibling] {
-            endpoint
-                .update_peers(vec![PeerConfig::new(
-                    reader.npub(),
-                    "udp",
-                    format!("127.0.0.1:{port}"),
-                )])
-                .await
-                .unwrap();
-        }
+        let reader = attachments.reads.endpoint();
         let (requests, capture) = capture_requests(provider.clone(), false).await;
         let hash = hashtree_core::sha256(b"provider request while identified peers try to join");
         assert!(matches!(
@@ -129,10 +119,33 @@ async fn unsolicited_identified_peers_cannot_join_anonymous_reader() {
             BlobReply::NoResult,
         ));
         assert_eq!(observed(&requests, hash).await.npub(), reader.npub());
+        assert!(reader.bound_udp_listen_addrs().await.unwrap().is_empty());
+        let port = provider
+            .peers()
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|peer| peer.connected && peer.npub == reader.npub())
+            .unwrap()
+            .transport_addr
+            .unwrap()
+            .parse::<std::net::SocketAddr>()
+            .unwrap()
+            .port();
+        for endpoint in [&live, &sibling, &unrelated] {
+            endpoint
+                .update_peers(vec![PeerConfig::new(
+                    reader.npub(),
+                    "udp",
+                    format!("127.0.0.1:{port}"),
+                )])
+                .await
+                .unwrap();
+        }
         // Require actual failed dial attempts, rather than checking before the
         // requesters had a chance to transmit their authenticated handshakes.
         tokio::time::timeout(Duration::from_secs(8), async {
-            for endpoint in [&live, &sibling] {
+            for endpoint in [&live, &sibling, &unrelated] {
                 loop {
                     if endpoint
                         .peers()
@@ -162,7 +175,7 @@ async fn unsolicited_identified_peers_cannot_join_anonymous_reader() {
         attachments.shutdown_reads().await;
         capture.abort();
         let _ = capture.await;
-        for endpoint in [live, sibling, provider] {
+        for endpoint in [live, sibling, unrelated, provider] {
             endpoint.shutdown().await.unwrap();
         }
     })
@@ -171,7 +184,7 @@ async fn unsolicited_identified_peers_cannot_join_anonymous_reader() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn newly_linked_peer_closes_reader_before_next_get_and_recreation_recovers() {
+async fn newly_linked_peer_revokes_its_route_and_preserves_other_provider_reads() {
     tokio::time::timeout(Duration::from_secs(40), async {
         let live = identified_endpoint(&Keys::generate(), network(vec![])).await;
         let becoming_sibling = identified_endpoint(&Keys::generate(), network(vec![])).await;
@@ -217,7 +230,7 @@ async fn newly_linked_peer_closes_reader_before_next_get_and_recreation_recovers
         let old_reader = observed(&sibling_requests, hash).await;
         assert!(attachments
             .reads
-            .endpoint
+            .endpoint()
             .peers()
             .await
             .unwrap()
@@ -225,48 +238,40 @@ async fn newly_linked_peer_closes_reader_before_next_get_and_recreation_recovers
             .any(|peer| peer.connected && peer.npub == becoming_sibling.npub()));
         attachments
             .set_peers(vec![provider_id], vec![sibling_id])
-            .await;
-        // Directly exercise the unrelated-provider route: verified device reads
-        // are a different authorized route and may still use live identity.
-        let request = hashtree_core::BlobRequest { hash, htl: 1 };
-        assert!(attachments.provider.route(request).await.is_err());
+            .await
+            .unwrap();
         assert!(
-            attachments.reads.transport().is_err(),
-            "reader closed before any new provider GET"
+            !attachments.reads.endpoint().is_stopped().await,
+            "safe reader remains operational"
         );
-        assert!(sibling_requests.try_recv().is_err());
-        assert!(provider_requests.try_recv().is_err());
-        assert_eq!(
-            attachments.store.get(&fallback_hash).await.unwrap(),
-            Some(fallback_bytes)
-        );
-        drop(attachments);
-        let recreated = bind_same_host_attachment_store(
-            live.clone(),
-            ProviderReadOptions::new(&network(vec![]), public),
-            Arc::new(StoreBlobRoute::new(fallback)),
-            vec![provider_id],
-            vec![sibling_id],
-            primary,
-        )
-        .await
-        .unwrap();
-        assert!(matches!(
-            recreated.provider.route(request).await.unwrap(),
-            BlobReply::NoResult
-        ));
-        let new_reader = observed(&provider_requests, hash).await;
-        assert_ne!(new_reader, old_reader);
-        assert_eq!(new_reader.npub(), recreated.reads.endpoint.npub());
-        assert!(!recreated
+        assert!(!attachments
             .reads
-            .endpoint
+            .endpoint()
             .peers()
             .await
             .unwrap()
             .iter()
             .any(|peer| peer.connected && peer.npub == becoming_sibling.npub()));
-        recreated.shutdown_reads().await;
+        let request = hashtree_core::BlobRequest { hash, htl: 1 };
+        assert!(matches!(
+            attachments.provider.route(request).await.unwrap(),
+            BlobReply::NoResult
+        ));
+        let continuing_reader = observed(&provider_requests, hash).await;
+        assert_eq!(continuing_reader, old_reader);
+        assert_eq!(
+            continuing_reader.npub(),
+            attachments.reads.endpoint().npub()
+        );
+        assert!(
+            sibling_requests.try_recv().is_err(),
+            "revoked provider received another GET"
+        );
+        assert_eq!(
+            attachments.store.get(&fallback_hash).await.unwrap(),
+            Some(fallback_bytes)
+        );
+        attachments.shutdown_reads().await;
         sibling_capture.abort();
         provider_capture.abort();
         let _ = sibling_capture.await;
@@ -276,7 +281,7 @@ async fn newly_linked_peer_closes_reader_before_next_get_and_recreation_recovers
         }
     })
     .await
-    .expect("bounded reader revocation/recreation wire test");
+    .expect("bounded reader revocation/recovery wire test");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -323,15 +328,24 @@ async fn linking_cancels_already_prepared_hedged_provider_gets() {
         });
         assert_eq!(
             observed(&started, hash).await.npub(),
-            attachments.reads.endpoint.npub()
+            attachments.reads.endpoint().npub()
         );
         attachments
             .set_peers(vec![stalled_id], vec![linking_id])
-            .await;
+            .await
+            .unwrap();
         assert!(
-            attachments.reads.endpoint.is_stopped().await,
-            "transition waits for endpoint closure"
+            !attachments.reads.endpoint().is_stopped().await,
+            "admission barrier preserves unrelated paths"
         );
+        assert!(!attachments
+            .reads
+            .endpoint()
+            .peers()
+            .await
+            .unwrap()
+            .iter()
+            .any(|peer| peer.connected && peer.npub == linking.npub()));
         assert!(pending.await.unwrap().is_err());
         assert!(
             forbidden.try_recv().is_err(),
