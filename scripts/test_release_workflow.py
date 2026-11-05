@@ -491,11 +491,11 @@ class ReleaseWorkflowTests(unittest.TestCase):
 
     def test_resource_gate_binds_tag_commit_and_blocks_publication(self) -> None:
         workflow = (ROOT / ".github/workflows/release.yml").read_text()
-        pin = "a0a3a23d9c98a1741eb3efdb12f180d53aaaa3b7"
+        pin = "4de7301344aa13e943946e1c1bae0a9f8d814686"
         self.assertIn(f"irislib/iris-stack/.github/workflows/product-lab.yml@{pin}", workflow)
         self.assertIn(f"lab_rev: {pin}", workflow)
         self.assertIn("chat_rev: ${{ needs.validate.outputs.sha }}", workflow)
-        self.assertIn("drive_rev: edba4842b6ce03ae382d036dc09b179445ace759", workflow)
+        self.assertIn("drive_rev: f0d723d4626d63c3d92e80d412af7b9abf05d940", workflow)
         self.assertIn("htree_rev: 458702aada89c0629df9456df38fef9c3f8f6a61", workflow)
         release = workflow.split("\n  release:\n", 1)[1]
         self.assertIn("      - mesh-resource\n", release.split("    runs-on:", 1)[0])

@@ -7,6 +7,7 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 ### GitHub
 
 - Stop repeated routing repairs for private client connections while preserving authenticated recovery.
+- Keep followed and muted profiles current through bounded anonymous discovery, and preserve saved discovery data when upgrading.
 - Validate the accepted dependency versions before starting platform builds.
 - Preserve typed text and the insertion point on iOS when a chat’s saved draft arrives after typing has begun.
 - Deliver a Note to Self file offer to each ready linked device immediately. Retry the missing copies across restarts.
@@ -20,6 +21,7 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 ### Apple
 
 - Reduce unnecessary network activity while the app is idle.
+- Keep followed and muted profiles up to date.
 - Keep letters in order and the cursor in place when you start typing as a chat opens on iPhone.
 - Send files to yourself on a connected device even when another linked device is offline.
 - Restore message history more reliably when linking a new device.
@@ -30,6 +32,7 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 ### Zapstore
 
 - Reduce unnecessary network activity while the app is idle.
+- Keep followed and muted profiles up to date.
 - Send files to yourself on a connected device even when another linked device is offline.
 - Restore message history more reliably when linking a new device.
 - Improve privacy when downloading files and sharing cached files between your devices.
