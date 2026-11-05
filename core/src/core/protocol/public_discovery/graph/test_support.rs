@@ -7,9 +7,9 @@ use std::sync::{
 };
 use tokio_tungstenite::tungstenite::Message;
 
-pub(super) struct Fixture {
-    pub(super) url: RelayUrl,
-    pub(super) wire: Arc<Mutex<Vec<serde_json::Value>>>,
+pub(in crate::core) struct Fixture {
+    pub(in crate::core) url: RelayUrl,
+    pub(in crate::core) wire: Arc<Mutex<Vec<serde_json::Value>>>,
     pub(super) mode: Arc<AtomicUsize>,
     pub(super) hold_eose: Arc<AtomicBool>,
     pub(super) connections: Arc<AtomicUsize>,
@@ -42,7 +42,7 @@ fn repeated_fingerprint() -> String {
     bytes.to_lower_hex_string()
 }
 
-pub(super) async fn fixture(events: Vec<Event>) -> Fixture {
+pub(in crate::core) async fn fixture(events: Vec<Event>) -> Fixture {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = RelayUrl::parse(&format!("ws://{}", listener.local_addr().unwrap())).unwrap();
     let wire = Arc::new(Mutex::new(Vec::new()));
@@ -121,6 +121,7 @@ pub(super) async fn fixture(events: Vec<Event>) -> Fixture {
                                             2 => None,
                                             3 => Some(serde_json::json!(["NEG-MSG", id, "00".repeat(8193)])),
                                             4 => Some(serde_json::json!(["NEG-MSG", id, repeated_fingerprint()])),
+                                            5 => Some(serde_json::json!(["NEG-MSG", id, "not-hex"])),
                                             _ => {
                                                 let filter: Filter=serde_json::from_value(frame[2].clone()).unwrap();
                                                 let mut storage=NegentropyStorageVector::new();

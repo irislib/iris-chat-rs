@@ -1,5 +1,6 @@
 //! Real TLS/serialized Nostr fixture. Trust is local to the test pool; production
 //! certificate verification and transport options are unchanged.
+pub(in crate::core) use super::graph::test_support::fixture as graph_fixture;
 use super::*;
 use futures_util::{SinkExt, StreamExt};
 use std::sync::{

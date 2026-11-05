@@ -37,7 +37,7 @@ required-features = ["stack-fixture"]
 
 [features]
 local-relay-bin = []
-stack-fixture = []
+stack-fixture = ["dep:tracing"]
 desktop-media = ["dep:cpal", "dep:nokhwa", "dep:openh264", "dep:image", "dep:sonora", "dep:openh264-sys2"]
 
 [dependencies]
@@ -74,7 +74,7 @@ nostr = { version = "0.44.7", default-features = false, features = ["std", "nip4
 nostr-sdk = { version = "0.44.1", default-features = false, features = ["nip44"] }
 nostr-pubsub = "=0.1.20"
 nostr-pubsub-reconcile = "=0.1.1"
-nostr-pubsub-fips = "=0.5.51"
+nostr-pubsub-fips = "=0.6.0"
 nostr-pubsub-relay = "=0.1.16"
 nostr-social-graph = "=0.2.0"
 negentropy = "=0.5.2"
@@ -95,6 +95,7 @@ tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
 opus = "=0.4.0"
 opusic-sys = "=0.7.5"
 tokio-util = { version = "0.7", features = ["compat"] }
+tracing = { version = "=0.1.44", optional = true }
 uniffi = "0.29.4"
 url = "2"
 urlencoding = "2"

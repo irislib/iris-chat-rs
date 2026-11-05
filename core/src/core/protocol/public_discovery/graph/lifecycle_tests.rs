@@ -50,7 +50,10 @@ async fn cancelling_graph_setup_before_handshake_queues_no_filters() {
 async fn auth_rejection_preserves_cached_graph_and_never_uses_account_or_device_identity() {
     let owner = Keys::generate();
     let device = Keys::generate();
-    let cached = event(&owner, Kind::ContactList, "cached");
+    let cached = [
+        event(&owner, Kind::ContactList, "cached follows"),
+        event(&owner, Kind::MuteList, "cached mutes"),
+    ];
     let fixture = fixture(Vec::new()).await;
     fixture.reject_auth.store(true, Ordering::Release);
     let pool = Arc::new(DiscoveryRelays::default());
@@ -58,17 +61,15 @@ async fn auth_rejection_preserves_cached_graph_and_never_uses_account_or_device_
         .graph_scope(std::slice::from_ref(&fixture.url))
         .await
         .unwrap();
-    let result = scope
-        .opinions(
-            Kind::ContactList,
-            &[owner.public_key()],
-            std::slice::from_ref(&cached),
-            2,
-        )
-        .await
-        .unwrap();
-    assert!(!result.complete);
-    assert_eq!(result.events, vec![cached]);
+    for head in &cached {
+        let result = scope
+            .opinions(head.kind, &[owner.public_key()], &cached, 2)
+            .await
+            .unwrap();
+        assert!(!result.complete);
+        assert_eq!(result.events, vec![head.clone()]);
+    }
+    assert_eq!(count(&fixture, "REQ"), 0);
     until(|| count(&fixture, "AUTH") > 0).await;
     let frames = fixture.wire.lock().unwrap();
     for frame in frames.iter() {
@@ -108,7 +109,9 @@ async fn graph_reconnect_reuses_anonymous_pool_and_keeps_raw_counter_monotonic()
         )
         .await
         .unwrap();
+    assert!(!first.complete);
     assert!(first.events.iter().any(|event| event.id == cached.id));
+    assert_eq!(count(&fixture, "REQ"), 0);
     let before = counter.load(Ordering::Relaxed);
     tokio::time::timeout(Duration::from_secs(20), async {
         while fixture.connections.load(AtomicOrdering::SeqCst) < 2 || count(&fixture, "AUTH") < 2 {
@@ -121,6 +124,7 @@ async fn graph_reconnect_reuses_anonymous_pool_and_keeps_raw_counter_monotonic()
         .graph_scope(std::slice::from_ref(&fixture.url))
         .await
         .unwrap();
+    assert_eq!(count(&fixture, "REQ"), 0);
     let second = again
         .opinions(
             Kind::ContactList,

@@ -592,6 +592,8 @@ impl AppCore {
                 },
             );
         }
+        #[cfg(feature = "stack-fixture")]
+        let builder = crate::stack_mesh_fixture::with_traffic_diagnostics(builder);
         let endpoint = match self.runtime.block_on(builder.bind()) {
             Ok(endpoint) => Arc::new(endpoint),
             Err(error) => {

@@ -108,7 +108,10 @@ async fn complete_graph_flow_uses_shared_anonymous_auth_and_real_negentropy_with
 
 #[tokio::test]
 async fn graph_cancellation_closes_negotiation_and_request_without_dropping_shared_connection() {
-    let fixture = fixture(Vec::new()).await;
+    let keys = Keys::generate();
+    let author = keys.public_key();
+    let mute = event(&keys, Kind::MuteList, "");
+    let fixture = fixture(vec![mute.clone()]).await;
     let pool = Arc::new(DiscoveryRelays::default());
     let keeper = pool.open(std::slice::from_ref(&fixture.url)).await.unwrap();
     let scope = Arc::new(
@@ -116,7 +119,6 @@ async fn graph_cancellation_closes_negotiation_and_request_without_dropping_shar
             .await
             .unwrap(),
     );
-    let author = Keys::generate().public_key();
     fixture.mode.store(2, AtomicOrdering::SeqCst);
     let running = {
         let scope = scope.clone();
@@ -126,13 +128,16 @@ async fn graph_cancellation_closes_negotiation_and_request_without_dropping_shar
     running.abort();
     let _ = running.await;
     until(|| count(&fixture, "NEG-CLOSE") == 1).await;
-    fixture.mode.store(1, AtomicOrdering::SeqCst);
+    fixture.mode.store(0, AtomicOrdering::SeqCst);
     fixture.hold_eose.store(true, Ordering::Release);
     let running = {
         let scope = scope.clone();
         tokio::spawn(async move { scope.opinions(Kind::MuteList, &[author], &[], 2).await })
     };
     until(|| count(&fixture, "REQ") > 0).await;
+    assert!(fixture.wire.lock().unwrap().iter().any(|frame| {
+        frame[0] == "REQ" && frame[2]["ids"] == serde_json::json!([mute.id.to_hex()])
+    }));
     running.abort();
     let _ = running.await;
     until(|| count(&fixture, "CLOSE") > 0).await;
@@ -217,7 +222,7 @@ async fn graph_scope_covers_every_configured_relay_and_reports_incomplete_covera
         assert_eq!(count(fixture, "NEG-OPEN"), 1);
     }
     fixtures[1].mode.store(1, AtomicOrdering::SeqCst);
-    fixtures[1].hold_eose.store(true, Ordering::Release);
+    let requests_before = count(&fixtures[1], "REQ");
     assert!(
         !scope
             .opinions(Kind::MuteList, &[author], &[], 2)
@@ -225,6 +230,7 @@ async fn graph_scope_covers_every_configured_relay_and_reports_incomplete_covera
             .unwrap()
             .complete
     );
+    assert_eq!(count(&fixtures[1], "REQ"), requests_before);
 }
 
 #[tokio::test]

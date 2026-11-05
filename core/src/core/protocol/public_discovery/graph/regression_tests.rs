@@ -6,6 +6,15 @@ use tokio_tungstenite::tungstenite::Message;
 
 #[tokio::test]
 async fn missing_negentropy_bodies_after_eose_preserve_cached_head_and_rank() {
+    incomplete_negentropy_preserves_cached_head_and_rank(false).await;
+}
+
+#[tokio::test]
+async fn unsupported_negentropy_preserves_cached_head_and_rank_without_history_fallback() {
+    incomplete_negentropy_preserves_cached_head_and_rank(true).await;
+}
+
+async fn incomplete_negentropy_preserves_cached_head_and_rank(unsupported: bool) {
     let owner = Keys::generate();
     let friend = Keys::generate();
     let root = EventBuilder::new(Kind::ContactList, "")
@@ -19,7 +28,11 @@ async fn missing_negentropy_bodies_after_eose_preserve_cached_head_and_rank() {
         .sign_with_keys(&friend)
         .unwrap();
     let fixture = fixture(vec![root.clone(), new.clone()]).await;
-    fixture.omitted.lock().unwrap().insert(new.id);
+    if unsupported {
+        fixture.mode.store(1, AtomicOrdering::SeqCst);
+    } else {
+        fixture.omitted.lock().unwrap().insert(new.id);
+    }
     let mut cache = UserDiscoveryCache::default();
     cache.owner_pubkey_hex = Some(owner.public_key().to_hex());
     cache.follow_event_id = Some(root.id.to_hex());
@@ -84,10 +97,88 @@ async fn missing_negentropy_bodies_after_eose_preserve_cached_head_and_rank() {
         old.id.to_hex()
     );
     let frames = fixture.wire.lock().unwrap();
-    assert!(frames.iter().any(|frame| frame[0] == "REQ"
-        && frame[2]["ids"]
-            .as_array()
-            .is_some_and(|ids| ids.contains(&serde_json::json!(new.id.to_hex())))));
+    if unsupported {
+        // Root/profile queries remain ordinary reads. No friend follow-list
+        // history request may replace its failed graph reconciliation.
+        assert!(!frames.iter().any(|frame| frame[0] == "REQ"
+            && frame[2]["kinds"] == serde_json::json!([3])
+            && frame[2]["authors"] == serde_json::json!([friend.public_key().to_hex()])));
+    } else {
+        assert!(frames.iter().any(|frame| frame[0] == "REQ"
+            && frame[2]["ids"]
+                .as_array()
+                .is_some_and(|ids| ids.contains(&serde_json::json!(new.id.to_hex())))));
+    }
+}
+
+#[tokio::test]
+async fn failed_negentropy_keeps_both_list_heads_without_requests_or_uploads() {
+    for mode in [1, 2, 5] {
+        let owner = Keys::generate();
+        let heads = [
+            event(&owner, Kind::ContactList, "retained follows"),
+            event(&owner, Kind::MuteList, "retained mutes"),
+        ];
+        let fixture = fixture(Vec::new()).await;
+        fixture.mode.store(mode, AtomicOrdering::SeqCst);
+        let pool = Arc::new(DiscoveryRelays::default());
+        let scope = pool
+            .graph_scope(std::slice::from_ref(&fixture.url))
+            .await
+            .unwrap();
+        for head in &heads {
+            let result = scope
+                .opinions(head.kind, &[owner.public_key()], &heads, 2)
+                .await
+                .unwrap();
+            assert!(!result.complete, "mode {mode}");
+            assert_eq!(result.events, vec![head.clone()], "mode {mode}");
+        }
+        until(|| count(&fixture, "NEG-CLOSE") == 2).await;
+        assert_eq!(count(&fixture, "REQ"), 0, "mode {mode}");
+        assert_eq!(count(&fixture, "EVENT"), 0, "mode {mode}");
+        assert_closed(&fixture, "NEG-OPEN", "NEG-CLOSE");
+    }
+}
+
+#[tokio::test]
+async fn unsupported_relay_does_not_prevent_exact_id_download_from_healthy_relay() {
+    let owner = Keys::generate();
+    let heads = [
+        event(&owner, Kind::ContactList, ""),
+        event(&owner, Kind::MuteList, ""),
+    ];
+    let rejected = fixture(heads.to_vec()).await;
+    rejected.mode.store(1, AtomicOrdering::SeqCst);
+    let healthy = fixture(heads.to_vec()).await;
+    let pool = Arc::new(DiscoveryRelays::default());
+    let scope = pool
+        .graph_scope(&[rejected.url.clone(), healthy.url.clone()])
+        .await
+        .unwrap();
+    for head in &heads {
+        let result = scope
+            .opinions(head.kind, &[owner.public_key()], &[], 2)
+            .await
+            .unwrap();
+        assert!(!result.complete);
+        assert_eq!(result.events, vec![head.clone()]);
+    }
+    assert_eq!(count(&rejected, "REQ"), 0);
+    let frames = healthy.wire.lock().unwrap();
+    let requests = frames
+        .iter()
+        .filter(|frame| frame[0] == "REQ")
+        .collect::<Vec<_>>();
+    assert_eq!(requests.len(), 2);
+    for (request, head) in requests.iter().zip(&heads) {
+        assert_eq!(request[2]["ids"], serde_json::json!([head.id.to_hex()]));
+        assert_eq!(
+            request[2]["authors"],
+            serde_json::json!([owner.public_key().to_hex()])
+        );
+        assert_eq!(request[2]["kinds"], serde_json::json!([head.kind.as_u16()]));
+    }
 }
 
 #[tokio::test]

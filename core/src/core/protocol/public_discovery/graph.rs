@@ -171,10 +171,15 @@ impl GraphScope {
                             .ids(ids.iter().copied())
                             .kind(kind)
                             .authors(authors.iter().copied()),
-                        Some(ids),
+                        ids,
                     ),
                     Ok(Err(QueryFailure::Limit)) => return Err(QueryFailure::Limit),
-                    _ => (filter.clone(), None), // Unsupported/offline relays retain bounded ordinary requests.
+                    _ => {
+                        // Failed reconciliation leaves this relay incomplete; do not
+                        // replace it with a broad history download.
+                        complete = false;
+                        continue;
+                    }
                 };
                 self.budget.check()?;
                 match query::fetch_admitted(
@@ -191,14 +196,12 @@ impl GraphScope {
                 .await
                 {
                     Ok(result) => {
-                        let bodies_complete = required_ids.as_ref().is_none_or(|ids| {
-                            let received = result
-                                .events
-                                .iter()
-                                .map(|event| event.id)
-                                .collect::<HashSet<_>>();
-                            ids.is_subset(&received)
-                        });
+                        let received = result
+                            .events
+                            .iter()
+                            .map(|event| event.id)
+                            .collect::<HashSet<_>>();
+                        let bodies_complete = required_ids.is_subset(&received);
                         complete &= result.complete && bodies_complete;
                         events.extend(result.events);
                     }
@@ -337,7 +340,7 @@ async fn reconcile(
 }
 
 #[cfg(test)]
-mod test_support;
+pub(in crate::core) mod test_support;
 #[cfg(test)]
 mod tests;
 

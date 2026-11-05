@@ -14,6 +14,7 @@ use sha2::{Digest, Sha256};
 const READY_WAIT: Duration = Duration::from_secs(15);
 
 fn main() -> Result<()> {
+    iris_chat_core::stack_mesh_fixture::control::install()?;
     let mut args = std::env::args_os().skip(1);
     let command = args
         .next()

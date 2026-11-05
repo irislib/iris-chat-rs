@@ -5,6 +5,15 @@ use nostr_pubsub_fips::{FipsPubsubClient, FipsPubsubDeliverySnapshot};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 
+// The fixture installs its collector before app startup. Other stack-feature
+// test helpers retain their behavior unless that collector is explicitly installed.
+pub(super) fn enable_services(endpoint: &FipsEndpoint) -> anyhow::Result<()> {
+    for port in [7368, 39019] {
+        endpoint.enable_service_carrier_diagnostics(port)?;
+    }
+    super::control::mark_services_enabled()
+}
+
 pub(super) fn snapshot(
     endpoint: &FipsEndpoint,
     client: &FipsPubsubClient,
@@ -44,7 +53,7 @@ pub(super) fn snapshot(
             );
         }
     }
-    let value = json!({"version": 1, "counters": counters});
+    let value = json!({"version": 2, "counters": counters, "control": super::control::snapshot()?});
     anyhow::ensure!(
         serde_json::to_vec(&value)?.len() <= 8192,
         "fixture traffic snapshot exceeds cap"

@@ -502,7 +502,7 @@ fn encode_opinion_cache(
         .collect()
 }
 
-/// NIP-77 is optional: unsupported relays retain the ordinary bounded REQ path.
+/// Failed NIP-77 reconciliation preserves cached opinions without a history fallback.
 /// Only complete verified cached events are claimed present; graph projections
 /// cannot stand in for the signed lists needed by the verified social ranker.
 async fn fetch_graph_opinion_chunks(

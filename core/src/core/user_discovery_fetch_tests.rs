@@ -19,40 +19,62 @@ fn positions(cache: &UserDiscoveryCache, owners: &[&Keys]) -> Vec<u32> {
         .collect()
 }
 
+async fn fetch_reconciled_fixture(
+    events: Vec<Event>,
+    owner: PublicKey,
+    previous: UserDiscoveryCache,
+    expected_ids: &[nostr::EventId],
+) -> UserDiscoveryFetchResult {
+    let relay = crate::core::protocol::public_discovery::test_support::graph_fixture(events).await;
+    let result = fetch_user_discovery(
+        Arc::new(DiscoveryRelays::default()),
+        vec![relay.url.clone()],
+        owner,
+        previous,
+    )
+    .await;
+    let frames = relay.wire.lock().unwrap();
+    for kind in [3, 10000] {
+        assert!(frames
+            .iter()
+            .any(|frame| frame[0] == "NEG-OPEN" && frame[2]["kinds"] == serde_json::json!([kind])));
+    }
+    for id in expected_ids {
+        assert!(frames.iter().any(|frame| frame[0] == "REQ"
+            && frame[2]["ids"]
+                .as_array()
+                .is_some_and(|ids| ids.contains(&serde_json::json!(id.to_hex())))));
+    }
+    assert!(frames.iter().all(|frame| frame[0] != "EVENT"));
+    result
+}
+
 #[test]
 fn relay_people_graph_fetches_mutes_and_restores_them_offline() {
-    let relay = crate::local_relay::TestRelay::start();
     let owner = Keys::generate();
     let friend = Keys::generate();
     let target = Keys::generate();
-    let client = Client::new(Keys::generate());
-    let relay_urls = relay_urls_from_strings(&[relay.url().to_string()]);
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .unwrap();
     let cache = runtime.block_on(async {
-        ensure_session_relays_configured(&client, &relay_urls).await;
-        connect_client_with_timeout(&client, Duration::from_secs(2)).await;
-        client
-            .send_event(&follow_event(&owner, 1, &[friend.public_key()]))
-            .await
-            .unwrap();
         let muted = EventBuilder::new(Kind::from(10_000), "")
             .tags([Tag::public_key(target.public_key())])
             .custom_created_at(Timestamp::from(2))
             .sign_with_keys(&friend)
             .unwrap();
-        client.send_event(&muted).await.unwrap();
-        let result = fetch_user_discovery(
-            Arc::new(DiscoveryRelays::default()),
-            relay_urls,
+        fetch_reconciled_fixture(
+            vec![
+                follow_event(&owner, 1, &[friend.public_key()]),
+                muted.clone(),
+            ],
             owner.public_key(),
             UserDiscoveryCache::default(),
+            &[muted.id],
         )
-        .await;
-        client.disconnect().await;
-        result.cache
+        .await
+        .cache
     });
     let temp = TempDir::new().unwrap();
     let mut store = AppStore::new(open_database(temp.path()).unwrap());
@@ -69,7 +91,6 @@ fn relay_people_graph_fetches_mutes_and_restores_them_offline() {
 
 #[test]
 fn relay_fetch_keeps_all_follows_and_preserves_social_order_until_root_changes() {
-    let relay = crate::local_relay::TestRelay::start();
     let root = Keys::generate();
     let alice = Keys::generate();
     let bob = Keys::generate();
@@ -84,27 +105,17 @@ fn relay_fetch_keeps_all_follows_and_preserves_social_order_until_root_changes()
             .collect::<Vec<_>>(),
     );
     let alice_follows_carol = follow_event(&alice, 100, &[carol.public_key()]);
-    let relay_urls = relay_urls_from_strings(&[relay.url().to_string()]);
-    let publisher = Client::new(Keys::generate());
-    let discovery_client = Client::new(Keys::generate());
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .unwrap();
 
-    let first = runtime.block_on(async {
-        ensure_session_relays_configured(&publisher, &relay_urls).await;
-        connect_client_with_timeout(&publisher, Duration::from_secs(2)).await;
-        publisher.send_event(&root_follow).await.unwrap();
-        publisher.send_event(&alice_follows_carol).await.unwrap();
-        fetch_user_discovery(
-            Arc::new(DiscoveryRelays::default()),
-            relay_urls.clone(),
-            root.public_key(),
-            UserDiscoveryCache::default(),
-        )
-        .await
-    });
+    let first = runtime.block_on(fetch_reconciled_fixture(
+        vec![root_follow.clone(), alice_follows_carol.clone()],
+        root.public_key(),
+        UserDiscoveryCache::default(),
+        &[alice_follows_carol.id],
+    ));
     assert_eq!(first.cache.users.len(), owners.len());
     assert_eq!(positions(&first.cache, &owners), [1, 2, 0]);
     assert!(first.cache.social_rank_ready);
@@ -128,15 +139,13 @@ fn relay_fetch_keeps_all_follows_and_preserves_social_order_until_root_changes()
             unix_now().get() + CLEARLY_FUTURE_OFFSET_SECS,
             &[carol.public_key()],
         );
-        publisher.send_event(&future).await.unwrap();
-        let result = fetch_user_discovery(
-            Arc::new(DiscoveryRelays::default()),
-            relay_urls.clone(),
+        fetch_reconciled_fixture(
+            vec![root_follow.clone(), future.clone()],
             root.public_key(),
             first.cache,
+            &[future.id],
         )
-        .await;
-        result
+        .await
     });
     assert_eq!(second.cache.users.len(), owners.len());
     assert_eq!(positions(&second.cache, &owners), [1, 2, 0]);
@@ -165,18 +174,13 @@ fn relay_fetch_keeps_all_follows_and_preserves_social_order_until_root_changes()
             unix_now().get() + CLEARLY_FUTURE_OFFSET_SECS,
             &[carol.public_key()],
         );
-        publisher.send_event(&changed_root).await.unwrap();
-        publisher.send_event(&future).await.unwrap();
-        let result = fetch_user_discovery(
-            Arc::new(DiscoveryRelays::default()),
-            relay_urls,
+        fetch_reconciled_fixture(
+            vec![changed_root.clone(), future.clone()],
             root.public_key(),
             second.cache,
+            &[future.id],
         )
-        .await;
-        let _ = publisher.shutdown().await;
-        let _ = discovery_client.shutdown().await;
-        result
+        .await
     });
     assert_eq!(third.cache.users.len(), changed_owners.len());
     assert_eq!(positions(&third.cache, &changed_owners), [0, 1]);
@@ -261,9 +265,11 @@ fn local_relay_ignores_future_root_and_preserves_metadata_and_unfollow() {
         )
         .await
     });
+    // This ordinary relay has no NIP-77 support. Root/profile reads still
+    // succeed, while graph opinions honestly remain incomplete.
     assert_eq!(
         second.detail,
-        "follows=1 metadata_failed_chunks=0 social_failed_chunks=0"
+        "follows=1 metadata_failed_chunks=0 social_failed_chunks=1"
     );
     assert_eq!(second.cache.users.len(), 1);
     assert_eq!(second.cache.follow_event_id, Some(follow.id.to_hex()));

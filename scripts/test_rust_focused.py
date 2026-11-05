@@ -177,6 +177,41 @@ class FocusedRunnerTests(unittest.TestCase):
             self.assertEqual(run["exit_code"], 0)
             self.assertTrue(run["closure"]["closed"])
 
+    def test_explicit_features_share_one_locked_build_and_are_recorded(self):
+        result = self.run_fixture("--test", "tests::one", "--test", "tests::two",
+                                  "--feature", "stack-fixture", "--feature", "local-relay-bin")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        builds = [call for call in self.calls() if call["tool"] == "cargo" and call["args"][0] == "test"]
+        self.assertEqual(len(builds), 1)
+        self.assertEqual(builds[0]["args"][-2:], ["--features", "stack-fixture,local-relay-bin"])
+        self.assertIn("--locked", builds[0]["args"])
+        self.assertIn("--offline", builds[0]["args"])
+        self.assertEqual(self.receipt()["plan"]["features"], ["stack-fixture", "local-relay-bin"])
+        binaries = [call for call in self.calls() if call["tool"] == "binary"]
+        self.assertEqual(len(binaries), 2)
+        self.assertTrue(all("--features" not in call["args"] for call in binaries))
+        self.assertTrue(self.receipt()["passed"])
+
+    def test_invalid_or_duplicate_features_stop_before_commands(self):
+        for features in (("",), ("--all-features",), ("dep/feature",), ("x;echo",),
+                         ("stack-fixture", "stack-fixture")):
+            with self.subTest(features=features):
+                options = ["--test", "tests::one"]
+                options.extend("--feature=" + feature for feature in features)
+                self.assertEqual(self.run_fixture(*options).returncode, 2)
+        self.assertFalse((self.root / "calls.jsonl").exists())
+        self.assertFalse(self.output.exists())
+
+    def test_feature_dry_run_records_recipe_without_commands(self):
+        self.env["PATH"] = ""
+        result = self.run_fixture("--test", "tests::one", "--feature", "stack-fixture", "--dry-run")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        plan = json.loads(result.stdout)
+        self.assertEqual(plan["features"], ["stack-fixture"])
+        self.assertEqual(plan["build_command"][-2:], ["--features", "stack-fixture"])
+        self.assertFalse(self.output.exists())
+        self.assertFalse((self.root / "calls.jsonl").exists())
+
     def test_online_release_and_ignored_execution_are_explicit(self):
         expected_profile = {
             "CARGO_PROFILE_RELEASE_OPT_LEVEL": "3",
