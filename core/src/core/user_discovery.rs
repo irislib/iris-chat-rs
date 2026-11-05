@@ -284,6 +284,7 @@ async fn fetch_user_discovery(
         .copied()
         .collect::<Vec<_>>();
     let cached_opinions = decode_opinion_cache(&previous.social_opinion_events);
+    let graph_download_budget = std::sync::atomic::AtomicUsize::new(MAX_OPINION_CACHE_BYTES);
     // Public graph catch-up has no account signer or private subscription state.
     let graph_client = Client::builder().build();
     ensure_session_relays_configured(&graph_client, &relay_urls).await;
@@ -292,6 +293,7 @@ async fn fetch_user_discovery(
         fetch_graph_opinion_chunks(
             &graph_client,
             &cached_opinions,
+            &graph_download_budget,
             Kind::ContactList,
             opinion_authors.clone(),
             Some(MAX_PEER_FOLLOW_EVENTS_PER_CHUNK),
@@ -299,6 +301,7 @@ async fn fetch_user_discovery(
         fetch_graph_opinion_chunks(
             &graph_client,
             &cached_opinions,
+            &graph_download_budget,
             Kind::from(10_000),
             opinion_authors
                 .iter()
@@ -481,6 +484,7 @@ fn encode_opinion_cache(
 async fn fetch_graph_opinion_chunks(
     client: &Client,
     cached: &[Event],
+    budget: &std::sync::atomic::AtomicUsize,
     kind: Kind,
     authors: Vec<PublicKey>,
     max_events: Option<usize>,
@@ -538,11 +542,36 @@ async fn fetch_graph_opinion_chunks(
                 Some(Filter::new().ids(missing).limit(limit + 1))
             };
             let result = if let Some(query) = query {
-                client
-                    .fetch_events(query, DISCOVERY_REQUEST_TIMEOUT)
-                    .await
-                    .map(|events| events.iter().cloned().collect::<Vec<_>>())
-                    .map_err(|error| error.to_string())
+                async {
+                    if budget.load(std::sync::atomic::Ordering::Relaxed) == 0 {
+                        return Err("graph download byte budget exhausted".to_owned());
+                    }
+                    let mut stream = client
+                        .stream_events(query, DISCOVERY_REQUEST_TIMEOUT)
+                        .await
+                        .map_err(|error| error.to_string())?;
+                    let mut events = Vec::new();
+                    while let Some(event) = stream.next().await {
+                        let bytes = serde_json::to_vec(&event)
+                            .map_err(|error| error.to_string())?
+                            .len();
+                        if bytes > MAX_OPINION_EVENT_BYTES
+                            || events.len() >= limit
+                            || budget
+                                .fetch_update(
+                                    std::sync::atomic::Ordering::Relaxed,
+                                    std::sync::atomic::Ordering::Relaxed,
+                                    |remaining| remaining.checked_sub(bytes),
+                                )
+                                .is_err()
+                        {
+                            return Err("graph download byte or event budget exhausted".to_owned());
+                        }
+                        events.push(event);
+                    }
+                    Ok(events)
+                }
+                .await
             } else {
                 Ok(Vec::new())
             };
