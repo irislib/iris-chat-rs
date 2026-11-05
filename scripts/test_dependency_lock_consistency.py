@@ -12,10 +12,10 @@ EXPECTED = {
     "hashtree-blossom": "0.3.0",
     "hashtree-resolver": "0.3.0",
     "hashtree-updater": "0.3.0",
-    "nvpn-fips-core": "0.4.117",
-    "nvpn-fips-endpoint": "0.4.117",
+    "nvpn-fips-core": "0.4.118",
+    "nvpn-fips-endpoint": "0.4.118",
     "nvpn-fips-tcp": "0.2.6",
-    "nvpn-fips-tcp-endpoint": "0.2.52",
+    "nvpn-fips-tcp-endpoint": "0.2.53",
     "hashtree-config": "0.2.83",
     "hashtree-core": "0.3.0",
     "hashtree-index": "0.3.0",
@@ -23,7 +23,7 @@ EXPECTED = {
     "hashtree-fips-transport": "0.5.0",
     "hashtree-network": "0.3.0",
     "nostr-pubsub": "0.1.20",
-    "nostr-pubsub-fips": "0.5.49",
+    "nostr-pubsub-fips": "0.5.50",
     "nostr-pubsub-relay": "0.1.16",
     "nostr-pubsub-social-graph": "0.2.4",
     "nostr-social-graph": "0.1.4",
@@ -144,17 +144,17 @@ class DependencyLockConsistencyTests(unittest.TestCase):
 
     def test_core_manifest_pins_gated_fips_stack_exactly(self):
         manifest = (ROOT / "core" / "Cargo.toml").read_text(encoding="utf-8")
-        self.assertRegex(manifest, r'(?m)^nvpn-fips-core = \{ version = "=0\.4\.117",', "fips-core must stay on the gated release")
-        self.assertRegex(manifest, r'(?m)^nvpn-fips-endpoint = \{ version = "=0\.4\.117" \}$', "fips-endpoint must stay on the gated release")
+        self.assertRegex(manifest, r'(?m)^nvpn-fips-core = \{ version = "=0\.4\.118",', "fips-core must stay on the gated release")
+        self.assertRegex(manifest, r'(?m)^nvpn-fips-endpoint = \{ version = "=0\.4\.118" \}$', "fips-endpoint must stay on the gated release")
         self.assertRegex(manifest, r'(?m)^nvpn-fips-tcp = \{ version = "=0\.2\.6" \}$', "fips-tcp must stay on the gated release")
-        self.assertRegex(manifest, r'(?m)^nvpn-fips-tcp-endpoint = \{ version = "=0\.2\.52" \}$', "fips-tcp-endpoint must stay on the gated release")
+        self.assertRegex(manifest, r'(?m)^nvpn-fips-tcp-endpoint = \{ version = "=0\.2\.53" \}$', "fips-tcp-endpoint must stay on the gated release")
         self.assertRegex(manifest, r'(?m)^hashtree-config = "=0\.2\.83"$', "Hashtree config must stay on the gated release")
         self.assertRegex(manifest, r'(?m)^hashtree-core = "=0\.3\.0"$', "Hashtree core must stay on the gated release")
         self.assertRegex(manifest, r'(?m)^hashtree-fips-transport = "=0\.5\.0"$', "Hashtree/FIPS transport must stay on the gated release")
         self.assertRegex(manifest, r'(?m)^hashtree-network = "=0\.3\.0"$', "Hashtree network must stay on the gated release")
         self.assertRegex(manifest, r'(?m)^nostr-identity = "=0\.6\.0"$', "nostr-identity must stay on the gated release")
         self.assertRegex(manifest, r'(?m)^nostr-pubsub = "=0\.1\.20"$', "nostr-pubsub must stay on the gated release")
-        self.assertRegex(manifest, r'(?m)^nostr-pubsub-fips = "=0\.5\.49"$', "nostr-pubsub-fips must stay on the gated release")
+        self.assertRegex(manifest, r'(?m)^nostr-pubsub-fips = "=0\.5\.50"$', "nostr-pubsub-fips must stay on the gated release")
         self.assertRegex(manifest, r'(?m)^nostr-pubsub-relay = "=0\.1\.16"$', "nostr-pubsub-relay must stay on the gated release")
 
     def test_linux_build_inherits_the_pinned_core_manifest(self):

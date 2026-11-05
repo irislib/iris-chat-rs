@@ -84,6 +84,9 @@ jobs:
           }
           echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
 
+      - name: Check release dependency pins before builds
+        run: python3 scripts/test_dependency_lock_consistency.py
+
       - name: Install checksum-verified formatting compiler
         run: python3 scripts/release-build-inputs.py --install --work "$RUNNER_TEMP/iris-release-rust" --component rustfmt
 
