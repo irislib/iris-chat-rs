@@ -68,16 +68,26 @@ final class ChatPaginationUITests: IrisChatUITestCase {
             let afterY = sameMessage?.frame.minY ?? CGFloat.nan
             let tolerance = max(20, viewport.height * 0.06)
             let stayedVisible = sameMessage.map { viewport.intersects($0.frame) } ?? false
-            if !stayedVisible || abs(afterY - beforeY - distance) > tolerance {
+            let discontinuity = !stayedVisible || abs(afterY - beforeY - distance) > tolerance
+            let beforeOrdinals = messageSnapshots(in: before).compactMap { ordinal($0.label) }
+            let afterOrdinals = messageSnapshots(in: after).compactMap { ordinal($0.label) }
+            let transitioned = beforeOrdinals.min() != afterOrdinals.min()
+                || beforeOrdinals.max() != afterOrdinals.max()
+            if discontinuity {
                 capture(app, name: "older-page-anchor-discontinuity")
-                let beforeOrdinals = messageSnapshots(in: before).compactMap { ordinal($0.label) }
-                let afterOrdinals = messageSnapshots(in: after).compactMap { ordinal($0.label) }
-                let detail = XCTAttachment(string:
+            }
+            if discontinuity || transitioned {
+                // At most one 2,048-character attachment per bounded loop iteration.
+                // Retain successful transitions too, without another UI query.
+                let text =
                     "ordinal=\(ordinal(label) ?? -1) beforeY=\(beforeY) afterY=\(afterY) expectedDelta=\(distance) tolerance=\(tolerance)\n" +
+                    "viewport before=\(viewport) after=\(after.frame)\n" +
                     "rendered before=\(beforeOrdinals.min() ?? -1)...\(beforeOrdinals.max() ?? -1) " +
                     "after=\(afterOrdinals.min() ?? -1)...\(afterOrdinals.max() ?? -1)\n" +
-                    "before timeline trace:\n\(String(describing: before.value))\n" +
-                    "after timeline trace:\n\(String(describing: after.value))")
+                    "before timeline trace:\n\(String(describing: before.value).prefix(512))\n" +
+                    "after timeline trace:\n\(String(describing: after.value).prefix(512))"
+                let detail = XCTAttachment(string: String(text.prefix(2_048)))
+                detail.name = discontinuity ? "older-page-anchor-trace" : "older-page-transition-trace"
                 detail.lifetime = .keepAlways
                 add(detail)
             }
