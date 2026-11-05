@@ -779,3 +779,7 @@ fn column_exists(
 #[cfg(test)]
 #[path = "schema_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "schema_released_discovery_tests.rs"]
+mod released_discovery_tests;

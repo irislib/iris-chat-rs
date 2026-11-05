@@ -1,0 +1,98 @@
+[
+  {
+    "kind": 3,
+    "created_at": 1793836800,
+    "tags": [
+      [
+        "p",
+        "515819ca81e3323822cff57e4896006dd3cc256baed6fbc2a5c2c6c8d1e8f833",
+        "",
+        "Fixture one"
+      ],
+      [
+        "p",
+        "b95beafe763fab17a4cfdf7908f5556f3ff40297c57b801d342d7ae2be967225",
+        "",
+        "Fixture two"
+      ]
+    ],
+    "content": "",
+    "pubkey": "ba7963b97d72b6ad9c0629517e4f7d3a36b823aadd0ec32462e88f31bf13b12b",
+    "id": "bb2593122ec05fa391733161a414d7e6c58bf4aee3b21cfb8115dcae5b7c112d",
+    "sig": "92a6c4f036f4bc9d492f2bf6ffcdc1818bd23bf7ca79a34f4e6e4be239d19907237d2eb42ae0212731f1e671f7a16135fc4aa6ed1859ea0040ef75d88f17a455"
+  },
+  {
+    "kind": 10000,
+    "created_at": 1793836801,
+    "tags": [
+      [
+        "p",
+        "12a0f3028afdec26720a7890560c2f9c5063d9820edd6826b91ef03b88aeb3b7"
+      ]
+    ],
+    "content": "",
+    "pubkey": "ba7963b97d72b6ad9c0629517e4f7d3a36b823aadd0ec32462e88f31bf13b12b",
+    "id": "1f62b259f95b1a7c715238efe6b7e8e392fd6fa3c50d5e77aa4087119821535b",
+    "sig": "1e45b65520f96cd0e87d813cad351477725841f119d20c1488481c7a49f866560a57b6364d73b9ffcf59c09571ee8819524dc1244a468b8eacfe183f1e49537d"
+  },
+  {
+    "kind": 3,
+    "created_at": 1793836802,
+    "tags": [
+      [
+        "p",
+        "094710338801ab7b52d32ff1e5d95f8a658db25a2127a236bf8d263d6fadd39a"
+      ]
+    ],
+    "content": "",
+    "pubkey": "515819ca81e3323822cff57e4896006dd3cc256baed6fbc2a5c2c6c8d1e8f833",
+    "id": "4a0353befedbda9ff98ea8e408a6105cd27fee94b46d77a18b08f39a581302f5",
+    "sig": "4c28f222d035c4855fc3530e90f736ff0ed8d2c2b6a832d69123b2755857443df04e9b3dd8239883f90aed51022e81e5112c8a1457e1c189c1b4b251d90176f5"
+  },
+  {
+    "kind": 3,
+    "created_at": 1793836803,
+    "tags": [
+      [
+        "p",
+        "094710338801ab7b52d32ff1e5d95f8a658db25a2127a236bf8d263d6fadd39a"
+      ]
+    ],
+    "content": "",
+    "pubkey": "b95beafe763fab17a4cfdf7908f5556f3ff40297c57b801d342d7ae2be967225",
+    "id": "95d843a5a7d058903e102693c8377300b8aee9f6c63b694049676d3096337329",
+    "sig": "c7110a30937abf9cf167c543b172c58037f657fe0e0e30723e38aa46f08955dde0fc16c334024fc19a4d0c17b1478b4942982ee7264b14d4c0cb714bed379ba5"
+  },
+  {
+    "kind": 10000,
+    "created_at": 1793836804,
+    "tags": [
+      [
+        "p",
+        "12a0f3028afdec26720a7890560c2f9c5063d9820edd6826b91ef03b88aeb3b7"
+      ]
+    ],
+    "content": "",
+    "pubkey": "515819ca81e3323822cff57e4896006dd3cc256baed6fbc2a5c2c6c8d1e8f833",
+    "id": "b4a43e2919bac65234ba22e8499ffa09063c7b2ec2c44e1f749277c37fe058ed",
+    "sig": "3a684cbd9508679f2f0574a7d01537a4b5d163dceed5d0ee9eb1094c907a776e3efeaafab5af13e2a14629feb6a402a5a0be71016e1ef1e167b8a347543042f1"
+  },
+  {
+    "kind": 0,
+    "created_at": 1793836805,
+    "tags": [],
+    "content": "{\"name\":\"Schema46 fixture one\"}",
+    "pubkey": "515819ca81e3323822cff57e4896006dd3cc256baed6fbc2a5c2c6c8d1e8f833",
+    "id": "00e787bd00656de86e3407a374773c5c7d6ab244b591837b52b1aaefc2d44168",
+    "sig": "99e7394c6678e96b53a74673748d9c66571f116e77b781f7618adaffcb3e1d6afde9ac3ca4fdaa6684a4c87c8d5d285eafcb6a0253285afe04cd6ff15f8e6667"
+  },
+  {
+    "kind": 0,
+    "created_at": 1793836806,
+    "tags": [],
+    "content": "{\"name\":\"Schema46 fixture two\"}",
+    "pubkey": "b95beafe763fab17a4cfdf7908f5556f3ff40297c57b801d342d7ae2be967225",
+    "id": "714b5fcea02ddbe3fa67a3df4ff71868a7a88446d7f813c1c03f1d0bf39a9e10",
+    "sig": "e987f99ede3708f04ffdfe0d14177ce5c4e99826d0862576bf9d6f85c0e5fe6f3805bcdc2bc6a5c8ddd1d1b1bb5ec613d48dc1a1500d7eedc2ca3ce893f1f5e5"
+  }
+]
