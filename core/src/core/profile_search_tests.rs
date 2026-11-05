@@ -265,6 +265,7 @@ fn personalized_global_rank_restores_and_is_account_scoped() {
         social_rank_ready: true,
         social_friend_support: BTreeMap::from([(supported.clone(), 2)]),
         social_graph: None,
+        social_opinion_events: Vec::new(),
     };
     store.replace_user_discovery(&cache).unwrap();
     store

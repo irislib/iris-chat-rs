@@ -46,7 +46,7 @@ pub(super) fn update_people_graph(
             // The relay input remains bounded even when signed by a followed account.
             let max_edges = if event.pubkey == owner { 5_000 } else { 1_000 };
             let mut seen = HashSet::new();
-            let tags = event
+            let tags: Vec<Vec<String>> = event
                 .tags
                 .iter()
                 .filter_map(|tag| {
@@ -58,8 +58,10 @@ pub(super) fn update_people_graph(
                     seen.insert(target.clone())
                         .then(|| vec!["p".to_string(), target])
                 })
-                .take(max_edges)
+                .take(max_edges + 1)
                 .collect();
+            let incomplete = tags.len() > max_edges;
+            let tags = tags.into_iter().take(max_edges).collect();
             graph.handle_event(
                 &NostrEvent {
                     pubkey: event.pubkey.to_hex(),
@@ -67,7 +69,12 @@ pub(super) fn update_people_graph(
                     created_at: event.created_at.as_secs(),
                     tags,
                     content: String::new(),
-                    id: event.id.to_hex(),
+                    // A projection must never advertise the complete signed event as present.
+                    id: if incomplete {
+                        String::new()
+                    } else {
+                        event.id.to_hex()
+                    },
                     sig: String::new(),
                 },
                 true,

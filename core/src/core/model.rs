@@ -138,6 +138,9 @@ pub(super) struct UserDiscoveryCache {
     pub(super) social_friend_support: BTreeMap<String, u16>,
     #[serde(default)]
     pub(super) social_graph: Option<Vec<u8>>,
+    /// Complete verified public opinion heads; bounded separately from graph projections.
+    #[serde(default)]
+    pub(super) social_opinion_events: Vec<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]

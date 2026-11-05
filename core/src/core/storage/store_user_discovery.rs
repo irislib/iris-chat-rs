@@ -55,7 +55,16 @@ impl AppStore {
             let (owner, support) = row?;
             social_friend_support.insert(owner, support);
         }
+        let opinion_json: String = conn
+            .query_row(
+                "SELECT social_opinion_events_json FROM user_discovery_state WHERE id = 1",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?
+            .unwrap_or_else(|| "[]".to_owned());
         Ok(UserDiscoveryCache {
+            social_opinion_events: serde_json::from_str(&opinion_json).unwrap_or_default(),
             follow_event_json: conn
                 .query_row(
                     "SELECT follow_event_json FROM user_discovery_state WHERE id = 1",
@@ -96,8 +105,8 @@ impl AppStore {
         tx.execute(
             "INSERT INTO user_discovery_state(
                  id, owner_pubkey_hex, follow_event_id, follow_created_at_secs,
-                 social_rank_ready, social_graph, follow_event_json
-             ) VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6)",
+                 social_rank_ready, social_graph, follow_event_json, social_opinion_events_json
+             ) VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             params![
                 cache.owner_pubkey_hex,
                 cache.follow_event_id,
@@ -105,6 +114,7 @@ impl AppStore {
                 cache.social_rank_ready,
                 cache.social_graph,
                 cache.follow_event_json,
+                serde_json::to_string(&cache.social_opinion_events)?,
             ],
         )?;
         {
