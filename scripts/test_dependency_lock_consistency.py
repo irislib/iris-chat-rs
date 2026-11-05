@@ -23,7 +23,7 @@ EXPECTED = {
     "hashtree-fips-transport": "0.5.0",
     "hashtree-network": "0.3.0",
     "nostr-pubsub": "0.1.20",
-    "nostr-pubsub-fips": "0.6.0",
+    "nostr-pubsub-fips": "0.6.1",
     "nostr-pubsub-relay": "0.1.16",
     "nostr-pubsub-social-graph": "0.3.0",
     "nostr-social-graph": "0.2.0",
@@ -159,7 +159,7 @@ class DependencyLockConsistencyTests(unittest.TestCase):
         self.assertRegex(manifest, r'(?m)^hashtree-network = "=0\.3\.0"$', "Hashtree network must stay on the gated release")
         self.assertRegex(manifest, r'(?m)^nostr-identity = "=0\.6\.0"$', "nostr-identity must stay on the gated release")
         self.assertRegex(manifest, r'(?m)^nostr-pubsub = "=0\.1\.20"$', "nostr-pubsub must stay on the gated release")
-        self.assertRegex(manifest, r'(?m)^nostr-pubsub-fips = "=0\.6\.0"$', "nostr-pubsub-fips must stay on the gated release")
+        self.assertRegex(manifest, r'(?m)^nostr-pubsub-fips = "=0\.6\.1"$', "nostr-pubsub-fips must stay on the gated release")
         self.assertRegex(manifest, r'(?m)^nostr-pubsub-relay = "=0\.1\.16"$', "nostr-pubsub-relay must stay on the gated release")
         self.assertRegex(manifest, r'(?m)^nostr-social-graph = "=0\.2\.0"$', "Direct graph consumer needs revision-aware lists")
         # Direct and pubsub/memory consumers share the reviewed revision-aware graph.
@@ -172,7 +172,7 @@ class DependencyLockConsistencyTests(unittest.TestCase):
 
     def test_revision_aware_provider_archives_are_the_accepted_tuple(self):
         checksums = {
-            "nostr-pubsub-fips": "f5774e279e0511b5a94e68704b01eb28fd5ca9b2203ab54bb7727f9eff8f179a",
+            "nostr-pubsub-fips": "23568533712a3635e45e86ed79895e42f87a11dfcd43ba9bcf02a5e9b90db90f",
             "nostr-pubsub-social-graph": "e9dd2d0a1cdacf1ea254ea05d7f63dd6624ff4ee6dae62c4c4000dd4db8b9666",
             "nostr-social-memory": "39fb16cde2e5bb0e6eeed1c5c8740b01a3c90daa277c30c397715e84aa7a89c9",
         }

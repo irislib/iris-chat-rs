@@ -208,7 +208,12 @@ impl Collector {
                 state.overflow |= !valid;
             }
             Kind::Submission => {
-                let row = &mut state.submissions[(fields.msg_type - 16) as usize];
+                let Ok(index) = usize::try_from(fields.msg_type - 16) else {
+                    let valid = add(&mut state.invalid_events, 1);
+                    state.overflow |= !valid;
+                    return;
+                };
+                let row = &mut state.submissions[index];
                 let mut valid = add(&mut row[0], 1);
                 if fields.submitted {
                     valid &= add(&mut row[1], 1);
