@@ -687,6 +687,10 @@ jobs:
     timeout-minutes: 60
     env:
       CARGO_TARGET_DIR: ${{ github.workspace }}/cargo-target
+      # Keep debug assertions; omit large debug-info and incremental artifacts.
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_PROFILE_TEST_DEBUG: "0"
+      CARGO_INCREMENTAL: "0"
     defaults:
       run:
         working-directory: iris-chat-rs
@@ -730,23 +734,34 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             ${{ github.workspace }}/cargo-target
-          key: linux-${{ runner.os }}-${{ matrix.toolchain }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock') }}-${{ github.sha }}
+          key: linux-debug0-incremental0-v1-${{ runner.os }}-${{ matrix.toolchain }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock') }}-${{ github.sha }}
           restore-keys: |
-            linux-${{ runner.os }}-${{ matrix.toolchain }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock') }}-
-            linux-${{ runner.os }}-${{ matrix.toolchain }}-
+            linux-debug0-incremental0-v1-${{ runner.os }}-${{ matrix.toolchain }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock') }}-
+            linux-debug0-incremental0-v1-${{ runner.os }}-${{ matrix.toolchain }}-
 
       - name: Desktop media regression tests
         run: |
+          timeout 10s df -B1 "$GITHUB_WORKSPACE"
           cargo clippy --manifest-path core/Cargo.toml --features desktop-media --locked --lib -- -D warnings -D clippy::panic -D clippy::unwrap_used -D clippy::expect_used -D clippy::unimplemented -D clippy::todo -D clippy::indexing_slicing
           cargo test --manifest-path core/Cargo.toml --features desktop-media --locked --lib desktop_call -- --nocapture
 
       - name: Linux tests
         run: |
+          timeout 10s df -B1 "$GITHUB_WORKSPACE"
+          timeout 20s du -sb "$CARGO_TARGET_DIR"
           mkdir -p work/clipboard
           IRIS_CLIPBOARD_UI_SCREENSHOT="$PWD/work/clipboard/linux.png" \
           IRIS_COMPLETION_SCREENSHOT_DIR="$PWD/work/clipboard/completion" \
           IRIS_KEYBOARD_SCREENSHOT="$PWD/work/clipboard/linux-keyboard.png" \
             dbus-run-session -- xvfb-run -a cargo test --manifest-path linux/Cargo.toml --locked --features ui-tests
+
+      - name: Record Linux disk usage
+        if: always()
+        run: |
+          timeout 10s df -B1 "$GITHUB_WORKSPACE"
+          if [[ -d "$CARGO_TARGET_DIR" ]]; then
+            timeout 20s du -sb "$CARGO_TARGET_DIR"
+          fi
 
       - name: Upload Linux clipboard results
         if: always()
