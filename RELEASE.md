@@ -99,6 +99,11 @@ trust. This requires a BuildKit Dockerfile frontend
 supporting `ADD --checksum` and `--chmod`. Debian's snapshot also supports HTTP,
 with the same signature and fixed-hash checks. Only historical snapshot expiry
 is disabled; TLS verification, signatures and package integrity remain on.
+APT retries transient downloads up to five times, with 30-second connection and
+data-inactivity timeouts. Index updates and package downloads each have a
+10-minute acquisition deadline with a 15-second termination grace. Packages are
+downloaded before installation, which runs with downloads disabled; the
+acquisition deadline does not interrupt package configuration.
 `linux/build-inputs/cargo-deb.sha256` fixes cargo-deb 3.8.0 and its bundled lockfile;
 the helper verifies the archive before extraction and installs from that path
 with `--locked`. Release builds disable the optional, unpinned cargo-watch
