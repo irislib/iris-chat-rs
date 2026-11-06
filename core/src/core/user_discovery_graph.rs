@@ -124,6 +124,44 @@ mod tests {
     }
 
     #[test]
+    fn bundled_graph_keeps_list_ids_and_partial_heads_on_first_refresh() {
+        let owner = Keys::generate();
+        let owner_hex = owner.public_key().to_hex();
+        let seed =
+            SocialGraph::from_binary(&owner_hex, include_bytes!("../../assets/socialGraph.bin"))
+                .unwrap();
+        let revisions = |graph: &SocialGraph| {
+            graph
+                .get_list_revisions()
+                .into_iter()
+                .map(|(author, kind, revision)| ((author, kind), revision))
+                .collect::<std::collections::BTreeMap<_, _>>()
+        };
+        let expected = revisions(&seed);
+        for kind in [3, 10_000] {
+            let heads = expected
+                .iter()
+                .filter(|((_, list_kind), _)| *list_kind == kind)
+                .map(|(_, revision)| revision)
+                .collect::<Vec<_>>();
+            assert!(
+                !heads.is_empty(),
+                "the bootstrap must retain list event IDs"
+            );
+            assert!(heads
+                .iter()
+                .all(|head| { nostr_social_graph::valid_event_id(&head.id) }));
+            assert!(heads.iter().any(|head| head.complete));
+            assert!(heads.iter().any(|head| !head.complete));
+        }
+
+        let refreshed =
+            update_people_graph(owner.public_key(), None, &[], &[], Vec::new(), None, 0).unwrap();
+        let reloaded = SocialGraph::from_binary(&owner_hex, &refreshed).unwrap();
+        assert_eq!(revisions(&reloaded), expected);
+    }
+
+    #[test]
     fn rejected_personal_graph_preserves_original_bytes_during_refresh() {
         let root = Keys::generate();
         let friend = Keys::generate();
