@@ -26,7 +26,7 @@ EXPECTED = {
     "nostr-pubsub-fips": "0.6.1",
     "nostr-pubsub-relay": "0.1.16",
     "nostr-pubsub-social-graph": "0.3.0",
-    "nostr-social-graph": "0.2.0",
+    "nostr-social-graph": "0.2.1",
     "nostr-social-memory": "0.2.0",
 }
 
@@ -161,14 +161,14 @@ class DependencyLockConsistencyTests(unittest.TestCase):
         self.assertRegex(manifest, r'(?m)^nostr-pubsub = "=0\.1\.20"$', "nostr-pubsub must stay on the gated release")
         self.assertRegex(manifest, r'(?m)^nostr-pubsub-fips = "=0\.6\.1"$', "nostr-pubsub-fips must stay on the gated release")
         self.assertRegex(manifest, r'(?m)^nostr-pubsub-relay = "=0\.1\.16"$', "nostr-pubsub-relay must stay on the gated release")
-        self.assertRegex(manifest, r'(?m)^nostr-social-graph = "=0\.2\.0"$', "Direct graph consumer needs revision-aware lists")
+        self.assertRegex(manifest, r'(?m)^nostr-social-graph = "=0\.2\.1"$', "Direct graph consumer needs revision-aware lists")
         # Direct and pubsub/memory consumers share the reviewed revision-aware graph.
         for lock_path in PLATFORM_LOCKS:
             entries = [block for block in lock_path.read_text().split("[[package]]")
                        if re.search(r'(?m)^name = "nostr-social-graph"$', block)
-                       and re.search(r'(?m)^version = "0.2.0"$', block)]
+                       and re.search(r'(?m)^version = "0.2.1"$', block)]
             self.assertEqual(len(entries), 1)
-            self.assertIn('checksum = "83a7c3e6dedf8c0474c9e09938496abde4a9c77cd38ec4832d9b56ee9602b8f8"', entries[0])
+            self.assertIn('checksum = "c791a910d0dfe97088bb9ebac2b0551e21102ae4f272ad2a8b20cec27e188402"', entries[0])
 
     def test_revision_aware_provider_archives_are_the_accepted_tuple(self):
         checksums = {
