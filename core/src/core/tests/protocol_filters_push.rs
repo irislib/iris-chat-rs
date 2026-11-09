@@ -1617,6 +1617,7 @@ fn mobile_push_decrypt_preview_does_not_mutate_persisted_ratchet_state() {
     })
     .to_string();
 
+    super::mobile_push::PREVIEW_WORK.with(|work| work.set((0, 0)));
     let resolution = decrypt_mobile_push_notification(
         data_dir.to_string_lossy().to_string(),
         bob_keys.public_key().to_hex(),
@@ -1639,6 +1640,11 @@ fn mobile_push_decrypt_preview_does_not_mutate_persisted_ratchet_state() {
     );
     assert!(apns_resolution.should_show);
     assert_eq!(apns_resolution.body, message);
+    assert_eq!(
+        super::mobile_push::PREVIEW_WORK.with(|work| work.get()),
+        (2, 0),
+        "previews must not serialize a checkpoint, including during startup"
+    );
 
     let after = bob_storage
         .get(state_key)

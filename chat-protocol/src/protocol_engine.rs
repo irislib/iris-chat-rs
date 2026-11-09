@@ -7,6 +7,7 @@ include!("protocol_engine/group_retry_pacing.rs");
 include!("protocol_engine/group_fresh.rs");
 include!("protocol_engine/group_decrypt.rs");
 include!("protocol_engine/engine_core.rs");
+include!("protocol_engine/notification_preview.rs");
 include!("protocol_engine/group_ingress_migration.rs");
 include!("protocol_engine/engine_test_support.rs");
 include!("protocol_engine/engine_state_helpers.rs");
@@ -64,6 +65,7 @@ pub(crate) mod tests {
     include!("protocol_engine/checkpoint_fanout_tests.rs");
     include!("protocol_engine/checkpoint_growth_tests.rs");
     include!("protocol_engine/checkpoint_startup_tests.rs");
+    include!("protocol_engine/notification_preview_tests.rs");
     include!("protocol_engine/checkpoint_retry_clock_tests.rs");
     include!("protocol_engine/fanout_retry_tests.rs");
     include!("protocol_engine/fanout_retry_deadline_tests.rs");
