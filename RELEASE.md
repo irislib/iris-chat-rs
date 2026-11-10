@@ -43,9 +43,9 @@ A verified descendant's complete history may cover an ancestor package revision
 only with recorded ancestry and matching source configuration. Retain that
 proof together with the verified package archive's checksum; a successful Git
 push alone is insufficient.
-Check the registry archives and dependency pins after publication. Do not use
-the unsupported scripts under `scripts/legacy/release`. This source publication
-does not replace any tagged binary or satisfy a binary distribution gate.
+Check the registry archives and dependency pins after publication. This source
+publication does not replace any tagged binary or satisfy a binary distribution
+gate.
 
 An explicitly authorized iOS omission is recorded for its exact tag in
 `release-platforms.json` before tagging. All other tags still require the full

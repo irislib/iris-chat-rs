@@ -612,7 +612,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
     def test_only_supported_operator_entrypoint_is_active(self) -> None:
         self.assertTrue((ROOT / "scripts/distribute").exists())
         self.assertFalse((ROOT / "scripts/release").exists())
-        self.assertTrue((ROOT / "scripts/legacy/release/local-build-and-publish").exists())
+        self.assertFalse((ROOT / "scripts/legacy").exists())
 
 
 if __name__ == "__main__":
