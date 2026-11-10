@@ -1,3 +1,5 @@
+use super::*;
+
 #[test]
 fn private_block_event_is_durable_ordered_and_preserves_direct_history() {
     let owner = Keys::generate();
@@ -276,7 +278,7 @@ fn private_block_current_sibling_can_forward_state_after_original_writer_removed
     assert!(receiver.is_owner_blocked(&target));
 }
 
-fn signed_block_transition(
+pub(super) fn signed_block_transition(
     owner: &Keys,
     writer: &Keys,
     target: &str,

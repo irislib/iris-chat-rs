@@ -1,3 +1,5 @@
+use super::*;
+
 #[test]
 fn direct_send_readiness_advances_from_appkeys_and_invite_state() {
     let owner = Keys::generate();
@@ -25,12 +27,7 @@ fn direct_send_readiness_advances_from_appkeys_and_invite_state() {
         DirectSendReadiness::MissingPeerAppKeys
     );
 
-    observe_peer_appkeys_for_test(
-        &mut engine,
-        &peer_owner,
-        &[peer_device.public_key()],
-        1,
-    );
+    observe_peer_appkeys_for_test(&mut engine, &peer_owner, &[peer_device.public_key()], 1);
     assert_eq!(
         engine.direct_send_readiness(peer_owner.public_key()),
         DirectSendReadiness::MissingPeerInviteOrSession
@@ -75,12 +72,7 @@ fn nsec_restore_queues_until_local_device_approval_is_available() {
 
     {
         let engine = core.protocol_engine.as_mut().expect("protocol engine");
-        observe_peer_appkeys_for_test(
-            engine,
-            &peer_owner,
-            &[peer_device.public_key()],
-            1,
-        );
+        observe_peer_appkeys_for_test(engine, &peer_owner, &[peer_device.public_key()], 1);
         observe_peer_device_invite_for_test(engine, &peer_owner, &peer_device, 2);
         assert_eq!(
             engine.direct_send_readiness(peer_owner.public_key()),
@@ -99,22 +91,42 @@ fn nsec_restore_queues_until_local_device_approval_is_available() {
         .expect("sent message");
     assert_eq!(message.delivery, DeliveryState::Queued);
     assert!(message.delivery_trace.outer_event_ids.is_empty());
-    assert!(update_rx.try_iter().all(|update| match update {
-        AppUpdate::NearbyPublishedEvent { event_json, .. } => serde_json::from_str::<Event>(&event_json)
-            .map(|event| !is_app_keys_event(&event))
-            .unwrap_or(true),
-        _ => true,
-    }), "recovery must not publish a provisional one-device AppKeys roster");
+    assert!(
+        update_rx.try_iter().all(|update| match update {
+            AppUpdate::NearbyPublishedEvent { event_json, .. } =>
+                serde_json::from_str::<Event>(&event_json)
+                    .map(|event| !is_app_keys_event(&event))
+                    .unwrap_or(true),
+            _ => true,
+        }),
+        "recovery must not publish a provisional one-device AppKeys roster"
+    );
 
     let device = core.logged_in.as_ref().unwrap().device_keys.public_key();
     core.complete_owner_registration_lookup(
-        core.relay_status_watch_generation, owner.public_key(), device, 2, 2, vec![],
+        core.relay_status_watch_generation,
+        owner.public_key(),
+        device,
+        2,
+        2,
+        vec![],
     );
     let sent = &core.threads[&chat_id].messages[0];
-    assert!(!sent.delivery_trace.outer_event_ids.is_empty(), "approval must automatically drain the original message");
-    let response = pending_events_with_kind(&core, INVITE_RESPONSE_KIND).into_iter().next().unwrap();
-    assert!(response.tags.iter().any(|tag| tag.as_slice()[0] == "owner-proof"),
-        "the first send must carry the locally signed approval without waiting for server echo");
+    assert!(
+        !sent.delivery_trace.outer_event_ids.is_empty(),
+        "approval must automatically drain the original message"
+    );
+    let response = pending_events_with_kind(&core, INVITE_RESPONSE_KIND)
+        .into_iter()
+        .next()
+        .unwrap();
+    assert!(
+        response
+            .tags
+            .iter()
+            .any(|tag| tag.as_slice()[0] == "owner-proof"),
+        "the first send must carry the locally signed approval without waiting for server echo"
+    );
 }
 
 #[test]
@@ -126,12 +138,7 @@ fn signed_device_approval_drains_message_stuck_on_missing_local_app_keys() {
     let mut core = logged_in_test_core("owner-auth-recovers-queue", &owner, &device);
     {
         let engine = core.protocol_engine.as_mut().expect("protocol engine");
-        observe_peer_appkeys_for_test(
-            engine,
-            &peer_owner,
-            &[peer_device.public_key()],
-            1,
-        );
+        observe_peer_appkeys_for_test(engine, &peer_owner, &[peer_device.public_key()], 1);
         observe_peer_device_invite_for_test(engine, &peer_owner, &peer_device, 2);
     }
 
@@ -152,16 +159,28 @@ fn signed_device_approval_drains_message_stuck_on_missing_local_app_keys() {
         .authenticate_local_owner_for_sending(&owner)
         .expect("owner authentication");
     core.retry_protocol_engine_pending_work("test_owner_authentication");
-    assert!(core.threads[&chat_id].messages[0].delivery_trace.outer_event_ids.is_empty(),
-        "account-key possession must not replace the signed approval needed by recipients");
-    core.handle_relay_event(signed_app_keys_authorization_event(&owner, device.public_key(), 10));
+    assert!(
+        core.threads[&chat_id].messages[0]
+            .delivery_trace
+            .outer_event_ids
+            .is_empty(),
+        "account-key possession must not replace the signed approval needed by recipients"
+    );
+    core.handle_relay_event(signed_app_keys_authorization_event(
+        &owner,
+        device.public_key(),
+        10,
+    ));
 
     let sent = core
         .threads
         .get(&chat_id)
         .and_then(|thread| thread.messages.first())
         .expect("recovered message");
-    assert_eq!(sent.id, queued_id, "a queued message must keep its final event ID");
+    assert_eq!(
+        sent.id, queued_id,
+        "a queued message must keep its final event ID"
+    );
     assert!(!sent.delivery_trace.outer_event_ids.is_empty());
 }
 
@@ -193,7 +212,10 @@ fn appcore_direct_text_queues_until_subscription_state_makes_peer_ready() {
         .expect("queued message")
         .clone();
     assert_eq!(queued_message.delivery, DeliveryState::Queued);
-    assert!(nostr::EventId::from_hex(&queued_message.id).is_ok(), "queue with the final event hash");
+    assert!(
+        nostr::EventId::from_hex(&queued_message.id).is_ok(),
+        "queue with the final event hash"
+    );
     assert_eq!(queued_message.body, "queued hello");
     assert_eq!(queued_message.attachments.len(), 1);
     assert_eq!(queued_message.attachments[0].filename, "iris-logo.png");
@@ -228,8 +250,17 @@ fn appcore_direct_text_queues_until_subscription_state_makes_peer_ready() {
     assert!(core.pending_relay_publishes.is_empty());
 
     let mut receiver = logged_in_test_core("queued-timestamp-recipient", &peer_owner, &peer_device);
-    receiver.handle_relay_event(signed_app_keys_authorization_event(&owner, device.public_key(), 1));
-    let invite = receiver.protocol_engine.as_mut().unwrap().local_invite().unwrap();
+    receiver.handle_relay_event(signed_app_keys_authorization_event(
+        &owner,
+        device.public_key(),
+        1,
+    ));
+    let invite = receiver
+        .protocol_engine
+        .as_mut()
+        .unwrap()
+        .local_invite()
+        .unwrap();
     let invite_event = nostr_double_ratchet::invite_unsigned_event(&invite)
         .expect("invite event")
         .sign_with_keys(&peer_device)
@@ -260,11 +291,15 @@ fn appcore_direct_text_queues_until_subscription_state_makes_peer_ready() {
         }
     }
     let received = &receiver.threads[&owner.public_key().to_hex()].messages[0];
-    assert_eq!(received.id, queued_message.id, "recipient must index the same event");
-    assert_eq!(received.created_at_secs, queued_message.created_at_secs,
-        "the recipient must see when the queued message was written, not when it drained");
+    assert_eq!(
+        received.id, queued_message.id,
+        "recipient must index the same event"
+    );
+    assert_eq!(
+        received.created_at_secs, queued_message.created_at_secs,
+        "the recipient must see when the queued message was written, not when it drained"
+    );
 }
-
 
 #[test]
 fn appcore_direct_queue_keeps_distinct_final_ids_across_restart_and_retry() {
@@ -414,9 +449,10 @@ fn appcore_direct_queue_rejects_genuinely_empty_content() {
         .expect("failed empty message");
     assert_eq!(message.id, "empty-queued");
     assert_eq!(message.delivery, DeliveryState::Failed);
-    assert!(core.pending_relay_publishes.values().all(|pending| {
-        pending.inner_event_id.as_deref() != Some("empty-queued")
-    }));
+    assert!(core
+        .pending_relay_publishes
+        .values()
+        .all(|pending| { pending.inner_event_id.as_deref() != Some("empty-queued") }));
     assert!(core.debug_log.iter().any(|entry| {
         entry.category == "message.direct.queue.invalid"
             && entry.detail.contains("empty_content=true")
@@ -515,8 +551,11 @@ fn assert_group_fanout_no_progress_does_not_rewrite_persisted_state(known_roster
     let device = Keys::generate();
     let peer_owner = Keys::generate();
     let storage = Arc::new(CountingStorage::new());
-    let mut engine =
-        test_protocol_engine_with_storage(&owner, &device, storage.clone() as Arc<dyn StorageAdapter>);
+    let mut engine = test_protocol_engine_with_storage(
+        &owner,
+        &device,
+        storage.clone() as Arc<dyn StorageAdapter>,
+    );
     observe_current_device_appkeys_for_test(&mut engine, &owner, &device);
     if known_roster {
         observe_peer_appkeys_for_test(
@@ -675,7 +714,10 @@ fn appcore_direct_send_storage_failure_rolls_back_protocol_state() {
     );
 
     assert!(result.is_err());
-    assert!(!engine.has_pending_retry_work(), "failed persistence must also roll back the partial remote queue");
+    assert!(
+        !engine.has_pending_retry_work(),
+        "failed persistence must also roll back the partial remote queue"
+    );
     assert_eq!(
         engine.session_manager_snapshot_for_test(),
         before,

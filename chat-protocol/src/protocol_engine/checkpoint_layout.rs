@@ -1,35 +1,37 @@
+use super::*;
+
 // Keep checkpoints ordinary JSON so existing clients and recovery tools can
 // still read them. Remember only whitespace boundaries, never another copy of
 // secret state. Reuse these boundaries so a one-byte record overflow consumes
 // nearby padding instead of shifting every subsequent record by a whole page.
 #[derive(Default)]
-struct ProtocolCheckpointLayout {
-    record_ends: Vec<usize>,
-    bytes: usize,
-    core: Option<Box<ProtocolCheckpointLayout>>,
+pub(super) struct ProtocolCheckpointLayout {
+    pub(super) record_ends: Vec<usize>,
+    pub(super) bytes: usize,
+    pub(super) core: Option<Box<ProtocolCheckpointLayout>>,
 }
 
-const CHECKPOINT_PAGE: usize = 4096;
-const CHECKPOINT_RESERVE: usize = 64 * 1024;
+pub(super) const CHECKPOINT_PAGE: usize = 4096;
+pub(super) const CHECKPOINT_RESERVE: usize = 64 * 1024;
 
 #[cfg(test)]
 thread_local! {
-    static CHECKPOINT_LAYOUT_SCANNED_BYTES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub(super) static CHECKPOINT_LAYOUT_SCANNED_BYTES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct CheckpointRecord {
+pub(super) struct CheckpointRecord {
     end: usize,
     padded_end: usize,
     large: bool,
 }
 
 #[cfg(test)]
-fn checkpoint_records(json: &str) -> Vec<CheckpointRecord> {
+pub(super) fn checkpoint_records(json: &str) -> Vec<CheckpointRecord> {
     checkpoint_records_with_cached_pending(json, 0, None)
 }
 
-fn checkpoint_records_with_cached_pending(
+pub(super) fn checkpoint_records_with_cached_pending(
     json: &str,
     initial_depth: usize,
     pending: Option<&SerializedPendingGroupMessages>,
@@ -37,7 +39,7 @@ fn checkpoint_records_with_cached_pending(
     checkpoint_records_with_cached_fields(json, initial_depth, pending, &[])
 }
 
-fn checkpoint_records_with_cached_fields(
+pub(super) fn checkpoint_records_with_cached_fields(
     json: &str,
     initial_depth: usize,
     pending: Option<&SerializedPendingGroupMessages>,
@@ -229,7 +231,7 @@ fn scan_checkpoint_records(
 }
 
 impl ProtocolCheckpointLayout {
-    fn from_json(json: &str) -> Self {
+    pub(super) fn from_json(json: &str) -> Self {
         if json.len() < CHECKPOINT_RESERVE {
             return Self::default();
         }
@@ -259,7 +261,7 @@ impl ProtocolCheckpointLayout {
 }
 
 #[cfg(test)]
-fn layout_protocol_checkpoint(
+pub(super) fn layout_protocol_checkpoint(
     json: String,
     previous: &ProtocolCheckpointLayout,
 ) -> (String, ProtocolCheckpointLayout) {
@@ -275,7 +277,7 @@ fn layout_protocol_checkpoint_with_pending(
     layout_protocol_checkpoint_with_cached_fields(json, previous, pending, &[])
 }
 
-fn layout_protocol_checkpoint_with_cached_fields(
+pub(super) fn layout_protocol_checkpoint_with_cached_fields(
     json: String,
     previous: &ProtocolCheckpointLayout,
     pending: Option<&SerializedPendingGroupMessages>,

@@ -1,3 +1,5 @@
+use super::*;
+
 mod invite_notification_regressions {
     use super::*;
     use nostr::JsonUtil;
@@ -74,7 +76,7 @@ mod invite_notification_regressions {
             let mut core = isolated_invite_ui_core("new-chat-bundled-proof", &owner, &device);
             let invite = if private {
                 let url = create_private_invite_for_test(&mut core);
-                super::super::invites::parse_public_invite_input(&url).unwrap()
+                crate::core::invites::parse_public_invite_input(&url).unwrap()
             } else {
                 core.protocol_engine
                     .as_ref()
@@ -114,7 +116,7 @@ mod invite_notification_regressions {
             assert!(sync
                 .invite_response_pubkeys
                 .contains(&invite.inviter_ephemeral_public_key.to_string()));
-            let request = super::super::mobile_push::build_mobile_push_create_subscription_request(
+            let request = crate::core::mobile_push::build_mobile_push_create_subscription_request(
                 owner.secret_key().to_secret_hex(),
                 "ios".into(),
                 "test-token".into(),
@@ -268,7 +270,7 @@ mod invite_notification_regressions {
         assert!(notices[0].body.is_empty());
         assert_eq!(core.pending_new_chat_responses.len(), 32);
         assert_eq!(
-            super::super::invite_notifications::load_pending_responses(
+            crate::core::invite_notifications::load_pending_responses(
                 &core.private_chat_invite_storage().unwrap()
             )
             .unwrap()

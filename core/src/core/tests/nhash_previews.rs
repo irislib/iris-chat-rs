@@ -1,3 +1,5 @@
+use super::*;
+
 #[test]
 fn nhash_previews_hide_valid_references_in_encrypted_push_cached_push_and_chat_lists() {
     let mut farm = GroupScaleFarm::new(&[1, 1]);

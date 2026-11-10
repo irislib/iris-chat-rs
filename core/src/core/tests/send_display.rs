@@ -1,3 +1,5 @@
+use super::*;
+
 #[derive(Clone)]
 struct SendDisplayStorage {
     inner: InMemoryStorage,

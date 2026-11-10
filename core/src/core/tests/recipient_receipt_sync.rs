@@ -1,3 +1,5 @@
+use super::*;
+
 #[test]
 fn linked_phone_recovers_recipient_receipts_for_known_messages() {
     let mut pair = chat_read_sync_pair("receipt-negentropy");
@@ -96,9 +98,9 @@ fn sibling_message_replay_preserves_received_receipts() {
     }
 }
 
-type ReceiptTestChannel = flume::Receiver<super::device_sync_tcp::SendBatch>;
+type ReceiptTestChannel = flume::Receiver<crate::core::device_sync_tcp::SendBatch>;
 
-fn install_receipt_test_link(
+pub(super) fn install_receipt_test_link(
     pair: &mut ChatReadSyncPair,
 ) -> (ReceiptTestChannel, ReceiptTestChannel) {
     for roster in pair.a.app_keys.values_mut() {
@@ -132,7 +134,7 @@ fn install_receipt_test_link(
     (a_rx, b_rx)
 }
 
-fn pump_receipt_test_link(
+pub(super) fn pump_receipt_test_link(
     pair: &mut ChatReadSyncPair,
     a_rx: &ReceiptTestChannel,
     b_rx: &ReceiptTestChannel,

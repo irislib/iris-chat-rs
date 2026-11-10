@@ -1,4 +1,6 @@
-fn deferred_registration_core(label: &str) -> (AppCore, Keys, Keys) {
+use super::*;
+
+pub(super) fn deferred_registration_core(label: &str) -> (AppCore, Keys, Keys) {
     let owner = Keys::generate();
     let device = Keys::generate();
     let mut core = logged_in_test_core(label, &owner, &device);
@@ -134,23 +136,45 @@ fn restored_account_invite_waits_for_local_approval_then_resumes_automatically()
     for same_key_peer in [false, true] {
         let (mut sender, owner, device) = deferred_registration_core("restore-invite-approval");
         let peer_owner = Keys::generate();
-        let peer_device = if same_key_peer { peer_owner.clone() } else { Keys::generate() };
+        let peer_device = if same_key_peer {
+            peer_owner.clone()
+        } else {
+            Keys::generate()
+        };
         let mut peer = logged_in_test_core("restore-invite-peer", &peer_owner, &peer_device);
         let invite = create_private_invite_for_test(&mut peer);
         prove_invite_owner(&mut sender, &peer_owner, &peer_device, 10);
         sender.pending_relay_publishes.clear();
-        sender.handle_action(AppAction::AcceptInvite { invite_input: invite });
-        assert!(pending_events_with_kind(&sender, INVITE_RESPONSE_KIND).is_empty(),
-            "an imported account must not send an unprovable device claim");
+        sender.handle_action(AppAction::AcceptInvite {
+            invite_input: invite,
+        });
+        assert!(
+            pending_events_with_kind(&sender, INVITE_RESPONSE_KIND).is_empty(),
+            "an imported account must not send an unprovable device claim"
+        );
         assert!(sender.pending_outgoing_invite_acceptance.is_some());
         sender.complete_owner_registration_lookup(
-            sender.relay_status_watch_generation, owner.public_key(), device.public_key(), 1, 1, vec![],
+            sender.relay_status_watch_generation,
+            owner.public_key(),
+            device.public_key(),
+            1,
+            1,
+            vec![],
         );
         assert!(sender.pending_outgoing_invite_acceptance.is_none());
-        let response = pending_events_with_kind(&sender, INVITE_RESPONSE_KIND).into_iter().next().unwrap();
-        assert!(response.tags.iter().any(|tag| tag.as_slice()[0] == "owner-proof"));
+        let response = pending_events_with_kind(&sender, INVITE_RESPONSE_KIND)
+            .into_iter()
+            .next()
+            .unwrap();
+        assert!(response
+            .tags
+            .iter()
+            .any(|tag| tag.as_slice()[0] == "owner-proof"));
         peer.handle_relay_event(response);
-        assert_eq!(active_session_device_pubkeys(&peer, owner.public_key()), vec![device.public_key()]);
+        assert_eq!(
+            active_session_device_pubkeys(&peer, owner.public_key()),
+            vec![device.public_key()]
+        );
     }
 }
 
@@ -166,17 +190,41 @@ fn restored_account_publishes_verifiable_registration_to_empty_local_relay() {
     assert!(core.defer_owner_app_keys_publish);
     let receiver_owner = Keys::generate();
     let receiver_device = Keys::generate();
-    let mut receiver = logged_in_test_core("registration-recovery-recipient", &receiver_owner, &receiver_device);
-    let invite = receiver.protocol_engine.as_ref().unwrap().local_invite().unwrap();
-    let (mut sending_session, response) = invite.accept_with_owner(
-        device.public_key(), device.secret_key().to_secret_bytes(),
-        Some(device.public_key().to_hex()), Some(owner.public_key()),
-    ).unwrap();
+    let mut receiver = logged_in_test_core(
+        "registration-recovery-recipient",
+        &receiver_owner,
+        &receiver_device,
+    );
+    let invite = receiver
+        .protocol_engine
+        .as_ref()
+        .unwrap()
+        .local_invite()
+        .unwrap();
+    let (mut sending_session, response) = invite
+        .accept_with_owner(
+            device.public_key(),
+            device.secret_key().to_secret_bytes(),
+            Some(device.public_key().to_hex()),
+            Some(owner.public_key()),
+        )
+        .unwrap();
     receiver.handle_relay_event(invite_response_event(&response).unwrap());
-    let plan = sending_session.plan_send(b"previously missing message", NdrUnixSeconds(unix_now().get())).unwrap();
+    let plan = sending_session
+        .plan_send(
+            b"previously missing message",
+            NdrUnixSeconds(unix_now().get()),
+        )
+        .unwrap();
     let message = message_event(&sending_session.apply_send(plan).envelope).unwrap();
     receiver.handle_relay_event(message);
-    assert!(!receiver.threads.get(&owner.public_key().to_hex()).is_some_and(|thread| thread.messages.iter().any(|message| message.body == "previously missing message")));
+    assert!(!receiver
+        .threads
+        .get(&owner.public_key().to_hex())
+        .is_some_and(|thread| thread
+            .messages
+            .iter()
+            .any(|message| message.body == "previously missing message")));
     wait_for_profile_restart(&mut core, &rx, |core| {
         !core.defer_owner_app_keys_publish
             && relay_events(&relay).iter().any(|event| {

@@ -1,3 +1,6 @@
+use super::*;
+use nostr::util::JsonUtil;
+
 fn prepare_first_call_for_test(
     a: &mut AppCore,
     b: &mut AppCore,
@@ -32,7 +35,7 @@ fn prepare_first_call_for_test(
     b.persist_best_effort();
 }
 
-fn install_call_ratchet_for_test(
+pub(super) fn install_call_ratchet_for_test(
     a: &mut AppCore,
     b: &mut AppCore,
     ao: &Keys,
@@ -147,7 +150,7 @@ fn call_wake_v3_cold_preview_preserves_ratchet_and_foreground_enforces_contact_p
 
     let payload = serde_json::json!({"event":event}).to_string();
     let resolve = |core: &AppCore| {
-        calls::push::resolve_call_push_invite(
+        crate::core::calls::push::resolve_call_push_invite(
             core.data_dir.to_string_lossy().into(),
             bd.secret_key().to_secret_hex(),
             payload.clone(),
@@ -296,7 +299,7 @@ fn first_call_wake_fetches_acked_bootstrap_and_reordered_ciphertext_recovers_wit
     assert_eq!(envelope["events"].as_array().unwrap().len(), 1);
     let payload = serde_json::json!({"event":event}).to_string();
     let resolve = |core: &AppCore| {
-        calls::push::resolve_call_push_invite(
+        crate::core::calls::push::resolve_call_push_invite(
             core.data_dir.to_string_lossy().into(),
             bd.secret_key().to_secret_hex(),
             payload.clone(),
@@ -410,7 +413,7 @@ fn call_wake_v3_discovers_earlier_unread_bootstrap_after_sender_restart() {
     b.preferences.nostr_relay_urls = vec![relay.url().into()];
     b.persist_best_effort();
     let resolve = || {
-        calls::push::resolve_call_push_invite(
+        crate::core::calls::push::resolve_call_push_invite(
             b.data_dir.to_string_lossy().into(),
             bd.secret_key().to_secret_hex(),
             payload.clone(),

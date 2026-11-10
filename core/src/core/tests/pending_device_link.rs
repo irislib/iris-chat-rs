@@ -1,3 +1,5 @@
+use super::*;
+
 #[test]
 fn pending_linked_device_finishes_when_owner_accepts_invite() {
     let owner = Keys::generate();
@@ -79,15 +81,18 @@ fn pending_linked_device_finishes_when_owner_accepts_invite() {
     assert!(completion_updates
         .iter()
         .all(|update| !matches!(update, AppUpdate::ClearPendingDeviceLink)));
-    assert!(completion_updates.iter().all(|update| {
-        !matches!(
-            update,
-            AppUpdate::FullState(state)
-                if state.account.as_ref().is_some_and(|account| {
-                    account.authorization_state == DeviceAuthorizationState::AwaitingApproval
-                })
-        )
-    }), "link completion must never expose an intermediate awaiting-approval account");
+    assert!(
+        completion_updates.iter().all(|update| {
+            !matches!(
+                update,
+                AppUpdate::FullState(state)
+                    if state.account.as_ref().is_some_and(|account| {
+                        account.authorization_state == DeviceAuthorizationState::AwaitingApproval
+                    })
+            )
+        }),
+        "link completion must never expose an intermediate awaiting-approval account"
+    );
     assert!(completion_updates.iter().any(|update| matches!(
         update,
         AppUpdate::FullState(state)
@@ -111,14 +116,8 @@ fn legacy_incomplete_link_can_logout_and_create_fresh_account() {
         Arc::new(RwLock::new(AppState::empty())),
     );
     core.preferences.nostr_relay_urls.clear();
-    core.start_session(
-        old_owner.public_key(),
-        None,
-        old_device,
-        false,
-        false,
-    )
-    .expect("legacy incomplete linked session");
+    core.start_session(old_owner.public_key(), None, old_device, false, false)
+        .expect("legacy incomplete linked session");
     assert_eq!(
         core.state
             .account

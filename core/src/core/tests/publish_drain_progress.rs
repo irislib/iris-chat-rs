@@ -1,3 +1,6 @@
+use super::*;
+use nostr::util::JsonUtil;
+
 fn publish_drain_progress_fixture(count: usize) -> (AppCore, Vec<String>) {
     let owner = Keys::generate();
     let device = Keys::generate();
@@ -69,8 +72,7 @@ fn streamed_publish_failures_back_off_once_before_recovering_online() {
     assert_eq!(core.pending_relay_publishes.len(), 32);
 
     let relay = crate::local_relay::TestRelay::start();
-    core.logged_in.as_mut().unwrap().relay_urls =
-        vec![RelayUrl::parse(relay.url()).unwrap()];
+    core.logged_in.as_mut().unwrap().relay_urls = vec![RelayUrl::parse(relay.url()).unwrap()];
     let (tx, rx) = flume::unbounded();
     core.core_sender = tx.clone();
     core.priority_sender = tx;
@@ -107,9 +109,9 @@ fn successful_streamed_result_does_not_hide_another_failed_result() {
 fn successful_streamed_drain_immediately_publishes_coalesced_new_work() {
     let relay = crate::local_relay::TestRelay::start();
     let (mut core, ids) = publish_drain_progress_fixture(2);
-    core.logged_in.as_mut().unwrap().relay_urls =
-        vec![RelayUrl::parse(relay.url()).unwrap()];
-    core.pending_relay_publish_inflight.extend(ids.iter().cloned());
+    core.logged_in.as_mut().unwrap().relay_urls = vec![RelayUrl::parse(relay.url()).unwrap()];
+    core.pending_relay_publish_inflight
+        .extend(ids.iter().cloned());
     core.relay_transport_runtime.publish_drain_dirty = false;
     let (tx, rx) = flume::unbounded();
     core.core_sender = tx.clone();
@@ -133,5 +135,8 @@ fn successful_streamed_drain_immediately_publishes_coalesced_new_work() {
             && !core.relay_transport_runtime.publish_drain_in_flight
             && !core.relay_transport_runtime.connect_in_flight
     });
-    assert!(relay.events().iter().any(|event| event["id"] == new_event.id.to_hex()));
+    assert!(relay
+        .events()
+        .iter()
+        .any(|event| event["id"] == new_event.id.to_hex()));
 }

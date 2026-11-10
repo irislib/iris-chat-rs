@@ -1,3 +1,5 @@
+use super::*;
+
 #[test]
 fn blocking_a_peer_preserves_the_chat_but_removes_subscriptions() {
     let owner = Keys::generate();

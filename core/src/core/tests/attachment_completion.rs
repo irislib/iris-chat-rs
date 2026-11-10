@@ -1,3 +1,5 @@
+use super::*;
+
 fn attachment_completion_fixture() -> (AppCore, String, tempfile::TempDir) {
     let owner = Keys::generate();
     let device = Keys::generate();
@@ -113,7 +115,10 @@ fn attachment_upload_failure_preserves_drafts_and_navigation() {
     assert_eq!(core.screen_stack, vec![Screen::Settings]);
     assert!(!core.state.busy.uploading_attachment);
     assert!(core.state.busy.upload_progress.is_none());
-    assert_eq!(core.state.toast.as_deref(), Some("Attachment upload failed."));
+    assert_eq!(
+        core.state.toast.as_deref(),
+        Some("Attachment upload failed.")
+    );
 }
 
 #[test]
@@ -141,7 +146,10 @@ fn attachment_upload_group_completion_preserves_draft_and_navigation() {
         chat_id: other_chat.clone(),
     }];
 
-    core.handle_attachment_upload_finished(group_chat.clone(), Ok("Group attachment caption".into()));
+    core.handle_attachment_upload_finished(
+        group_chat.clone(),
+        Ok("Group attachment caption".into()),
+    );
 
     assert_eq!(core.threads[&group_chat].draft, "The next group message");
     assert!(core.threads[&group_chat]
@@ -202,21 +210,35 @@ fn direct_files_preparation_preserves_the_next_draft_and_navigation() {
         for message in pending.try_iter().take(128) {
             core.handle_message(message);
         }
-        assert!(std::time::Instant::now() < deadline, "file preparation timed out");
+        assert!(
+            std::time::Instant::now() < deadline,
+            "file preparation timed out"
+        );
         std::thread::sleep(Duration::from_millis(2));
     }
 
-    assert_eq!(core.threads[&chat_id].draft, "A later draft while the file is prepared");
+    assert_eq!(
+        core.threads[&chat_id].draft,
+        "A later draft while the file is prepared"
+    );
     assert_eq!(core.active_chat_id, None);
     assert_eq!(core.screen_stack, vec![Screen::Settings]);
     let records = direct_files_test_records(&core);
     assert_eq!(records.len(), 1);
     let message = direct_files_test_message(&core, &chat_id, &records[0].offer.id);
     assert_eq!(message.body, "The submitted file caption");
-    assert_eq!(message.direct_transfer.unwrap().files[0].filename, "draft.txt");
+    assert_eq!(
+        message.direct_transfer.unwrap().files[0].filename,
+        "draft.txt"
+    );
     let persisted = core.load_persisted().unwrap().unwrap();
     assert_eq!(
-        persisted.threads.iter().find(|thread| thread.chat_id == chat_id).unwrap().draft,
+        persisted
+            .threads
+            .iter()
+            .find(|thread| thread.chat_id == chat_id)
+            .unwrap()
+            .draft,
         "A later draft while the file is prepared"
     );
 }

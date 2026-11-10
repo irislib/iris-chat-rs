@@ -1,3 +1,5 @@
+use super::*;
+
 #[test]
 fn contact_identity_keeps_first_name_until_exact_approval_and_persists_private_history() {
     let mut pair = chat_read_receipt_pair("contact-identity");

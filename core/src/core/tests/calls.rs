@@ -1,4 +1,6 @@
-fn call_test_peer(core: &mut AppCore, owner: &Keys, device: &Keys) {
+use super::*;
+
+pub(super) fn call_test_peer(core: &mut AppCore, owner: &Keys, device: &Keys) {
     let now = unix_now().get();
     core.app_keys.insert(
         owner.public_key().to_hex(),
@@ -149,7 +151,7 @@ fn call_settings_persist_and_allow_voice_answer_when_video_disabled() {
     assert_eq!(restarted.state.preferences.call_quality, "custom");
     assert_eq!(restarted.state.preferences.call_max_bitrate_bps, 777_000);
 }
-fn pump_call_pair(
+pub(super) fn pump_call_pair(
     a: &mut AppCore,
     ar: &flume::Receiver<CoreMsg>,
     b: &mut AppCore,
@@ -161,7 +163,7 @@ fn pump_call_pair(
         }
     }
 }
-fn wait_call_pair(
+pub(super) fn wait_call_pair(
     a: &mut AppCore,
     ar: &flume::Receiver<CoreMsg>,
     b: &mut AppCore,
@@ -395,7 +397,7 @@ fn exercise_local_fips_call(resume_recipient: bool, push_wakeup: bool) {
             );
             let payload = serde_json::json!({"event": event}).to_string();
             b.persist_best_effort();
-            assert!(super::calls::push::resolve_call_push_invite(
+            assert!(crate::core::calls::push::resolve_call_push_invite(
                 _bdir.path().to_string_lossy().into(),
                 bd.secret_key().to_secret_hex(),
                 payload.clone()
@@ -624,5 +626,3 @@ fn device_sync_keeps_fixed_websocket_listener_after_roster_refresh() {
     }
     core.stop_device_sync_now();
 }
-
-include!("call_media_congestion.rs");

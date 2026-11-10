@@ -1,3 +1,5 @@
+use super::*;
+
 impl ProtocolEngine {
     pub fn observe_invite_event(&mut self, event: &Event) -> anyhow::Result<ProtocolRetryBatch> {
         Ok(self.observe_invite_event_with_outcome(event)?.retry_batch)

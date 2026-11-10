@@ -1,18 +1,20 @@
+use super::*;
+
 #[cfg(test)]
 thread_local! {
-    static CHECKPOINT_PENDING_SERIALIZED_ITEMS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub(super) static CHECKPOINT_PENDING_SERIALIZED_ITEMS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 type PendingGroupMessage = nostr_double_ratchet::wire::ParsedGroupSenderKeyMessageEvent;
 type CachedPendingRecord = Arc<Mutex<Option<Arc<crate::StorageCheckpointBody>>>>;
 
-struct SerializedPendingGroupMessages {
-    json: Box<serde_json::value::RawValue>,
-    records: Vec<CheckpointRecord>,
+pub(super) struct SerializedPendingGroupMessages {
+    pub(super) json: Box<serde_json::value::RawValue>,
+    pub(super) records: Vec<CheckpointRecord>,
 }
 
 impl SerializedPendingGroupMessages {
-    fn new(json: Box<serde_json::value::RawValue>) -> Self {
+    pub(super) fn new(json: Box<serde_json::value::RawValue>) -> Self {
         let records = checkpoint_records_with_cached_pending(json.get(), 1, None);
         Self { json, records }
     }
@@ -21,8 +23,8 @@ impl SerializedPendingGroupMessages {
 // Immutable checkpoint clones share both ciphertexts and their JSON. Mutation
 // detaches both generations, so rollback can restore its original cache.
 #[derive(Clone, Default)]
-struct PendingGroupMessages {
-    values: Arc<Vec<PendingGroupMessage>>,
+pub(super) struct PendingGroupMessages {
+    pub(super) values: Arc<Vec<PendingGroupMessage>>,
     serialized: Arc<std::sync::Mutex<Option<Arc<SerializedPendingGroupMessages>>>>,
     records: Arc<Vec<CachedPendingRecord>>,
 }
@@ -70,31 +72,31 @@ impl From<Vec<PendingGroupMessage>> for PendingGroupMessages {
 }
 
 impl PendingGroupMessages {
-    fn changed(&mut self) -> &mut Vec<PendingGroupMessage> {
+    pub(super) fn changed(&mut self) -> &mut Vec<PendingGroupMessage> {
         self.serialized = Arc::default();
         Arc::make_mut(&mut self.values)
     }
 
-    fn push(&mut self, value: PendingGroupMessage) {
+    pub(super) fn push(&mut self, value: PendingGroupMessage) {
         Arc::make_mut(&mut self.records).push(Arc::default());
         self.changed().push(value);
     }
-    fn insert(&mut self, index: usize, value: PendingGroupMessage) {
+    pub(super) fn insert(&mut self, index: usize, value: PendingGroupMessage) {
         Arc::make_mut(&mut self.records).insert(index, Arc::default());
         self.changed().insert(index, value);
     }
-    fn remove(&mut self, index: usize) -> PendingGroupMessage {
+    pub(super) fn remove(&mut self, index: usize) -> PendingGroupMessage {
         Arc::make_mut(&mut self.records).remove(index);
         self.changed().remove(index)
     }
 
     #[cfg(test)]
-    fn pop(&mut self) -> Option<PendingGroupMessage> {
+    pub(super) fn pop(&mut self) -> Option<PendingGroupMessage> {
         Arc::make_mut(&mut self.records).pop();
         self.changed().pop()
     }
 
-    fn retain(&mut self, mut keep: impl FnMut(&PendingGroupMessage) -> bool) {
+    pub(super) fn retain(&mut self, mut keep: impl FnMut(&PendingGroupMessage) -> bool) {
         // Do not detach/serialize the queue for the common no-op ACK/prune.
         let Some(first_removed) = self.values.iter().position(|value| !keep(value)) else {
             return;
@@ -116,7 +118,9 @@ impl PendingGroupMessages {
         });
     }
 
-    fn record_bodies(&self) -> Result<Vec<Arc<crate::StorageCheckpointBody>>, serde_json::Error> {
+    pub(super) fn record_bodies(
+        &self,
+    ) -> Result<Vec<Arc<crate::StorageCheckpointBody>>, serde_json::Error> {
         self.values
             .iter()
             .zip(self.records.iter())
@@ -135,7 +139,9 @@ impl PendingGroupMessages {
             .collect()
     }
 
-    fn serialized(&self) -> Result<Arc<SerializedPendingGroupMessages>, serde_json::Error> {
+    pub(super) fn serialized(
+        &self,
+    ) -> Result<Arc<SerializedPendingGroupMessages>, serde_json::Error> {
         let mut cached = self
             .serialized
             .lock()

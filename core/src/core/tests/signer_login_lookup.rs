@@ -1,3 +1,6 @@
+use super::*;
+use crate::core::account_signer::prepare_signer_authorization;
+
 #[test]
 fn signer_login_rejects_partial_device_list_without_end_of_stored_events() {
     use futures_util::{SinkExt, StreamExt};
@@ -57,27 +60,41 @@ fn signer_roster_preserves_conflicting_heads_from_an_incomplete_server() {
     let first = app_keys_event(&owner, &[&Keys::generate()], now);
     let competing = app_keys_event(&owner, &[&Keys::generate()], now);
     publish_signer_test_event(&core, &relay, &first);
-    let listener = core.runtime.block_on(tokio::net::TcpListener::bind("127.0.0.1:0")).unwrap();
+    let listener = core
+        .runtime
+        .block_on(tokio::net::TcpListener::bind("127.0.0.1:0"))
+        .unwrap();
     let partial_url = RelayUrl::parse(&format!("ws://{}", listener.local_addr().unwrap())).unwrap();
     let event = competing.clone();
     let partial = core.runtime.spawn(async move {
         let (stream, _) = listener.accept().await.unwrap();
         let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
         while let Some(Ok(message)) = socket.next().await {
-            let Ok(raw) = message.into_text() else { continue };
+            let Ok(raw) = message.into_text() else {
+                continue;
+            };
             let request: serde_json::Value = serde_json::from_str(&raw).unwrap();
             if request[0] == "REQ" {
-                socket.send(tokio_tungstenite::tungstenite::Message::Text(
-                    serde_json::json!(["EVENT", request[1], event]).to_string(),
-                )).await.unwrap();
+                socket
+                    .send(tokio_tungstenite::tungstenite::Message::Text(
+                        serde_json::json!(["EVENT", request[1], event]).to_string(),
+                    ))
+                    .await
+                    .unwrap();
                 std::future::pending::<()>().await;
             }
         }
     });
-    let result = core.runtime.block_on(super::account_signer_relay::fetch_signer_roster(
-        owner.public_key(), &[RelayUrl::parse(relay.url()).unwrap(), partial_url],
-    ));
-    assert_eq!(result.unwrap_err(), "Conflicting device lists. Try again later.");
+    let result = core
+        .runtime
+        .block_on(crate::core::account_signer_relay::fetch_signer_roster(
+            owner.public_key(),
+            &[RelayUrl::parse(relay.url()).unwrap(), partial_url],
+        ));
+    assert_eq!(
+        result.unwrap_err(),
+        "Conflicting device lists. Try again later."
+    );
     partial.abort();
 }
 

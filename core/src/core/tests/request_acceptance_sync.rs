@@ -1,3 +1,5 @@
+use super::*;
+
 #[test]
 fn request_acceptance_negentropy_survives_restart_without_message_history() {
     for engagement in ["accept", "reply", "reaction"] {

@@ -1,3 +1,5 @@
+use super::*;
+
 #[test]
 fn foreground_repairs_missed_group_reactions_on_an_existing_device_connection() {
     foreground_repairs_group_reactions(false);

@@ -1,4 +1,6 @@
-fn private_group_wake_farm() -> (GroupScaleFarm, String, String) {
+use super::*;
+
+pub(super) fn private_group_wake_farm() -> (GroupScaleFarm, String, String) {
     let mut farm = GroupScaleFarm::new(&[1, 1, 1]);
     farm.pump();
     let members = farm.owners[1..]
@@ -21,7 +23,10 @@ fn private_group_wake_farm() -> (GroupScaleFarm, String, String) {
     (farm, group_id, chat_id)
 }
 
-fn private_group_wake_events(farm: &GroupScaleFarm, group_id: &str) -> (Event, Vec<Event>) {
+pub(super) fn private_group_wake_events(
+    farm: &GroupScaleFarm,
+    group_id: &str,
+) -> (Event, Vec<Event>) {
     let sender = &farm.devices[0].core;
     let authors = sender
         .protocol_engine
@@ -59,7 +64,8 @@ fn private_group_wake_events(farm: &GroupScaleFarm, group_id: &str) -> (Event, V
     )
     .expect("decrypt private group carrier without consuming the live ratchet");
     let rumor = parse_runtime_rumor(&message.content).unwrap();
-    let broadcast = private_group_wake::decode(&rumor.content).expect("nested signed group event");
+    let broadcast =
+        crate::core::private_group_wake::decode(&rumor.content).expect("nested signed group event");
     (broadcast, wakes)
 }
 
@@ -173,11 +179,11 @@ fn mobile_push_cached_group_previews_require_authenticated_carrier_ids() {
         "the exact raw ciphertext ID now has a cached row"
     );
     assert_eq!(
-        private_group_wake::preview_source_id(&conn, &nested.id.to_hex()),
+        crate::core::private_group_wake::preview_source_id(&conn, &nested.id.to_hex()),
         None
     );
     assert_eq!(
-        private_group_wake::preview_source_id(&conn, &wake.id.to_hex()),
+        crate::core::private_group_wake::preview_source_id(&conn, &wake.id.to_hex()),
         Some(nested.id.to_hex())
     );
     let resolve = |payload: serde_json::Value| {
@@ -239,7 +245,7 @@ fn mobile_push_group_wake_binds_outer_rumor_and_nested_sender() {
         let rumor = UnsignedEvent::new(
             rumor_author,
             Timestamp::now(),
-            Kind::Custom(private_group_wake::GROUP_WAKE_KIND as u16),
+            Kind::Custom(crate::core::private_group_wake::GROUP_WAKE_KIND as u16),
             [],
             serde_json::json!({"v":1,"type":"group-wake","event":broadcast}).to_string(),
         );
@@ -362,8 +368,10 @@ fn mobile_push_group_wake_control_preview_survives_foreground_decryption() {
         std::slice::from_ref(&wake),
     )
     .unwrap();
-    let nested =
-        private_group_wake::decode(&parse_runtime_rumor(&direct.content).unwrap().content).unwrap();
+    let nested = crate::core::private_group_wake::decode(
+        &parse_runtime_rumor(&direct.content).unwrap().content,
+    )
+    .unwrap();
     for consumed in [false, true] {
         if consumed {
             receiver.core.handle_relay_event(wake.clone());
@@ -535,7 +543,7 @@ fn mobile_push_direct_group_copies_keep_authenticated_cached_previews() {
         let data_dir = receiver._dir.path().to_string_lossy().into_owned();
         let conn = mobile_push::open_lookup_connection(&data_dir).unwrap();
         assert_eq!(
-            private_group_wake::preview_source_id(&conn, &event.id.to_hex()),
+            crate::core::private_group_wake::preview_source_id(&conn, &event.id.to_hex()),
             Some(event.id.to_hex())
         );
         let cached = decrypt_mobile_push_notification(
@@ -666,7 +674,7 @@ fn private_group_wake_rejects_another_members_signature_and_malformed_inner_even
         let mut rumor = UnsignedEvent::new(
             wrong_sender,
             Timestamp::now(),
-            Kind::Custom(super::private_group_wake::GROUP_WAKE_KIND as u16),
+            Kind::Custom(crate::core::private_group_wake::GROUP_WAKE_KIND as u16),
             [],
             content,
         );

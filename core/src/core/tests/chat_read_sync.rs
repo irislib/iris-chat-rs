@@ -1,11 +1,13 @@
-struct ChatReadSyncPair {
-    owner: Keys,
-    a_device: Keys,
-    b_device: Keys,
-    a: AppCore,
-    b: AppCore,
-    a_dir: tempfile::TempDir,
-    _b_dir: tempfile::TempDir,
+use super::*;
+
+pub(super) struct ChatReadSyncPair {
+    pub(super) owner: Keys,
+    pub(super) a_device: Keys,
+    pub(super) b_device: Keys,
+    pub(super) a: AppCore,
+    pub(super) b: AppCore,
+    pub(super) a_dir: tempfile::TempDir,
+    pub(super) _b_dir: tempfile::TempDir,
 }
 
 #[test]
@@ -29,7 +31,7 @@ fn chat_read_exact_ids_preserve_older_unseen_and_late_messages() {
     }
 }
 
-fn chat_read_sync_pair(label: &str) -> ChatReadSyncPair {
+pub(super) fn chat_read_sync_pair(label: &str) -> ChatReadSyncPair {
     let owner = Keys::generate();
     let a_device = Keys::generate();
     let b_device = Keys::generate();
@@ -52,7 +54,7 @@ fn chat_read_sync_pair(label: &str) -> ChatReadSyncPair {
     }
 }
 
-fn chat_read_sync_incoming(core: &mut AppCore, peer: &Keys, id: &str, created_at: u64) {
+pub(super) fn chat_read_sync_incoming(core: &mut AppCore, peer: &Keys, id: &str, created_at: u64) {
     core.apply_runtime_text_message(
         peer.public_key(),
         None,
@@ -64,13 +66,22 @@ fn chat_read_sync_incoming(core: &mut AppCore, peer: &Keys, id: &str, created_at
     );
 }
 
-fn deliver_chat_read_packets(receiver: &mut AppCore, sender: &Keys, packets: &[Vec<u8>]) {
+pub(super) fn deliver_chat_read_packets(
+    receiver: &mut AppCore,
+    sender: &Keys,
+    packets: &[Vec<u8>],
+) {
     for packet in packets {
         receiver.handle_device_sync_packet(&sender.public_key().to_hex(), DEVICE_SYNC_PORT, packet);
     }
 }
 
-fn sync_chat_reads(sender: &AppCore, receiver: &mut AppCore, device: &Keys, history: bool) {
+pub(super) fn sync_chat_reads(
+    sender: &AppCore,
+    receiver: &mut AppCore,
+    device: &Keys,
+    history: bool,
+) {
     deliver_chat_read_packets(
         receiver,
         device,
@@ -78,7 +89,7 @@ fn sync_chat_reads(sender: &AppCore, receiver: &mut AppCore, device: &Keys, hist
     );
 }
 
-fn assert_chat_read_delivery(core: &AppCore, chat_id: &str, id: &str, seen: bool) {
+pub(super) fn assert_chat_read_delivery(core: &AppCore, chat_id: &str, id: &str, seen: bool) {
     let message = core.threads[chat_id]
         .messages
         .iter()
@@ -449,7 +460,7 @@ fn chat_read_sync_clears_badge_behind_own_replies_after_receiver_restart() {
                 messages: preview
                     .messages
                     .iter()
-                    .map(super::chats::chat_message_from_persisted)
+                    .map(crate::core::chats::chat_message_from_persisted)
                     .collect(),
                 draft: preview.draft.clone(),
             },

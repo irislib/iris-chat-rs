@@ -1,3 +1,5 @@
+use super::*;
+
 #[test]
 fn device_sync_websocket_authenticates_siblings_and_rejects_non_siblings() {
     device_sync_websocket_scenario(true);
@@ -60,8 +62,7 @@ fn device_sync_websocket_scenario(use_relay: bool) {
             .await
             .expect("Alice advertised endpoints");
         assert!(advertised.iter().any(|endpoint| {
-            endpoint.transport
-                == fips_core::discovery::nostr::OverlayTransportKind::WebRtc
+            endpoint.transport == fips_core::discovery::nostr::OverlayTransportKind::WebRtc
         }));
         let promotion = tokio::time::timeout(Duration::from_secs(40), async {
             loop {
@@ -80,7 +81,6 @@ fn device_sync_websocket_scenario(use_relay: bool) {
                  Alice={alice_status:#?}, Bob={bob_status:#?}"
             );
         }
-
     });
 
     let sync_peer = Keys::generate();
@@ -179,9 +179,16 @@ fn device_sync_websocket_scenario(use_relay: bool) {
     alice_core.delete_chat(&sync_chat_id);
     let deadline = std::time::Instant::now() + Duration::from_secs(10);
     while bob_core.threads.contains_key(&sync_chat_id) {
-        while let Ok(message) = alice_core_rx.try_recv() { alice_core.handle_message(message); }
-        while let Ok(message) = bob_core_rx.try_recv() { bob_core.handle_message(message); }
-        assert!(std::time::Instant::now() < deadline, "deletion must arrive over live device sync");
+        while let Ok(message) = alice_core_rx.try_recv() {
+            alice_core.handle_message(message);
+        }
+        while let Ok(message) = bob_core_rx.try_recv() {
+            bob_core.handle_message(message);
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "deletion must arrive over live device sync"
+        );
         std::thread::sleep(Duration::from_millis(10));
     }
     assert!(!alice_core.threads.contains_key(&sync_chat_id));
@@ -398,7 +405,10 @@ fn device_sync_bootstraps_missing_chats_groups_and_post_roster_messages_once() {
     for packet in core.build_device_sync_packets_for_test(100, true) {
         linked.handle_device_sync_packet(&local_device.public_key().to_hex(), 7369, &packet);
     }
-    assert_eq!(linked.threads[&peer_hex].messages[0].id, "after-both-cutoffs");
+    assert_eq!(
+        linked.threads[&peer_hex].messages[0].id,
+        "after-both-cutoffs"
+    );
     assert_eq!(linked.groups["friends"].name, "Best friends");
     assert_eq!(linked.groups["friends"].members.len(), 3);
     assert!(linked.threads.contains_key("group:friends"));
@@ -412,20 +422,36 @@ async fn sibling_metadata_broadcast_waits_for_the_outermost_batch_and_uses_lates
     let owner = Keys::generate();
     let local = Keys::generate();
     let sibling = Keys::generate();
-    let (mut core, _, _dir) = logged_in_test_core_with_updates("batched-device-metadata", &owner, &local);
+    let (mut core, _, _dir) =
+        logged_in_test_core_with_updates("batched-device-metadata", &owner, &local);
     let owner_hex = owner.public_key().to_hex();
-    core.app_keys.insert(owner_hex.clone(), KnownAppKeys {
-        owner_pubkey_hex: owner_hex.clone(),
-        created_at_secs: 100,
-        devices: [&local, &sibling].into_iter().map(|key| KnownAppKeyDevice {
-            identity_pubkey_hex: key.public_key().to_hex(),
-            created_at_secs: 1, device_label: None, client_label: None, label_updated_at_secs: 0,
-        }).collect(),
-    });
-    let endpoint = Arc::new(fips_core::FipsEndpoint::builder()
-        .without_system_tun().bind().await.expect("bind test endpoint"));
+    core.app_keys.insert(
+        owner_hex.clone(),
+        KnownAppKeys {
+            owner_pubkey_hex: owner_hex.clone(),
+            created_at_secs: 100,
+            devices: [&local, &sibling]
+                .into_iter()
+                .map(|key| KnownAppKeyDevice {
+                    identity_pubkey_hex: key.public_key().to_hex(),
+                    created_at_secs: 1,
+                    device_label: None,
+                    client_label: None,
+                    label_updated_at_secs: 0,
+                })
+                .collect(),
+        },
+    );
+    let endpoint = Arc::new(
+        fips_core::FipsEndpoint::builder()
+            .without_system_tun()
+            .bind()
+            .await
+            .expect("bind test endpoint"),
+    );
     let (tcp, records) = DeviceSyncTcpSender::test_channel(8, 1024);
-    let peer = fips_core::PeerIdentity::from_npub(&sibling.public_key().to_bech32().unwrap()).unwrap();
+    let peer =
+        fips_core::PeerIdentity::from_npub(&sibling.public_key().to_bech32().unwrap()).unwrap();
     core.install_device_sync_sender_for_test(endpoint.clone(), tcp, vec![peer]);
 
     core.enter_batch();
@@ -434,22 +460,39 @@ async fn sibling_metadata_broadcast_waits_for_the_outermost_batch_and_uses_lates
         core.app_keys.get_mut(&owner_hex).unwrap().created_at_secs = revision;
         core.broadcast_device_sync_snapshot();
     }
-    assert!(records.try_recv().is_err(), "metadata must wait until catch-up finishes");
+    assert!(
+        records.try_recv().is_err(),
+        "metadata must wait until catch-up finishes"
+    );
     core.exit_batch();
-    assert!(records.try_recv().is_err(), "nested batches must not flush early");
+    assert!(
+        records.try_recv().is_err(),
+        "nested batches must not flush early"
+    );
     core.exit_batch();
     let delivery = records.try_recv().expect("one final metadata snapshot");
     assert_eq!(delivery.peer, peer);
     assert!(!delivery.records.is_empty());
     for bytes in delivery.records {
         let packet: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-        assert_eq!(packet["rosterAt"], 1, "membership changes do not move the history boundary");
+        assert_eq!(
+            packet["rosterAt"], 1,
+            "membership changes do not move the history boundary"
+        );
     }
-    assert!(records.try_recv().is_err(), "intermediate snapshots must be coalesced");
+    assert!(
+        records.try_recv().is_err(),
+        "intermediate snapshots must be coalesced"
+    );
     core.broadcast_device_sync_snapshot();
-    assert!(records.try_recv().is_ok(), "unbatched updates remain immediate");
+    assert!(
+        records.try_recv().is_ok(),
+        "unbatched updates remain immediate"
+    );
     endpoint.shutdown().await.expect("shutdown test endpoint");
-    tokio::task::spawn_blocking(move || drop(core)).await.expect("drop test core outside async runtime");
+    tokio::task::spawn_blocking(move || drop(core))
+        .await
+        .expect("drop test core outside async runtime");
 }
 
 #[tokio::test]
@@ -540,9 +583,9 @@ async fn newly_received_message_is_queued_for_an_authorized_sibling() {
     assert!(core
         .build_device_sync_packets_for_test(100, true)
         .iter()
-        .any(|packet| packet.windows("live-message-id".len()).any(|window| {
-            window == "live-message-id".as_bytes()
-        })));
+        .any(|packet| packet
+            .windows("live-message-id".len())
+            .any(|window| { window == "live-message-id".as_bytes() })));
 
     core.push_outgoing_message_with_id(
         "live-outgoing-id".to_string(),
@@ -555,23 +598,29 @@ async fn newly_received_message_is_queued_for_an_authorized_sibling() {
     // Composing a reply accepts the chat immediately, so siblings may receive
     // metadata before delivery. The pending message itself must stay local.
     let metadata = records.try_iter().collect::<Vec<_>>();
-    assert!(!metadata.is_empty(), "reply acceptance wakes sibling metadata sync");
+    assert!(
+        !metadata.is_empty(),
+        "reply acceptance wakes sibling metadata sync"
+    );
     for queued in metadata {
         assert_eq!(queued.peer, sibling);
         for bytes in queued.records {
             let packet: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
             assert!(packet["messages"].as_array().is_none_or(Vec::is_empty));
-            assert!(!bytes.windows("live-outgoing-id".len()).any(|window| {
-                window == b"live-outgoing-id"
-            }));
+            assert!(!bytes
+                .windows("live-outgoing-id".len())
+                .any(|window| { window == b"live-outgoing-id" }));
         }
     }
-    assert!(!core
-        .build_device_sync_packets_for_test(100, true)
-        .iter()
-        .any(|packet| packet.windows("live-outgoing-id".len()).any(|window| {
-            window == "live-outgoing-id".as_bytes()
-        })), "an inventory taken before delivery finishes excludes pending messages");
+    assert!(
+        !core
+            .build_device_sync_packets_for_test(100, true)
+            .iter()
+            .any(|packet| packet
+                .windows("live-outgoing-id".len())
+                .any(|window| { window == "live-outgoing-id".as_bytes() })),
+        "an inventory taken before delivery finishes excludes pending messages"
+    );
     // Relay/protocol drain completion uses this path, rather than an explicit
     // delivery update. It must wake siblings whose earlier inventory was empty.
     core.reconcile_outgoing_message_delivery(&chat_id, "live-outgoing-id");
@@ -587,14 +636,17 @@ async fn newly_received_message_is_queued_for_an_authorized_sibling() {
     let outgoing_record = queued.records[0].clone();
     core.reconcile_outgoing_message_delivery(&chat_id, "live-outgoing-id");
     core.update_message_delivery(&chat_id, "live-outgoing-id", DeliveryState::Sent);
-    assert!(records.try_recv().is_err(), "unchanged delivery does not resend the message");
+    assert!(
+        records.try_recv().is_err(),
+        "unchanged delivery does not resend the message"
+    );
     core.update_message_delivery(&chat_id, "live-outgoing-id", DeliveryState::Failed);
     assert!(!core
         .build_device_sync_packets_for_test(100, true)
         .iter()
-        .any(|packet| packet.windows("live-outgoing-id".len()).any(|window| {
-            window == "live-outgoing-id".as_bytes()
-        })));
+        .any(|packet| packet
+            .windows("live-outgoing-id".len())
+            .any(|window| { window == "live-outgoing-id".as_bytes() })));
 
     let (mut linked, _linked_updates, _linked_temp_dir) =
         logged_in_test_core_with_updates("device-sync-live-linked", &owner, &sibling_device);
@@ -618,7 +670,10 @@ async fn newly_received_message_is_queued_for_an_authorized_sibling() {
     assert_eq!(linked_messages[1].id, "live-outgoing-id");
     assert!(linked_messages[1].body.is_empty());
     assert_eq!(linked_messages[1].attachments.len(), 1);
-    assert_eq!(linked_messages[1].attachments[0].filename, "linked-logo.png");
+    assert_eq!(
+        linked_messages[1].attachments[0].filename,
+        "linked-logo.png"
+    );
     assert!(linked_messages[1].is_outgoing);
 
     let resync = br#"{"type":"resyncRequired","v":1}"#;
@@ -632,7 +687,10 @@ async fn newly_received_message_is_queued_for_an_authorized_sibling() {
         .expect("overflow notice should elicit a lossless snapshot request");
     let request = serde_json::from_slice::<serde_json::Value>(&request_record).unwrap();
     assert_eq!(request["type"], "request");
-    assert_eq!(request["rosterAt"], 1, "requests retain the local device join time");
+    assert_eq!(
+        request["rosterAt"], 1,
+        "requests retain the local device join time"
+    );
 
     core.device_sync = None;
     core.apply_runtime_text_message(
@@ -675,11 +733,7 @@ async fn newly_received_message_is_queued_for_an_authorized_sibling() {
     }
     core.persist_best_effort_inner();
     for index in 0..11 {
-        core.update_message_delivery(
-            &chat_id,
-            &format!("page-{index:03}"),
-            DeliveryState::Failed,
-        );
+        core.update_message_delivery(&chat_id, &format!("page-{index:03}"), DeliveryState::Failed);
     }
     let mut cursor = None;
     let mut paged_ids = Vec::new();
@@ -690,7 +744,13 @@ async fn newly_received_message_is_queued_for_an_authorized_sibling() {
         cursor = Some(next);
     }
     assert_eq!(paged_ids.len(), 131);
-    assert_eq!(paged_ids.iter().filter(|id| *id == "live-message-id").count(), 1);
+    assert_eq!(
+        paged_ids
+            .iter()
+            .filter(|id| *id == "live-message-id")
+            .count(),
+        1
+    );
     assert_eq!(paged_ids.iter().filter(|id| *id == "page-139").count(), 1);
     assert_eq!(
         paged_ids
@@ -705,8 +765,8 @@ async fn newly_received_message_is_queued_for_an_authorized_sibling() {
         drop(core);
         drop(linked);
     })
-        .await
-        .expect("drop test core outside async runtime");
+    .await
+    .expect("drop test core outside async runtime");
 }
 
 #[test]
@@ -768,11 +828,8 @@ fn device_sync_app_keys_use_canonical_freshness_and_preserve_retained_labels() {
     };
 
     core.handle_device_sync_packet(&sibling_hex, 7369, &snapshot(20, &[&device_a]));
-    core.app_keys
-        .get_mut(&peer_hex)
-        .unwrap()
-        .devices[0]
-        .device_label = Some("Kept locally".to_string());
+    core.app_keys.get_mut(&peer_hex).unwrap().devices[0].device_label =
+        Some("Kept locally".to_string());
     core.handle_device_sync_packet(&sibling_hex, 7369, &snapshot(19, &[&device_b]));
     assert_eq!(core.app_keys[&peer_hex].devices.len(), 1);
     assert_eq!(
@@ -783,11 +840,7 @@ fn device_sync_app_keys_use_canonical_freshness_and_preserve_retained_labels() {
     core.handle_device_sync_packet(&sibling_hex, 7369, &snapshot(20, &[&device_b]));
     assert_eq!(core.app_keys[&peer_hex].devices.len(), 2);
 
-    core.handle_device_sync_packet(
-        &sibling_hex,
-        7369,
-        &snapshot(21, &[&device_a, &device_c]),
-    );
+    core.handle_device_sync_packet(&sibling_hex, 7369, &snapshot(21, &[&device_a, &device_c]));
     let roster = &core.app_keys[&peer_hex];
     assert_eq!(roster.created_at_secs, 21);
     assert_eq!(roster.devices.len(), 2);
@@ -895,22 +948,29 @@ fn device_sync_keeps_link_boundary_when_another_device_is_added() {
     let local = Keys::generate();
     let sibling = Keys::generate();
     let peer = Keys::generate();
-    let (mut core, _updates, _dir) = logged_in_test_core_with_updates("stable-sync-window", &owner, &local);
+    let (mut core, _updates, _dir) =
+        logged_in_test_core_with_updates("stable-sync-window", &owner, &local);
     configure_test_device_sync_profile(&mut core, &owner, &local, &sibling, None);
     let roster = core.app_keys.get_mut(&owner.public_key().to_hex()).unwrap();
     roster.created_at_secs = 500;
     roster.devices.push(KnownAppKeyDevice {
         identity_pubkey_hex: Keys::generate().public_key().to_hex(),
-        created_at_secs: 500, device_label: None, client_label: None, label_updated_at_secs: 0,
+        created_at_secs: 500,
+        device_label: None,
+        client_label: None,
+        label_updated_at_secs: 0,
     });
     let data = serde_json::to_vec(&serde_json::json!({
         "type":"snapshot", "v":1, "rosterAt":100,
         "messages":[{"chatId":peer.public_key().to_hex(), "id":"offline-gap",
             "body":"bWlzc2luZw==", "author":peer.public_key().to_hex(), "createdAt":150}]
-    })).unwrap();
+    }))
+    .unwrap();
     core.handle_device_sync_packet(&sibling.public_key().to_hex(), DEVICE_SYNC_PORT, &data);
-    assert!(has_device_sync_message(&core, &peer.public_key().to_hex(), "offline-gap"),
-        "adding a third device must not hide earlier eligible gaps between existing devices");
+    assert!(
+        has_device_sync_message(&core, &peer.public_key().to_hex(), "offline-gap"),
+        "adding a third device must not hide earlier eligible gaps between existing devices"
+    );
 }
 
 #[test]

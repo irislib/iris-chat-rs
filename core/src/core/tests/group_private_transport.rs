@@ -1,7 +1,9 @@
-struct SenderKeyMatrixDevice {
-    owner: Keys,
-    device: Keys,
-    engine: ProtocolEngine,
+use super::*;
+
+pub(super) struct SenderKeyMatrixDevice {
+    pub(super) owner: Keys,
+    pub(super) device: Keys,
+    pub(super) engine: ProtocolEngine,
 }
 
 #[test]
@@ -88,7 +90,7 @@ fn network_group_intermediates_require_authenticated_ratchet_delivery() {
 }
 
 impl SenderKeyMatrixDevice {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         let owner = Keys::generate();
         let device = Keys::generate();
         let engine = test_protocol_engine(&owner, &device);
@@ -100,7 +102,7 @@ impl SenderKeyMatrixDevice {
     }
 }
 
-fn sender_key_matrix_devices(count: usize) -> Vec<SenderKeyMatrixDevice> {
+pub(super) fn sender_key_matrix_devices(count: usize) -> Vec<SenderKeyMatrixDevice> {
     let mut devices = (0..count)
         .map(|_| SenderKeyMatrixDevice::new())
         .collect::<Vec<_>>();
@@ -108,7 +110,7 @@ fn sender_key_matrix_devices(count: usize) -> Vec<SenderKeyMatrixDevice> {
     devices
 }
 
-fn observe_sender_key_matrix_protocol_state(devices: &mut [SenderKeyMatrixDevice]) {
+pub(super) fn observe_sender_key_matrix_protocol_state(devices: &mut [SenderKeyMatrixDevice]) {
     let identities = devices
         .iter()
         .map(|device| {
@@ -130,7 +132,7 @@ fn observe_sender_key_matrix_protocol_state(devices: &mut [SenderKeyMatrixDevice
     }
 }
 
-fn observe_local_invite_for_test(
+pub(super) fn observe_local_invite_for_test(
     engine: &mut ProtocolEngine,
     owner: &Keys,
     device: &Keys,
@@ -153,7 +155,7 @@ fn observe_local_invite_for_test(
         .expect("observe peer local invite");
 }
 
-fn ordered_protocol_events(effects: &[ProtocolEffect]) -> Vec<Event> {
+pub(super) fn ordered_protocol_events(effects: &[ProtocolEffect]) -> Vec<Event> {
     protocol_publish_events(effects)
         .into_iter()
         .cloned()
@@ -198,7 +200,7 @@ fn sender_key_outer_events_for_engine<'a>(
         .collect()
 }
 
-fn sender_key_outer_count(
+pub(super) fn sender_key_outer_count(
     engine: &ProtocolEngine,
     effects: &[ProtocolEffect],
     event_ids: &[String],
@@ -208,7 +210,7 @@ fn sender_key_outer_count(
 
 // Decrypt exactly one recipient's ratchet carrier while retaining its nested
 // group ciphertext for the lower-level ordering/replay tests below.
-fn take_private_group_cipher_for_test(
+pub(super) fn take_private_group_cipher_for_test(
     recipient: &mut ProtocolEngine,
     effects: &[ProtocolEffect],
 ) -> Event {
@@ -240,11 +242,15 @@ fn take_private_group_cipher_for_test(
         let Some(rumor) = parse_runtime_rumor(&decrypted.content) else {
             continue;
         };
-        if rumor.kind == private_group_wake::GROUP_WAKE_KIND {
-            let nested =
-                private_group_wake::decode(&rumor.content).expect("nested group ciphertext");
+        if rumor.kind == crate::core::private_group_wake::GROUP_WAKE_KIND {
+            let nested = crate::core::private_group_wake::decode(&rumor.content)
+                .expect("nested group ciphertext");
             assert!(
-                private_group_wake::sender_matches(recipient, decrypted.sender, &nested),
+                crate::core::private_group_wake::sender_matches(
+                    recipient,
+                    decrypted.sender,
+                    &nested
+                ),
                 "group ciphertext must belong to its authenticated ratchet sender"
             );
             return nested;
@@ -263,7 +269,7 @@ fn take_private_group_cipher_for_test(
 // Sender-key ordering tests inspect only the local intermediate ciphertext. A
 // disposable recipient receives the private transport and all preceding controls;
 // the actual recipient keeps its deliberately missing metadata/distributions.
-fn private_group_cipher_from_sender_for_test(
+pub(super) fn private_group_cipher_from_sender_for_test(
     sender: &ProtocolEngine,
     recipient: &ProtocolEngine,
     effects: &[ProtocolEffect],
@@ -271,7 +277,7 @@ fn private_group_cipher_from_sender_for_test(
     private_group_cipher_with_controls_for_test(sender, recipient, &[], effects)
 }
 
-fn private_group_cipher_with_controls_for_test(
+pub(super) fn private_group_cipher_with_controls_for_test(
     sender: &ProtocolEngine,
     recipient: &ProtocolEngine,
     controls: &[ProtocolEffect],
@@ -371,9 +377,13 @@ fn apply_protocol_event_to_engine(
         };
         if let Some(decrypted) = decrypted {
             if let Some(rumor) = parse_runtime_rumor(&decrypted.content) {
-                if rumor.kind == private_group_wake::GROUP_WAKE_KIND {
-                    if let Some(nested) = private_group_wake::decode(&rumor.content) {
-                        if private_group_wake::sender_matches(engine, decrypted.sender, &nested) {
+                if rumor.kind == crate::core::private_group_wake::GROUP_WAKE_KIND {
+                    if let Some(nested) = crate::core::private_group_wake::decode(&rumor.content) {
+                        if crate::core::private_group_wake::sender_matches(
+                            engine,
+                            decrypted.sender,
+                            &nested,
+                        ) {
                             let result = engine
                                 .process_group_outer_event(&nested)
                                 .expect("process authenticated private group delivery");
@@ -405,7 +415,7 @@ fn apply_protocol_event_to_engine(
     }
 }
 
-fn apply_protocol_events_to_engine(
+pub(super) fn apply_protocol_events_to_engine(
     engine: &mut ProtocolEngine,
     events: &[Event],
     group_events: &mut Vec<GroupIncomingEvent>,
@@ -415,7 +425,7 @@ fn apply_protocol_events_to_engine(
     }
 }
 
-fn deliver_protocol_effects_to_engine(
+pub(super) fn deliver_protocol_effects_to_engine(
     engine: &mut ProtocolEngine,
     effects: &[ProtocolEffect],
 ) -> Vec<GroupIncomingEvent> {
@@ -424,7 +434,7 @@ fn deliver_protocol_effects_to_engine(
     group_events
 }
 
-fn deliver_invite_response_effects_to_engine(
+pub(super) fn deliver_invite_response_effects_to_engine(
     engine: &mut ProtocolEngine,
     effects: &[ProtocolEffect],
 ) -> Vec<GroupIncomingEvent> {
@@ -474,9 +484,13 @@ fn apply_protocol_event_to_engine_once(
         };
         if let Some(decrypted) = decrypted {
             if let Some(rumor) = parse_runtime_rumor(&decrypted.content) {
-                if rumor.kind == private_group_wake::GROUP_WAKE_KIND {
-                    if let Some(nested) = private_group_wake::decode(&rumor.content) {
-                        if private_group_wake::sender_matches(engine, decrypted.sender, &nested) {
+                if rumor.kind == crate::core::private_group_wake::GROUP_WAKE_KIND {
+                    if let Some(nested) = crate::core::private_group_wake::decode(&rumor.content) {
+                        if crate::core::private_group_wake::sender_matches(
+                            engine,
+                            decrypted.sender,
+                            &nested,
+                        ) {
                             let result = engine
                                 .process_group_outer_event(&nested)
                                 .expect("process authenticated private group delivery");
@@ -500,7 +514,7 @@ fn apply_protocol_event_to_engine_once(
     (Vec::new(), Vec::new())
 }
 
-fn deliver_protocol_effects_to_engine_once(
+pub(super) fn deliver_protocol_effects_to_engine_once(
     engine: &mut ProtocolEngine,
     effects: &[ProtocolEffect],
 ) -> (Vec<GroupIncomingEvent>, Vec<ProtocolEffect>) {
@@ -514,7 +528,7 @@ fn deliver_protocol_effects_to_engine_once(
     (group_events, followup_effects)
 }
 
-fn deliver_protocol_effects_without_feedback(
+pub(super) fn deliver_protocol_effects_without_feedback(
     engine: &mut ProtocolEngine,
     effects: &[ProtocolEffect],
 ) -> Vec<GroupIncomingEvent> {
@@ -541,7 +555,7 @@ fn deliver_protocol_effects_without_feedback(
     group_events
 }
 
-fn group_events_contain_body(
+pub(super) fn group_events_contain_body(
     events: &[GroupIncomingEvent],
     group_id: &str,
     sender_owner: PublicKey,

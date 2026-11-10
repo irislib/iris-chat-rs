@@ -1,3 +1,5 @@
+use super::*;
+
 #[test]
 fn first_contact_send_queues_text_until_peer_protocol_state_is_ready() {
     let alice_owner = Keys::generate();
@@ -26,18 +28,13 @@ fn first_contact_send_queues_text_until_peer_protocol_state_is_ready() {
         &bob_device,
     );
     bob.pending_relay_publishes.clear();
-    let alice_app_keys = signed_app_keys_authorization_event(
-        &alice_owner,
-        alice_device.public_key(),
-        10,
-    );
+    let alice_app_keys =
+        signed_app_keys_authorization_event(&alice_owner, alice_device.public_key(), 10);
     bob.handle_relay_event(alice_app_keys.clone());
-    bob.handle_action(AppAction::AcceptInvite { invite_input: invite_url });
-    ingest_invite_owner_app_keys(
-        &mut bob,
-        alice_owner.public_key(),
-        vec![alice_app_keys],
-    );
+    bob.handle_action(AppAction::AcceptInvite {
+        invite_input: invite_url,
+    });
+    ingest_invite_owner_app_keys(&mut bob, alice_owner.public_key(), vec![alice_app_keys]);
     bob.handle_action(AppAction::SendMessage {
         chat_id: alice_owner.public_key().to_hex(),
         text: "payload before bootstrap".to_string(),
@@ -47,16 +44,13 @@ fn first_contact_send_queues_text_until_peer_protocol_state_is_ready() {
         .into_iter()
         .next()
         .expect("invite response event");
-    let payload_event = bob
-        .pending_relay_publishes
-        .values()
-        .find_map(|pending| {
-            let event = serde_json::from_str::<Event>(&pending.event_json).ok()?;
-            (event.kind.as_u16() as u32 == MESSAGE_EVENT_KIND
-                && pending.inner_event_id.is_some()
-                && pending.chat_id.is_some())
-            .then_some(event)
-        });
+    let payload_event = bob.pending_relay_publishes.values().find_map(|pending| {
+        let event = serde_json::from_str::<Event>(&pending.event_json).ok()?;
+        (event.kind.as_u16() as u32 == MESSAGE_EVENT_KIND
+            && pending.inner_event_id.is_some()
+            && pending.chat_id.is_some())
+        .then_some(event)
+    });
     assert!(
         payload_event.is_none(),
         "first-contact text must not publish before Alice's AppKeys make the chat send-ready"
@@ -98,11 +92,8 @@ fn cold_app_key_first_direct_message_is_recipient_scoped() {
         &bob_owner,
         &bob_device,
     );
-    let alice_app_keys = signed_app_keys_authorization_event(
-        &alice_owner,
-        alice_device.public_key(),
-        10,
-    );
+    let alice_app_keys =
+        signed_app_keys_authorization_event(&alice_owner, alice_device.public_key(), 10);
     bob_acceptor.handle_relay_event(alice_app_keys.clone());
     bob_acceptor.handle_action(AppAction::AcceptInvite {
         invite_input: invite_url,
@@ -117,18 +108,10 @@ fn cold_app_key_first_direct_message_is_recipient_scoped() {
         .next()
         .expect("bob invite response");
     let bob_bootstrap_messages = pending_events_with_kind(&bob_acceptor, MESSAGE_EVENT_KIND);
-    let bob_app_keys = signed_app_keys_authorization_event(
-        &bob_owner,
-        bob_device.public_key(),
-        10,
-    );
+    let bob_app_keys = signed_app_keys_authorization_event(&bob_owner, bob_device.public_key(), 10);
     alice.handle_relay_event(bob_app_keys.clone());
     alice.handle_relay_event(response);
-    ingest_invite_owner_app_keys(
-        &mut alice,
-        bob_owner.public_key(),
-        vec![bob_app_keys],
-    );
+    ingest_invite_owner_app_keys(&mut alice, bob_owner.public_key(), vec![bob_app_keys]);
     for event in bob_bootstrap_messages {
         alice.handle_relay_event(event);
     }
@@ -216,7 +199,11 @@ fn has_filter_with_kind_pubkey_for_test(filters: &[Filter], kind: u32, pubkey: P
             let has_kind = filter
                 .get("kinds")
                 .and_then(|kinds| kinds.as_array())
-                .is_some_and(|kinds| kinds.iter().any(|value| value.as_u64() == Some(kind as u64)));
+                .is_some_and(|kinds| {
+                    kinds
+                        .iter()
+                        .any(|value| value.as_u64() == Some(kind as u64))
+                });
             let has_pubkey = filter
                 .get("#p")
                 .and_then(|pubkeys| pubkeys.as_array())

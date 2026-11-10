@@ -1,3 +1,5 @@
+use super::*;
+
 #[derive(Clone)]
 struct ReceiptBatchStorage {
     inner: CountingStorage,

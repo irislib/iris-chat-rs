@@ -1,3 +1,5 @@
+use super::*;
+
 #[test]
 fn incoming_device_authored_runtime_message_from_known_peer_routes_to_owner_thread() {
     let owner = Keys::generate();

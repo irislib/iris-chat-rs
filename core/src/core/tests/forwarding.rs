@@ -1,3 +1,5 @@
+use super::*;
+
 #[test]
 fn forwarded_content_survives_encryption_projection_and_storage_without_source_author() {
     let sender_owner = Keys::generate();
@@ -84,7 +86,10 @@ fn forwarded_content_survives_encryption_projection_and_storage_without_source_a
         .iter()
         .find(|m| m.id == received_id)
         .unwrap();
-    assert_eq!(super::chats::chat_message_from_persisted(stored).body, text);
+    assert_eq!(
+        crate::core::chats::chat_message_from_persisted(stored).body,
+        text
+    );
     assert_eq!(
         crate::format_forwarded_message(text.clone()),
         text,
@@ -130,7 +135,7 @@ fn forwarded_attachment_keeps_heading_in_group_timeline_and_persistence() {
         .iter()
         .find(|m| m.id == message.id)
         .unwrap();
-    let restored = super::chats::chat_message_from_persisted(stored);
+    let restored = crate::core::chats::chat_message_from_persisted(stored);
     assert_eq!(restored.body, message.body);
     assert_eq!(restored.attachments, message.attachments);
 }

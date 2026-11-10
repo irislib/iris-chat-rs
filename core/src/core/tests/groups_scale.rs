@@ -1,18 +1,21 @@
 // The transport is deterministic; membership, encryption, subscriptions, UI rows,
 // retry queues and SQLite writes all use the same paths as the native clients.
-struct GroupScaleDevice {
-    owner: usize,
-    keys: Keys,
-    core: AppCore,
-    _dir: tempfile::TempDir,
+
+use super::*;
+
+pub(super) struct GroupScaleDevice {
+    pub(super) owner: usize,
+    pub(super) keys: Keys,
+    pub(super) core: AppCore,
+    pub(super) _dir: tempfile::TempDir,
     delivered: HashSet<nostr::EventId>,
-    online: bool,
+    pub(super) online: bool,
 }
 
-struct GroupScaleFarm {
-    owners: Vec<Keys>,
-    devices: Vec<GroupScaleDevice>,
-    history: Vec<Event>,
+pub(super) struct GroupScaleFarm {
+    pub(super) owners: Vec<Keys>,
+    pub(super) devices: Vec<GroupScaleDevice>,
+    pub(super) history: Vec<Event>,
     published: HashSet<nostr::EventId>,
     deliveries: usize,
     duplicates: usize,
@@ -23,7 +26,7 @@ struct GroupScaleFarm {
 }
 
 impl GroupScaleFarm {
-    fn new(device_counts: &[usize]) -> Self {
+    pub(super) fn new(device_counts: &[usize]) -> Self {
         let owners = device_counts
             .iter()
             .map(|_| Keys::generate())
@@ -89,7 +92,7 @@ impl GroupScaleFarm {
         }
     }
 
-    fn pump(&mut self) {
+    pub(super) fn pump(&mut self) {
         for round in 0..100 {
             let before = (self.history.len(), self.deliveries);
             if round % 5 == 0 {
@@ -159,7 +162,9 @@ impl GroupScaleFarm {
                     .collect::<Vec<_>>();
                 self.transport_time += transport_start.elapsed();
                 // The production catch-up loop processes at most 64 events in a batch.
-                for events in matches.chunks(super::lifecycle::CATCH_UP_EVENT_PROCESS_CHUNK_SIZE) {
+                for events in
+                    matches.chunks(crate::core::lifecycle::CATCH_UP_EVENT_PROCESS_CHUNK_SIZE)
+                {
                     device.core.enter_batch();
                     for event in events {
                         device.delivered.insert(event.id);
@@ -185,7 +190,7 @@ impl GroupScaleFarm {
         }
     }
 
-    fn retry(&mut self) {
+    pub(super) fn retry(&mut self) {
         self.now = self.now.max(unix_now().get()).saturating_add(60);
         for device in self.devices.iter_mut().filter(|device| device.online) {
             let retry = device
@@ -202,7 +207,7 @@ impl GroupScaleFarm {
         self.pump();
     }
 
-    fn add_members(&mut self, group_id: &str, members: std::ops::Range<usize>) {
+    pub(super) fn add_members(&mut self, group_id: &str, members: std::ops::Range<usize>) {
         let count = members.len();
         let member_inputs = members
             .map(|index| self.owners[index].public_key().to_hex())
@@ -221,7 +226,7 @@ impl GroupScaleFarm {
         self.pump();
     }
 
-    fn send(&mut self, device: usize, chat_id: &str, body: &str) -> (String, Duration) {
+    pub(super) fn send(&mut self, device: usize, chat_id: &str, body: &str) -> (String, Duration) {
         let action_start = std::time::Instant::now();
         self.devices[device]
             .core
@@ -602,7 +607,7 @@ fn appcore_group_multi_device_sender_uses_private_sibling_delivery() {
         kinds,
         vec![
             nostr_double_ratchet::group_wire::GROUP_SENDER_KEY_DISTRIBUTION_KIND,
-            private_group_wake::GROUP_WAKE_KIND,
+            crate::core::private_group_wake::GROUP_WAKE_KIND,
             nostr_double_ratchet::GROUP_ROSTER_FACT_KIND,
         ]
     );

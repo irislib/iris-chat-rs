@@ -1,17 +1,19 @@
+use super::*;
+
 /// Exact ciphertext acknowledgements survive app event-cache eviction and restart.
 /// Timestamp-only acknowledgements cannot distinguish same-second messages.
 #[derive(Clone, Debug, Default)]
-struct ProtocolGroupReplayCache {
+pub(super) struct ProtocolGroupReplayCache {
     order: std::collections::VecDeque<String>,
     members: HashSet<String>,
 }
 
 impl ProtocolGroupReplayCache {
-    fn contains(&self, fingerprint: &str) -> bool {
+    pub(super) fn contains(&self, fingerprint: &str) -> bool {
         self.members.contains(fingerprint)
     }
 
-    fn insert(&mut self, fingerprint: String) {
+    pub(super) fn insert(&mut self, fingerprint: String) {
         if !self.members.insert(fingerprint.clone()) {
             return;
         }
@@ -46,7 +48,7 @@ impl<'de> Deserialize<'de> for ProtocolGroupReplayCache {
     }
 }
 
-fn group_sender_key_fingerprint(message: &GroupSenderKeyMessage) -> String {
+pub(super) fn group_sender_key_fingerprint(message: &GroupSenderKeyMessage) -> String {
     use nostr::hashes::{sha256, Hash, HashEngine};
     let mut engine = sha256::Hash::engine();
     for bytes in [

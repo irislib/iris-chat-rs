@@ -1,4 +1,6 @@
-const MAX_READY_GROUP_PUBLICATIONS: usize = 4_096;
+use super::*;
+
+pub(super) const MAX_READY_GROUP_PUBLICATIONS: usize = 4_096;
 
 impl ProtocolEngine {
     fn ready_group_publication_is_allowed(&self, pending: &ProtocolReadyGroupPublish) -> bool {
@@ -12,7 +14,7 @@ impl ProtocolEngine {
                 .is_some_and(|owner| self.held_direct_chats.contains(&owner.to_hex()))
     }
 
-    fn retire_ineligible_group_publications(&mut self) -> anyhow::Result<()> {
+    pub(super) fn retire_ineligible_group_publications(&mut self) -> anyhow::Result<()> {
         let rejected = self
             .ready_group_publications
             .iter()
@@ -30,7 +32,7 @@ impl ProtocolEngine {
         })
     }
 
-    fn retain_group_publications(
+    pub(super) fn retain_group_publications(
         &mut self,
         effects: &[ProtocolEffect],
         wake_recipient: Option<NdrOwnerPubkey>,
@@ -97,7 +99,7 @@ impl ProtocolEngine {
 
     /// Prepare recipient-specific notification delivery in the same checkpoint
     /// as the shared group ciphertext. Shared authors never enter push filters.
-    fn prepare_private_group_wakes(
+    pub(super) fn prepare_private_group_wakes(
         &mut self,
         group_id: &str,
         output: &mut ProtocolGroupSendResult,

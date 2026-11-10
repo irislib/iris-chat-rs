@@ -1,6 +1,9 @@
 // Protocol receive work yields after a bounded key-search slice. Synchronous
 // matrix fixtures drive the same continuation turns the app actor schedules.
-fn finish_group_search_for_test(
+
+use super::*;
+
+pub(super) fn finish_group_search_for_test(
     engine: &mut ProtocolEngine,
     mut result: ProtocolGroupIncomingResult,
 ) -> ProtocolGroupIncomingResult {
@@ -22,7 +25,7 @@ fn finish_group_search_for_test(
     result
 }
 
-fn deliver_protocol_effects_with_ready_work(
+pub(super) fn deliver_protocol_effects_with_ready_work(
     engine: &mut ProtocolEngine,
     effects: &[ProtocolEffect],
 ) -> Vec<GroupIncomingEvent> {
@@ -37,7 +40,7 @@ fn deliver_protocol_effects_with_ready_work(
     events
 }
 
-fn deliver_protocol_effects_with_ready_work_once(
+pub(super) fn deliver_protocol_effects_with_ready_work_once(
     engine: &mut ProtocolEngine,
     effects: &[ProtocolEffect],
 ) -> (Vec<GroupIncomingEvent>, Vec<ProtocolEffect>) {

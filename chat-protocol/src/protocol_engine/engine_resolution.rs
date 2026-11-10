@@ -1,12 +1,14 @@
+use super::*;
+
 impl ProtocolEngine {
-    fn resolve_message_sender_owner(
+    pub(super) fn resolve_message_sender_owner(
         &self,
         envelope: &MessageEnvelope,
     ) -> ProtocolSenderOwnerResolution {
         self.resolve_message_sender_owner_for_sender(envelope.sender)
     }
 
-    fn resolve_message_sender_owner_for_sender(
+    pub(super) fn resolve_message_sender_owner_for_sender(
         &self,
         sender: NdrDevicePubkey,
     ) -> ProtocolSenderOwnerResolution {
@@ -24,7 +26,7 @@ impl ProtocolEngine {
             })
     }
 
-    fn resolve_message_sender_owner_with_snapshot(
+    pub(super) fn resolve_message_sender_owner_with_snapshot(
         &self,
         sender: NdrDevicePubkey,
         snapshot: &SessionManagerSnapshot,
@@ -36,7 +38,7 @@ impl ProtocolEngine {
             })
     }
 
-    fn resolve_group_pairwise_sender_owner(
+    pub(super) fn resolve_group_pairwise_sender_owner(
         &self,
         sender_owner: NdrOwnerPubkey,
         sender_device: Option<NdrDevicePubkey>,
@@ -64,7 +66,7 @@ impl ProtocolEngine {
         }
     }
 
-    fn owner_resolution_for_sender_record(
+    pub(super) fn owner_resolution_for_sender_record(
         &self,
         record: ProtocolSenderDeviceRecord,
     ) -> ProtocolSenderOwnerResolution {
@@ -196,7 +198,7 @@ impl ProtocolEngine {
             .is_some_and(|roster| roster.get_device(&device).is_some())
     }
 
-    fn wake_pending_protocol_for_owner(&mut self, owner: NdrOwnerPubkey) {
+    pub(super) fn wake_pending_protocol_for_owner(&mut self, owner: NdrOwnerPubkey) {
         for pending in &mut self.pending_remote_sends {
             if owner == self.local_owner || pending.recipient_owner == owner {
                 pending.next_retry_at_secs = 0;
@@ -264,7 +266,7 @@ impl ProtocolEngine {
         }
     }
 
-    fn ensure_local_roster(&mut self, created_at: NdrUnixSeconds) {
+    pub(super) fn ensure_local_roster(&mut self, created_at: NdrUnixSeconds) {
         let has_local_roster = self
             .session_manager
             .snapshot()
@@ -280,7 +282,7 @@ impl ProtocolEngine {
         }
     }
 
-    fn protocol_group_send_from_prepared(
+    pub(super) fn protocol_group_send_from_prepared(
         &mut self,
         prepared: &GroupPreparedSend,
         inner_event_id: Option<String>,
@@ -289,7 +291,7 @@ impl ProtocolEngine {
             .map(|(output, _)| output)
     }
 
-    fn protocol_group_send_from_prepared_with_progress(
+    pub(super) fn protocol_group_send_from_prepared_with_progress(
         &mut self,
         prepared: &GroupPreparedSend,
         inner_event_id: Option<String>,
@@ -339,7 +341,7 @@ impl ProtocolEngine {
         ))
     }
 
-    fn sync_group_to_local_siblings(
+    pub(super) fn sync_group_to_local_siblings(
         &mut self,
         group: &GroupSnapshot,
     ) -> anyhow::Result<Vec<ProtocolEffect>> {
@@ -363,7 +365,7 @@ impl ProtocolEngine {
         Ok(effects)
     }
 
-    fn sync_remote_group_sender_key_distribution_to_local_siblings(
+    pub(super) fn sync_remote_group_sender_key_distribution_to_local_siblings(
         &mut self,
         group_id: &str,
         sender_owner: NdrOwnerPubkey,
@@ -404,7 +406,7 @@ impl ProtocolEngine {
         )
     }
 
-    fn queue_group_pending_fanouts(
+    pub(super) fn queue_group_pending_fanouts(
         &mut self,
         group_id: &str,
         prepared: &GroupPreparedPublish,
@@ -444,7 +446,7 @@ impl ProtocolEngine {
         changed
     }
 
-    fn group_fanout_missing_devices(
+    pub(super) fn group_fanout_missing_devices(
         &self,
         fanout: &GroupPendingFanout,
         gaps: &[nostr_double_ratchet::RelayGap],
@@ -472,7 +474,7 @@ impl ProtocolEngine {
         Some(devices)
     }
 
-    fn queued_group_targets(&self) -> Vec<String> {
+    pub(super) fn queued_group_targets(&self) -> Vec<String> {
         let mut targets = self
             .pending_group_fanouts
             .iter()
@@ -489,7 +491,7 @@ impl ProtocolEngine {
         targets
     }
 
-    fn pending_inbound_owner_claim_targets(&self) -> Vec<String> {
+    pub(super) fn pending_inbound_owner_claim_targets(&self) -> Vec<String> {
         let mut targets = Vec::new();
         if self.pending_inbound.is_empty() {
             return targets;
@@ -515,7 +517,7 @@ impl ProtocolEngine {
         targets
     }
 
-    fn pending_group_pairwise_owner_claim_targets(&self) -> Vec<String> {
+    pub(super) fn pending_group_pairwise_owner_claim_targets(&self) -> Vec<String> {
         let mut targets = Vec::new();
         for pending in &self.pending_group_pairwise_payloads {
             if let ProtocolSenderOwnerResolution::PendingOwnerClaim { claimed_owner, .. } = self
@@ -529,7 +531,7 @@ impl ProtocolEngine {
         targets
     }
 
-    fn queue_pending_inbound_direct_event(
+    pub(super) fn queue_pending_inbound_direct_event(
         &mut self,
         event: Event,
         now_secs: u64,
@@ -588,7 +590,7 @@ impl ProtocolEngine {
         Ok(())
     }
 
-    fn pending_inbound_metadata_for_event(
+    pub(super) fn pending_inbound_metadata_for_event(
         &self,
         event: &Event,
         envelope: Option<&MessageEnvelope>,
@@ -660,7 +662,7 @@ impl ProtocolEngine {
             .unwrap_or(false)
     }
 
-    fn record_pending_decrypted_delivery(
+    pub(super) fn record_pending_decrypted_delivery(
         &mut self,
         decrypted: ProtocolDecryptedMessage,
         created_at_secs: u64,
@@ -683,7 +685,7 @@ impl ProtocolEngine {
         }
     }
 
-    fn queue_pending_group_pairwise_payload(
+    pub(super) fn queue_pending_group_pairwise_payload(
         &mut self,
         sender_owner: NdrOwnerPubkey,
         sender_device: Option<NdrDevicePubkey>,

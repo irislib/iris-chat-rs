@@ -1,3 +1,5 @@
+use super::*;
+
 // Optional encrypted extension on the existing signed invite response. Keeping
 // the original content unchanged lets older clients continue parsing it.
 const HANDSHAKE_OWNER_PROOF_TAG: &str = "owner-proof";
@@ -11,7 +13,7 @@ impl ProtocolEngine {
             .map(|_| self.local_handshake_owner_proof().is_some())
     }
 
-    fn local_handshake_owner_proof(&self) -> Option<&Event> {
+    pub(super) fn local_handshake_owner_proof(&self) -> Option<&Event> {
         let ProtocolAppKeysEvidence::Verified(event) =
             self.invite_owner_app_keys_evidence.get(&self.local_owner)?
         else {
@@ -48,7 +50,7 @@ impl ProtocolEngine {
     }
 }
 
-fn invite_response_with_owner_proof(
+pub(super) fn invite_response_with_owner_proof(
     response: &nostr_double_ratchet::InviteResponseEnvelope,
     proof: Option<&Event>,
 ) -> anyhow::Result<Event> {
@@ -78,7 +80,7 @@ fn invite_response_with_owner_proof(
         .sign_with_keys(&keys)?)
 }
 
-fn handshake_owner_proof(invite: &Invite, response: &Event) -> Option<Event> {
+pub(super) fn handshake_owner_proof(invite: &Invite, response: &Event) -> Option<Event> {
     // The optional extension never replaces validation of the original handshake.
     let envelope = parse_invite_response_event(response).ok()?;
     if envelope.recipient != invite.inviter_ephemeral_public_key {

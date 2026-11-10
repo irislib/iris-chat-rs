@@ -1,3 +1,5 @@
+use super::*;
+
 #[test]
 fn owner_device_rejects_app_key_only_approval_input() {
     let owner = Keys::generate();
@@ -158,7 +160,7 @@ fn account_bootstrap_app_keys_snapshot_installs_peer_device_roster() {
         .any(|device| device.identity_pubkey_hex == bob_device.to_hex()));
 }
 
-fn event_has_tag_value(event: &Event, tag_name: &str, value: &str) -> bool {
+pub(super) fn event_has_tag_value(event: &Event, tag_name: &str, value: &str) -> bool {
     event.tags.iter().any(|tag| {
         let values = tag.as_slice();
         values.first().map(|value| value.as_str()) == Some(tag_name)

@@ -1,7 +1,9 @@
+use super::*;
+
 // Runtime-only negative results. Neither fingerprints nor failure entries are
 // serialized, checkpointed, logged, or sent to another participant.
 const FAILED_INBOUND_RECEIVE_CACHE_LIMIT: usize = 8_192;
-type InboundReceiveFingerprints =
+pub(super) type InboundReceiveFingerprints =
     BTreeMap<NdrOwnerPubkey, nostr_double_ratchet::ReceiveInputFingerprint>;
 
 #[derive(Clone, Copy)]
@@ -33,7 +35,7 @@ impl FailedInboundReceiveKind {
     }
 }
 
-struct FailedInboundReceive {
+pub(super) struct FailedInboundReceive {
     owner: NdrOwnerPubkey,
     state: nostr_double_ratchet::ReceiveInputFingerprint,
     envelope: [u8; 32],
@@ -79,7 +81,7 @@ impl ProtocolEngine {
             .retain(|id, _| retained.contains(id));
     }
 
-    fn retry_pending_inbound_direct_events(
+    pub(super) fn retry_pending_inbound_direct_events(
         &mut self,
         now: NdrUnixSeconds,
     ) -> anyhow::Result<Vec<ProtocolDecryptedMessage>> {
@@ -101,7 +103,7 @@ impl ProtocolEngine {
         result
     }
 
-    fn decrypt_pending_direct_message_with_cache(
+    pub(super) fn decrypt_pending_direct_message_with_cache(
         &mut self,
         pending: &ProtocolPendingInbound,
         fingerprints: &mut InboundReceiveFingerprints,
@@ -122,7 +124,7 @@ impl ProtocolEngine {
         )
     }
 
-    fn receive_direct_message_with_cache(
+    pub(super) fn receive_direct_message_with_cache(
         &mut self,
         event: &Event,
         envelope: &MessageEnvelope,

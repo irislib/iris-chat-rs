@@ -1,5 +1,7 @@
+use super::*;
+
 impl ProtocolEngine {
-    fn has_authoritative_local_roster(&self) -> bool {
+    pub(super) fn has_authoritative_local_roster(&self) -> bool {
         if self.local_app_keys_observed {
             return true;
         }
@@ -13,7 +15,7 @@ impl ProtocolEngine {
     }
 
     #[cfg_attr(all(test, target_os = "linux"), track_caller)]
-    fn persist(&mut self) -> anyhow::Result<()> {
+    pub(super) fn persist(&mut self) -> anyhow::Result<()> {
         #[cfg(all(test, target_os = "linux"))]
         tests::audit_retry_persist_requested(std::panic::Location::caller());
         if self.batch_depth.get() > 0 {
@@ -24,7 +26,7 @@ impl ProtocolEngine {
     }
 
     #[cfg_attr(all(test, target_os = "linux"), track_caller)]
-    fn persist_now(&mut self) -> anyhow::Result<()> {
+    pub(super) fn persist_now(&mut self) -> anyhow::Result<()> {
         let state = ProtocolEnginePersistedState {
             version: PROTOCOL_ENGINE_STATE_VERSION,
             group_invite_uses: self.group_invite_uses.clone(),

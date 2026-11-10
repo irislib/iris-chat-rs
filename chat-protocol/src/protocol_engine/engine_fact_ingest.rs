@@ -1,3 +1,5 @@
+use super::*;
+
 impl ProtocolEngine {
     /// Install metadata copied from an authenticated sibling device. Signed
     /// roster facts can advance this copy, but restoring removed membership
@@ -133,7 +135,10 @@ impl ProtocolEngine {
         fact.snapshot.admins.contains(&signer_owner) && fact.snapshot.members.contains(&local_owner)
     }
 
-    fn install_group_roster_snapshot(&mut self, snapshot: GroupSnapshot) -> anyhow::Result<bool> {
+    pub(super) fn install_group_roster_snapshot(
+        &mut self,
+        snapshot: GroupSnapshot,
+    ) -> anyhow::Result<bool> {
         if self.group_roster_snapshot_is_stale(&snapshot) {
             return Ok(false);
         }

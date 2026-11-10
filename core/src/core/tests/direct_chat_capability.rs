@@ -1,6 +1,8 @@
-use super::direct_chat_capability::{resolve_current_app_keys, CurrentAppKeysResolution};
+use super::*;
 
-fn app_keys_event(owner: &Keys, devices: &[&Keys], created_at_secs: u64) -> Event {
+use crate::core::direct_chat_capability::{resolve_current_app_keys, CurrentAppKeysResolution};
+
+pub(super) fn app_keys_event(owner: &Keys, devices: &[&Keys], created_at_secs: u64) -> Event {
     AppKeys::new(
         devices
             .iter()
@@ -60,7 +62,11 @@ fn direct_capability_existing_authenticated_session_opens_offline_without_lookup
     core.open_chat(&chat_id);
 
     assert_eq!(
-        core.state.current_chat.as_ref().unwrap().direct_chat_capability,
+        core.state
+            .current_chat
+            .as_ref()
+            .unwrap()
+            .direct_chat_capability,
         Some(DirectChatCapabilityState::Available),
         "the protocol's authenticated session is sufficient even without the app-key UI cache"
     );
@@ -75,9 +81,15 @@ fn direct_capability_unknown_peer_only_checks_when_lookup_starts() {
     let peer = Keys::generate();
     let chat_id = peer.public_key().to_hex();
     let mut core = logged_in_test_core("direct-capability-unknown", &owner, &device);
-    core.ensure_thread_record(&chat_id, 1).messages.push(test_chat_message(
-        &chat_id, "old-message", "old history is not a session", 1, false,
-    ));
+    core.ensure_thread_record(&chat_id, 1)
+        .messages
+        .push(test_chat_message(
+            &chat_id,
+            "old-message",
+            "old history is not a session",
+            1,
+            false,
+        ));
     assert_eq!(core.chat_capability(&chat_id, &ChatKind::Direct), None);
 
     core.logged_in.as_mut().unwrap().relay_urls = vec!["ws://127.0.0.1:9".parse().unwrap()];
@@ -137,7 +149,10 @@ fn direct_capability_optimistic_page_does_not_invent_a_lookup() {
     core.open_chat(&chat_id);
     let resolved = chat_snapshot_from_state_and_db(&core.state, Some(&shared), &chat_id, 80)
         .expect("resolved chat page");
-    assert_eq!(resolved.direct_chat_capability, Some(DirectChatCapabilityState::Available));
+    assert_eq!(
+        resolved.direct_chat_capability,
+        Some(DirectChatCapabilityState::Available)
+    );
 }
 
 #[test]
@@ -170,11 +185,7 @@ fn direct_capability_requires_a_verified_unique_current_nonempty_head() {
     let conflicting_a = app_keys_event(&owner, &[&device_a], now);
     let conflicting_b = app_keys_event(&owner, &[&device_b], now);
     assert_eq!(
-        resolve_current_app_keys(
-            vec![conflicting_a, conflicting_b],
-            owner.public_key(),
-            now,
-        ),
+        resolve_current_app_keys(vec![conflicting_a, conflicting_b], owner.public_key(), now,),
         CurrentAppKeysResolution::Ambiguous
     );
 
@@ -220,11 +231,7 @@ fn direct_capability_completion_unlocks_only_nonempty_app_keys() {
         generation,
         token,
         &peer_hex,
-        Ok(vec![app_keys_event(
-            &peer_owner,
-            &[&peer_device],
-            now,
-        )]),
+        Ok(vec![app_keys_event(&peer_owner, &[&peer_device], now)]),
     );
     assert_eq!(
         core.direct_chat_capability_state(&peer_hex),
@@ -290,10 +297,7 @@ fn direct_capability_completion_is_invalidated_on_account_reset() {
     );
 
     assert!(!core.app_keys.contains_key(&peer_hex));
-    assert_eq!(
-        core.direct_chat_capability_state(&peer_hex),
-        None
-    );
+    assert_eq!(core.direct_chat_capability_state(&peer_hex), None);
 }
 
 #[test]
@@ -404,7 +408,9 @@ fn direct_capability_resumes_after_completion_was_dropped_while_suspended() {
     let peer_hex = peer.public_key().to_hex();
     core.ensure_thread_record(&peer_hex, unix_now().get());
     core.active_chat_id = Some(peer_hex.clone());
-    core.screen_stack = vec![Screen::Chat { chat_id: peer_hex.clone() }];
+    core.screen_stack = vec![Screen::Chat {
+        chat_id: peer_hex.clone(),
+    }];
     let (generation, token) = prime_capability_check(&mut core, peer.public_key());
 
     core.prepare_for_suspend();
@@ -412,7 +418,11 @@ fn direct_capability_resumes_after_completion_was_dropped_while_suspended() {
         generation,
         token,
         owner_pubkey_hex: peer_hex.clone(),
-        result: Ok(vec![app_keys_event(&peer, &[&peer_device], unix_now().get())]),
+        result: Ok(vec![app_keys_event(
+            &peer,
+            &[&peer_device],
+            unix_now().get(),
+        )]),
     });
     assert!(!core.app_keys.contains_key(&peer_hex));
     core.handle_app_foregrounded();
@@ -426,7 +436,14 @@ fn direct_capability_resumes_after_completion_was_dropped_while_suspended() {
         generation,
         token,
         &peer_hex,
-        Ok(vec![app_keys_event(&peer, &[&peer_device], unix_now().get())]),
+        Ok(vec![app_keys_event(
+            &peer,
+            &[&peer_device],
+            unix_now().get(),
+        )]),
     );
-    assert!(!core.app_keys.contains_key(&peer_hex), "pre-suspend results must remain invalidated");
+    assert!(
+        !core.app_keys.contains_key(&peer_hex),
+        "pre-suspend results must remain invalidated"
+    );
 }

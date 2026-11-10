@@ -57,14 +57,14 @@ IRIS_DEFAULT_RELAYS=ws://127.0.0.1:9 \
 IRIS_DEVICE_APPROVAL_RELAY_URL=ws://127.0.0.1:9 \
 CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0 \
 cargo test --manifest-path core/Cargo.toml --locked --lib -- \
-  core::tests::profile_metadata_ \
-  core::tests::editing_profile_preserves_extra_metadata_fields_and_tags \
-  core::tests::local_identity_artifacts_offer_profile_metadata_to_nearby \
-  core::tests::profile_picture_upload_propagates_to_account_snapshot \
-  core::tests::opening_uncached_direct_chat_starts_targeted_profile_fetch \
-  core::tests::incoming_uncached_direct_message_starts_targeted_profile_fetch \
-  core::tests::create_account_without_name_still_offers_profile_metadata_to_nearby \
-  core::tests::delete_profile_metadata_publishes_blank_profile_and_clears_local_record \
+  core::tests::profile_metadata_restart::profile_metadata_ \
+  core::tests::protocol_filters_push::editing_profile_preserves_extra_metadata_fields_and_tags \
+  core::tests::protocol_filters_push::local_identity_artifacts_offer_profile_metadata_to_nearby \
+  core::tests::groups_persistence_helpers::profile_picture_upload_propagates_to_account_snapshot \
+  core::tests::direct_messages_typing::opening_uncached_direct_chat_starts_targeted_profile_fetch \
+  core::tests::direct_messages_typing::incoming_uncached_direct_message_starts_targeted_profile_fetch \
+  core::tests::protocol_filters_push::create_account_without_name_still_offers_profile_metadata_to_nearby \
+  core::tests::protocol_filters_push::delete_profile_metadata_publishes_blank_profile_and_clears_local_record \
   --test-threads=2
 ```
 

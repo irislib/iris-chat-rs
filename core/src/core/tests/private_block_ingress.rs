@@ -1,3 +1,5 @@
+use super::*;
+
 #[test]
 fn private_block_same_second_transition_survives_out_of_order_replay() {
     let owner = Keys::generate();

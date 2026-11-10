@@ -1,9 +1,13 @@
+use super::*;
+
 /// Earlier protocol states already retained exact signed owner evidence, but
 /// predated the ratchet library's separate evidence index. Feed those original
 /// events into restoration so valid sessions do not become unauthorized after
 /// an upgrade. Keep existing heads: the library resolves newer revocations and
 /// conflicting signed events instead of trusting cached authorization flags.
-fn restore_signed_peer_evidence_for_session_manager(state: &mut ProtocolEnginePersistedState) {
+pub(super) fn restore_signed_peer_evidence_for_session_manager(
+    state: &mut ProtocolEnginePersistedState,
+) {
     for (owner, evidence) in &state.invite_owner_app_keys_evidence {
         if *owner == state.session_manager.local_owner_pubkey {
             continue;
@@ -25,7 +29,7 @@ fn restore_signed_peer_evidence_for_session_manager(state: &mut ProtocolEnginePe
     }
 }
 
-fn quarantine_unverified_owner_rosters(
+pub(super) fn quarantine_unverified_owner_rosters(
     snapshot: &mut SessionManagerSnapshot,
     verified_app_keys_owners: &BTreeSet<NdrOwnerPubkey>,
 ) {
@@ -59,7 +63,7 @@ fn quarantine_unverified_owner_rosters(
     }
 }
 
-fn load_or_create_local_invite(
+pub(super) fn load_or_create_local_invite(
     storage: &dyn StorageAdapter,
     device_pubkey: PublicKey,
     device_id: &str,
@@ -78,7 +82,7 @@ fn load_or_create_local_invite(
     Ok(invite)
 }
 
-fn normalize_local_invite_owner(mut invite: Invite, owner_pubkey: PublicKey) -> Invite {
+pub(super) fn normalize_local_invite_owner(mut invite: Invite, owner_pubkey: PublicKey) -> Invite {
     if invite.metadata_privacy_version != nostr_double_ratchet::METADATA_PRIVACY_VERSION {
         invite.metadata_privacy_version = nostr_double_ratchet::METADATA_PRIVACY_VERSION;
         invite.created_at = NdrUnixSeconds(
@@ -92,7 +96,7 @@ fn normalize_local_invite_owner(mut invite: Invite, owner_pubkey: PublicKey) -> 
     invite
 }
 
-fn user_record_snapshot(
+pub(super) fn user_record_snapshot(
     snapshot: &SessionManagerSnapshot,
     owner: NdrOwnerPubkey,
 ) -> Option<&UserRecordSnapshot> {
@@ -102,7 +106,7 @@ fn user_record_snapshot(
         .find(|user| user.owner_pubkey == owner)
 }
 
-fn roster_device_pubkeys(user: &UserRecordSnapshot) -> Option<Vec<NdrDevicePubkey>> {
+pub(super) fn roster_device_pubkeys(user: &UserRecordSnapshot) -> Option<Vec<NdrDevicePubkey>> {
     user.roster.as_ref().map(|roster| {
         roster
             .devices()
@@ -131,7 +135,7 @@ impl ProtocolEngine {
 }
 
 impl ProtocolEngine {
-    fn with_group_fanout_checkpoint<T>(
+    pub(super) fn with_group_fanout_checkpoint<T>(
         &mut self,
         operation: impl FnOnce(&mut Self, &mut GroupFanoutRetryUndo) -> anyhow::Result<T>,
     ) -> anyhow::Result<T> {
@@ -157,7 +161,7 @@ impl ProtocolEngine {
         result
     }
 
-    fn state_checkpoint(&self) -> ProtocolEngineCheckpoint {
+    pub(super) fn state_checkpoint(&self) -> ProtocolEngineCheckpoint {
         ProtocolEngineCheckpoint {
             session_manager: self.session_manager.clone(),
             group_manager: self.group_manager.clone(),
@@ -185,7 +189,7 @@ impl ProtocolEngine {
         }
     }
 
-    fn restore_checkpoint(&mut self, checkpoint: ProtocolEngineCheckpoint) {
+    pub(super) fn restore_checkpoint(&mut self, checkpoint: ProtocolEngineCheckpoint) {
         self.group_invite_uses = checkpoint.group_invite_uses;
         self.session_manager = checkpoint.session_manager;
         self.group_manager = checkpoint.group_manager;
@@ -214,7 +218,7 @@ impl ProtocolEngine {
         self.invalidate_known_message_author_cache();
     }
 
-    fn with_state_checkpoint<T>(
+    pub(super) fn with_state_checkpoint<T>(
         &mut self,
         operation: impl FnOnce(&mut Self) -> anyhow::Result<T>,
     ) -> anyhow::Result<T> {

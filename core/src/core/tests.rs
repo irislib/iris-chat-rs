@@ -1,6 +1,165 @@
 use super::protocol::build_protocol_subscription_filters;
 use super::*;
 
+mod app_keys_device_labels;
+mod app_keys_invites_requests;
+mod app_keys_publishing;
+mod app_keys_roster;
+mod attachment_completion;
+mod block_preserves_history;
+mod call_history_multi_device;
+mod call_media_congestion;
+mod call_quality;
+mod call_wake_v2;
+mod calls;
+mod chat_deletion_sync;
+mod chat_page_order;
+mod chat_read_negentropy;
+mod chat_read_receipts;
+mod chat_read_sync;
+mod contact_details;
+mod contact_identity;
+mod device_approval;
+mod device_connections;
+mod device_link_signer;
+mod device_roster_fetch;
+mod device_sync;
+mod device_sync_authorization;
+mod device_sync_helpers;
+mod device_sync_history;
+mod device_sync_history_restart;
+mod device_sync_mutation_privacy;
+mod device_sync_provider_refresh;
+mod device_sync_records;
+mod direct_chat_capability;
+mod direct_files;
+mod direct_group_sender_key_ack;
+mod direct_message_request_acceptance;
+mod direct_messages_blocking;
+mod direct_messages_group_requests;
+mod direct_messages_runtime_regressions;
+mod direct_messages_typing;
+mod explicit_direct_invite_acceptance;
+mod fips_provider_privacy;
+mod first_contact_receiver;
+mod foreground_discovery;
+mod forwarding;
+mod full_invites;
+mod group_message_ids;
+mod group_private_transport;
+mod group_reactions;
+mod group_removal;
+mod groups_message_expiration;
+mod groups_mutation_delivery;
+mod groups_persistence_helpers;
+mod groups_persistence_more;
+mod groups_scale;
+mod groups_sender_key;
+mod groups_sender_key_continuation;
+mod groups_sender_key_retry;
+mod handshake_owner_proof;
+mod image_proxy_preferences;
+mod invite_notifications;
+mod issued_invites;
+mod local_message_deletion;
+mod mentions;
+mod mesh_chat;
+mod mesh_group_replay;
+mod message_expiry;
+mod message_mutation_cleanup;
+mod message_mutation_live_privacy;
+mod message_mutations;
+mod metadata_privacy;
+mod mobile_push_controls;
+mod mobile_push_read_sync;
+mod nearby_publish_burst;
+mod nhash_previews;
+mod open_chat_finalize;
+mod pending_device_link;
+mod pending_publish_replay;
+#[cfg(target_os = "linux")]
+mod populated_discovery_idle;
+mod populated_retry_idle;
+mod private_block_carriers;
+mod private_block_controls;
+mod private_block_ingress;
+mod private_block_outbox;
+mod private_block_push_atomic;
+mod private_block_sync;
+mod private_contact_migration;
+mod private_contacts;
+mod private_control_interop;
+mod private_group_wake;
+mod private_invite_join_navigation;
+mod private_invite_owner_crash;
+mod private_invite_owner_verification;
+mod private_settings;
+mod profile_metadata_restart;
+mod protocol_discovery_demand;
+mod protocol_filters_push;
+mod protocol_idle_replay;
+mod protocol_ready_retry;
+mod protocol_runtime;
+mod protocol_runtime_direct_queue;
+mod protocol_runtime_replay;
+mod protocol_startup_guards;
+mod public_follow;
+mod publish_drain_progress;
+mod receipt_batch_latency;
+mod recipient_receipt_sync;
+mod registration_recovery;
+mod remote_signer;
+mod remote_signer_fixture;
+mod request_acceptance_sync;
+mod retry_publish_ordering;
+mod send_display;
+mod signer_login;
+mod signer_login_lookup;
+mod startup_restore;
+mod synthetic_history_scale;
+mod synthetic_protocol_checkpoint;
+mod synthetic_vm_profile;
+mod timed_mute;
+
+use app_keys_invites_requests::*;
+use app_keys_roster::*;
+use block_preserves_history::*;
+use call_wake_v2::*;
+use calls::*;
+use chat_deletion_sync::*;
+use chat_read_negentropy::*;
+use chat_read_receipts::*;
+use chat_read_sync::*;
+use contact_details::*;
+use device_approval::*;
+pub(crate) use device_sync_helpers::*;
+use device_sync_history::*;
+use direct_chat_capability::*;
+use direct_files::*;
+use direct_messages_group_requests::*;
+use direct_messages_typing::*;
+use group_private_transport::*;
+use group_reactions::*;
+use groups_persistence_more::*;
+use groups_scale::*;
+use groups_sender_key_continuation::*;
+use issued_invites::*;
+use message_mutations::*;
+use pending_publish_replay::*;
+use private_block_sync::*;
+use private_contact_migration::*;
+use private_contacts::*;
+use private_group_wake::*;
+use private_invite_join_navigation::*;
+use private_invite_owner_verification::*;
+use profile_metadata_restart::*;
+pub(crate) use protocol_runtime::*;
+use recipient_receipt_sync::*;
+use registration_recovery::*;
+use remote_signer_fixture::*;
+use signer_login::*;
+use synthetic_history_scale::*;
+
 const TEST_PROTOCOL_ENGINE_STATE_KEY: &str = "appcore/protocol-engine-state-v1";
 const TEST_DEVICE_APPROVAL_REQUEST_SECRET: &str = "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE";
 
@@ -45,7 +204,7 @@ fn seed_protocol_storage_if_missing_for_test(
     Ok(())
 }
 
-fn protocol_publish_events(effects: &[ProtocolEffect]) -> Vec<&Event> {
+pub(super) fn protocol_publish_events(effects: &[ProtocolEffect]) -> Vec<&Event> {
     effects
         .iter()
         .map(|effect| match effect {
@@ -66,7 +225,7 @@ fn protocol_publish_events_with_kind(effects: &[ProtocolEffect], kind: u32) -> V
         .collect()
 }
 
-fn protocol_publish_events_for_target(
+pub(super) fn protocol_publish_events_for_target(
     effects: &[ProtocolEffect],
     _owner_pubkey_hex: &str,
     _device_id: &str,
@@ -110,130 +269,3 @@ fn protocol_targeted_payload_count(effects: &[ProtocolEffect], _owner_pubkey_hex
         })
         .count()
 }
-
-include!("tests/protocol_runtime.rs");
-include!("tests/forwarding.rs");
-include!("tests/protocol_runtime_direct_queue.rs");
-include!("tests/send_display.rs");
-include!("tests/attachment_completion.rs");
-include!("tests/receipt_batch_latency.rs");
-include!("tests/registration_recovery.rs");
-include!("tests/device_roster_fetch.rs");
-include!("tests/device_connections.rs");
-include!("tests/protocol_startup_guards.rs");
-include!("tests/profile_metadata_restart.rs");
-include!("tests/protocol_runtime_replay.rs");
-include!("tests/protocol_idle_replay.rs");
-include!("tests/pending_publish_replay.rs");
-include!("tests/metadata_privacy.rs");
-include!("tests/retry_publish_ordering.rs");
-include!("tests/nearby_publish_burst.rs");
-include!("tests/publish_drain_progress.rs");
-include!("tests/protocol_filters_push.rs");
-include!("tests/protocol_discovery_demand.rs");
-include!("tests/invite_notifications.rs");
-include!("tests/device_approval.rs");
-include!("tests/app_keys_roster.rs");
-include!("tests/app_keys_device_labels.rs");
-include!("tests/app_keys_publishing.rs");
-include!("tests/app_keys_invites_requests.rs");
-include!("tests/direct_message_request_acceptance.rs");
-include!("tests/explicit_direct_invite_acceptance.rs");
-include!("tests/pending_device_link.rs");
-include!("tests/signer_login.rs");
-include!("tests/signer_login_lookup.rs");
-include!("tests/remote_signer_fixture.rs");
-include!("tests/remote_signer.rs");
-include!("tests/device_link_signer.rs");
-include!("tests/private_invite_owner_verification.rs");
-include!("tests/private_invite_owner_crash.rs");
-include!("tests/handshake_owner_proof.rs");
-include!("tests/first_contact_receiver.rs");
-include!("tests/direct_messages_group_requests.rs");
-include!("tests/direct_messages_blocking.rs");
-include!("tests/block_preserves_history.rs");
-include!("tests/private_block_sync.rs");
-include!("tests/private_block_ingress.rs");
-include!("tests/private_block_outbox.rs");
-include!("tests/private_block_carriers.rs");
-include!("tests/private_block_push_atomic.rs");
-include!("tests/private_block_controls.rs");
-include!("tests/direct_chat_capability.rs");
-include!("tests/direct_messages_typing.rs");
-include!("tests/chat_page_order.rs");
-include!("tests/open_chat_finalize.rs");
-include!("tests/direct_messages_runtime_regressions.rs");
-include!("tests/direct_group_sender_key_ack.rs");
-include!("tests/groups_sender_key.rs");
-include!("tests/groups_sender_key_continuation.rs");
-include!("tests/group_reactions.rs");
-include!("tests/groups_mutation_delivery.rs");
-include!("tests/group_message_ids.rs");
-include!("tests/groups_sender_key_retry.rs");
-include!("tests/protocol_ready_retry.rs");
-include!("tests/groups_scale.rs");
-include!("tests/private_group_wake.rs");
-include!("tests/groups_message_expiration.rs");
-include!("tests/groups_persistence_helpers.rs");
-include!("tests/groups_persistence_more.rs");
-include!("tests/message_expiry.rs");
-include!("tests/group_removal.rs");
-include!("tests/device_sync_helpers.rs");
-include!("tests/device_sync.rs");
-include!("tests/device_sync_authorization.rs");
-include!("tests/device_sync_provider_refresh.rs");
-include!("tests/device_sync_history.rs");
-include!("tests/device_sync_history_restart.rs");
-include!("tests/device_sync_records.rs");
-include!("tests/device_sync_mutation_privacy.rs");
-include!("tests/chat_read_sync.rs");
-include!("tests/chat_read_negentropy.rs");
-include!("tests/recipient_receipt_sync.rs");
-include!("tests/mobile_push_read_sync.rs");
-include!("tests/mobile_push_controls.rs");
-include!("tests/chat_read_receipts.rs");
-include!("tests/chat_deletion_sync.rs");
-include!("tests/local_message_deletion.rs");
-include!("tests/mesh_chat.rs");
-include!("tests/mesh_group_replay.rs");
-include!("tests/image_proxy_preferences.rs");
-
-include!("tests/calls.rs");
-include!("tests/call_wake_v2.rs");
-include!("tests/call_quality.rs");
-include!("tests/call_history_multi_device.rs");
-include!("tests/direct_files.rs");
-
-include!("tests/contact_details.rs");
-include!("tests/private_contacts.rs");
-include!("tests/private_contact_migration.rs");
-include!("tests/private_control_interop.rs");
-
-include!("tests/timed_mute.rs");
-
-include!("tests/contact_identity.rs");
-include!("tests/public_follow.rs");
-
-include!("tests/synthetic_history_scale.rs");
-include!("tests/synthetic_vm_profile.rs");
-include!("tests/populated_discovery_idle.rs");
-include!("tests/foreground_discovery.rs");
-include!("tests/synthetic_protocol_checkpoint.rs");
-include!("tests/populated_retry_idle.rs");
-
-include!("tests/message_mutations.rs");
-include!("tests/message_mutation_live_privacy.rs");
-
-include!("tests/message_mutation_cleanup.rs");
-
-include!("tests/private_settings.rs");
-include!("tests/request_acceptance_sync.rs");
-
-include!("tests/mentions.rs");
-
-include!("tests/nhash_previews.rs");
-
-include!("tests/issued_invites.rs");
-include!("tests/full_invites.rs");
-include!("tests/fips_provider_privacy.rs");
-include!("tests/startup_restore.rs");

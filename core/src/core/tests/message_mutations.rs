@@ -1,4 +1,6 @@
-fn receive_test_mutation(
+use super::*;
+
+pub(super) fn receive_test_mutation(
     core: &mut AppCore,
     author: &Keys,
     chat: &str,
@@ -429,9 +431,12 @@ fn message_mutations_linked_device_history_converges_without_changing_originals(
                 .any(|r| r["type"] == "messageMutation"));
         } else {
             assert_eq!(edited.body, "Original");
-            assert!(right.message_for_mutation(&chat, "sync-delete")
-                .is_none_or(|message| message.body.is_empty()),
-                "Older readers must never receive retracted plaintext");
+            assert!(
+                right
+                    .message_for_mutation(&chat, "sync-delete")
+                    .is_none_or(|message| message.body.is_empty()),
+                "Older readers must never receive retracted plaintext"
+            );
             assert!(
                 !trace
                     .iter()
@@ -443,10 +448,15 @@ fn message_mutations_linked_device_history_converges_without_changing_originals(
         }
         if !capable {
             if let Some(path) = std::env::var_os("IRIS_MESSAGE_MUTATION_LEGACY_TRACE") {
-                std::fs::write(path, serde_json::to_vec(&serde_json::json!({
-                    "owner": owner.public_key().to_hex(), "packets": trace,
-                    "messageId": "sync-edit", "body": edited.body,
-                })).unwrap()).unwrap();
+                std::fs::write(
+                    path,
+                    serde_json::to_vec(&serde_json::json!({
+                        "owner": owner.public_key().to_hex(), "packets": trace,
+                        "messageId": "sync-edit", "body": edited.body,
+                    }))
+                    .unwrap(),
+                )
+                .unwrap();
             }
         }
         assert_eq!(left.device_history_session_count_for_test(), 0);
@@ -585,7 +595,7 @@ fn drain_mutation_history_wire(
     source_key: &Keys,
     target: &mut AppCore,
     target_key: &Keys,
-    records: &flume::Receiver<super::device_sync_tcp::SendBatch>,
+    records: &flume::Receiver<crate::core::device_sync_tcp::SendBatch>,
     trace: &mut Vec<serde_json::Value>,
     capable: bool,
 ) -> bool {

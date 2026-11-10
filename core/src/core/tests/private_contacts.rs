@@ -1,3 +1,5 @@
+use super::*;
+
 use crate::private_contact_sync_v2::*;
 
 #[test]
@@ -95,13 +97,13 @@ fn private_contact_recovery_retries_failed_admission_and_later_outages() {
     );
 }
 
-fn private_contact_patch(value: serde_json::Value) -> PrivateContactPatchV2 {
+pub(super) fn private_contact_patch(value: serde_json::Value) -> PrivateContactPatchV2 {
     serde_json::from_value(value).unwrap()
 }
 
 // Public bootstrap invites use the same kind as retired private app records.
 // Allow only verified empty-content invites, never sealed contact data.
-fn assert_only_public_invites_pending(core: &AppCore) {
+pub(super) fn assert_only_public_invites_pending(core: &AppCore) {
     for event in pending_events_with_kind(core, 30078) {
         assert!(
             event.content.is_empty(),

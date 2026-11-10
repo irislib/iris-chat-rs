@@ -1,4 +1,6 @@
-fn save_contact_details(core: &mut AppCore, peer: &Keys, nickname: &str, note: &str) {
+use super::*;
+
+pub(super) fn save_contact_details(core: &mut AppCore, peer: &Keys, nickname: &str, note: &str) {
     core.handle_action(AppAction::SetContactDetails {
         owner_pubkey_hex: peer.public_key().to_hex(),
         nickname: nickname.to_string(),

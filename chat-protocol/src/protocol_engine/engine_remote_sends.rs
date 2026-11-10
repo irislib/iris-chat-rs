@@ -1,5 +1,7 @@
+use super::*;
+
 impl ProtocolEngine {
-    fn queue_remote_payload(
+    pub(super) fn queue_remote_payload(
         &mut self,
         peer: PublicKey,
         chat_id: &str,
@@ -80,7 +82,7 @@ impl ProtocolEngine {
         Ok((event_ids, effects))
     }
 
-    fn prepare_pending_remote_send(
+    pub(super) fn prepare_pending_remote_send(
         &mut self,
         pending: &mut ProtocolPendingRemoteSend,
         now: NdrUnixSeconds,
@@ -133,7 +135,7 @@ impl ProtocolEngine {
         Ok((effects, prepared.relay_gaps.is_empty()))
     }
 
-    fn retry_pending_remote_sends(
+    pub(super) fn retry_pending_remote_sends(
         &mut self,
         now: NdrUnixSeconds,
     ) -> anyhow::Result<Vec<ProtocolEffect>> {

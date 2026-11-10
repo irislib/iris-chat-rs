@@ -1,4 +1,6 @@
-fn direct_files_test_records(core: &AppCore) -> Vec<super::direct_files::Record> {
+use super::*;
+
+pub(super) fn direct_files_test_records(core: &AppCore) -> Vec<crate::core::direct_files::Record> {
     let db = core.app_store.shared();
     let conn = db.lock().unwrap();
     let mut stmt = conn
@@ -12,7 +14,11 @@ fn direct_files_test_records(core: &AppCore) -> Vec<super::direct_files::Record>
     records
 }
 
-fn direct_files_test_message(core: &AppCore, chat: &str, id: &str) -> ChatMessageSnapshot {
+pub(super) fn direct_files_test_message(
+    core: &AppCore,
+    chat: &str,
+    id: &str,
+) -> ChatMessageSnapshot {
     chat_snapshot_from_state_and_db(&core.state, Some(&core.app_store.shared()), chat, 100)
         .expect("chat snapshot")
         .messages

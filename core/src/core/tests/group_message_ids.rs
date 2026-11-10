@@ -1,3 +1,5 @@
+use super::*;
+
 #[test]
 fn group_message_ids_are_distinct_across_linked_devices_at_the_same_clock_tick() {
     let owner = Keys::generate();

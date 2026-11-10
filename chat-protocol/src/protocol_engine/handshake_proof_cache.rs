@@ -1,19 +1,21 @@
-const HANDSHAKE_PROOF_CACHE_ENTRIES: usize = 256;
-const HANDSHAKE_PROOF_CACHE_BYTES: usize = 1024 * 1024;
+use super::*;
+
+pub(super) const HANDSHAKE_PROOF_CACHE_ENTRIES: usize = 256;
+pub(super) const HANDSHAKE_PROOF_CACHE_BYTES: usize = 1024 * 1024;
 type HandshakeProofKey = (nostr::EventId, nostr::EventId);
 
 /// Retry the exact signed response. Re-encrypting its unchanged owner proof
 /// randomizes the event ID, defeating both outbox and receiver deduplication.
 /// Only public signed events are retained; this cache is not durable state.
 #[derive(Default)]
-struct HandshakeProofCache {
-    events: BTreeMap<HandshakeProofKey, (Event, usize)>,
-    order: std::collections::VecDeque<HandshakeProofKey>,
-    bytes: usize,
+pub(super) struct HandshakeProofCache {
+    pub(super) events: BTreeMap<HandshakeProofKey, (Event, usize)>,
+    pub(super) order: std::collections::VecDeque<HandshakeProofKey>,
+    pub(super) bytes: usize,
 }
 
 impl HandshakeProofCache {
-    fn insert(&mut self, key: HandshakeProofKey, event: Event) -> anyhow::Result<()> {
+    pub(super) fn insert(&mut self, key: HandshakeProofKey, event: Event) -> anyhow::Result<()> {
         let bytes = serde_json::to_vec(&event)?.len();
         if bytes > HANDSHAKE_PROOF_CACHE_BYTES || self.events.contains_key(&key) {
             return Ok(());
@@ -36,7 +38,7 @@ impl HandshakeProofCache {
 }
 
 impl ProtocolEngine {
-    fn cached_invite_response_with_owner_proof(
+    pub(super) fn cached_invite_response_with_owner_proof(
         &self,
         response: &nostr_double_ratchet::InviteResponseEnvelope,
     ) -> anyhow::Result<Event> {

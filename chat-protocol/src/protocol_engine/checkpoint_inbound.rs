@@ -1,16 +1,18 @@
+use super::*;
+
 // Retry clocks are mutable; the large event/envelope body is shared across
 // checkpoint and rollback clones. Any body mutation starts a fresh cache
 // generation, including owner resolution and imported-envelope changes.
 #[derive(Clone)]
-struct CheckpointInbound {
+pub(super) struct CheckpointInbound {
     value: Arc<ProtocolPendingInboundBody>,
     cached: Arc<std::sync::OnceLock<CheckpointInboundBodies>>,
 }
 
 #[derive(Clone)]
-struct CheckpointInboundBodies {
-    event: Arc<crate::StorageCheckpointBody>,
-    envelope: Arc<crate::StorageCheckpointBody>,
+pub(super) struct CheckpointInboundBodies {
+    pub(super) event: Arc<crate::StorageCheckpointBody>,
+    pub(super) envelope: Arc<crate::StorageCheckpointBody>,
 }
 
 impl From<ProtocolPendingInboundBody> for CheckpointInbound {
@@ -62,7 +64,7 @@ impl<'de> Deserialize<'de> for CheckpointInbound {
 }
 
 impl CheckpointInbound {
-    fn checkpoint_bodies(&self) -> Result<CheckpointInboundBodies, serde_json::Error> {
+    pub(super) fn checkpoint_bodies(&self) -> Result<CheckpointInboundBodies, serde_json::Error> {
         if let Some(cached) = self.cached.get() {
             return Ok(cached.clone());
         }
@@ -83,7 +85,7 @@ impl CheckpointInbound {
     }
 }
 
-fn append_checkpoint_inbound(
+pub(super) fn append_checkpoint_inbound(
     checkpoint: &mut crate::StorageCheckpoint,
     inbound: &[ProtocolPendingInbound],
 ) -> Result<(), serde_json::Error> {

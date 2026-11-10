@@ -1,4 +1,6 @@
-fn pending_publish_changes(core: &AppCore) -> u64 {
+use super::*;
+
+pub(super) fn pending_publish_changes(core: &AppCore) -> u64 {
     core.app_store
         .shared()
         .lock()

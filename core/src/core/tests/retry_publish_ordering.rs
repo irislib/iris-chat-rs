@@ -1,3 +1,5 @@
+use super::*;
+
 #[test]
 fn retry_batch_publish_registration_blocks_delivery_until_relay_success() {
     let transport_keys = Keys::generate();

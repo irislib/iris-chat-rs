@@ -1,3 +1,5 @@
+use super::*;
+
 #[test]
 fn timed_mute_actions_persist_and_unmute_only_the_selected_chat() {
     let owner = Keys::generate();
@@ -395,20 +397,36 @@ fn timed_mute_newly_linked_device_inherits_legacy_and_versioned_mutes() {
 fn chat_pin_sync_survives_unpin_restart_and_new_device_catchup() {
     let mut pair = chat_read_sync_pair("chat-pin-sync");
     let chat_id = Keys::generate().public_key().to_hex();
-    pair.a.handle_action(AppAction::SetChatPinned { chat_id: chat_id.clone(), pinned: true });
+    pair.a.handle_action(AppAction::SetChatPinned {
+        chat_id: chat_id.clone(),
+        pinned: true,
+    });
     let stale = pair.a.build_device_sync_packets_for_test(100, false);
     deliver_chat_read_packets(&mut pair.b, &Keys::generate(), &stale);
     assert!(!pair.b.is_chat_pinned(&chat_id));
     deliver_chat_read_packets(&mut pair.b, &pair.a_device, &stale);
-    assert!(pair.b.is_chat_pinned(&chat_id), "a sibling must receive the pin even without chat history");
-    pair.b.handle_action(AppAction::SetChatPinned { chat_id: chat_id.clone(), pinned: false });
+    assert!(
+        pair.b.is_chat_pinned(&chat_id),
+        "a sibling must receive the pin even without chat history"
+    );
+    pair.b.handle_action(AppAction::SetChatPinned {
+        chat_id: chat_id.clone(),
+        pinned: false,
+    });
     sync_chat_reads(&pair.b, &mut pair.a, &pair.b_device, false);
     assert!(!pair.a.is_chat_pinned(&chat_id));
     deliver_chat_read_packets(&mut pair.b, &pair.a_device, &stale);
-    assert!(!pair.b.is_chat_pinned(&chat_id), "stale pin must not undo unpin");
+    assert!(
+        !pair.b.is_chat_pinned(&chat_id),
+        "stale pin must not undo unpin"
+    );
     pair.a.persist_best_effort();
     drop(pair.a);
-    let mut restarted = logged_in_test_core_at_data_dir(&pair.owner, &pair.a_device, pair.a_dir.path().to_string_lossy().into());
+    let mut restarted = logged_in_test_core_at_data_dir(
+        &pair.owner,
+        &pair.a_device,
+        pair.a_dir.path().to_string_lossy().into(),
+    );
     restarted.load_persisted().unwrap();
     assert!(!restarted.is_chat_pinned(&chat_id));
 }
@@ -488,14 +506,15 @@ fn chat_pin_control_rejects_peer_spoof_and_removed_sibling() {
     }
 }
 
-
 #[test]
 fn chat_pin_new_device_inherits_legacy_pins_before_link_time() {
     let mut pair = chat_read_sync_pair("pin-new-device");
     let legacy = Keys::generate().public_key().to_hex();
     pair.a.preferences.pinned_chat_ids.push(legacy.clone());
     pair.a.set_chat_pinned("group:weekend", true);
-    let packets = pair.a.build_device_sync_packets_for_test(unix_now().get() + 10, false);
+    let packets = pair
+        .a
+        .build_device_sync_packets_for_test(unix_now().get() + 10, false);
     deliver_chat_read_packets(&mut pair.b, &pair.a_device, &packets);
     assert!(pair.b.is_chat_pinned(&legacy));
     assert!(pair.b.is_chat_pinned("group:weekend"));

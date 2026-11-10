@@ -4,13 +4,15 @@
 // Also accepts 1024 and 3072 MiB. Run with a release profile for product timings.
 // Generation is outside every measured interval; no existing account is opened.
 
-struct SyntheticHistory {
-    core: AppCore,
-    updates: flume::Receiver<AppUpdate>,
-    directory: tempfile::TempDir,
-    chat_ids: Vec<String>,
-    rows: u64,
-    database_bytes: u64,
+use super::*;
+
+pub(super) struct SyntheticHistory {
+    pub(super) core: AppCore,
+    pub(super) updates: flume::Receiver<AppUpdate>,
+    pub(super) directory: tempfile::TempDir,
+    pub(super) chat_ids: Vec<String>,
+    pub(super) rows: u64,
+    pub(super) database_bytes: u64,
 }
 
 fn synthetic_history_free_space(path: &std::path::Path, required: u64) {
@@ -49,13 +51,17 @@ fn synthetic_history_free_space(path: &std::path::Path, required: u64) {
     }
 }
 
-fn synthetic_history_fixture(mib: u64, contacts: usize, groups: usize) -> SyntheticHistory {
+pub(super) fn synthetic_history_fixture(
+    mib: u64,
+    contacts: usize,
+    groups: usize,
+) -> SyntheticHistory {
     synthetic_history_fixture_with_devices(mib, contacts, groups, 1).0
 }
 
 // The populated discovery regression reuses the same durable SQL/session/FTS
 // generator. The original benchmark keeps its one-device setup unchanged.
-fn synthetic_history_fixture_with_devices(
+pub(super) fn synthetic_history_fixture_with_devices(
     mib: u64,
     contacts: usize,
     groups: usize,
@@ -64,7 +70,7 @@ fn synthetic_history_fixture_with_devices(
     synthetic_history_fixture_with_devices_at(mib, contacts, groups, devices_per_contact, 0)
 }
 
-fn synthetic_discovery_event(
+pub(super) fn synthetic_discovery_event(
     mut unsigned: UnsignedEvent,
     keys: &Keys,
     discovery_epoch: u64,
@@ -83,7 +89,7 @@ fn synthetic_discovery_event(
 // Native VM exports may publish their generated discovery corpus. Keep the
 // original zero-based timestamps for existing offline fixtures, while letting
 // that export use recent, relay-admissible signed events without rewriting them.
-fn synthetic_history_fixture_with_devices_at(
+pub(super) fn synthetic_history_fixture_with_devices_at(
     mib: u64,
     contacts: usize,
     groups: usize,
@@ -381,7 +387,7 @@ fn synthetic_history_fixture_with_devices_at(
     )
 }
 
-fn synthetic_history_app(
+pub(super) fn synthetic_history_app(
     mut core: AppCore,
     updates: flume::Receiver<AppUpdate>,
 ) -> Arc<crate::FfiApp> {
@@ -415,7 +421,10 @@ fn synthetic_history_app(
     app
 }
 
-fn synthetic_history_wait(app: &crate::FfiApp, predicate: impl Fn(&AppState) -> bool) -> AppState {
+pub(super) fn synthetic_history_wait(
+    app: &crate::FfiApp,
+    predicate: impl Fn(&AppState) -> bool,
+) -> AppState {
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         let update = app

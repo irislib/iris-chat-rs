@@ -1,5 +1,7 @@
+use super::*;
+
 impl ProtocolEngine {
-    fn prepare_pending_local_sibling_send(
+    pub(super) fn prepare_pending_local_sibling_send(
         &mut self,
         pending: &mut ProtocolPendingLocalSiblingSend,
         now: NdrUnixSeconds,
@@ -54,7 +56,7 @@ impl ProtocolEngine {
         Ok((effects, prepared.relay_gaps.is_empty()))
     }
 
-    fn retry_pending_local_sibling_sends(
+    pub(super) fn retry_pending_local_sibling_sends(
         &mut self,
         now: NdrUnixSeconds,
     ) -> anyhow::Result<Vec<ProtocolEffect>> {

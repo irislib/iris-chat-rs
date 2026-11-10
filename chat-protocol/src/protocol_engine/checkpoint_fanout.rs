@@ -1,6 +1,8 @@
+use super::*;
+
 #[cfg(test)]
 thread_local! {
-    static CHECKPOINT_FANOUT_SERIALIZED_BYTES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub(super) static CHECKPOINT_FANOUT_SERIALIZED_BYTES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 // Queued payloads are immutable. Retry timing and remaining recipients live in
@@ -8,10 +10,10 @@ thread_local! {
 // rollback clones therefore need neither copy nor re-encode every payload.
 // The cache retires with the payload, including on successful delivery.
 #[derive(Clone)]
-struct CheckpointGroupFanout {
-    value: Arc<GroupPendingFanout>,
+pub(super) struct CheckpointGroupFanout {
+    pub(super) value: Arc<GroupPendingFanout>,
     serialized: Arc<Mutex<Option<Arc<serde_json::value::RawValue>>>>,
-    repair_identity: Arc<std::sync::OnceLock<Option<serde_json::Value>>>,
+    pub(super) repair_identity: Arc<std::sync::OnceLock<Option<serde_json::Value>>>,
     checkpoint_body: Arc<std::sync::OnceLock<Arc<crate::StorageCheckpointBody>>>,
 }
 
@@ -46,7 +48,9 @@ impl std::fmt::Debug for CheckpointGroupFanout {
 }
 
 impl CheckpointGroupFanout {
-    fn checkpoint_body(&self) -> Result<Arc<crate::StorageCheckpointBody>, serde_json::Error> {
+    pub(super) fn checkpoint_body(
+        &self,
+    ) -> Result<Arc<crate::StorageCheckpointBody>, serde_json::Error> {
         if let Some(body) = self.checkpoint_body.get() {
             return Ok(body.clone());
         }
@@ -59,7 +63,7 @@ impl CheckpointGroupFanout {
             .expect("initialized checkpoint body")
             .clone())
     }
-    fn repair_identity(&self) -> Option<&serde_json::Value> {
+    pub(super) fn repair_identity(&self) -> Option<&serde_json::Value> {
         self.repair_identity
             .get_or_init(|| {
                 let GroupPendingFanout::Remote { payload, .. } = self.as_ref() else {
@@ -96,7 +100,7 @@ impl CheckpointGroupFanout {
             .as_ref()
     }
 
-    fn serialized(&self) -> Result<Arc<serde_json::value::RawValue>, serde_json::Error> {
+    pub(super) fn serialized(&self) -> Result<Arc<serde_json::value::RawValue>, serde_json::Error> {
         let mut cached = self
             .serialized
             .lock()
@@ -114,7 +118,7 @@ impl CheckpointGroupFanout {
 }
 
 impl ProtocolPendingGroupFanout {
-    fn same_pending_repair(&self, other: &Self) -> bool {
+    pub(super) fn same_pending_repair(&self, other: &Self) -> bool {
         if self.inner_event_id.is_some()
             || other.inner_event_id.is_some()
             || self.group_id != other.group_id
@@ -155,7 +159,7 @@ impl<'de> Deserialize<'de> for CheckpointGroupFanout {
     }
 }
 
-fn append_checkpoint_padding(output: &mut String, target: usize) {
+pub(super) fn append_checkpoint_padding(output: &mut String, target: usize) {
     // Copy fixed ASCII blocks instead of extending one char at a time. Keep
     // scratch space bounded even when an existing checkpoint has large slack.
     const SPACES: &str = concat!(

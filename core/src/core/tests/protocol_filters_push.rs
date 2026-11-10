@@ -1,3 +1,5 @@
+use super::*;
+
 #[test]
 fn queued_group_create_schedules_fast_protocol_retry_tick() {
     let owner = Keys::generate();
@@ -1617,7 +1619,7 @@ fn mobile_push_decrypt_preview_does_not_mutate_persisted_ratchet_state() {
     })
     .to_string();
 
-    super::mobile_push::PREVIEW_WORK.with(|work| work.set((0, 0)));
+    crate::core::mobile_push::PREVIEW_WORK.with(|work| work.set((0, 0)));
     let resolution = decrypt_mobile_push_notification(
         data_dir.to_string_lossy().to_string(),
         bob_keys.public_key().to_hex(),
@@ -1641,7 +1643,7 @@ fn mobile_push_decrypt_preview_does_not_mutate_persisted_ratchet_state() {
     assert!(apns_resolution.should_show);
     assert_eq!(apns_resolution.body, message);
     assert_eq!(
-        super::mobile_push::PREVIEW_WORK.with(|work| work.get()),
+        crate::core::mobile_push::PREVIEW_WORK.with(|work| work.get()),
         (2, 0),
         "previews must not serialize a checkpoint, including during startup"
     );
@@ -2001,7 +2003,7 @@ fn appcore_persists_pending_group_sender_key_outer_when_no_group_message_emits()
         )
         .unwrap(),
     );
-    assert!(private_group_wake::sender_matches(
+    assert!(crate::core::private_group_wake::sender_matches(
         core.protocol_engine.as_ref().unwrap(),
         sender,
         &nested,
@@ -2752,7 +2754,9 @@ fn nearby_master_toggle_preserves_transport_preferences() {
     assert!(!sibling_tcp);
     assert_eq!(siblings, 0);
     core.runtime
-        .block_on(local_endpoint.register_service_receiver(super::fips_nearby::FIPS_NEARBY_PORT))
+        .block_on(
+            local_endpoint.register_service_receiver(crate::core::fips_nearby::FIPS_NEARBY_PORT),
+        )
         .expect("the local-only endpoint must not register the Nearby service");
 
     assert!(!core.state.preferences.nearby_enabled);

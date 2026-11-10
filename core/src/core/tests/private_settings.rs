@@ -1,3 +1,5 @@
+use super::*;
+
 #[test]
 fn independent_request_choices_and_chat_deletions_merge_after_restart() {
     for reverse in [false, true] {

@@ -12,11 +12,11 @@ import unittest
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 CRATES = ("core", "chat-protocol", "protocol-ffi")
 MEMORY_TEST = "core::protocol::anonymous_reads::memory_tests::populated_account_discovery_under_memory_limit"
-CHECKPOINT_TEST = "protocol_engine::tests::checkpoint_backlog_production_counts_are_durable"
+CHECKPOINT_TEST = "protocol_engine::tests::checkpoint_fanout_tests::checkpoint_backlog_production_counts_are_durable"
 CHECKPOINT_MARKER = "checkpoint_backlog fanouts=22702 ciphertexts=19231 checkpoint_bytes=254672896"
 CHECKPOINT_RESULT = "test result: ok. 1 passed; 0 failed; 0 ignored;"
 FANOUT_TEST = "core::tests::populated_discovery_idle::populated_account_five_relay_discovery_stays_quiet_and_targeted_demand_progresses"
-BATCHED_TEST = "protocol_engine::tests::restored_backlog_batched_retry_stays_within_cpu_budget"
+BATCHED_TEST = "protocol_engine::tests::batched_retry_cpu_tests::restored_backlog_batched_retry_stays_within_cpu_budget"
 
 
 def checkpoint_command():
@@ -501,11 +501,11 @@ class RustRunnerTests(unittest.TestCase):
 
     def test_batched_observer_is_ordinary_and_standalone_diagnostic_remains_separate(self):
         protocol = ROOT / "chat-protocol/src/protocol_engine"
-        observer = (protocol / "retry_work_audit.rs").read_text()
+        observer = (protocol / "tests/retry_work_audit.rs").read_text()
         self.assertRegex(observer, r"#\[test\]\s+fn retry_search_audit_keeps_author_generations_across_observations\(\)")
-        self.assertIn('#[cfg(target_os = "linux")]\n    include!("protocol_engine/batched_retry_cpu_tests.rs");',
-                      (protocol.with_suffix(".rs")).read_text())
-        standalone = (protocol / "inbound_retry_backlog_tests.rs").read_text()
+        self.assertIn('#[cfg(target_os = "linux")]\nmod batched_retry_cpu_tests;',
+                      (protocol / "tests.rs").read_text())
+        standalone = (protocol / "tests/inbound_retry_backlog_tests.rs").read_text()
         self.assertIn("fn restored_backlog_whole_retry_at_continuation_cadence()", standalone)
         self.assertIn('"whole retry loop still uses {cpu_percent:.2}% of one CPU"', standalone)
         for nextest in (True, False):
@@ -515,11 +515,11 @@ class RustRunnerTests(unittest.TestCase):
     def test_populated_discovery_runs_nonignored_in_the_core_suite(self):
         source = (ROOT / "core/src/core/tests/populated_discovery_idle.rs").read_text()
         self.assertRegex(source, r"#\[test\]\s+fn populated_account_discovery_stays_quiet_and_targeted_demand_progresses\(\)")
-        default = source[source.index("    #[test]\n    fn populated_account_discovery_stays_quiet"):]
-        default = default[:default.index("    #[test]", 1)]
+        default = source[source.index("#[test]\nfn populated_account_discovery_stays_quiet"):]
+        default = default[:default.index("#[test]", 1)]
         self.assertNotRegex(default, r"#\[ignore(?:\s|=|\])")
         self.assertRegex(source, r"#\[test\]\s+#\[ignore[^\n]+\]\s+fn populated_account_five_relay_discovery_stays_quiet_and_targeted_demand_progresses\(\)")
-        self.assertIn('include!("tests/populated_discovery_idle.rs");',
+        self.assertIn('#[cfg(target_os = "linux")]\nmod populated_discovery_idle;',
                       (ROOT / "core/src/core/tests.rs").read_text())
         # Both ordinary runners select the full core suite once; there is no
         # separate expensive CPU invocation to silently duplicate the fixture.

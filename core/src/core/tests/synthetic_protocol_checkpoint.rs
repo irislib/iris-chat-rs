@@ -1,3 +1,5 @@
+use super::*;
+
 fn synthetic_protocol_backlog(core: &mut AppCore, target_bytes: usize) -> (usize, usize) {
     let logged_in = core.logged_in.as_ref().unwrap();
     let owner = logged_in.owner_pubkey;

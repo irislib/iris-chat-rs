@@ -1,3 +1,5 @@
+use super::*;
+
 fn filter_has_kind(filters: &[Filter], kind: u32) -> bool {
     filters
         .iter()

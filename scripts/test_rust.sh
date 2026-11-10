@@ -102,7 +102,7 @@ for crate in "${crates[@]}"; do
         # history. Keep this allocation/serialization/durability regression in
         # both CI and the tagged release gate, with its aggregate work counts.
         if ! checkpoint_output="$(cargo test "${args[@]}" --lib \
-            protocol_engine::tests::checkpoint_backlog_production_counts_are_durable \
+            protocol_engine::tests::checkpoint_fanout_tests::checkpoint_backlog_production_counts_are_durable \
             -- --ignored --exact --test-threads=1 --nocapture 2>&1)"; then
             printf '%s\n' "$checkpoint_output"
             exit 1
@@ -130,7 +130,7 @@ for crate in "${crates[@]}"; do
                 CARGO_PROFILE_RELEASE_OPT_LEVEL=3 CARGO_PROFILE_RELEASE_DEBUG=1 \
                 CARGO_PROFILE_RELEASE_DEBUG_ASSERTIONS=false \
                     cargo test "${args[@]}" --release --jobs 2 --lib \
-                    protocol_engine::tests::restored_backlog_batched_retry_stays_within_cpu_budget \
+                    protocol_engine::tests::batched_retry_cpu_tests::restored_backlog_batched_retry_stays_within_cpu_budget \
                     -- --ignored --exact --test-threads=1 --nocapture 2>&1 | tee "$batched_log"
                 python3 - "$batched_log" "$batched_receipt" <<'BATCHED_CPU_RECEIPT'
 import json
@@ -142,7 +142,7 @@ import sys
 text = Path(sys.argv[1]).read_text()
 assert re.findall(r"test result: (ok|FAILED)\. (\d+) passed; (\d+) failed; (\d+) ignored;", text) == [("ok", "1", "0", "0")], "Required batched retry test did not pass exactly once"
 assert "running 1 test\n" in text
-assert "protocol_engine::tests::restored_backlog_batched_retry_stays_within_cpu_budget" in text
+assert "protocol_engine::tests::batched_retry_cpu_tests::restored_backlog_batched_retry_stays_within_cpu_budget" in text
 rows = re.findall(r"batched_retry_cpu (\{[^\n]+\})", text)
 assert len(rows) == 1, "Require exactly one complete batched retry receipt"
 result = json.loads(rows[0])

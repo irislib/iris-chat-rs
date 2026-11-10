@@ -1,3 +1,5 @@
+use super::*;
+
 impl ProtocolEngine {
     pub fn has_device_roster_entry_for_owner(
         &self,
@@ -18,7 +20,7 @@ impl ProtocolEngine {
     }
 }
 
-fn should_replace_provisional_local_roster(
+pub(super) fn should_replace_provisional_local_roster(
     snapshot: &SessionManagerSnapshot,
     owner_pubkey: PublicKey,
     local_device_pubkey: NdrDevicePubkey,

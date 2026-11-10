@@ -1,4 +1,6 @@
-use super::account_signer::{prepare_signer_authorization, validate_signer_authorization};
+use super::*;
+
+use crate::core::account_signer::{prepare_signer_authorization, validate_signer_authorization};
 
 #[test]
 fn signer_authorization_preserves_devices_without_republishing_private_labels() {
@@ -81,7 +83,7 @@ fn signer_authorization_rejects_changed_signed_fields() {
     }
 }
 
-fn signer_test_core(
+pub(super) fn signer_test_core(
     path: &std::path::Path,
     relays: Vec<String>,
 ) -> (
@@ -102,7 +104,7 @@ fn signer_test_core(
     (core, messages, updates)
 }
 
-fn pump_signer_core_until(
+pub(super) fn pump_signer_core_until(
     core: &mut AppCore,
     messages: &flume::Receiver<CoreMsg>,
     condition: impl Fn(&AppCore) -> bool,
@@ -120,7 +122,7 @@ fn pump_signer_core_until(
     }
 }
 
-fn next_signer_request(
+pub(super) fn next_signer_request(
     core: &mut AppCore,
     messages: &flume::Receiver<CoreMsg>,
     updates: &flume::Receiver<AppUpdate>,
@@ -151,7 +153,11 @@ fn next_signer_request(
     }
 }
 
-fn publish_signer_test_event(core: &AppCore, relay: &crate::local_relay::TestRelay, event: &Event) {
+pub(super) fn publish_signer_test_event(
+    core: &AppCore,
+    relay: &crate::local_relay::TestRelay,
+    event: &Event,
+) {
     core.runtime.block_on(async {
         let client = Client::default();
         client.add_relay(relay.url()).await.unwrap();
@@ -383,7 +389,7 @@ fn signer_login_rejects_conflicting_rosters_and_unreachable_servers() {
         .any(|update| matches!(update, AppUpdate::SignerLoginSignEvent { .. })));
 }
 
-fn assert_signer_device_can_message(restored: &mut AppCore, owner: PublicKey) {
+pub(super) fn assert_signer_device_can_message(restored: &mut AppCore, owner: PublicKey) {
     // Exercise production invite acceptance, carried owner proof, encryption,
     // and receiver delivery with the restored device secret alone.
     let receiver_owner = Keys::generate();

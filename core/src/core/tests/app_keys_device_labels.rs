@@ -1,3 +1,6 @@
+use super::*;
+use nostr::util::JsonUtil;
+
 fn legacy_labeled_roster_for_test(roster: &AppKeys, owner: &Keys, at: u64) -> Event {
     let mut event = roster.get_event_at(owner.public_key(), at);
     event.tags.push(

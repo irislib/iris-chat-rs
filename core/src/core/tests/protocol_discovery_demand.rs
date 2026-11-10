@@ -1,3 +1,5 @@
+use super::*;
+
 fn cache_discovery_roster(core: &mut AppCore, owner: &Keys, devices: &[PublicKey], at: u64) {
     let roster = AppKeys::new(
         devices

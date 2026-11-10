@@ -1,3 +1,5 @@
+use super::*;
+
 #[test]
 fn local_message_deletion_survives_restart_and_protocol_and_sibling_replay() {
     for grouped in [false, true] {

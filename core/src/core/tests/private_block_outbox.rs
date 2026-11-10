@@ -1,3 +1,5 @@
+use super::*;
+
 #[test]
 fn private_block_cancels_cloned_drain_and_preserves_other_peer_retry() {
     let transport_keys = Keys::generate();

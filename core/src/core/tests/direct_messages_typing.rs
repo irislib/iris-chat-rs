@@ -1,3 +1,5 @@
+use super::*;
+
 #[test]
 fn opening_uncached_direct_chat_starts_targeted_profile_fetch() {
     let owner = Keys::generate();
@@ -208,20 +210,41 @@ fn unknown_users_toggle_off_excludes_non_accepted_peers_from_subs() {
         );
     }
 
-    alice.apply_runtime_text_message(bob_owner.public_key(), None, "Direct request".into(),
-        unix_now().get(), None, Some("group-transport-request".into()), None);
-    let group = test_group_snapshot("accepted-push-group", "Friends", bob_owner.public_key(),
-        vec![alice_owner.public_key(), bob_owner.public_key()], vec![bob_owner.public_key()], 1);
+    alice.apply_runtime_text_message(
+        bob_owner.public_key(),
+        None,
+        "Direct request".into(),
+        unix_now().get(),
+        None,
+        Some("group-transport-request".into()),
+        None,
+    );
+    let group = test_group_snapshot(
+        "accepted-push-group",
+        "Friends",
+        bob_owner.public_key(),
+        vec![alice_owner.public_key(), bob_owner.public_key()],
+        vec![bob_owner.public_key()],
+        1,
+    );
     alice.apply_group_roster_snapshot(group, 200);
     alice.accept_message_request("group:accepted-push-group");
     let group_authors = alice.subscribable_message_author_hexes();
-    assert!(bob_event_authors.iter().all(|author| group_authors.contains(author)),
-        "accepted group sender-key controls must still wake unknown-DM-off clients");
-    assert!(!alice.preferences.accepted_owner_pubkeys.contains(&bob_hex),
-        "group transport must not implicitly accept the member's direct chat");
+    assert!(
+        bob_event_authors
+            .iter()
+            .all(|author| group_authors.contains(author)),
+        "accepted group sender-key controls must still wake unknown-DM-off clients"
+    );
+    assert!(
+        !alice.preferences.accepted_owner_pubkeys.contains(&bob_hex),
+        "group transport must not implicitly accept the member's direct chat"
+    );
     assert!(alice.thread_is_message_request(&bob_hex));
     alice.set_user_blocked(&bob_hex, true);
-    assert!(bob_event_authors.iter().all(|author| !alice.subscribable_message_author_hexes().contains(author)));
+    assert!(bob_event_authors
+        .iter()
+        .all(|author| !alice.subscribable_message_author_hexes().contains(author)));
     alice.set_user_blocked(&bob_hex, false);
     alice.groups.remove("accepted-push-group");
 
@@ -567,7 +590,7 @@ fn self_synced_seen_receipt_marks_incoming_message_seen() {
     assert_eq!(message.delivery, DeliveryState::Seen);
 }
 
-fn protocol_send_log_count(core: &AppCore, reason: &str) -> usize {
+pub(super) fn protocol_send_log_count(core: &AppCore, reason: &str) -> usize {
     let needle = format!("reason={reason} ");
     core.debug_log
         .iter()
@@ -1886,15 +1909,15 @@ fn runtime_controls_settings_reactions_and_expiration_flow() {
     );
 }
 
-fn ndr_owner_pubkey(pubkey: PublicKey) -> nostr_double_ratchet::OwnerPubkey {
+pub(super) fn ndr_owner_pubkey(pubkey: PublicKey) -> nostr_double_ratchet::OwnerPubkey {
     nostr_double_ratchet::OwnerPubkey::from_bytes(pubkey.to_bytes())
 }
 
-fn ndr_device_pubkey(pubkey: PublicKey) -> nostr_double_ratchet::DevicePubkey {
+pub(super) fn ndr_device_pubkey(pubkey: PublicKey) -> nostr_double_ratchet::DevicePubkey {
     nostr_double_ratchet::DevicePubkey::from_bytes(pubkey.to_bytes())
 }
 
-fn test_group_snapshot(
+pub(super) fn test_group_snapshot(
     group_id: &str,
     name: &str,
     created_by: PublicKey,

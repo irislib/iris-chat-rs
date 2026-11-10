@@ -1,4 +1,6 @@
-fn profile_restart_core(
+use super::*;
+
+pub(super) fn profile_restart_core(
     data_dir: &std::path::Path,
     relay: &crate::local_relay::TestRelay,
 ) -> (AppCore, flume::Receiver<CoreMsg>) {
@@ -14,7 +16,7 @@ fn profile_restart_core(
     (core, rx)
 }
 
-fn wait_for_profile_restart(
+pub(super) fn wait_for_profile_restart(
     core: &mut AppCore,
     rx: &flume::Receiver<CoreMsg>,
     ready: impl Fn(&AppCore) -> bool,

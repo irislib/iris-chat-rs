@@ -1,9 +1,11 @@
+use super::*;
+
 const INVITE_OWNER_APP_KEYS_MAX_EVENT_BYTES: usize = 64 * 1024;
 const INVITE_OWNER_APP_KEYS_MAX_DEVICES: usize = 64;
 const INVITE_OWNER_APP_KEYS_MAX_FUTURE_SKEW_SECS: u64 = 5 * 60;
 
 impl ProtocolEngine {
-    fn update_invite_owner_app_keys_evidence(
+    pub(super) fn update_invite_owner_app_keys_evidence(
         &mut self,
         owner: NdrOwnerPubkey,
         event: &Event,
@@ -71,10 +73,9 @@ impl ProtocolEngine {
             return Ok(ProtocolInviteSessionImportOutcome::AlreadyImported);
         }
         if owner_pubkey != authenticated_device {
-            match self.invite_owner_app_keys_membership(
-                ndr_owner(owner_pubkey),
-                authenticated_device,
-            ) {
+            match self
+                .invite_owner_app_keys_membership(ndr_owner(owner_pubkey), authenticated_device)
+            {
                 Some(true) => {}
                 Some(false) => {
                     return Ok(ProtocolInviteSessionImportOutcome::Blocked(
@@ -119,7 +120,7 @@ impl ProtocolEngine {
         Ok(ProtocolInviteSessionImportOutcome::Imported(retry_batch))
     }
 
-    fn invite_owner_app_keys_membership(
+    pub(super) fn invite_owner_app_keys_membership(
         &self,
         owner: NdrOwnerPubkey,
         device: PublicKey,
@@ -127,7 +128,7 @@ impl ProtocolEngine {
         self.invite_owner_exact_app_keys_membership(owner, device)
     }
 
-    fn invite_owner_exact_app_keys_membership(
+    pub(super) fn invite_owner_exact_app_keys_membership(
         &self,
         owner: NdrOwnerPubkey,
         device: PublicKey,
@@ -176,27 +177,26 @@ impl ProtocolEngine {
         invite_owner_pubkey: PublicKey,
         invite_device_pubkey: PublicKey,
     ) -> bool {
-        invite_owner_pubkey == invite_device_pubkey || matches!(
-            self.invite_owner_exact_app_keys_membership(
-                ndr_owner(invite_owner_pubkey),
-                invite_device_pubkey,
-            ),
-            Some(true)
-        )
+        invite_owner_pubkey == invite_device_pubkey
+            || matches!(
+                self.invite_owner_exact_app_keys_membership(
+                    ndr_owner(invite_owner_pubkey),
+                    invite_device_pubkey,
+                ),
+                Some(true)
+            )
     }
 }
 
-fn sanitize_invite_owner_persisted_state(state: &mut ProtocolEnginePersistedState) {
-    state.invite_owner_app_keys_evidence.retain(|owner, evidence| {
-        match evidence {
-            ProtocolAppKeysEvidence::Verified(event) => {
-                public_owner(*owner).is_ok_and(|owner| {
-                    app_keys_event_is_acceptable_for_owner(owner, event, unix_now().get())
-                })
-            }
+pub(super) fn sanitize_invite_owner_persisted_state(state: &mut ProtocolEnginePersistedState) {
+    state
+        .invite_owner_app_keys_evidence
+        .retain(|owner, evidence| match evidence {
+            ProtocolAppKeysEvidence::Verified(event) => public_owner(*owner).is_ok_and(|owner| {
+                app_keys_event_is_acceptable_for_owner(owner, event, unix_now().get())
+            }),
             ProtocolAppKeysEvidence::Ambiguous { .. } => true,
-        }
-    });
+        });
     let exact_verified_owners = state
         .invite_owner_app_keys_evidence
         .iter()
@@ -211,7 +211,6 @@ fn sanitize_invite_owner_persisted_state(state: &mut ProtocolEnginePersistedStat
             .verified_app_keys_owners
             .extend(exact_verified_owners.iter().copied());
     }
-
 }
 
 /// Verifies the exact signed AppKeys evidence accepted for direct-chat setup.

@@ -1,4 +1,6 @@
-fn deliver_group_reaction_test_events(cores: &mut [AppCore; 2]) {
+use super::*;
+
+pub(super) fn deliver_group_reaction_test_events(cores: &mut [AppCore; 2]) {
     let mut delivered = HashSet::new();
     for _ in 0..10 {
         let mut progressed = false;

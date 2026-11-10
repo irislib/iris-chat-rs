@@ -1,9 +1,11 @@
-fn drain_history_wire(
+use super::*;
+
+pub(super) fn drain_history_wire(
     source: &mut AppCore,
     source_key: &Keys,
     target: &mut AppCore,
     target_key: &Keys,
-    records: &flume::Receiver<super::device_sync_tcp::SendBatch>,
+    records: &flume::Receiver<crate::core::device_sync_tcp::SendBatch>,
     trace: &mut Vec<serde_json::Value>,
 ) -> bool {
     let mut progress = false;

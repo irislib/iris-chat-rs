@@ -1,3 +1,5 @@
+use super::*;
+
 #[test]
 fn start_linked_device_stores_bounded_bootstrap_without_publishing_request_event() {
     let approval_relay = crate::local_relay::TestRelay::start();
@@ -9,8 +11,7 @@ fn start_linked_device_stores_bounded_bootstrap_without_publishing_request_event
         Arc::new(RwLock::new(AppState::empty())),
     );
     core.preferences.nostr_relay_urls = vec!["wss://ordinary.example".to_string()];
-    core.device_approval_relay_urls =
-        relay_urls_from_strings(&[approval_relay.url().to_string()]);
+    core.device_approval_relay_urls = relay_urls_from_strings(&[approval_relay.url().to_string()]);
 
     core.handle_action(AppAction::SetCurrentDeviceLabels {
         device_label: "abcdefghijklmnop more".to_string(),
@@ -29,7 +30,9 @@ fn start_linked_device_stores_bounded_bootstrap_without_publishing_request_event
     let bootstrap = parse_nostr_identity_device_approval_bootstrap(&snapshot.url, &[])
         .expect("parse bootstrap")
         .expect("device approval bootstrap");
-    assert!(snapshot.url.starts_with("nostr-identity://device-approval/"));
+    assert!(snapshot
+        .url
+        .starts_with("nostr-identity://device-approval/"));
     assert_eq!(
         serde_json::to_value(&bootstrap)
             .expect("bootstrap JSON")
@@ -84,14 +87,11 @@ fn start_linked_device_stores_bounded_bootstrap_without_publishing_request_event
     assert!(!pending_approval_relays
         .iter()
         .any(|relay| relay.contains("ordinary.example")));
-    assert_eq!(
-        bootstrap.device_app_key_npub,
-        snapshot.device_input
-    );
+    assert_eq!(bootstrap.device_app_key_npub, snapshot.device_input);
     assert!(matches!(core.screen_stack.as_slice(), [Screen::AddDevice]));
 }
 
-fn signed_app_keys_authorization_event(
+pub(super) fn signed_app_keys_authorization_event(
     owner: &Keys,
     device_pubkey: PublicKey,
     created_at: u64,
@@ -102,7 +102,7 @@ fn signed_app_keys_authorization_event(
         .expect("signed app keys authorization")
 }
 
-fn device_approval_bootstrap_for_test(
+pub(super) fn device_approval_bootstrap_for_test(
     device_keys: &Keys,
     request_keys: &Keys,
     request_secret: &str,
@@ -128,7 +128,7 @@ fn device_approval_bootstrap_for_test(
     encode_nostr_identity_device_approval_bootstrap(&bootstrap, None).expect("encode bootstrap")
 }
 
-fn dispatch_device_approval_for_test(
+pub(super) fn dispatch_device_approval_for_test(
     core: &mut AppCore,
     relay_url: &str,
     bootstrap: String,
@@ -139,7 +139,7 @@ fn dispatch_device_approval_for_test(
     });
 }
 
-fn relay_events(relay: &crate::local_relay::TestRelay) -> Vec<Event> {
+pub(super) fn relay_events(relay: &crate::local_relay::TestRelay) -> Vec<Event> {
     relay
         .events()
         .into_iter()
@@ -216,7 +216,14 @@ fn bootstrap_only_link_finishes_pairing_and_authorizes_linked_device() {
     );
 
     assert_eq!(primary.state.toast.as_deref(), Some("Device added"));
-    assert!(relay_events(&approval_relay).iter().chain(relay_events(&ordinary_relay).iter()).all(|event| event.kind != Kind::Custom(30078) && !event.content.contains("iris-chat-history")), "history choice stays on the private linking pair, never public relays");
+    assert!(
+        relay_events(&approval_relay)
+            .iter()
+            .chain(relay_events(&ordinary_relay).iter())
+            .all(|event| event.kind != Kind::Custom(30078)
+                && !event.content.contains("iris-chat-history")),
+        "history choice stays on the private linking pair, never public relays"
+    );
     let approval_events = relay_events(&approval_relay);
     let response_event = approval_events
         .into_iter()
@@ -244,11 +251,7 @@ fn bootstrap_only_link_finishes_pairing_and_authorizes_linked_device() {
         std::thread::sleep(Duration::from_millis(10));
     };
     assert!(relay_events(&approval_relay).iter().all(|event| {
-        !event_has_tag_value(
-            event,
-            "type",
-            "nostr_identity_device_approval_request",
-        )
+        !event_has_tag_value(event, "type", "nostr_identity_device_approval_request")
     }));
     let approval_event_ids = [
         response_event.id.to_string(),

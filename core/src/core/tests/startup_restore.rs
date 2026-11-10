@@ -1,3 +1,5 @@
+use super::*;
+
 fn startup_restore_test_connection() -> SharedConnection {
     let connection = rusqlite::Connection::open_in_memory().unwrap();
     connection
@@ -23,7 +25,7 @@ fn startup_restore_interrupts_real_dml_and_rolls_back_the_whole_transaction() {
     use rusqlite::hooks::Action;
     use std::sync::atomic::{AtomicUsize, Ordering};
     let connection = startup_restore_test_connection();
-    let control = Arc::new(startup_restore::StartupRestoreControl::default());
+    let control = Arc::new(crate::core::startup_restore::StartupRestoreControl::default());
     let guard = control.begin(connection.clone()).unwrap();
     connection
         .lock()
@@ -55,7 +57,7 @@ fn startup_restore_interrupts_real_dml_and_rolls_back_the_whole_transaction() {
     let error = guard
         .finish(result.map_err(anyhow::Error::from))
         .unwrap_err();
-    assert!(error.is::<startup_restore::StartupRestoreDeferred>());
+    assert!(error.is::<crate::core::startup_restore::StartupRestoreDeferred>());
     connection
         .lock()
         .unwrap()
@@ -67,7 +69,7 @@ fn startup_restore_interrupts_real_dml_and_rolls_back_the_whole_transaction() {
 fn startup_restore_between_statements_and_drop_remove_hook_before_rollback() {
     for finish in [false, true] {
         let connection = startup_restore_test_connection();
-        let control = Arc::new(startup_restore::StartupRestoreControl::default());
+        let control = Arc::new(crate::core::startup_restore::StartupRestoreControl::default());
         let guard = control.begin(connection.clone()).unwrap();
         connection
             .lock()
@@ -89,7 +91,7 @@ fn startup_restore_between_statements_and_drop_remove_hook_before_rollback() {
             let error = guard
                 .finish(result.map_err(anyhow::Error::from))
                 .unwrap_err();
-            assert!(error.is::<startup_restore::StartupRestoreDeferred>());
+            assert!(error.is::<crate::core::startup_restore::StartupRestoreDeferred>());
         } else {
             // No next SQLite statement consumes the cancellation. Drop must
             // remove the hook first or its own ROLLBACK would be interrupted.
@@ -108,14 +110,14 @@ fn startup_restore_between_statements_and_drop_remove_hook_before_rollback() {
 #[test]
 fn startup_restore_pre_registration_cancel_stale_epochs_and_foreground_are_scoped() {
     let connection = startup_restore_test_connection();
-    let control = Arc::new(startup_restore::StartupRestoreControl::default());
+    let control = Arc::new(crate::core::startup_restore::StartupRestoreControl::default());
     let old_epoch = control.epoch();
     control.cancel(old_epoch);
     let error = control
         .begin(connection.clone())
         .err()
         .expect("paused registration must defer");
-    assert!(error.is::<startup_restore::StartupRestoreDeferred>());
+    assert!(error.is::<crate::core::startup_restore::StartupRestoreDeferred>());
     startup_restore_assert_idle(&connection, 0);
     control.foregrounded();
     control.cancel(old_epoch);
@@ -138,7 +140,7 @@ fn startup_restore_pre_registration_cancel_stale_epochs_and_foreground_are_scope
     assert!(guard
         .finish(result.map_err(anyhow::Error::from))
         .unwrap_err()
-        .is::<startup_restore::StartupRestoreDeferred>());
+        .is::<crate::core::startup_restore::StartupRestoreDeferred>());
     startup_restore_assert_idle(&connection, 1);
     control
         .begin(connection.clone())
@@ -150,7 +152,7 @@ fn startup_restore_pre_registration_cancel_stale_epochs_and_foreground_are_scope
 #[test]
 fn startup_restore_completed_commit_survives_cancel_and_runtime_sql_is_not_interrupted() {
     let connection = startup_restore_test_connection();
-    let control = Arc::new(startup_restore::StartupRestoreControl::default());
+    let control = Arc::new(crate::core::startup_restore::StartupRestoreControl::default());
     let guard = control.begin(connection.clone()).unwrap();
     connection
         .lock()
@@ -177,7 +179,7 @@ fn startup_restore_completed_commit_survives_cancel_and_runtime_sql_is_not_inter
 #[test]
 fn startup_restore_does_not_take_ownership_of_an_existing_transaction() {
     let connection = startup_restore_test_connection();
-    let control = Arc::new(startup_restore::StartupRestoreControl::default());
+    let control = Arc::new(crate::core::startup_restore::StartupRestoreControl::default());
     connection
         .lock()
         .unwrap()
@@ -192,12 +194,12 @@ fn startup_restore_does_not_take_ownership_of_an_existing_transaction() {
 #[test]
 fn startup_restore_cancellation_does_not_mask_a_genuine_checkpoint_error() {
     let connection = startup_restore_test_connection();
-    let control = Arc::new(startup_restore::StartupRestoreControl::default());
+    let control = Arc::new(crate::core::startup_restore::StartupRestoreControl::default());
     let guard = control.begin(connection.clone()).unwrap();
     let result: anyhow::Result<()> = Err(anyhow::anyhow!("malformed checkpoint"));
     control.cancel(control.epoch());
     let error = guard.finish(result).unwrap_err();
-    assert!(!error.is::<startup_restore::StartupRestoreDeferred>());
+    assert!(!error.is::<crate::core::startup_restore::StartupRestoreDeferred>());
     assert_eq!(error.to_string(), "malformed checkpoint");
     startup_restore_assert_idle(&connection, 0);
 }
@@ -359,7 +361,9 @@ fn startup_restore_ffi_grace_cancels_without_acknowledging_a_busy_database() {
     let deadline = Instant::now() + Duration::from_secs(2);
     let cancelled = loop {
         match control.begin(probe.clone()) {
-            Err(error) if error.is::<startup_restore::StartupRestoreDeferred>() => break true,
+            Err(error) if error.is::<crate::core::startup_restore::StartupRestoreDeferred>() => {
+                break true
+            }
             Err(error) => panic!("unexpected cancellation probe failure: {error}"),
             Ok(guard) => guard.finish(Ok(())).unwrap(),
         }
@@ -483,7 +487,7 @@ fn startup_restore_failed_rollback_closes_the_core_before_suspend_returns() {
     let error = guard
         .finish::<()>(Err(anyhow::anyhow!("injected interrupted restore")))
         .unwrap_err();
-    assert!(!error.is::<startup_restore::StartupRestoreDeferred>());
+    assert!(!error.is::<crate::core::startup_restore::StartupRestoreDeferred>());
     assert!(denied_rollbacks.load(Ordering::SeqCst) > 0);
     assert!(!control.is_active_for_test());
     {

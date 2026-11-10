@@ -1,3 +1,5 @@
+use super::*;
+
 impl ProtocolEngine {
     /// Runtime hold while private block state is being applied. The owning app
     /// restores it from signed account state before allowing retry work.
@@ -112,7 +114,7 @@ impl ProtocolEngine {
     }
 }
 
-fn pending_direct_authored_at(payload: &[u8], fallback: u64) -> u64 {
+pub(crate) fn pending_direct_authored_at(payload: &[u8], fallback: u64) -> u64 {
     serde_json::from_slice::<UnsignedEvent>(payload)
         .map_or(fallback, |event| event.created_at.as_secs())
 }

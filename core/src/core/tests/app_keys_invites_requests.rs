@@ -1,3 +1,5 @@
+use super::*;
+
 #[test]
 fn peer_profile_debug_reports_known_user_context() {
     let owner = Keys::generate();
@@ -292,7 +294,7 @@ fn linked_device_missing_local_session_exposes_link_code() {
         .as_ref()
         .expect("link-device snapshot");
     let invite =
-        super::invites::parse_public_invite_input(&snapshot.url).expect("parse link invite");
+        crate::core::invites::parse_public_invite_input(&snapshot.url).expect("parse link invite");
     assert_eq!(invite.purpose.as_deref(), Some("link"));
     assert_eq!(invite.owner_public_key, Some(owner.public_key()));
     assert_eq!(
@@ -1039,7 +1041,7 @@ fn owner_device_rejects_legacy_link_invite_for_device_approval() {
     )
     .expect("link invite");
     invite.purpose = Some("link".to_string());
-    let invite_url = super::invites::chat_invite_url(&invite).expect("invite url");
+    let invite_url = crate::core::invites::chat_invite_url(&invite).expect("invite url");
 
     core.handle_action(AppAction::AddAuthorizedDevice {
         device_input: invite_url,
@@ -1943,7 +1945,7 @@ fn has_filter_with_kind_pubkey(filters: &[Filter], kind: u32, pubkey: PublicKey)
         })
 }
 
-fn established_peer_session_state_for_test(
+pub(super) fn established_peer_session_state_for_test(
     peer_keys: &Keys,
     local_keys: &Keys,
 ) -> nostr_double_ratchet::SessionState {
@@ -2028,7 +2030,7 @@ fn unrelated_direct_message_event_for_test(sender: &Keys, receiver: &Keys) -> Ev
         .expect("unrelated message event")
 }
 
-fn install_local_sibling_session_for_test(
+pub(super) fn install_local_sibling_session_for_test(
     core: &mut AppCore,
     owner: &Keys,
     linked_device: &Keys,
@@ -2100,7 +2102,7 @@ fn create_invite_generates_private_link_without_public_republish() {
         .public_invite
         .as_ref()
         .expect("private invite snapshot");
-    let invite = super::invites::parse_public_invite_input(&snapshot.legacy_url)
+    let invite = crate::core::invites::parse_public_invite_input(&snapshot.legacy_url)
         .expect("parse private invite");
     assert_eq!(invite.purpose.as_deref(), Some("private"));
     assert_eq!(invite.max_uses, None);
@@ -2408,7 +2410,7 @@ fn pending_device_link_reconnects_immediately_after_sdk_termination() {
     runtime.block_on(async {
         let client = Client::new(Keys::generate());
         let urls = relay_urls_from_strings(&[relay.url().to_owned()]);
-        super::account::connect_pending_device_link_client(&client, &urls).await;
+        crate::core::account::connect_pending_device_link_client(&client, &urls).await;
         assert_eq!(connected_relay_count_for_client(&client).await, 1);
         let subscription = SubscriptionId::new("pairing-reconnect-test");
         client
@@ -2422,7 +2424,7 @@ fn pending_device_link_reconnects_immediately_after_sdk_termination() {
         client.disconnect().await;
         // A current-thread runtime keeps the old connection task from consuming
         // its termination signal before the production reconnect starts.
-        super::account::connect_pending_device_link_client(&client, &urls).await;
+        crate::core::account::connect_pending_device_link_client(&client, &urls).await;
         assert!(
             !client.subscription(&subscription).await.is_empty(),
             "pool subscription must survive relay replacement"
@@ -2441,5 +2443,3 @@ fn pending_device_link_reconnects_immediately_after_sdk_termination() {
         client.shutdown().await;
     });
 }
-
-include!("private_invite_join_navigation.rs");

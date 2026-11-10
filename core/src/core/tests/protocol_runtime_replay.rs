@@ -1,3 +1,5 @@
+use super::*;
+
 fn assert_unchanged_discovery_replay_is_idle(replay_invite: bool) {
     let owner = Keys::generate();
     let devices = [Keys::generate(), Keys::generate(), Keys::generate()];
@@ -52,11 +54,24 @@ fn assert_unchanged_discovery_replay_is_idle(replay_invite: bool) {
     for event in replays {
         core.handle_relay_event(event);
     }
-    assert!(!core.batch_dirty_persist, "unchanged discovery dirtied the app database");
-    assert!(!core.batch_dirty_state, "unchanged discovery rebuilt the UI");
-    assert!(!core.mobile_push_dirty, "unchanged discovery rebuilt notification filters");
+    assert!(
+        !core.batch_dirty_persist,
+        "unchanged discovery dirtied the app database"
+    );
+    assert!(
+        !core.batch_dirty_state,
+        "unchanged discovery rebuilt the UI"
+    );
+    assert!(
+        !core.mobile_push_dirty,
+        "unchanged discovery rebuilt notification filters"
+    );
     core.exit_batch();
-    assert_eq!(storage.put_count(), writes, "unchanged discovery rewrote protocol state");
+    assert_eq!(
+        storage.put_count(),
+        writes,
+        "unchanged discovery rewrote protocol state"
+    );
 }
 
 #[test]
@@ -151,7 +166,10 @@ fn unrelated_save_preserves_unapplied_decrypted_message_across_restart() {
         .unwrap()
         .has_pending_retry_work());
     core.retry_protocol_engine_pending_work("restart");
-    assert_eq!(core.threads[&sender.public_key().to_hex()].messages[0].created_at_secs, 200);
+    assert_eq!(
+        core.threads[&sender.public_key().to_hex()].messages[0].created_at_secs,
+        200
+    );
     assert_eq!(
         core.threads[&sender.public_key().to_hex()]
             .messages
@@ -232,12 +250,7 @@ fn invite_response_observation_installs_session_author_state() {
     let peer_owner = Keys::generate();
     let peer_device = Keys::generate();
     let mut engine = test_protocol_engine(&owner, &device);
-    observe_peer_appkeys_for_test(
-        &mut engine,
-        &peer_owner,
-        &[peer_device.public_key()],
-        1,
-    );
+    observe_peer_appkeys_for_test(&mut engine, &peer_owner, &[peer_device.public_key()], 1);
 
     let invite = engine.local_invite().expect("local invite");
     let (_peer_session, response) = invite
@@ -248,8 +261,8 @@ fn invite_response_observation_installs_session_author_state() {
             Some(peer_owner.public_key()),
         )
         .expect("peer accepts invite");
-    let response_event = nostr_double_ratchet::invite_response_event(&response)
-        .expect("invite response event");
+    let response_event =
+        nostr_double_ratchet::invite_response_event(&response).expect("invite response event");
 
     engine
         .observe_invite_response_event(&response_event)
@@ -287,8 +300,8 @@ fn invite_response_replay_after_consumed_invite_is_idempotent() {
             Some(peer_owner.public_key()),
         )
         .expect("peer accepts invite");
-    let response_event = nostr_double_ratchet::invite_response_event(&response)
-        .expect("invite response event");
+    let response_event =
+        nostr_double_ratchet::invite_response_event(&response).expect("invite response event");
 
     engine
         .observe_invite_response_event(&response_event)
@@ -319,8 +332,8 @@ fn appcore_direct_message_from_unverified_claimed_owner_retries_after_appkeys() 
             Some(peer_owner.public_key()),
         )
         .expect("peer accepts invite");
-    let response_event = nostr_double_ratchet::invite_response_event(&response)
-        .expect("invite response event");
+    let response_event =
+        nostr_double_ratchet::invite_response_event(&response).expect("invite response event");
     engine
         .observe_invite_response_event(&response_event)
         .expect("observe invite response");
@@ -329,8 +342,7 @@ fn appcore_direct_message_from_unverified_claimed_owner_retries_after_appkeys() 
         .plan_send(b"hello-before-appkeys", NdrUnixSeconds(11))
         .expect("peer plans message");
     let sent = peer_session.apply_send(plan);
-    let message_event =
-        nostr_double_ratchet::message_event(&sent.envelope).expect("message event");
+    let message_event = nostr_double_ratchet::message_event(&sent.envelope).expect("message event");
 
     let decrypted = engine
         .process_direct_message_event(&message_event)
@@ -400,8 +412,8 @@ fn appcore_pending_group_payload_from_claimed_device_uses_owner_after_appkeys() 
             Some(peer_owner.public_key()),
         )
         .expect("peer accepts invite");
-    let response_event = nostr_double_ratchet::invite_response_event(&response)
-        .expect("invite response event");
+    let response_event =
+        nostr_double_ratchet::invite_response_event(&response).expect("invite response event");
     engine
         .observe_invite_response_event(&response_event)
         .expect("observe invite response");
@@ -431,8 +443,8 @@ fn appcore_pending_group_payload_from_claimed_device_uses_owner_after_appkeys() 
             &payload,
             peer_device.public_key(),
             Some(peer_device.public_key()),
-    )
-    .expect("process group payload");
+        )
+        .expect("process group payload");
     assert!(outcome.consumed);
     assert!(outcome.events.is_empty());
     assert!(outcome.effects.is_empty());

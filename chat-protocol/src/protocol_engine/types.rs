@@ -1,16 +1,18 @@
-const PROTOCOL_ENGINE_STATE_KEY: &str = "appcore/protocol-engine-state-v1";
-const PROTOCOL_ENGINE_STATE_VERSION: u32 = 1;
-const PROTOCOL_APP_KEYS_PROVENANCE_VERSION: u8 = 1;
-const PROTOCOL_GROUP_INGRESS_PROVENANCE_VERSION: u8 = 1;
-const LEGACY_GROUP_INGRESS_QUARANTINE_KEY: &str = "appcore/quarantine/group-ingress-v0";
-const LOCAL_SIBLING_PROTOCOL: &str = "ndr-local-sibling-copy";
-const PENDING_RETRY_DELAY_SECS: u64 = 2;
-const MAX_UNTRACKED_PENDING_INBOUND: usize = 256;
-const PENDING_GROUP_FANOUT_RETRY_BATCH_SIZE: usize = 64;
-const PROCESSED_GROUP_SENDER_KEY_LIMIT: usize = 16_384;
-const ANSWERED_GROUP_SENDER_KEY_REPAIR_LIMIT: usize = 512;
+use super::*;
 
-fn group_chat_id(group_id: &str) -> String {
+pub(super) const PROTOCOL_ENGINE_STATE_KEY: &str = "appcore/protocol-engine-state-v1";
+pub(super) const PROTOCOL_ENGINE_STATE_VERSION: u32 = 1;
+pub(super) const PROTOCOL_APP_KEYS_PROVENANCE_VERSION: u8 = 1;
+pub(super) const PROTOCOL_GROUP_INGRESS_PROVENANCE_VERSION: u8 = 1;
+pub(super) const LEGACY_GROUP_INGRESS_QUARANTINE_KEY: &str = "appcore/quarantine/group-ingress-v0";
+pub(super) const LOCAL_SIBLING_PROTOCOL: &str = "ndr-local-sibling-copy";
+pub(super) const PENDING_RETRY_DELAY_SECS: u64 = 2;
+pub(super) const MAX_UNTRACKED_PENDING_INBOUND: usize = 256;
+pub(super) const PENDING_GROUP_FANOUT_RETRY_BATCH_SIZE: usize = 64;
+pub(super) const PROCESSED_GROUP_SENDER_KEY_LIMIT: usize = 16_384;
+pub(super) const ANSWERED_GROUP_SENDER_KEY_REPAIR_LIMIT: usize = 512;
+
+pub(super) fn group_chat_id(group_id: &str) -> String {
     format!("group:{group_id}")
 }
 
@@ -30,66 +32,66 @@ impl std::fmt::Display for PendingInboundAdmissionError {
 impl std::error::Error for PendingInboundAdmissionError {}
 
 #[derive(Debug, Serialize, Deserialize)]
-struct ProtocolEnginePersistedState {
-    version: u32,
+pub(super) struct ProtocolEnginePersistedState {
+    pub(super) version: u32,
     // record_protocol_checkpoint checks this prefix so it can assemble cached
     // queue records separately from the smaller session and retry state.
     #[serde(default)]
-    pending_group_sender_key_messages: PendingGroupMessages,
+    pub(super) pending_group_sender_key_messages: PendingGroupMessages,
     #[serde(default)]
-    pending_group_fanouts: Vec<ProtocolPendingGroupFanout>,
+    pub(super) pending_group_fanouts: Vec<ProtocolPendingGroupFanout>,
     #[serde(default)]
-    pending_inbound: Vec<ProtocolPendingInbound>,
-    session_manager: SessionManagerSnapshot,
-    group_manager: GroupManagerSnapshot,
+    pub(super) pending_inbound: Vec<ProtocolPendingInbound>,
+    pub(super) session_manager: SessionManagerSnapshot,
+    pub(super) group_manager: GroupManagerSnapshot,
     /// Owners whose current roster was installed through trusted AppKeys ingestion.
     ///
     /// This defaults to empty so v1 states written before roster provenance was
     /// persisted can be loaded and quarantined instead of treating synthetic
     /// invite-owner rosters as authoritative.
     #[serde(default)]
-    verified_app_keys_owners: BTreeSet<NdrOwnerPubkey>,
+    pub(super) verified_app_keys_owners: BTreeSet<NdrOwnerPubkey>,
     /// Nonzero only for states written after roster-provenance quarantine was
     /// introduced. Legacy booleans are ignored because vulnerable releases
     /// could synthesize them from an owner hint.
     #[serde(default)]
-    app_keys_provenance_version: u8,
+    pub(super) app_keys_provenance_version: u8,
     /// Earlier releases admitted raw network ciphertext to group recovery.
     /// Only new states have exclusively authenticated pairwise group ingress.
     #[serde(default)]
-    group_ingress_provenance_version: u8,
+    pub(super) group_ingress_provenance_version: u8,
     /// Exact signed evidence used for invite owner/device authorization.
     /// Reconstructed device lists and legacy booleans are never sufficient.
     #[serde(default)]
-    invite_owner_app_keys_evidence: BTreeMap<NdrOwnerPubkey, ProtocolAppKeysEvidence>,
+    pub(super) invite_owner_app_keys_evidence: BTreeMap<NdrOwnerPubkey, ProtocolAppKeysEvidence>,
     #[serde(default)]
-    processed_private_invite_response_ids: Vec<String>,
+    pub(super) processed_private_invite_response_ids: Vec<String>,
     #[serde(default)]
-    group_invite_uses: BTreeMap<String, BTreeSet<NdrOwnerPubkey>>,
+    pub(super) group_invite_uses: BTreeMap<String, BTreeSet<NdrOwnerPubkey>>,
     #[serde(default)]
-    ready_group_publications: BTreeMap<String, ProtocolReadyGroupPublish>,
+    pub(super) ready_group_publications: BTreeMap<String, ProtocolReadyGroupPublish>,
     #[serde(default)]
-    pending_local_sibling_sends: Vec<ProtocolPendingLocalSiblingSend>,
+    pub(super) pending_local_sibling_sends: Vec<ProtocolPendingLocalSiblingSend>,
     #[serde(default)]
-    pending_remote_sends: Vec<ProtocolPendingRemoteSend>,
+    pub(super) pending_remote_sends: Vec<ProtocolPendingRemoteSend>,
     #[serde(default)]
-    pending_group_pairwise_payloads: Vec<ProtocolPendingGroupPairwisePayload>,
+    pub(super) pending_group_pairwise_payloads: Vec<ProtocolPendingGroupPairwisePayload>,
     #[serde(default)]
-    pending_group_sender_key_repairs: Vec<ProtocolPendingGroupSenderKeyRepair>,
+    pub(super) pending_group_sender_key_repairs: Vec<ProtocolPendingGroupSenderKeyRepair>,
     #[serde(default)]
-    processed_group_sender_key_messages: ProtocolGroupReplayCache,
+    pub(super) processed_group_sender_key_messages: ProtocolGroupReplayCache,
     #[serde(default)]
-    answered_group_sender_key_repairs: Vec<ProtocolAnsweredGroupSenderKeyRepair>,
+    pub(super) answered_group_sender_key_repairs: Vec<ProtocolAnsweredGroupSenderKeyRepair>,
     #[serde(default)]
-    pending_decrypted_deliveries: Vec<ProtocolPendingDecryptedDelivery>,
+    pub(super) pending_decrypted_deliveries: Vec<ProtocolPendingDecryptedDelivery>,
     #[serde(default)]
-    group_roster_fact_histories: BTreeMap<String, GroupRosterFactHistory>,
+    pub(super) group_roster_fact_histories: BTreeMap<String, GroupRosterFactHistory>,
     #[serde(default)]
-    subscription_generation: u64,
+    pub(super) subscription_generation: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-enum ProtocolAppKeysEvidence {
+pub(super) enum ProtocolAppKeysEvidence {
     Verified(Box<Event>),
     Ambiguous { created_at_secs: u64 },
 }
@@ -104,10 +106,10 @@ pub struct ProtocolPublish {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-struct ProtocolReadyGroupPublish {
-    publish: ProtocolPublish,
+pub(super) struct ProtocolReadyGroupPublish {
+    pub(super) publish: ProtocolPublish,
     #[serde(default)]
-    wake_recipient: Option<NdrOwnerPubkey>,
+    pub(super) wake_recipient: Option<NdrOwnerPubkey>,
 }
 
 #[derive(Clone, Debug)]
@@ -116,28 +118,28 @@ pub enum ProtocolEffect {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-struct ProtocolPendingInbound {
+pub(crate) struct ProtocolPendingInbound {
     #[serde(flatten)]
-    body: CheckpointInbound,
-    created_at_secs: u64,
-    next_retry_at_secs: u64,
+    pub(super) body: CheckpointInbound,
+    pub(super) created_at_secs: u64,
+    pub(super) next_retry_at_secs: u64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-struct ProtocolPendingInboundBody {
-    event: Event,
+pub(crate) struct ProtocolPendingInboundBody {
+    pub(super) event: Event,
     #[serde(default)]
-    event_id: String,
+    pub(super) event_id: String,
     #[serde(default)]
-    envelope: Option<MessageEnvelope>,
+    pub(super) envelope: Option<MessageEnvelope>,
     #[serde(default)]
-    sender_message_pubkey_hex: Option<String>,
+    pub(super) sender_message_pubkey_hex: Option<String>,
     #[serde(default)]
-    resolved_owner_pubkey_hex: Option<String>,
+    pub(super) resolved_owner_pubkey_hex: Option<String>,
     #[serde(default)]
-    claimed_owner_pubkey_hex: Option<String>,
+    pub(super) claimed_owner_pubkey_hex: Option<String>,
     #[serde(default)]
-    metadata_verified: bool,
+    pub(super) metadata_verified: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -150,82 +152,82 @@ pub struct ProtocolPendingInboundTestDebug {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-struct ProtocolPendingGroupFanout {
-    group_id: String,
-    fanout: CheckpointGroupFanout,
+pub(super) struct ProtocolPendingGroupFanout {
+    pub(super) group_id: String,
+    pub(super) fanout: CheckpointGroupFanout,
     // None until the roster is known (also for legacy persisted queues).
     #[serde(default)]
-    remaining_devices: Option<BTreeSet<NdrDevicePubkey>>,
-    inner_event_id: Option<String>,
-    created_at_secs: u64,
-    next_retry_at_secs: u64,
+    pub(super) remaining_devices: Option<BTreeSet<NdrDevicePubkey>>,
+    pub(super) inner_event_id: Option<String>,
+    pub(super) created_at_secs: u64,
+    pub(super) next_retry_at_secs: u64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-struct ProtocolPendingGroupPairwisePayload {
-    sender_owner: NdrOwnerPubkey,
-    sender_device: Option<NdrDevicePubkey>,
-    payload: Vec<u8>,
-    created_at_secs: u64,
-    next_retry_at_secs: u64,
+pub(super) struct ProtocolPendingGroupPairwisePayload {
+    pub(super) sender_owner: NdrOwnerPubkey,
+    pub(super) sender_device: Option<NdrDevicePubkey>,
+    pub(super) payload: Vec<u8>,
+    pub(super) created_at_secs: u64,
+    pub(super) next_retry_at_secs: u64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-struct ProtocolPendingGroupSenderKeyRepair {
-    group_id: String,
-    sender_event_pubkey_hex: String,
+pub(super) struct ProtocolPendingGroupSenderKeyRepair {
+    pub(super) group_id: String,
+    pub(super) sender_event_pubkey_hex: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    key_id: Option<u32>,
+    pub(super) key_id: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    message_number: Option<u32>,
+    pub(super) message_number: Option<u32>,
     #[serde(default)]
-    required_revision: Option<u64>,
-    created_at_secs: u64,
-    last_requested_at_secs: u64,
-    request_count: u32,
-    next_retry_at_secs: u64,
+    pub(super) required_revision: Option<u64>,
+    pub(super) created_at_secs: u64,
+    pub(super) last_requested_at_secs: u64,
+    pub(super) request_count: u32,
+    pub(super) next_retry_at_secs: u64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-struct ProtocolAnsweredGroupSenderKeyRepair {
-    requester_owner_hex: String,
-    group_id: String,
-    sender_event_pubkey_hex: String,
+pub(super) struct ProtocolAnsweredGroupSenderKeyRepair {
+    pub(super) requester_owner_hex: String,
+    pub(super) group_id: String,
+    pub(super) sender_event_pubkey_hex: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    key_id: Option<u32>,
+    pub(super) key_id: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    message_number: Option<u32>,
+    pub(super) message_number: Option<u32>,
     #[serde(default)]
-    required_revision: Option<u64>,
-    request_created_at_secs: u64,
-    last_responded_at_secs: u64,
-    response_count: u32,
-    next_response_at_secs: u64,
+    pub(super) required_revision: Option<u64>,
+    pub(super) request_created_at_secs: u64,
+    pub(super) last_responded_at_secs: u64,
+    pub(super) response_count: u32,
+    pub(super) next_response_at_secs: u64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-struct ProtocolPendingDecryptedDelivery {
+pub(super) struct ProtocolPendingDecryptedDelivery {
     // In-memory receive completion only; rejected content is never retained.
     #[serde(skip)]
-    discarded: bool,
-    sender: PublicKey,
-    sender_device: Option<PublicKey>,
-    conversation_owner: Option<PublicKey>,
-    content: String,
-    event_id: Option<String>,
-    created_at_secs: u64,
+    pub(super) discarded: bool,
+    pub(super) sender: PublicKey,
+    pub(super) sender_device: Option<PublicKey>,
+    pub(super) conversation_owner: Option<PublicKey>,
+    pub(super) content: String,
+    pub(super) event_id: Option<String>,
+    pub(super) created_at_secs: u64,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
-struct GroupRosterFactHistory {
-    events: Vec<Event>,
+pub(super) struct GroupRosterFactHistory {
+    pub(super) events: Vec<Event>,
 }
 
 #[derive(Clone, Debug)]
-struct KnownMessageAuthorCache {
-    pubkeys: Vec<PublicKey>,
-    pubkey_set: HashSet<PublicKey>,
-    usable_session_owners: HashSet<PublicKey>,
+pub(super) struct KnownMessageAuthorCache {
+    pub(super) pubkeys: Vec<PublicKey>,
+    pub(super) pubkey_set: HashSet<PublicKey>,
+    pub(super) usable_session_owners: HashSet<PublicKey>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -361,7 +363,7 @@ pub struct ProtocolDeviceOwnerHint {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum ProtocolSenderOwnerResolution {
+pub(super) enum ProtocolSenderOwnerResolution {
     Verified {
         owner: NdrOwnerPubkey,
     },
@@ -376,20 +378,20 @@ enum ProtocolSenderOwnerResolution {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct ProtocolSenderDeviceRecord {
-    storage_owner: NdrOwnerPubkey,
-    device_pubkey: NdrDevicePubkey,
-    claimed_owner_pubkey: Option<NdrOwnerPubkey>,
+pub(super) struct ProtocolSenderDeviceRecord {
+    pub(super) storage_owner: NdrOwnerPubkey,
+    pub(super) device_pubkey: NdrDevicePubkey,
+    pub(super) claimed_owner_pubkey: Option<NdrOwnerPubkey>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-struct ProtocolPendingInboundMetadata {
-    event_id: String,
-    envelope: Option<MessageEnvelope>,
-    sender_message_pubkey_hex: Option<String>,
-    resolved_owner_pubkey_hex: Option<String>,
-    claimed_owner_pubkey_hex: Option<String>,
-    metadata_verified: bool,
+pub(super) struct ProtocolPendingInboundMetadata {
+    pub(super) event_id: String,
+    pub(super) envelope: Option<MessageEnvelope>,
+    pub(super) sender_message_pubkey_hex: Option<String>,
+    pub(super) resolved_owner_pubkey_hex: Option<String>,
+    pub(super) claimed_owner_pubkey_hex: Option<String>,
+    pub(super) metadata_verified: bool,
 }
 
 impl From<ProtocolPendingDecryptedDelivery> for ProtocolDecryptedMessage {
@@ -442,60 +444,61 @@ pub struct ProtocolMessageSessionDebugSnapshot {
 }
 
 #[derive(Clone, Copy)]
-struct PendingInboundRetryDeadline {
-    queue_len: usize,
-    next_retry_at_secs: Option<u64>,
+pub(super) struct PendingInboundRetryDeadline {
+    pub(super) queue_len: usize,
+    pub(super) next_retry_at_secs: Option<u64>,
 }
 
 #[derive(Clone, Copy)]
-struct PendingGroupFanoutRetryDeadline {
-    queue_len: usize,
-    next_retry_at_secs: Option<u64>,
+pub(super) struct PendingGroupFanoutRetryDeadline {
+    pub(super) queue_len: usize,
+    pub(super) next_retry_at_secs: Option<u64>,
 }
 
 pub struct ProtocolEngine {
-    owner_pubkey: PublicKey,
-    local_owner: NdrOwnerPubkey,
-    local_device: NdrDevicePubkey,
-    local_device_secret: [u8; 32],
-    storage: Arc<dyn StorageAdapter>,
-    session_manager: SessionManager,
-    group_manager: GroupEventManager,
-    pending_inbound: Vec<ProtocolPendingInbound>,
+    pub(super) owner_pubkey: PublicKey,
+    pub(super) local_owner: NdrOwnerPubkey,
+    pub(super) local_device: NdrDevicePubkey,
+    pub(super) local_device_secret: [u8; 32],
+    pub(super) storage: Arc<dyn StorageAdapter>,
+    pub(super) session_manager: SessionManager,
+    pub(super) group_manager: GroupEventManager,
+    pub(super) pending_inbound: Vec<ProtocolPendingInbound>,
     /// Runtime-only scheduling hint. Unknown after restoration or queue/deadline mutation;
     /// never copied into a durable or rollback checkpoint.
-    pending_inbound_retry_deadline: std::cell::Cell<Option<PendingInboundRetryDeadline>>,
-    failed_inbound_receives: BTreeMap<nostr::EventId, FailedInboundReceive>,
-    pending_group_fanouts: Vec<ProtocolPendingGroupFanout>,
+    pub(super) pending_inbound_retry_deadline: std::cell::Cell<Option<PendingInboundRetryDeadline>>,
+    pub(super) failed_inbound_receives: BTreeMap<nostr::EventId, FailedInboundReceive>,
+    pub(super) pending_group_fanouts: Vec<ProtocolPendingGroupFanout>,
     /// Runtime-only hint, populated after finding no due fanouts. Queue changes
     /// and restoration discard it; durable and rollback checkpoints exclude it.
-    pending_group_fanout_retry_deadline: std::cell::Cell<Option<PendingGroupFanoutRetryDeadline>>,
-    ready_group_publications: BTreeMap<String, ProtocolReadyGroupPublish>,
-    pending_local_sibling_sends: Vec<ProtocolPendingLocalSiblingSend>,
-    held_direct_chats: BTreeSet<String>,
-    pending_remote_sends: Vec<ProtocolPendingRemoteSend>,
-    pending_group_pairwise_payloads: Vec<ProtocolPendingGroupPairwisePayload>,
-    pending_group_sender_key_messages: PendingGroupMessages,
-    pending_group_sender_key_repairs: Vec<ProtocolPendingGroupSenderKeyRepair>,
-    processed_group_sender_key_messages: ProtocolGroupReplayCache,
-    group_sender_key_retry: std::cell::RefCell<ProtocolGroupSenderKeyRetry>,
-    group_retry_pacing: std::cell::RefCell<GroupRetryPacing>,
-    answered_group_sender_key_repairs: Vec<ProtocolAnsweredGroupSenderKeyRepair>,
-    pending_decrypted_deliveries: Vec<ProtocolPendingDecryptedDelivery>,
-    group_roster_fact_histories: BTreeMap<String, GroupRosterFactHistory>,
-    handshake_proof_cache: std::cell::RefCell<HandshakeProofCache>,
-    known_message_author_cache: std::cell::RefCell<Option<KnownMessageAuthorCache>>,
-    known_message_author_cache_build_count: std::cell::Cell<u64>,
-    verified_app_keys_owners: BTreeSet<NdrOwnerPubkey>,
-    invite_owner_app_keys_evidence: BTreeMap<NdrOwnerPubkey, ProtocolAppKeysEvidence>,
-    processed_private_invite_response_ids: Vec<String>,
-    group_invite_uses: BTreeMap<String, BTreeSet<NdrOwnerPubkey>>,
-    local_app_keys_observed: bool,
+    pub(super) pending_group_fanout_retry_deadline:
+        std::cell::Cell<Option<PendingGroupFanoutRetryDeadline>>,
+    pub(super) ready_group_publications: BTreeMap<String, ProtocolReadyGroupPublish>,
+    pub(super) pending_local_sibling_sends: Vec<ProtocolPendingLocalSiblingSend>,
+    pub(super) held_direct_chats: BTreeSet<String>,
+    pub(super) pending_remote_sends: Vec<ProtocolPendingRemoteSend>,
+    pub(super) pending_group_pairwise_payloads: Vec<ProtocolPendingGroupPairwisePayload>,
+    pub(super) pending_group_sender_key_messages: PendingGroupMessages,
+    pub(super) pending_group_sender_key_repairs: Vec<ProtocolPendingGroupSenderKeyRepair>,
+    pub(super) processed_group_sender_key_messages: ProtocolGroupReplayCache,
+    pub(super) group_sender_key_retry: std::cell::RefCell<ProtocolGroupSenderKeyRetry>,
+    pub(super) group_retry_pacing: std::cell::RefCell<GroupRetryPacing>,
+    pub(super) answered_group_sender_key_repairs: Vec<ProtocolAnsweredGroupSenderKeyRepair>,
+    pub(super) pending_decrypted_deliveries: Vec<ProtocolPendingDecryptedDelivery>,
+    pub(super) group_roster_fact_histories: BTreeMap<String, GroupRosterFactHistory>,
+    pub(super) handshake_proof_cache: std::cell::RefCell<HandshakeProofCache>,
+    pub(super) known_message_author_cache: std::cell::RefCell<Option<KnownMessageAuthorCache>>,
+    pub(super) known_message_author_cache_build_count: std::cell::Cell<u64>,
+    pub(super) verified_app_keys_owners: BTreeSet<NdrOwnerPubkey>,
+    pub(super) invite_owner_app_keys_evidence: BTreeMap<NdrOwnerPubkey, ProtocolAppKeysEvidence>,
+    pub(super) processed_private_invite_response_ids: Vec<String>,
+    pub(super) group_invite_uses: BTreeMap<String, BTreeSet<NdrOwnerPubkey>>,
+    pub(super) local_app_keys_observed: bool,
     /// Ephemeral proof that this runtime holds the owner's secret key. This
     /// permits outbound recovery while a restored AppKeys roster is still
     /// being fetched, without persisting or publishing a provisional roster.
-    local_owner_authenticated: bool,
-    subscription_generation: u64,
+    pub(super) local_owner_authenticated: bool,
+    pub(super) subscription_generation: u64,
     /// While > 0, `persist()` only flips `batch_persist_dirty` instead of
     /// serializing+writing. AppCore wraps catch-up bursts and other
     /// multi-event entry points so an N-event burst issues one persist
@@ -505,58 +508,58 @@ pub struct ProtocolEngine {
     /// foreground freeze.
     pub batch_depth: std::cell::Cell<u32>,
     pub batch_persist_dirty: std::cell::Cell<bool>,
-    checkpoint_layout: std::cell::RefCell<ProtocolCheckpointLayout>,
+    pub(super) checkpoint_layout: std::cell::RefCell<ProtocolCheckpointLayout>,
 }
 
 #[derive(Clone)]
-struct ProtocolEngineCheckpoint {
-    session_manager: SessionManager,
-    group_manager: GroupEventManager,
-    pending_inbound: Vec<ProtocolPendingInbound>,
-    pending_group_fanouts: Vec<ProtocolPendingGroupFanout>,
-    ready_group_publications: BTreeMap<String, ProtocolReadyGroupPublish>,
-    pending_local_sibling_sends: Vec<ProtocolPendingLocalSiblingSend>,
-    pending_remote_sends: Vec<ProtocolPendingRemoteSend>,
-    pending_group_pairwise_payloads: Vec<ProtocolPendingGroupPairwisePayload>,
-    pending_group_sender_key_messages: PendingGroupMessages,
-    pending_group_sender_key_repairs: Vec<ProtocolPendingGroupSenderKeyRepair>,
-    processed_group_sender_key_messages: ProtocolGroupReplayCache,
-    group_sender_key_retry: ProtocolGroupSenderKeyRetry,
-    answered_group_sender_key_repairs: Vec<ProtocolAnsweredGroupSenderKeyRepair>,
-    pending_decrypted_deliveries: Vec<ProtocolPendingDecryptedDelivery>,
-    group_roster_fact_histories: BTreeMap<String, GroupRosterFactHistory>,
-    verified_app_keys_owners: BTreeSet<NdrOwnerPubkey>,
-    invite_owner_app_keys_evidence: BTreeMap<NdrOwnerPubkey, ProtocolAppKeysEvidence>,
-    processed_private_invite_response_ids: Vec<String>,
-    group_invite_uses: BTreeMap<String, BTreeSet<NdrOwnerPubkey>>,
-    local_app_keys_observed: bool,
-    subscription_generation: u64,
+pub(super) struct ProtocolEngineCheckpoint {
+    pub(super) session_manager: SessionManager,
+    pub(super) group_manager: GroupEventManager,
+    pub(super) pending_inbound: Vec<ProtocolPendingInbound>,
+    pub(super) pending_group_fanouts: Vec<ProtocolPendingGroupFanout>,
+    pub(super) ready_group_publications: BTreeMap<String, ProtocolReadyGroupPublish>,
+    pub(super) pending_local_sibling_sends: Vec<ProtocolPendingLocalSiblingSend>,
+    pub(super) pending_remote_sends: Vec<ProtocolPendingRemoteSend>,
+    pub(super) pending_group_pairwise_payloads: Vec<ProtocolPendingGroupPairwisePayload>,
+    pub(super) pending_group_sender_key_messages: PendingGroupMessages,
+    pub(super) pending_group_sender_key_repairs: Vec<ProtocolPendingGroupSenderKeyRepair>,
+    pub(super) processed_group_sender_key_messages: ProtocolGroupReplayCache,
+    pub(super) group_sender_key_retry: ProtocolGroupSenderKeyRetry,
+    pub(super) answered_group_sender_key_repairs: Vec<ProtocolAnsweredGroupSenderKeyRepair>,
+    pub(super) pending_decrypted_deliveries: Vec<ProtocolPendingDecryptedDelivery>,
+    pub(super) group_roster_fact_histories: BTreeMap<String, GroupRosterFactHistory>,
+    pub(super) verified_app_keys_owners: BTreeSet<NdrOwnerPubkey>,
+    pub(super) invite_owner_app_keys_evidence: BTreeMap<NdrOwnerPubkey, ProtocolAppKeysEvidence>,
+    pub(super) processed_private_invite_response_ids: Vec<String>,
+    pub(super) group_invite_uses: BTreeMap<String, BTreeSet<NdrOwnerPubkey>>,
+    pub(super) local_app_keys_observed: bool,
+    pub(super) subscription_generation: u64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-struct ProtocolPendingLocalSiblingSend {
+pub(super) struct ProtocolPendingLocalSiblingSend {
     // Message bodies are restricted to devices authorized when sent. None
     // preserves current-roster broadcast semantics for read-state metadata.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    eligible_devices: Option<BTreeSet<NdrDevicePubkey>>,
-    chat_id: String,
-    payload: Vec<u8>,
-    message_id: String,
-    completed_devices: BTreeSet<NdrDevicePubkey>,
-    created_at_secs: u64,
-    next_retry_at_secs: u64,
+    pub(super) eligible_devices: Option<BTreeSet<NdrDevicePubkey>>,
+    pub(super) chat_id: String,
+    pub(super) payload: Vec<u8>,
+    pub(super) message_id: String,
+    pub(super) completed_devices: BTreeSet<NdrDevicePubkey>,
+    pub(super) created_at_secs: u64,
+    pub(super) next_retry_at_secs: u64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
-struct ProtocolPendingRemoteSend {
-    recipient_owner: NdrOwnerPubkey,
-    eligible_devices: BTreeSet<NdrDevicePubkey>,
-    completed_devices: BTreeSet<NdrDevicePubkey>,
-    chat_id: String,
-    payload: Vec<u8>,
-    inner_event_id: Option<String>,
-    message_id: String,
-    expires_at_secs: Option<u64>,
-    created_at_secs: u64,
-    next_retry_at_secs: u64,
+pub(super) struct ProtocolPendingRemoteSend {
+    pub(super) recipient_owner: NdrOwnerPubkey,
+    pub(super) eligible_devices: BTreeSet<NdrDevicePubkey>,
+    pub(super) completed_devices: BTreeSet<NdrDevicePubkey>,
+    pub(super) chat_id: String,
+    pub(super) payload: Vec<u8>,
+    pub(super) inner_event_id: Option<String>,
+    pub(super) message_id: String,
+    pub(super) expires_at_secs: Option<u64>,
+    pub(super) created_at_secs: u64,
+    pub(super) next_retry_at_secs: u64,
 }

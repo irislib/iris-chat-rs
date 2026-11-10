@@ -1,4 +1,6 @@
-fn restart_block_history_core(owner: &Keys, device: &Keys, data_dir: String) -> AppCore {
+use super::*;
+
+pub(super) fn restart_block_history_core(owner: &Keys, device: &Keys, data_dir: String) -> AppCore {
     let mut core = AppCore::new(
         flume::unbounded().0,
         flume::unbounded().0,

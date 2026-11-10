@@ -1,3 +1,5 @@
+use super::*;
+
 use nostr_identity::FACT_OP_KIND;
 
 #[test]
@@ -63,7 +65,10 @@ fn group_created_by_unknown_creator_surfaces_as_request_and_clears_on_accept() {
             .contains(&chat_id),
         "group acceptance belongs to the conversation"
     );
-    assert!(!core.preferences.accepted_owner_pubkeys.contains(&creator.public_key().to_hex()));
+    assert!(!core
+        .preferences
+        .accepted_owner_pubkeys
+        .contains(&creator.public_key().to_hex()));
 }
 
 #[test]
@@ -339,7 +344,7 @@ fn fully_approved_linked_device_group_messages_sync_to_primary_without_request()
     );
 }
 
-fn install_two_way_local_sibling_state_for_test(
+pub(super) fn install_two_way_local_sibling_state_for_test(
     primary: &mut AppCore,
     linked: &mut AppCore,
     owner: &Keys,
@@ -424,13 +429,13 @@ fn install_two_way_local_sibling_state_for_test(
         .expect("linked observes primary invite");
 }
 
-fn deliver_pending_relay_events_for_test(sender: &AppCore, recipient: &mut AppCore) {
+pub(super) fn deliver_pending_relay_events_for_test(sender: &AppCore, recipient: &mut AppCore) {
     for event in sorted_pending_events_for_test(sender) {
         recipient.handle_relay_event(event);
     }
 }
 
-fn settle_pending_relay_events_for_test(primary: &mut AppCore, linked: &mut AppCore) {
+pub(super) fn settle_pending_relay_events_for_test(primary: &mut AppCore, linked: &mut AppCore) {
     let mut delivered_to_primary = HashSet::new();
     let mut delivered_to_linked = HashSet::new();
     for _ in 0..8 {
@@ -454,7 +459,7 @@ fn settle_pending_relay_events_for_test(primary: &mut AppCore, linked: &mut AppC
     panic!("sibling startup relay traffic did not settle");
 }
 
-fn sorted_pending_events_for_test(core: &AppCore) -> Vec<Event> {
+pub(super) fn sorted_pending_events_for_test(core: &AppCore) -> Vec<Event> {
     let mut events = core
         .pending_relay_publishes
         .values()

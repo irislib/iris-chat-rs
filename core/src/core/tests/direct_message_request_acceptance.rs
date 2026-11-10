@@ -1,3 +1,5 @@
+use super::*;
+
 #[test]
 fn private_invite_capability_response_ignores_unknown_dm_setting_after_owner_roster() {
     let alice_owner = Keys::generate();

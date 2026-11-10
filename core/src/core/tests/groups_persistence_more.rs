@@ -1,3 +1,5 @@
+use super::*;
+
 #[test]
 fn background_receiver_keeps_open_chat_messages_unread_without_suspending() {
     let owner = Keys::generate();
@@ -547,7 +549,7 @@ fn internal_prune_expired_messages_event_ignores_stale_tokens_and_updates_state(
     );
 }
 
-fn logged_in_test_core(label: &str, owner: &Keys, device: &Keys) -> AppCore {
+pub(super) fn logged_in_test_core(label: &str, owner: &Keys, device: &Keys) -> AppCore {
     logged_in_test_core_at_data_dir(
         owner,
         device,
@@ -561,7 +563,7 @@ fn logged_in_test_core(label: &str, owner: &Keys, device: &Keys) -> AppCore {
     )
 }
 
-fn logged_in_test_core_with_storage(
+pub(super) fn logged_in_test_core_with_storage(
     label: &str,
     owner: &Keys,
     device: &Keys,
@@ -591,7 +593,11 @@ fn logged_in_test_core_with_storage(
     core
 }
 
-fn logged_in_test_core_at_data_dir(owner: &Keys, device: &Keys, data_dir: String) -> AppCore {
+pub(super) fn logged_in_test_core_at_data_dir(
+    owner: &Keys,
+    device: &Keys,
+    data_dir: String,
+) -> AppCore {
     let mut core = AppCore::new(
         flume::unbounded().0,
         flume::unbounded().0,
@@ -615,7 +621,7 @@ fn logged_in_test_core_at_data_dir(owner: &Keys, device: &Keys, data_dir: String
     core
 }
 
-fn test_chat_message(
+pub(super) fn test_chat_message(
     chat_id: &str,
     id: &str,
     body: &str,
@@ -652,12 +658,12 @@ fn test_chat_message(
     }
 }
 
-fn test_protocol_engine(owner: &Keys, device: &Keys) -> ProtocolEngine {
+pub(super) fn test_protocol_engine(owner: &Keys, device: &Keys) -> ProtocolEngine {
     let storage = Arc::new(InMemoryStorage::new()) as Arc<dyn StorageAdapter>;
     test_protocol_engine_with_storage(owner, device, storage)
 }
 
-fn test_protocol_engine_with_storage(
+pub(super) fn test_protocol_engine_with_storage(
     owner: &Keys,
     device: &Keys,
     storage: Arc<dyn StorageAdapter>,
@@ -674,7 +680,7 @@ fn test_protocol_engine_with_storage(
         .expect("protocol engine")
 }
 
-fn observe_current_device_appkeys_for_test(
+pub(super) fn observe_current_device_appkeys_for_test(
     engine: &mut ProtocolEngine,
     owner: &Keys,
     device: &Keys,
@@ -689,7 +695,7 @@ fn observe_current_device_appkeys_for_test(
         .expect("local appkeys");
 }
 
-fn observe_peer_appkeys_for_test(
+pub(super) fn observe_peer_appkeys_for_test(
     engine: &mut ProtocolEngine,
     owner: &Keys,
     devices: &[PublicKey],
@@ -710,7 +716,7 @@ fn observe_peer_appkeys_for_test(
         .expect("peer appkeys event");
 }
 
-fn observe_peer_device_invite_for_test(
+pub(super) fn observe_peer_device_invite_for_test(
     engine: &mut ProtocolEngine,
     owner: &Keys,
     device: &Keys,
@@ -735,7 +741,7 @@ fn observe_peer_device_invite_for_test(
         .expect("observe peer invite");
 }
 
-fn protocol_payload_events_for_result<'a>(
+pub(super) fn protocol_payload_events_for_result<'a>(
     effects: &'a [ProtocolEffect],
     event_ids: &[String],
 ) -> Vec<&'a Event> {
@@ -746,11 +752,11 @@ fn protocol_payload_events_for_result<'a>(
         .collect()
 }
 
-fn protocol_effect_events(effects: &[ProtocolEffect]) -> Vec<&Event> {
+pub(super) fn protocol_effect_events(effects: &[ProtocolEffect]) -> Vec<&Event> {
     protocol_publish_events(effects)
 }
 
-fn latest_sender_key_distribution_for_test(
+pub(super) fn latest_sender_key_distribution_for_test(
     engine: &ProtocolEngine,
     group_id: &str,
     created_at: NdrUnixSeconds,
@@ -777,7 +783,7 @@ fn latest_sender_key_distribution_for_test(
     }
 }
 
-fn install_test_protocol_engine(
+pub(super) fn install_test_protocol_engine(
     core: &mut AppCore,
     owner: &Keys,
     device: &Keys,
@@ -823,7 +829,7 @@ fn stable_local_invite_for_test(owner: &Keys, device: &Keys) -> Invite {
     invite
 }
 
-fn stored_message_count(core: &AppCore) -> i64 {
+pub(super) fn stored_message_count(core: &AppCore) -> i64 {
     let conn = core.app_store.shared();
     let count = conn
         .lock()
@@ -833,7 +839,11 @@ fn stored_message_count(core: &AppCore) -> i64 {
     count
 }
 
-fn stored_message_expiration(core: &AppCore, chat_id: &str, message_id: &str) -> Option<u64> {
+pub(super) fn stored_message_expiration(
+    core: &AppCore,
+    chat_id: &str,
+    message_id: &str,
+) -> Option<u64> {
     let conn = core.app_store.shared();
     let expires_at: Option<i64> = conn
         .lock()
@@ -847,7 +857,7 @@ fn stored_message_expiration(core: &AppCore, chat_id: &str, message_id: &str) ->
     expires_at.map(|secs| secs as u64)
 }
 
-fn stored_chat_ttl(core: &AppCore, chat_id: &str) -> Option<u64> {
+pub(super) fn stored_chat_ttl(core: &AppCore, chat_id: &str) -> Option<u64> {
     let conn = core.app_store.shared();
     let conn = conn.lock().unwrap();
     let mut stmt = conn
@@ -859,7 +869,7 @@ fn stored_chat_ttl(core: &AppCore, chat_id: &str) -> Option<u64> {
         .map(|row| row.get::<_, i64>(0).unwrap() as u64)
 }
 
-fn runtime_state_json(core: &AppCore, owner: &Keys, device: &Keys) -> serde_json::Value {
+pub(super) fn runtime_state_json(core: &AppCore, owner: &Keys, device: &Keys) -> serde_json::Value {
     let storage = crate::core::storage::SqliteStorageAdapter::new(
         core.app_store.shared(),
         owner.public_key().to_hex(),
@@ -872,7 +882,7 @@ fn runtime_state_json(core: &AppCore, owner: &Keys, device: &Keys) -> serde_json
     serde_json::from_str(&value).expect("runtime state json")
 }
 
-fn stored_pending_group_sender_key_message_count(
+pub(super) fn stored_pending_group_sender_key_message_count(
     core: &AppCore,
     owner: &Keys,
     device: &Keys,
@@ -884,7 +894,11 @@ fn stored_pending_group_sender_key_message_count(
         .unwrap_or_default()
 }
 
-fn stored_pending_decrypted_delivery_count(core: &AppCore, owner: &Keys, device: &Keys) -> usize {
+pub(super) fn stored_pending_decrypted_delivery_count(
+    core: &AppCore,
+    owner: &Keys,
+    device: &Keys,
+) -> usize {
     runtime_state_json(core, owner, device)
         .get("pending_decrypted_deliveries")
         .and_then(|value| value.as_array())
@@ -892,7 +906,7 @@ fn stored_pending_decrypted_delivery_count(core: &AppCore, owner: &Keys, device:
         .unwrap_or_default()
 }
 
-fn pending_events_with_kind(core: &AppCore, kind: u32) -> Vec<Event> {
+pub(super) fn pending_events_with_kind(core: &AppCore, kind: u32) -> Vec<Event> {
     core.pending_relay_publishes
         .values()
         .filter_map(|pending| serde_json::from_str::<Event>(&pending.event_json).ok())
@@ -900,7 +914,9 @@ fn pending_events_with_kind(core: &AppCore, kind: u32) -> Vec<Event> {
         .collect()
 }
 
-fn serializable_key_pair_for_test(keys: &Keys) -> nostr_double_ratchet::SerializableKeyPair {
+pub(super) fn serializable_key_pair_for_test(
+    keys: &Keys,
+) -> nostr_double_ratchet::SerializableKeyPair {
     nostr_double_ratchet::SerializableKeyPair {
         public_key: NdrDevicePubkey::from_bytes(keys.public_key().to_bytes()),
         private_key: keys.secret_key().to_secret_bytes(),
@@ -920,11 +936,12 @@ async fn profile_picture_hashtree_roundtrip() {
         .parent()
         .unwrap()
         .join("ios/UITests/Fixtures/cat.jpg");
-    let url = super::attachment_upload::upload_profile_picture_to_hashtree(&secret_hex, &path)
-        .await
-        .expect("upload");
+    let url =
+        crate::core::attachment_upload::upload_profile_picture_to_hashtree(&secret_hex, &path)
+            .await
+            .expect("upload");
     let nhash = url.strip_prefix("htree://").expect("htree:// prefix");
-    let b64 = super::attachment_upload::download_hashtree_attachment_base64(nhash)
+    let b64 = crate::core::attachment_upload::download_hashtree_attachment_base64(nhash)
         .await
         .expect("download bytes");
     use base64::Engine;

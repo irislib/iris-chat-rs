@@ -1,3 +1,5 @@
+use super::*;
+
 #[test]
 fn private_chat_handshake_carries_locally_signed_approval_without_server_echo() {
     for linked in [false, true] {

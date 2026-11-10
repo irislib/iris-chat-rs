@@ -37,6 +37,7 @@ baseline_limit_for() {
     android/app/src/main/java/to/iris/chat/ui/screens/ChatMessageComponents.kt) echo 2060 ;;
     android/app/src/main/java/to/iris/chat/ui/screens/ChatScreen.kt) echo 1623 ;;
     android/app/src/main/java/to/iris/chat/ui/screens/MyProfileSheet.kt) echo 1792 ;;
+    chat-protocol/src/protocol_engine/tests/group_retry_budget_tests.rs) echo 1004 ;;
     core/src/bin/iris.rs) echo 2246 ;;
     core/src/core/account.rs) echo 1223 ;;
     core/src/core/chats.rs) echo 1898 ;;
@@ -45,6 +46,7 @@ baseline_limit_for() {
     core/src/core/protocol.rs) echo 1918 ;;
     core/src/core/storage/store.rs) echo 2765 ;;
     core/src/core/tests/app_keys_invites_requests.rs) echo 2536 ;;
+    core/src/core/tests/device_sync.rs) echo 1028 ;;
     core/src/core/tests/direct_messages_typing.rs) echo 2347 ;;
     core/src/core/tests/groups_persistence_more.rs) echo 1006 ;;
     core/src/core/tests/groups_sender_key.rs) echo 2190 ;;

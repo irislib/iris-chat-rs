@@ -1,15 +1,17 @@
-const GROUP_FRESH_QUEUE_LIMIT: usize = 32;
+use super::*;
+
+pub(super) const GROUP_FRESH_QUEUE_LIMIT: usize = 32;
 const GROUP_FRESH_KEY_TRIALS: usize = 4;
 
 #[derive(Clone)]
-struct FreshGroupSenderKeyCandidate {
-    fingerprint: String,
-    parsed: Arc<nostr_double_ratchet::wire::ParsedGroupSenderKeyMessageEvent>,
-    pending_index: usize,
+pub(super) struct FreshGroupSenderKeyCandidate {
+    pub(super) fingerprint: String,
+    pub(super) parsed: Arc<nostr_double_ratchet::wire::ParsedGroupSenderKeyMessageEvent>,
+    pub(super) pending_index: usize,
 }
 
 impl ProtocolEngine {
-    fn admit_fresh_group_sender_key_candidate(
+    pub(super) fn admit_fresh_group_sender_key_candidate(
         &self,
         parsed: &nostr_double_ratchet::wire::ParsedGroupSenderKeyMessageEvent,
         pending_index: usize,
@@ -38,12 +40,12 @@ impl ProtocolEngine {
         }
     }
 
-    fn fresh_group_sender_key_work_is_due(&self) -> bool {
+    pub(super) fn fresh_group_sender_key_work_is_due(&self) -> bool {
         !self.group_sender_key_retry.borrow().fresh.is_empty()
             && self.group_retry_pacing.borrow().fresh_delay().is_zero()
     }
 
-    fn pending_group_sender_key_retry_index(
+    pub(super) fn pending_group_sender_key_retry_index(
         &self,
         author: NdrDevicePubkey,
         fingerprint: &str,
@@ -101,7 +103,7 @@ impl ProtocolEngine {
             })
     }
 
-    fn prepare_fresh_group_sender_key_message(
+    pub(super) fn prepare_fresh_group_sender_key_message(
         &self,
         message: &GroupSenderKeyMessage,
     ) -> nostr_double_ratchet::Result<Option<nostr_double_ratchet::GroupSenderKeyReceivePlan>> {

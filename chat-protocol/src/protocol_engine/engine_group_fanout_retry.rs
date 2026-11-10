@@ -1,13 +1,15 @@
+use super::*;
+
 #[cfg(test)]
 thread_local! {
-    static GROUP_FANOUT_RETRY_VISITED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    static GROUP_FANOUT_RETRY_PREPARE_ATTEMPTS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    static GROUP_FANOUT_RETRY_PUBLICATION_CONVERSIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-    static GROUP_FANOUT_RETRY_PAYLOAD_CLASSIFICATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub(super) static GROUP_FANOUT_RETRY_VISITED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub(super) static GROUP_FANOUT_RETRY_PREPARE_ATTEMPTS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub(super) static GROUP_FANOUT_RETRY_PUBLICATION_CONVERSIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    pub(super) static GROUP_FANOUT_RETRY_PAYLOAD_CLASSIFICATIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 #[derive(Default)]
-struct GroupFanoutRetryUndo {
+pub(super) struct GroupFanoutRetryUndo {
     replaced: Vec<(usize, ProtocolPendingGroupFanout)>,
     removed: Vec<(usize, ProtocolPendingGroupFanout)>,
 }
@@ -46,7 +48,7 @@ impl GroupFanoutRetryUndo {
             .collect();
     }
 
-    fn restore(self, queue: &mut Vec<ProtocolPendingGroupFanout>) {
+    pub(super) fn restore(self, queue: &mut Vec<ProtocolPendingGroupFanout>) {
         if !self.removed.is_empty() {
             let original_len = queue.len() + self.removed.len();
             let mut remaining = std::mem::take(queue).into_iter();
@@ -67,7 +69,7 @@ impl GroupFanoutRetryUndo {
 }
 
 impl ProtocolEngine {
-    fn retry_pending_group_fanouts(
+    pub(super) fn retry_pending_group_fanouts(
         &mut self,
         now: NdrUnixSeconds,
     ) -> anyhow::Result<ProtocolGroupIncomingResult> {
@@ -139,7 +141,7 @@ impl ProtocolEngine {
         candidates
     }
 
-    fn retry_pending_group_fanouts_inner(
+    pub(super) fn retry_pending_group_fanouts_inner(
         &mut self,
         now: NdrUnixSeconds,
         undo: &mut GroupFanoutRetryUndo,

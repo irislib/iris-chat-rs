@@ -2,6 +2,8 @@
 /// the info screen, and back must return to the chat instead of the chat
 /// list. Mirrors the group-details flow but for the direct-message case
 /// after we converted both UIs from local overlays to the router push.
+use super::*;
+
 #[test]
 fn member_profile_from_group_survives_updates_and_returns_to_group() {
     let owner = Keys::generate();

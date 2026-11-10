@@ -1,3 +1,5 @@
+use super::*;
+
 #[test]
 fn private_block_retires_late_sealed_controls_by_authored_time_after_reload() {
     let transport_keys = Keys::generate();

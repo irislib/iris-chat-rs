@@ -36,4 +36,4 @@ with socket.socket(socket.AF_INET,socket.SOCK_DGRAM) as connection:
     else:
         raise SystemExit('Network isolation did not deny external traffic')
 PY
-sandbox-exec -p "$ISOLATION" "$TEST_BINARY" --exact core::tests::calls_e2e_without_internet_over_local_fips_udp --nocapture
+sandbox-exec -p "$ISOLATION" "$TEST_BINARY" --exact core::tests::calls::calls_e2e_without_internet_over_local_fips_udp --nocapture

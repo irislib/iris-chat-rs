@@ -1,4 +1,4 @@
-include!("group_private_transport.rs");
+use super::*;
 
 #[test]
 fn appcore_create_group_defaults_to_sender_key_protocol() {

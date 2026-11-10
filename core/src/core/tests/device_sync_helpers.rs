@@ -1,12 +1,18 @@
-pub(super) fn configure_test_device_sync_profile(
+use super::*;
+
+pub(crate) fn configure_test_device_sync_profile(
     core: &mut AppCore,
     owner: &Keys,
     local_device: &Keys,
     sibling_device: &Keys,
     relay_url: Option<&str>,
 ) {
-    core.logged_in.as_mut().expect("logged in").relay_urls =
-        relay_urls_from_strings(&relay_url.into_iter().map(str::to_string).collect::<Vec<_>>());
+    core.logged_in.as_mut().expect("logged in").relay_urls = relay_urls_from_strings(
+        &relay_url
+            .into_iter()
+            .map(str::to_string)
+            .collect::<Vec<_>>(),
+    );
     let owner_hex = owner.public_key().to_hex();
     core.app_keys.insert(
         owner_hex.clone(),
@@ -33,7 +39,7 @@ pub(super) fn configure_test_device_sync_profile(
     );
 }
 
-fn test_fips_peer(keys: &Keys) -> fips_core::PeerIdentity {
+pub(super) fn test_fips_peer(keys: &Keys) -> fips_core::PeerIdentity {
     fips_core::PeerIdentity::from_npub(
         &keys
             .public_key()
@@ -43,7 +49,7 @@ fn test_fips_peer(keys: &Keys) -> fips_core::PeerIdentity {
     .expect("test FIPS identity")
 }
 
-fn test_keys_with_compressed_prefix(prefix: u8) -> Keys {
+pub(super) fn test_keys_with_compressed_prefix(prefix: u8) -> Keys {
     loop {
         let keys = Keys::generate();
         let identity = fips_core::Identity::from_secret_str(&keys.secret_key().to_secret_hex())
@@ -54,12 +60,12 @@ fn test_keys_with_compressed_prefix(prefix: u8) -> Keys {
     }
 }
 
-fn reserve_tcp_addr() -> std::net::SocketAddr {
+pub(super) fn reserve_tcp_addr() -> std::net::SocketAddr {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("reserve TCP address");
     listener.local_addr().expect("reserved TCP address")
 }
 
-async fn device_sync_peer_transport(
+pub(super) async fn device_sync_peer_transport(
     endpoint: &fips_core::FipsEndpoint,
     peer: &fips_core::PeerIdentity,
 ) -> Option<String> {
@@ -72,7 +78,7 @@ async fn device_sync_peer_transport(
         .and_then(|candidate| candidate.transport_type)
 }
 
-async fn device_sync_pair_is_connected(
+pub(super) async fn device_sync_pair_is_connected(
     link: [(&fips_core::FipsEndpoint, &fips_core::PeerIdentity); 2],
 ) -> bool {
     device_sync_peer_transport(link[0].0, link[0].1)
@@ -83,7 +89,7 @@ async fn device_sync_pair_is_connected(
             .is_some()
 }
 
-async fn device_sync_pair_uses_websocket(
+pub(super) async fn device_sync_pair_uses_websocket(
     link: [(&fips_core::FipsEndpoint, &fips_core::PeerIdentity); 2],
 ) -> bool {
     device_sync_peer_transport(link[0].0, link[0].1)
@@ -96,7 +102,7 @@ async fn device_sync_pair_uses_websocket(
             == Some("websocket")
 }
 
-fn has_device_sync_message(core: &AppCore, chat_id: &str, message_id: &str) -> bool {
+pub(super) fn has_device_sync_message(core: &AppCore, chat_id: &str, message_id: &str) -> bool {
     core.threads.get(chat_id).is_some_and(|thread| {
         thread
             .messages
@@ -105,7 +111,7 @@ fn has_device_sync_message(core: &AppCore, chat_id: &str, message_id: &str) -> b
     })
 }
 
-fn wait_for_device_sync_message(
+pub(super) fn wait_for_device_sync_message(
     (sender, sender_messages): (&mut AppCore, &flume::Receiver<CoreMsg>),
     (receiver, messages): (&mut AppCore, &flume::Receiver<CoreMsg>),
     link: [(&fips_core::FipsEndpoint, &fips_core::PeerIdentity); 2],

@@ -1,3 +1,5 @@
+use super::*;
+
 #[test]
 fn mentions_group_push_and_foreground_use_identity_and_respect_mute_choice() {
     let mut farm = GroupScaleFarm::new(&[1, 1]);

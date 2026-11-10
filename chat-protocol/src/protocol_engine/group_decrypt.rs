@@ -1,15 +1,17 @@
+use super::*;
+
 #[derive(Clone)]
-struct ActiveGroupSenderKeyDecrypt {
-    fingerprint: String,
+pub(super) struct ActiveGroupSenderKeyDecrypt {
+    pub(super) fingerprint: String,
     cursor: nostr_double_ratchet::GroupSenderKeyDecryptCursor,
     message: GroupSenderKeyMessage,
     // Validated against the durable queue before each continuation. Only a queue
     // mutation can force a scan; ordinary slices touch just this one ciphertext.
-    pending_index: usize,
+    pub(super) pending_index: usize,
 }
 
 impl ActiveGroupSenderKeyDecrypt {
-    fn matches(
+    pub(super) fn matches(
         &self,
         parsed: &nostr_double_ratchet::wire::ParsedGroupSenderKeyMessageEvent,
     ) -> bool {
@@ -23,7 +25,7 @@ impl ActiveGroupSenderKeyDecrypt {
 }
 
 impl ProtocolEngine {
-    fn prepare_group_sender_key_message(
+    pub(super) fn prepare_group_sender_key_message(
         &mut self,
         message: &GroupSenderKeyMessage,
         fingerprint: &str,
@@ -120,7 +122,7 @@ impl ProtocolEngine {
 
     /// Pure search does not clone rollback state or write a checkpoint per slice.
     /// Final ratchet application still uses the caller's atomic persistence batch.
-    fn advance_group_sender_key_continuation(&mut self) -> anyhow::Result<bool> {
+    pub(super) fn advance_group_sender_key_continuation(&mut self) -> anyhow::Result<bool> {
         if self.group_sender_key_retry.borrow().active.is_some()
             && !self.group_retry_pacing.borrow().delay().is_zero()
         {

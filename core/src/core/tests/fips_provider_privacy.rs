@@ -1,3 +1,6 @@
+use super::*;
+use nostr::util::JsonUtil;
+
 async fn nearby_privacy_endpoint(
     keys: &Keys,
     peers: Vec<fips_core::config::PeerConfig>,
@@ -160,7 +163,7 @@ fn nearby_private_transcript_targets_only_the_intended_live_device_after_restart
         .await
         .unwrap();
     });
-    let (tcp, _) = super::device_sync_tcp::DeviceSyncTcpSender::test_channel(1, 1024);
+    let (tcp, _) = crate::core::device_sync_tcp::DeviceSyncTcpSender::test_channel(1, 1024);
     core.install_device_sync_sender_for_test(source.clone(), tcp, vec![]);
     core.preferences.nearby_enabled = true;
     core.preferences.nearby_mailbag_enabled = true;
@@ -454,7 +457,7 @@ fn nearby_private_invite_response_accepts_only_current_local_invite_keys() {
         .next()
         .unwrap()
         .clone();
-    let invite_key = super::invites::private_chat_invite_key(&invite);
+    let invite_key = crate::core::invites::private_chat_invite_key(&invite);
     let response = crafted_private_invite_response(
         &url,
         &sender_device,
@@ -599,7 +602,7 @@ fn native_identified_receiver_does_not_export_peer_public_cache_or_restart_repla
                 ))
                 .unwrap(),
         );
-        let (tcp, _) = super::device_sync_tcp::DeviceSyncTcpSender::test_channel(1, 1024);
+        let (tcp, _) = crate::core::device_sync_tcp::DeviceSyncTcpSender::test_channel(1, 1024);
         core.install_device_sync_sender_for_test(endpoint.clone(), tcp, Vec::new());
         core.device_sync.as_mut().unwrap().pubsub = Some(receiver.clone());
         core.reconcile_mesh_protocol_subscriptions();

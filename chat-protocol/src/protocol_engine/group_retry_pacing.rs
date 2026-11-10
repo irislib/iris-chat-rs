@@ -1,24 +1,26 @@
+use super::*;
+
 /// Resource policy for automatic history recovery, separate from ratchet state
 /// and rollback checkpoints. Time spent on a failed transaction is still work.
 #[derive(Default)]
-struct GroupRetryPacing {
-    enabled: bool,
-    not_before: Option<std::time::Instant>,
-    fresh_not_before: Option<std::time::Instant>,
+pub(super) struct GroupRetryPacing {
+    pub(super) enabled: bool,
+    pub(super) not_before: Option<std::time::Instant>,
+    pub(super) fresh_not_before: Option<std::time::Instant>,
     #[cfg(test)]
-    clock: Option<std::time::Instant>,
+    pub(super) clock: Option<std::time::Instant>,
     #[cfg(test)]
-    key_trials: usize,
+    pub(super) key_trials: usize,
     #[cfg(test)]
-    work_calls: usize,
+    pub(super) work_calls: usize,
     #[cfg(test)]
-    fresh_key_trials: usize,
+    pub(super) fresh_key_trials: usize,
     #[cfg(test)]
-    fresh_work_calls: usize,
+    pub(super) fresh_work_calls: usize,
 }
 
 impl GroupRetryPacing {
-    fn now(&self) -> std::time::Instant {
+    pub(super) fn now(&self) -> std::time::Instant {
         #[cfg(test)]
         if let Some(now) = self.clock {
             return now;
@@ -26,7 +28,7 @@ impl GroupRetryPacing {
         std::time::Instant::now()
     }
 
-    fn delay(&self) -> std::time::Duration {
+    pub(super) fn delay(&self) -> std::time::Duration {
         if !self.enabled {
             return std::time::Duration::ZERO;
         }
@@ -36,7 +38,7 @@ impl GroupRetryPacing {
             })
     }
 
-    fn record_work(&mut self, elapsed: std::time::Duration) {
+    pub(super) fn record_work(&mut self, elapsed: std::time::Duration) {
         if self.enabled {
             #[cfg(test)]
             if let Some(now) = self.clock {
@@ -55,14 +57,14 @@ impl GroupRetryPacing {
         }
     }
 
-    fn fresh_delay(&self) -> std::time::Duration {
+    pub(super) fn fresh_delay(&self) -> std::time::Duration {
         self.fresh_not_before
             .map_or(std::time::Duration::ZERO, |deadline| {
                 deadline.saturating_duration_since(self.now())
             })
     }
 
-    fn record_fresh_work(&mut self, elapsed: std::time::Duration) {
+    pub(super) fn record_fresh_work(&mut self, elapsed: std::time::Duration) {
         // A small current-position probe may run while history is cooling down.
         // Its measured cost also extends the GLOBAL debt: sustained fresh work
         // replaces history work instead of creating another ongoing CPU budget.

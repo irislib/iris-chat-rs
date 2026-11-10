@@ -1,11 +1,13 @@
-fn is_synthetic_group_delivery(delivery: &ProtocolPendingDecryptedDelivery) -> bool {
+use super::*;
+
+pub(super) fn is_synthetic_group_delivery(delivery: &ProtocolPendingDecryptedDelivery) -> bool {
     delivery
         .event_id
         .as_deref()
         .is_some_and(|id| id.starts_with("group-delivery:"))
 }
 
-fn legacy_group_ingress_quarantine(
+pub(super) fn legacy_group_ingress_quarantine(
     raw: &str,
     state: &ProtocolEnginePersistedState,
 ) -> anyhow::Result<String> {
@@ -50,7 +52,7 @@ fn legacy_group_ingress_quarantine(
     })?)
 }
 
-fn quarantine_legacy_group_ingress(
+pub(super) fn quarantine_legacy_group_ingress(
     storage: &dyn StorageAdapter,
     raw: &str,
     state: &mut ProtocolEnginePersistedState,

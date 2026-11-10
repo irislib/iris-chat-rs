@@ -1,3 +1,5 @@
+use super::*;
+
 impl ProtocolEngine {
     /// Shared bootstrap authors can expose ciphertext addressed to other devices.
     /// Untargeted session messages remain eligible for authenticated decryption.
@@ -17,7 +19,7 @@ impl ProtocolEngine {
         has_recipient
     }
 
-    fn invalidate_pending_inbound_retry_deadline(&self) {
+    pub(super) fn invalidate_pending_inbound_retry_deadline(&self) {
         self.pending_inbound_retry_deadline.set(None);
     }
 
@@ -38,7 +40,7 @@ impl ProtocolEngine {
         deadline
     }
 
-    fn has_due_pending_inbound_retry(&self, now: NdrUnixSeconds) -> bool {
+    pub(super) fn has_due_pending_inbound_retry(&self, now: NdrUnixSeconds) -> bool {
         let deadline = self
             .pending_inbound_retry_deadline
             .get()
@@ -49,11 +51,11 @@ impl ProtocolEngine {
             .is_some_and(|next_retry| next_retry <= now.get())
     }
 
-    fn invalidate_pending_group_fanout_retry_deadline(&self) {
+    pub(super) fn invalidate_pending_group_fanout_retry_deadline(&self) {
         self.pending_group_fanout_retry_deadline.set(None);
     }
 
-    fn has_due_pending_group_fanout_retry(&self, now: NdrUnixSeconds) -> bool {
+    pub(super) fn has_due_pending_group_fanout_retry(&self, now: NdrUnixSeconds) -> bool {
         if let Some(deadline) = self
             .pending_group_fanout_retry_deadline
             .get()
@@ -541,7 +543,7 @@ impl ProtocolEngine {
         Ok(batch)
     }
 
-    fn discard_pending_messages_for_other_devices(&mut self) -> anyhow::Result<()> {
+    pub(super) fn discard_pending_messages_for_other_devices(&mut self) -> anyhow::Result<()> {
         let foreign_events = self
             .pending_inbound
             .iter()
@@ -607,7 +609,7 @@ impl ProtocolEngine {
         Ok(())
     }
 
-    fn retry_pending_inbound_direct_events_inner(
+    pub(super) fn retry_pending_inbound_direct_events_inner(
         &mut self,
         now: NdrUnixSeconds,
         fingerprints: &mut InboundReceiveFingerprints,
@@ -682,7 +684,7 @@ impl ProtocolEngine {
     }
 
     #[cfg(test)]
-    fn decrypt_pending_direct_message_event(
+    pub(super) fn decrypt_pending_direct_message_event(
         &mut self,
         pending: &ProtocolPendingInbound,
     ) -> anyhow::Result<DirectReceive> {
@@ -707,7 +709,7 @@ impl ProtocolEngine {
         self.decrypt_direct_message_envelope_with_cache(event, envelope, record_delivery, None)
     }
 
-    fn decrypt_direct_message_envelope_with_cache(
+    pub(super) fn decrypt_direct_message_envelope_with_cache(
         &mut self,
         event: &Event,
         envelope: &MessageEnvelope,
@@ -886,5 +888,3 @@ impl ProtocolEngine {
         Ok(result)
     }
 }
-
-include!("incoming_retry_tests.rs");

@@ -1,8 +1,10 @@
+use super::*;
+
 use nostr::nips::nip44;
 use serde_json::{json, Value};
 
 #[derive(Clone, Copy)]
-enum RemoteSignerFault {
+pub(super) enum RemoteSignerFault {
     None,
     ChangedEvent,
     Reject,
@@ -31,7 +33,7 @@ async fn remote_signer_response(
     client.send_event(&event).await.unwrap();
 }
 
-fn launch_remote_signer_fixture(
+pub(super) fn launch_remote_signer_fixture(
     core: &AppCore,
     relay: &crate::local_relay::TestRelay,
     transport: &Keys,

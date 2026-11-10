@@ -1,3 +1,5 @@
+use super::*;
+
 #[test]
 fn idle_mesh_liveness_replaces_a_closed_callback_with_unchanged_filters() {
     let owner = Keys::generate();
@@ -255,8 +257,13 @@ fn encrypted_chat_crosses_fips_transit_by_direct_recipient_route_without_message
             }
         }
         let ready = [&alice, &bob].into_iter().all(|core| {
-            core.device_sync.as_ref().is_some_and(|mesh| runtime.block_on(mesh.endpoint.peers())
-                .unwrap().iter().any(|peer| peer.connected && peer.npub == transit.npub()))
+            core.device_sync.as_ref().is_some_and(|mesh| {
+                runtime
+                    .block_on(mesh.endpoint.peers())
+                    .unwrap()
+                    .iter()
+                    .any(|peer| peer.connected && peer.npub == transit.npub())
+            })
         });
         if ready {
             break;

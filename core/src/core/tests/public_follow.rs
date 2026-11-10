@@ -1,3 +1,5 @@
+use super::*;
+
 use nostr::JsonUtil;
 
 #[test]

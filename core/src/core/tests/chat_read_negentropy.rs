@@ -1,3 +1,5 @@
+use super::*;
+
 #[test]
 fn chat_read_negentropy_recovers_private_progress_before_history_after_restart() {
     for include_history in [false, true] {
@@ -235,12 +237,12 @@ fn run_chat_read_negentropy(include_history: bool, supports_read_states: bool) {
     assert_eq!(right.threads[&chat].unread_count, 1);
 }
 
-fn drain_chat_read_negentropy(
+pub(super) fn drain_chat_read_negentropy(
     source: &mut AppCore,
     source_key: &Keys,
     target: &mut AppCore,
     target_key: &Keys,
-    receiver: &flume::Receiver<super::device_sync_tcp::SendBatch>,
+    receiver: &flume::Receiver<crate::core::device_sync_tcp::SendBatch>,
     trace: &mut Vec<serde_json::Value>,
     suppress_seen_notifications: bool,
 ) -> bool {
@@ -272,7 +274,7 @@ fn drain_chat_read_negentropy(
             let mut preferences = target.state.preferences.clone();
             preferences.desktop_notifications_enabled = true;
             assert!(
-                super::notifications::decide_notifications(
+                crate::core::notifications::decide_notifications(
                     &previous,
                     &target.state.chat_list,
                     &preferences,

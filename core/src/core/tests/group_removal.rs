@@ -1,3 +1,5 @@
+use super::*;
+
 fn removed_group_fixture() -> (AppCore, Keys, Keys, GroupSnapshot, GroupSnapshot) {
     let owner = Keys::generate();
     let device = Keys::generate();

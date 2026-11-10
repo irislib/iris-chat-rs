@@ -1,3 +1,5 @@
+use super::*;
+
 #[test]
 fn private_invite_delete_failure_blocks_sibling_imports_in_same_retry_pass() {
     let inviter_owner = Keys::generate();
@@ -11,7 +13,9 @@ fn private_invite_delete_failure_blocks_sibling_imports_in_same_retry_pass() {
         &inviter_device,
     );
     let invite_url = create_private_invite_for_test(&mut inviter);
-    inviter.handle_action(AppAction::PushScreen { screen: Screen::NewChat });
+    inviter.handle_action(AppAction::PushScreen {
+        screen: Screen::NewChat,
+    });
     let invite_key = inviter
         .private_chat_invites
         .keys()
@@ -47,11 +51,7 @@ fn private_invite_delete_failure_blocks_sibling_imports_in_same_retry_pass() {
     .get_event_at(peer_owner.public_key(), 10)
     .sign_with_keys(&peer_owner)
     .expect("signed sibling roster");
-    ingest_invite_owner_app_keys(
-        &mut inviter,
-        peer_owner.public_key(),
-        vec![roster.clone()],
-    );
+    ingest_invite_owner_app_keys(&mut inviter, peer_owner.public_key(), vec![roster.clone()]);
 
     assert_eq!(
         stored_session_count(&inviter, peer_owner.public_key()),
@@ -60,8 +60,10 @@ fn private_invite_delete_failure_blocks_sibling_imports_in_same_retry_pass() {
     );
     assert_eq!(inviter.pending_private_invite_responses.len(), 2);
     assert!(inviter.private_chat_invites.contains_key(&invite_key));
-    assert!(matches!(inviter.screen_stack.last(), Some(Screen::NewChat)),
-        "Do not navigate before one-use invite consumption is durable");
+    assert!(
+        matches!(inviter.screen_stack.last(), Some(Screen::NewChat)),
+        "Do not navigate before one-use invite consumption is durable"
+    );
 
     {
         let shared = inviter.app_store.shared();
@@ -69,18 +71,18 @@ fn private_invite_delete_failure_blocks_sibling_imports_in_same_retry_pass() {
         conn.execute_batch("DROP TRIGGER fail_private_invite_delete_siblings;")
             .expect("remove delete failure trigger");
     }
-    ingest_invite_owner_app_keys(
-        &mut inviter,
-        peer_owner.public_key(),
-        vec![roster],
-    );
+    ingest_invite_owner_app_keys(&mut inviter, peer_owner.public_key(), vec![roster]);
 
     assert_eq!(stored_session_count(&inviter, peer_owner.public_key()), 1);
     assert!(inviter.pending_private_invite_responses.is_empty());
     assert!(inviter.private_chat_invites.is_empty());
-    assert!(inviter.threads.contains_key(&peer_owner.public_key().to_hex()));
-    assert!(matches!(inviter.screen_stack.last(), Some(Screen::NewChat)),
-        "A legacy link that is not displayed must not redirect the current code screen");
+    assert!(inviter
+        .threads
+        .contains_key(&peer_owner.public_key().to_hex()));
+    assert!(
+        matches!(inviter.screen_stack.last(), Some(Screen::NewChat)),
+        "A legacy link that is not displayed must not redirect the current code screen"
+    );
 }
 
 #[test]
@@ -104,11 +106,15 @@ fn unchanged_roster_replay_finishes_invite_cleanup_visibly_and_durably() {
     assert_eq!(core.pending_private_invite_responses.len(), 1);
     {
         let shared = core.app_store.shared();
-        shared.lock().unwrap().execute_batch(&format!(
-            "CREATE TEMP TRIGGER fail_replayed_invite_cleanup BEFORE DELETE ON ndr_kv
+        shared
+            .lock()
+            .unwrap()
+            .execute_batch(&format!(
+                "CREATE TEMP TRIGGER fail_replayed_invite_cleanup BEFORE DELETE ON ndr_kv
              WHEN OLD.key = '{invite_key}'
              BEGIN SELECT RAISE(ABORT, 'injected invite cleanup failure'); END;"
-        )).unwrap();
+            ))
+            .unwrap();
     }
     let roster = signed_app_keys_authorization_event(&peer, peer_device.public_key(), 10);
     core.handle_relay_event(roster.clone());
@@ -118,7 +124,11 @@ fn unchanged_roster_replay_finishes_invite_cleanup_visibly_and_durably() {
     assert!(!core.threads.contains_key(&chat_id));
     {
         let shared = core.app_store.shared();
-        shared.lock().unwrap().execute_batch("DROP TRIGGER fail_replayed_invite_cleanup;").unwrap();
+        shared
+            .lock()
+            .unwrap()
+            .execute_batch("DROP TRIGGER fail_replayed_invite_cleanup;")
+            .unwrap();
     }
     for index in 0..MAX_SEEN_EVENT_IDS {
         core.remember_event(format!("{index:064x}"));
@@ -131,11 +141,23 @@ fn unchanged_roster_replay_finishes_invite_cleanup_visibly_and_durably() {
     assert!(core.pending_private_invite_responses.is_empty());
     assert_eq!(stored_session_count(&core, peer.public_key()), 1);
     assert_eq!(core.screen_stack, vec![Screen::Settings]);
-    assert!(core.state.chat_list.iter().any(|chat| chat.chat_id == chat_id));
-    let notices = super::notifications::decide_notifications(
-        &previous_chats, &core.state.chat_list, &core.state.preferences, false, None,
+    assert!(core
+        .state
+        .chat_list
+        .iter()
+        .any(|chat| chat.chat_id == chat_id));
+    let notices = crate::core::notifications::decide_notifications(
+        &previous_chats,
+        &core.state.chat_list,
+        &core.state.preferences,
+        false,
+        None,
     );
-    assert_eq!(notices.len(), 1, "cleanup recovery must still announce the new chat");
+    assert_eq!(
+        notices.len(),
+        1,
+        "cleanup recovery must still announce the new chat"
+    );
     assert_eq!(notices[0].title, "New chat");
     drop(core);
     let mut restarted = logged_in_test_core_at_data_dir(&owner, &device, data_dir);

@@ -1,18 +1,20 @@
+use super::*;
+
 #[derive(Clone)]
-struct SwitchableFailStorage {
+pub(super) struct SwitchableFailStorage {
     inner: InMemoryStorage,
     fail_puts: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl SwitchableFailStorage {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         Self {
             inner: InMemoryStorage::new(),
             fail_puts: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         }
     }
 
-    fn set_fail_puts(&self, fail: bool) {
+    pub(super) fn set_fail_puts(&self, fail: bool) {
         self.fail_puts
             .store(fail, std::sync::atomic::Ordering::SeqCst);
     }
@@ -40,20 +42,20 @@ impl StorageAdapter for SwitchableFailStorage {
 }
 
 #[derive(Clone)]
-struct CountingStorage {
+pub(super) struct CountingStorage {
     inner: InMemoryStorage,
     put_count: Arc<std::sync::atomic::AtomicUsize>,
 }
 
 impl CountingStorage {
-    fn new() -> Self {
+    pub(super) fn new() -> Self {
         Self {
             inner: InMemoryStorage::new(),
             put_count: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         }
     }
 
-    fn put_count(&self) -> usize {
+    pub(super) fn put_count(&self) -> usize {
         self.put_count.load(std::sync::atomic::Ordering::SeqCst)
     }
 }
@@ -78,7 +80,7 @@ impl StorageAdapter for CountingStorage {
     }
 }
 
-fn protocol_plan_for_test(
+pub(super) fn protocol_plan_for_test(
     message_authors: Vec<PublicKey>,
     group_sender_key_authors: Vec<PublicKey>,
 ) -> ProtocolSubscriptionPlan {
@@ -101,7 +103,7 @@ fn protocol_plan_for_test(
     }
 }
 
-fn runtime_rumor_json(
+pub(super) fn runtime_rumor_json(
     author: PublicKey,
     kind: u32,
     content: &str,
@@ -127,7 +129,7 @@ fn runtime_rumor_json(
     )
 }
 
-fn appcore_direct_message_event_for_test(
+pub(super) fn appcore_direct_message_event_for_test(
     receiver_engine: &mut ProtocolEngine,
     sender_keys: &Keys,
     body: &str,
@@ -142,7 +144,7 @@ fn appcore_direct_message_event_for_test(
     .0
 }
 
-fn appcore_direct_message_event_with_author_keys_for_test(
+pub(super) fn appcore_direct_message_event_with_author_keys_for_test(
     receiver_engine: &mut ProtocolEngine,
     sender_keys: &Keys,
     body: &str,
@@ -185,7 +187,7 @@ fn appcore_direct_message_event_with_author_keys_for_test(
     )
 }
 
-pub(super) fn logged_in_test_core_with_updates(
+pub(crate) fn logged_in_test_core_with_updates(
     label: &str,
     owner: &Keys,
     device: &Keys,
@@ -229,7 +231,7 @@ fn signed_pairwise_message_event_for_test(
         .expect("signed pairwise message event")
 }
 
-fn drain_app_updates(update_rx: &flume::Receiver<AppUpdate>) {
+pub(super) fn drain_app_updates(update_rx: &flume::Receiver<AppUpdate>) {
     while update_rx.try_recv().is_ok() {}
 }
 
@@ -706,7 +708,7 @@ fn liveness_retries_pending_relay_publish_without_active_protocol_subscription()
 #[test]
 fn fetch_catch_up_events_requeues_large_batches_in_chunks() {
     let keys = Keys::generate();
-    let events = (0..=super::lifecycle::CATCH_UP_EVENT_PROCESS_CHUNK_SIZE)
+    let events = (0..=crate::core::lifecycle::CATCH_UP_EVENT_PROCESS_CHUNK_SIZE)
         .map(|index| {
             EventBuilder::new(Kind::TextNote, format!("catch-up-{index}"))
                 .sign_with_keys(&keys)
@@ -1833,10 +1835,12 @@ fn liveness_replays_retained_appkeys_for_tracked_peer() {
             loop {
                 match discovery_rx.recv_async().await {
                     Ok(CoreMsg::Internal(event)) => match *event {
-                        InternalEvent::RelayEvent(event) if event.id == app_keys_event_id => break event,
-                        _ => {},
+                        InternalEvent::RelayEvent(event) if event.id == app_keys_event_id => {
+                            break event
+                        }
+                        _ => {}
                     },
-                    Ok(_) => {},
+                    Ok(_) => {}
                     Err(error) => panic!("discovery event channel closed: {error}"),
                 }
             }
@@ -2465,7 +2469,7 @@ fn appcore_sender_owner_resolution_keeps_claimed_device_pending_until_owner_veri
         .expect("sender resolver");
     let body = &protocol_source[start
         ..protocol_source[start..]
-            .find("\n    fn ensure_local_roster")
+            .find("\n    pub(super) fn ensure_local_roster")
             .map(|offset| start + offset)
             .unwrap_or(protocol_source.len())];
     assert!(
@@ -2488,7 +2492,7 @@ fn pending_inbound_owner_targets_use_cached_metadata_not_event_reparse() {
         .expect("pending inbound target collector");
     let body = &protocol_source[start
         ..protocol_source[start..]
-            .find("\n    fn pending_group_pairwise_owner_claim_targets")
+            .find("\n    pub(super) fn pending_group_pairwise_owner_claim_targets")
             .map(|offset| start + offset)
             .unwrap_or(protocol_source.len())];
     assert!(

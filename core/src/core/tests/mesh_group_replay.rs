@@ -1,5 +1,8 @@
 // Offline members recover their own recipient-specific ratchet carrier from
 // the sender's durable queue. Another group member never serves shared group traffic.
+
+use super::*;
+
 #[test]
 fn private_group_recipient_delivery_survives_sender_restart_while_member_offline() {
     let mut farm = GroupScaleFarm::new(&[1, 1, 1]);
@@ -58,7 +61,7 @@ fn private_group_recipient_delivery_survives_sender_restart_while_member_offline
     )
     .expect("inspect C's carrier without advancing the live ratchet");
     let rumor = parse_runtime_rumor(&preview.content).unwrap();
-    let nested = private_group_wake::decode(&rumor.content).unwrap();
+    let nested = crate::core::private_group_wake::decode(&rumor.content).unwrap();
     assert!(!farm.devices[2].core.threads[&chat_id]
         .messages
         .iter()

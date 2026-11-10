@@ -1,4 +1,6 @@
-fn protocol_effects_from_prepared(
+use super::*;
+
+pub(super) fn protocol_effects_from_prepared(
     prepared: &PreparedSend,
     engine: &ProtocolEngine,
     inner_event_id: Option<String>,
@@ -30,7 +32,7 @@ fn protocol_effects_from_prepared(
     Ok(publishes.into_iter().map(ProtocolEffect::Publish).collect())
 }
 
-fn protocol_effects_from_group_prepared_publish(
+pub(super) fn protocol_effects_from_group_prepared_publish(
     prepared: &GroupPreparedPublish,
     engine: &ProtocolEngine,
     inner_event_id: Option<String>,
@@ -71,7 +73,7 @@ fn protocol_effects_from_group_prepared_publish(
     Ok(publishes.into_iter().map(ProtocolEffect::Publish).collect())
 }
 
-fn message_event_for_delivery(delivery: &Delivery) -> anyhow::Result<Event> {
+pub(super) fn message_event_for_delivery(delivery: &Delivery) -> anyhow::Result<Event> {
     // Cold delivery needs a recipient, but its sender must remain the ratchet
     // session key. Never sign this envelope with an account or device identity.
     let mut envelope = delivery.envelope.clone();
@@ -112,7 +114,7 @@ pub fn resolve_invite_owner(
         .unwrap_or(inviter_device))
 }
 
-fn app_keys_device_pubkeys(app_keys: &AppKeys) -> BTreeSet<PublicKey> {
+pub(super) fn app_keys_device_pubkeys(app_keys: &AppKeys) -> BTreeSet<PublicKey> {
     app_keys
         .get_all_devices()
         .into_iter()
@@ -120,7 +122,7 @@ fn app_keys_device_pubkeys(app_keys: &AppKeys) -> BTreeSet<PublicKey> {
         .collect()
 }
 
-fn classify_group_pairwise_payload(payload: &[u8]) -> anyhow::Result<(bool, bool)> {
+pub(super) fn classify_group_pairwise_payload(payload: &[u8]) -> anyhow::Result<(bool, bool)> {
     let codec = JsonGroupPayloadCodecV1;
     let Some(command) = codec.decode_pairwise_command(payload)? else {
         return Ok((false, false));
@@ -143,12 +145,12 @@ fn pending_retry_delay_secs(created_at_secs: u64, now: NdrUnixSeconds) -> u64 {
     }
 }
 
-fn next_pending_retry_at_secs(created_at_secs: u64, now: NdrUnixSeconds) -> u64 {
+pub(super) fn next_pending_retry_at_secs(created_at_secs: u64, now: NdrUnixSeconds) -> u64 {
     now.get()
         .saturating_add(pending_retry_delay_secs(created_at_secs, now))
 }
 
-fn group_publish_from_prepared_send(
+pub(super) fn group_publish_from_prepared_send(
     prepared: PreparedSend,
     fanout: GroupPendingFanout,
 ) -> GroupPreparedPublish {
@@ -166,7 +168,10 @@ fn group_publish_from_prepared_send(
     }
 }
 
-fn collect_expected_sender_pubkeys(session: &SessionState, out: &mut HashSet<PublicKey>) {
+pub(super) fn collect_expected_sender_pubkeys(
+    session: &SessionState,
+    out: &mut HashSet<PublicKey>,
+) {
     if let Some(current) = session.their_current_nostr_public_key {
         if let Ok(pubkey) = public_device(current) {
             out.insert(pubkey);
@@ -184,13 +189,16 @@ fn collect_expected_sender_pubkeys(session: &SessionState, out: &mut HashSet<Pub
     }
 }
 
-fn session_state_matches_sender(session: &SessionState, sender: NdrDevicePubkey) -> bool {
+pub(super) fn session_state_matches_sender(
+    session: &SessionState,
+    sender: NdrDevicePubkey,
+) -> bool {
     session.their_current_nostr_public_key == Some(sender)
         || session.their_next_nostr_public_key == Some(sender)
         || session.skipped_keys.contains_key(&sender)
 }
 
-fn sender_resolution_owner_matches(
+pub(super) fn sender_resolution_owner_matches(
     resolution: ProtocolSenderOwnerResolution,
     owner: NdrOwnerPubkey,
 ) -> bool {
@@ -207,7 +215,7 @@ fn sender_resolution_owner_matches(
     }
 }
 
-fn pending_inbound_owner_hexes_from_resolution(
+pub(super) fn pending_inbound_owner_hexes_from_resolution(
     resolution: ProtocolSenderOwnerResolution,
 ) -> (Option<String>, Option<String>) {
     match resolution {
@@ -223,7 +231,9 @@ fn pending_inbound_owner_hexes_from_resolution(
     }
 }
 
-fn pending_inbound_sender_pubkey(pending: &ProtocolPendingInbound) -> Option<NdrDevicePubkey> {
+pub(super) fn pending_inbound_sender_pubkey(
+    pending: &ProtocolPendingInbound,
+) -> Option<NdrDevicePubkey> {
     if let Some(envelope) = pending.envelope.as_ref() {
         return Some(envelope.sender);
     }
@@ -234,7 +244,7 @@ fn pending_inbound_sender_pubkey(pending: &ProtocolPendingInbound) -> Option<Ndr
         .map(ndr_device)
 }
 
-fn apply_pending_inbound_metadata(
+pub(super) fn apply_pending_inbound_metadata(
     pending: &mut ProtocolPendingInbound,
     metadata: ProtocolPendingInboundMetadata,
 ) -> bool {
@@ -266,15 +276,18 @@ fn apply_pending_inbound_metadata(
     changed
 }
 
-fn provisional_owner_from_sender_pubkey(sender: NdrDevicePubkey) -> NdrOwnerPubkey {
+pub(super) fn provisional_owner_from_sender_pubkey(sender: NdrDevicePubkey) -> NdrOwnerPubkey {
     NdrOwnerPubkey::from_bytes(sender.to_bytes())
 }
 
-fn local_sibling_payload(conversation_owner: PublicKey, payload: &[u8]) -> anyhow::Result<Vec<u8>> {
+pub(super) fn local_sibling_payload(
+    conversation_owner: PublicKey,
+    payload: &[u8],
+) -> anyhow::Result<Vec<u8>> {
     local_sibling_payload_with_original_sender(conversation_owner, None, payload)
 }
 
-fn local_sibling_payload_with_original_sender(
+pub(super) fn local_sibling_payload_with_original_sender(
     conversation_owner: PublicKey,
     original_sender_device: Option<PublicKey>,
     payload: &[u8],
@@ -290,7 +303,9 @@ fn local_sibling_payload_with_original_sender(
     Ok(serde_json::to_vec(&wrapper)?)
 }
 
-fn decode_local_sibling_payload(payload: &[u8]) -> Option<(PublicKey, Option<PublicKey>, Vec<u8>)> {
+pub(super) fn decode_local_sibling_payload(
+    payload: &[u8],
+) -> Option<(PublicKey, Option<PublicKey>, Vec<u8>)> {
     use base64::Engine;
     let wrapper: LocalSiblingPayload = serde_json::from_slice(payload).ok()?;
     if wrapper.protocol != LOCAL_SIBLING_PROTOCOL || wrapper.version != 1 {
@@ -317,30 +332,30 @@ struct LocalSiblingPayload {
     payload: String,
 }
 
-fn ndr_owner(pubkey: PublicKey) -> NdrOwnerPubkey {
+pub(super) fn ndr_owner(pubkey: PublicKey) -> NdrOwnerPubkey {
     NdrOwnerPubkey::from_bytes(pubkey.to_bytes())
 }
 
-fn ndr_device(pubkey: PublicKey) -> NdrDevicePubkey {
+pub(super) fn ndr_device(pubkey: PublicKey) -> NdrDevicePubkey {
     NdrDevicePubkey::from_bytes(pubkey.to_bytes())
 }
 
-fn protocol_event_has_tag(event: &Event, name: &str) -> bool {
+pub(super) fn protocol_event_has_tag(event: &Event, name: &str) -> bool {
     event
         .tags
         .iter()
         .any(|tag| tag.as_slice().first().map(|value| value.as_str()) == Some(name))
 }
 
-fn public_owner(pubkey: NdrOwnerPubkey) -> anyhow::Result<PublicKey> {
+pub(super) fn public_owner(pubkey: NdrOwnerPubkey) -> anyhow::Result<PublicKey> {
     Ok(PublicKey::from_slice(&pubkey.to_bytes())?)
 }
 
-fn public_device(pubkey: NdrDevicePubkey) -> anyhow::Result<PublicKey> {
+pub(super) fn public_device(pubkey: NdrDevicePubkey) -> anyhow::Result<PublicKey> {
     Ok(PublicKey::from_slice(&pubkey.to_bytes())?)
 }
 
-fn current_unix_millis() -> u64 {
+pub(super) fn current_unix_millis() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()

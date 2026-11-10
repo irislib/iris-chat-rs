@@ -1,3 +1,6 @@
+use super::*;
+use nostr::util::JsonUtil;
+
 #[test]
 fn metadata_privacy_blocks_identity_signers_even_with_a_version_marker() {
     let owner = Keys::generate();

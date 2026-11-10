@@ -1,3 +1,5 @@
+use super::*;
+
 #[test]
 fn image_proxy_fallback_opt_in_persists_and_reset_disables_it() {
     let temp = tempfile::tempdir().unwrap();

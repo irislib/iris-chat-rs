@@ -1,4 +1,14 @@
-fn saved_sibling_rumors(core: &AppCore, owner: &Keys, device: &Keys) -> Vec<UnsignedEvent> {
+use super::*;
+pub(super) use crate::private_contact_sync_v2::parse_private_contact_control_v2;
+use crate::private_contact_sync_v2::private_contact_values_v2;
+use crate::private_contact_sync_v2::restore_private_contact_sync_v2;
+use crate::private_contact_sync_v2::PrivateContactControlV2;
+
+pub(super) fn saved_sibling_rumors(
+    core: &AppCore,
+    owner: &Keys,
+    device: &Keys,
+) -> Vec<UnsignedEvent> {
     use base64::Engine;
     let storage = SqliteStorageAdapter::new(
         core.app_store.shared(),

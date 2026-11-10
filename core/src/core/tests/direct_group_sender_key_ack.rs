@@ -1,3 +1,5 @@
+use super::*;
+
 #[test]
 fn direct_group_copy_does_not_admit_unwrapped_sender_key_candidate() {
     let mut devices = sender_key_matrix_devices(2);

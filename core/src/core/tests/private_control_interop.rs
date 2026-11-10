@@ -1,3 +1,5 @@
+use super::*;
+
 #[test]
 fn native_private_control_interop_fixture() {
     let mut pair = chat_read_receipt_pair("private-control-wire-fixture");

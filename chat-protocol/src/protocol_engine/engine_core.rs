@@ -1,3 +1,5 @@
+use super::*;
+
 impl ProtocolEngine {
     pub fn load_or_create_for_local_device(
         storage: Arc<dyn StorageAdapter>,
@@ -75,7 +77,7 @@ impl ProtocolEngine {
         Ok(engine)
     }
 
-    fn load_persisted_state(
+    pub(super) fn load_persisted_state(
         storage: Arc<dyn StorageAdapter>,
         owner_pubkey: PublicKey,
         local_owner: NdrOwnerPubkey,
@@ -179,7 +181,7 @@ impl ProtocolEngine {
         self.persist()
     }
 
-    fn prune_superseded_local_group_sync_fanouts(&mut self) -> bool {
+    pub(super) fn prune_superseded_local_group_sync_fanouts(&mut self) -> bool {
         let original_len = self.pending_group_fanouts.len();
         if original_len < 2 {
             return false;
@@ -349,7 +351,7 @@ impl ProtocolEngine {
             })
     }
 
-    fn verified_roster_owner_for_device(
+    pub(super) fn verified_roster_owner_for_device(
         &self,
         device_pubkey: NdrDevicePubkey,
     ) -> Option<NdrOwnerPubkey> {
@@ -590,7 +592,7 @@ impl ProtocolEngine {
         }
     }
 
-    fn invalidate_known_message_author_cache(&self) {
+    pub(super) fn invalidate_known_message_author_cache(&self) {
         self.known_message_author_cache.borrow_mut().take();
     }
 

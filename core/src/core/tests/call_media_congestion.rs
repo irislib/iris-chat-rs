@@ -5,6 +5,8 @@
 /// calls_sustained_audio_playout_survives_video_bursts -- --ignored --nocapture
 /// Set IRIS_CALL_SOAK_SECONDS=600 or 1800 for ten/thirty wall-clock minutes.
 /// This does not cover hardware audio/video, echo cancellation, or a rate-limited WAN.
+use super::*;
+
 #[test]
 #[ignore = "120-second real FIPS UDP audio/video queue stress"]
 fn calls_sustained_audio_playout_survives_video_bursts() {

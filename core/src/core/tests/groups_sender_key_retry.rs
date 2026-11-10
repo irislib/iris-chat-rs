@@ -1,3 +1,5 @@
+use super::*;
+
 #[test]
 fn appcore_sender_key_repair_request_survives_restart_and_throttles() {
     let bob_storage = Arc::new(InMemoryStorage::new()) as Arc<dyn StorageAdapter>;

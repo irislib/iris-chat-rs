@@ -1,12 +1,14 @@
+use super::*;
+
 impl ProtocolEngine {
-    fn queue_pending_group_sender_key_message(
+    pub(super) fn queue_pending_group_sender_key_message(
         &mut self,
         parsed: nostr_double_ratchet::wire::ParsedGroupSenderKeyMessageEvent,
     ) -> anyhow::Result<()> {
         self.queue_group_sender_key_candidate(parsed, true)
     }
 
-    fn queue_group_sender_key_candidate(
+    pub(super) fn queue_group_sender_key_candidate(
         &mut self,
         parsed: nostr_double_ratchet::wire::ParsedGroupSenderKeyMessageEvent,
         fresh: bool,
@@ -72,7 +74,10 @@ impl ProtocolEngine {
         Ok(())
     }
 
-    fn clear_pending_group_sender_key_candidate_for_direct_event(&mut self, event: &Event) {
+    pub(super) fn clear_pending_group_sender_key_candidate_for_direct_event(
+        &mut self,
+        event: &Event,
+    ) {
         if !protocol_event_has_tag(event, "header") {
             return;
         }
@@ -82,7 +87,7 @@ impl ProtocolEngine {
         self.clear_pending_group_sender_key_candidate(&parsed);
     }
 
-    fn clear_pending_group_sender_key_candidate(
+    pub(super) fn clear_pending_group_sender_key_candidate(
         &mut self,
         parsed: &nostr_double_ratchet::wire::ParsedGroupSenderKeyMessageEvent,
     ) -> bool {
@@ -141,7 +146,7 @@ impl ProtocolEngine {
             })
     }
 
-    fn unmapped_group_sender_key_candidate_is_known_message_author(
+    pub(super) fn unmapped_group_sender_key_candidate_is_known_message_author(
         &self,
         parsed: &nostr_double_ratchet::wire::ParsedGroupSenderKeyMessageEvent,
     ) -> bool {
@@ -168,7 +173,7 @@ impl ProtocolEngine {
             .then_some(group_id)
     }
 
-    fn local_owner_is_inactive_for_group(&self, group_id: &str) -> bool {
+    pub(super) fn local_owner_is_inactive_for_group(&self, group_id: &str) -> bool {
         self.group_manager
             .group_has_member(group_id, self.local_owner)
             == Some(false)
@@ -184,7 +189,7 @@ impl ProtocolEngine {
             .collect()
     }
 
-    fn prune_pending_group_sender_key_work_for_inactive_local_groups(&mut self) -> bool {
+    pub(super) fn prune_pending_group_sender_key_work_for_inactive_local_groups(&mut self) -> bool {
         let inactive_group_ids = self.inactive_local_group_ids();
         if inactive_group_ids.is_empty() {
             return false;
@@ -211,7 +216,7 @@ impl ProtocolEngine {
             || self.pending_group_sender_key_repairs.len() != original_repair_len
     }
 
-    fn group_sender_key_message_from_parsed(
+    pub(super) fn group_sender_key_message_from_parsed(
         &self,
         parsed: &nostr_double_ratchet::wire::ParsedGroupSenderKeyMessageEvent,
     ) -> Option<GroupSenderKeyMessage> {
@@ -229,7 +234,10 @@ impl ProtocolEngine {
         })
     }
 
-    fn group_sender_key_message_has_pending_repair(&self, message: &GroupSenderKeyMessage) -> bool {
+    pub(super) fn group_sender_key_message_has_pending_repair(
+        &self,
+        message: &GroupSenderKeyMessage,
+    ) -> bool {
         let sender = message.sender_event_pubkey.to_hex();
         let key_id = message.encrypted_header.is_none().then_some(message.key_id);
         let number = message
@@ -244,7 +252,7 @@ impl ProtocolEngine {
         })
     }
 
-    fn handle_group_sender_key_message(
+    pub(super) fn handle_group_sender_key_message(
         &mut self,
         message: GroupSenderKeyMessage,
     ) -> anyhow::Result<ProtocolGroupIncomingResult> {
@@ -465,7 +473,7 @@ impl ProtocolEngine {
         }
     }
 
-    fn sender_key_repair_request_effects(
+    pub(super) fn sender_key_repair_request_effects(
         &mut self,
         request: SenderKeyRepairRequest,
         now: NdrUnixSeconds,
@@ -553,7 +561,7 @@ impl ProtocolEngine {
         Ok(output.effects)
     }
 
-    fn retry_pending_group_sender_key_repairs(
+    pub(super) fn retry_pending_group_sender_key_repairs(
         &mut self,
         now: NdrUnixSeconds,
     ) -> anyhow::Result<Vec<ProtocolEffect>> {
@@ -583,7 +591,7 @@ impl ProtocolEngine {
         Ok(effects)
     }
 
-    fn pending_group_sender_key_repair_due_at_secs(
+    pub(super) fn pending_group_sender_key_repair_due_at_secs(
         pending: &ProtocolPendingGroupSenderKeyRepair,
     ) -> u64 {
         if pending.request_count == 0 || pending.last_requested_at_secs == 0 {
@@ -599,7 +607,7 @@ impl ProtocolEngine {
         }
     }
 
-    fn sender_key_repair_response_effects(
+    pub(super) fn sender_key_repair_response_effects(
         &mut self,
         requester_owner: NdrOwnerPubkey,
         request: &SenderKeyRepairRequest,
@@ -626,7 +634,7 @@ impl ProtocolEngine {
         Ok(output.effects)
     }
 
-    fn group_sender_key_repair_response_throttled(
+    pub(super) fn group_sender_key_repair_response_throttled(
         &self,
         requester_owner: NdrOwnerPubkey,
         request: &SenderKeyRepairRequest,

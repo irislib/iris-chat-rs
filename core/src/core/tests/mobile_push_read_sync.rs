@@ -1,3 +1,5 @@
+use super::*;
+
 #[test]
 fn mobile_push_marks_only_own_pairwise_session_authors_as_background() {
     let owner = Keys::generate();
@@ -361,7 +363,7 @@ fn mobile_push_large_group_notification_cleanup_has_one_protocol_load_and_bounde
         rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
     )
     .unwrap();
-    let checkpoint_storage = super::storage::SqliteStorageAdapter::new(
+    let checkpoint_storage = crate::core::storage::SqliteStorageAdapter::new(
         Arc::new(std::sync::Mutex::new(conn)),
         pair.owner.public_key().to_hex(),
         pair.b_device.public_key().to_hex(),
@@ -375,7 +377,7 @@ fn mobile_push_large_group_notification_cleanup_has_one_protocol_load_and_bounde
         .unwrap()
     };
     let before = read_state();
-    super::mobile_push::PREVIEW_WORK.with(|work| work.set((0, 0)));
+    crate::core::mobile_push::PREVIEW_WORK.with(|work| work.set((0, 0)));
     let started = std::time::Instant::now();
     let indexes = read_mobile_push_notification_indexes(
         pair._b_dir.path().to_string_lossy().into_owned(),
@@ -383,7 +385,7 @@ fn mobile_push_large_group_notification_cleanup_has_one_protocol_load_and_bounde
         pair.b_device.secret_key().to_secret_hex(),
         payloads,
     );
-    let (loads, checkpoint_bytes) = super::mobile_push::PREVIEW_WORK.with(|work| work.get());
+    let (loads, checkpoint_bytes) = crate::core::mobile_push::PREVIEW_WORK.with(|work| work.get());
     eprintln!("large-group notification cleanup: {:?}, loads={loads}, checkpoint_bytes={checkpoint_bytes}, state_bytes={}", started.elapsed(), before.len());
     assert_eq!(indexes, expected);
     assert_eq!(
@@ -401,7 +403,7 @@ fn mobile_push_large_group_notification_cleanup_has_one_protocol_load_and_bounde
     );
     // A real receive must persist its ratchet and delivery journal immediately,
     // but must not rewrite the unrelated multi-megabyte group/fanout history.
-    let storage = Arc::new(super::storage::SqliteStorageAdapter::new(
+    let storage = Arc::new(crate::core::storage::SqliteStorageAdapter::new(
         pair.b.app_store.shared(),
         pair.owner.public_key().to_hex(),
         pair.b_device.public_key().to_hex(),
@@ -472,7 +474,7 @@ fn mobile_push_large_group_notification_cleanup_has_one_protocol_load_and_bounde
     let reopened = Arc::new(std::sync::Mutex::new(
         rusqlite::Connection::open(pair._b_dir.path().join("core.sqlite3")).unwrap(),
     ));
-    let storage = Arc::new(super::storage::SqliteStorageAdapter::new(
+    let storage = Arc::new(crate::core::storage::SqliteStorageAdapter::new(
         reopened.clone(),
         pair.owner.public_key().to_hex(),
         pair.b_device.public_key().to_hex(),

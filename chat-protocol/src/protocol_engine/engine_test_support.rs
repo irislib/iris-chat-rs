@@ -1,3 +1,5 @@
+use super::*;
+
 impl ProtocolEngine {
     pub fn fork_for_test(&self) -> anyhow::Result<Self> {
         let storage = Arc::new(crate::InMemoryStorage::new()) as Arc<dyn StorageAdapter>;

@@ -1,3 +1,5 @@
+use super::*;
+
 impl ProtocolEngine {
     pub fn ingest_app_keys_snapshot(
         &mut self,
@@ -177,5 +179,4 @@ impl ProtocolEngine {
             retry_batch: self.retry_pending_protocol(NdrUnixSeconds(now.get()))?,
         })
     }
-
 }

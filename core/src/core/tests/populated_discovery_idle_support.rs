@@ -43,7 +43,7 @@ fn measure_core_writes(core: &mut AppCore) -> (Arc<AtomicUsize>, Arc<AtomicUsize
     let owner = logged.owner_keys.clone().unwrap();
     let device = logged.device_keys.clone();
     let storage = Arc::new(MeasuredProtocolStorage {
-        inner: Arc::new(super::super::storage::SqliteStorageAdapter::new(
+        inner: Arc::new(crate::core::storage::SqliteStorageAdapter::new(
             core.app_store.shared(),
             owner.public_key().to_hex(),
             device.public_key().to_hex(),

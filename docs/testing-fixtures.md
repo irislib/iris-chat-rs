@@ -63,7 +63,7 @@ python3 scripts/test-rust-focused --crate core --jobs 2 --timeout 300 \
   --test core::tests::synthetic_vm_profile::synthetic_vm_export_rejects_unsafe_or_ambiguous_inputs \
   --test core::tests::synthetic_vm_profile::synthetic_vm_seed_corpus_rejects_unsafe_unbounded_or_expired_events \
   --test core::tests::synthetic_vm_profile::synthetic_vm_export_reopens_real_history_and_swift_account_bundle \
-  --test core::tests::synthetic_history_small_fixture_exercises_real_database_and_ffi \
+  --test core::tests::synthetic_history_scale::synthetic_history_small_fixture_exercises_real_database_and_ffi \
   --test core::tests::synthetic_vm_profile::export_populated_native_vm_profile
 ```
 

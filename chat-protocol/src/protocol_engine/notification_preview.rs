@@ -1,8 +1,10 @@
+use super::*;
+
 // Discard outgoing work during decoding, before allocating copies of its bodies.
 // Authentication evidence and incoming recovery queues retain the ordinary
 // decoder and migration rules. This view must never replace the live checkpoint.
 #[derive(Deserialize)]
-struct NotificationPreviewPersistedState {
+pub(super) struct NotificationPreviewPersistedState {
     #[serde(default, rename = "pending_group_fanouts")]
     _fanouts: serde::de::IgnoredAny,
     #[serde(default, rename = "ready_group_publications")]
@@ -12,7 +14,7 @@ struct NotificationPreviewPersistedState {
     #[serde(default, rename = "pending_remote_sends")]
     _remote_sends: serde::de::IgnoredAny,
     #[serde(flatten)]
-    state: ProtocolEnginePersistedState,
+    pub(super) state: ProtocolEnginePersistedState,
 }
 
 impl ProtocolEngine {

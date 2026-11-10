@@ -1,3 +1,5 @@
+use super::*;
+
 #[test]
 fn device_sync_authorization_changes_even_when_routing_peers_stay_the_same() {
     let owner = Keys::generate();

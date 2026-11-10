@@ -1,3 +1,5 @@
+use super::*;
+
 #[test]
 fn expired_history_preserves_newer_unread_badges() {
     for old_delivery in [DeliveryState::Seen, DeliveryState::Received] {

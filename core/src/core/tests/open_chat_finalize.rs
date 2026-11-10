@@ -1,3 +1,5 @@
+use super::*;
+
 fn open_chat_finalize_fixture() -> (
     AppCore,
     flume::Receiver<CoreMsg>,
@@ -28,7 +30,10 @@ fn open_chat_finalize_fixture() -> (
     );
     // Session startup already publishes these durable identity artifacts.
     core.republish_local_identity_artifacts();
-    assert!(core.pending_relay_publishes.values().any(|p| p.label == "app-keys"));
+    assert!(core
+        .pending_relay_publishes
+        .values()
+        .any(|p| p.label == "app-keys"));
     assert!(core
         .pending_relay_publishes
         .values()
@@ -63,15 +68,36 @@ fn open_chat_finalize_preserves_identity_without_rewriting_protocol_checkpoint()
 
     run_open_chat_finalize(&mut core, &receiver, &chat_id);
 
-    assert_eq!(storage.put_count(), before, "opening an unchanged chat must not checkpoint the global protocol state");
+    assert_eq!(
+        storage.put_count(),
+        before,
+        "opening an unchanged chat must not checkpoint the global protocol state"
+    );
     assert_eq!(core.pending_relay_publishes.len(), pending);
-    assert!(!updates.try_iter().any(|update| matches!(update, AppUpdate::NearbyPublishedEvent { .. })),
-        "opening an existing chat must not republish unchanged identity artifacts");
+    assert!(
+        !updates
+            .try_iter()
+            .any(|update| matches!(update, AppUpdate::NearbyPublishedEvent { .. })),
+        "opening an existing chat must not republish unchanged identity artifacts"
+    );
     assert_eq!(core.state.current_chat.as_ref().unwrap().chat_id, chat_id);
-    assert_eq!(core.app_store.load_state().unwrap().unwrap().active_chat_id.as_deref(), Some(chat_id.as_str()));
-    assert!(!core.chat_read_states.contains_key(&chat_id),
-        "opening an empty chat must not create a timestamp-based read cutoff");
-    assert!(core.protocol_subscription_runtime.tracked_peer_catch_up_due_at.is_some());
+    assert_eq!(
+        core.app_store
+            .load_state()
+            .unwrap()
+            .unwrap()
+            .active_chat_id
+            .as_deref(),
+        Some(chat_id.as_str())
+    );
+    assert!(
+        !core.chat_read_states.contains_key(&chat_id),
+        "opening an empty chat must not create a timestamp-based read cutoff"
+    );
+    assert!(core
+        .protocol_subscription_runtime
+        .tracked_peer_catch_up_due_at
+        .is_some());
 }
 
 #[test]
@@ -85,8 +111,17 @@ fn open_chat_finalize_schedules_catch_up_without_starting_global_fetch() {
 
     assert!(!core.protocol_subscription_runtime.protocol_fetch_in_flight,
         "opening a chat must not start an immediate global fetch ahead of queued foreground actions");
-    assert!(core.protocol_subscription_runtime.desired_plan.as_ref().is_some_and(|plan|
-        plan.roster_authors.contains(&chat_id)), "the opened peer must still be subscribed");
-    assert!(core.protocol_subscription_runtime.tracked_peer_catch_up_due_at.is_some(),
-        "coalesced catch-up must remain available for the opened peer");
+    assert!(
+        core.protocol_subscription_runtime
+            .desired_plan
+            .as_ref()
+            .is_some_and(|plan| plan.roster_authors.contains(&chat_id)),
+        "the opened peer must still be subscribed"
+    );
+    assert!(
+        core.protocol_subscription_runtime
+            .tracked_peer_catch_up_due_at
+            .is_some(),
+        "coalesced catch-up must remain available for the opened peer"
+    );
 }

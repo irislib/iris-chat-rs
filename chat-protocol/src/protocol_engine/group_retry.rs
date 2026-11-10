@@ -1,13 +1,15 @@
-const GROUP_SENDER_KEY_RETRY_LIMIT: usize = 8;
+use super::*;
+
+pub(super) const GROUP_SENDER_KEY_RETRY_LIMIT: usize = 8;
 const GROUP_SENDER_KEY_TRIALS_PER_TURN: usize = 256;
 const GROUP_SENDER_KEY_RETRY_SLICE: std::time::Duration = std::time::Duration::from_millis(25);
 
 #[derive(Clone, PartialEq, Eq)]
-struct GroupSenderKeyRetryInput {
+pub(super) struct GroupSenderKeyRetryInput {
     group_id: String,
     protocol: GroupProtocol,
     members: Vec<NdrOwnerPubkey>,
-    revision: u64,
+    pub(super) revision: u64,
     sender_owner: NdrOwnerPubkey,
     sender_device: NdrDevicePubkey,
     is_local_sending_chain: bool,
@@ -19,23 +21,23 @@ struct GroupSenderKeyRetryInput {
 /// One input change admits each affected candidate once, in FIFO order. A failed
 /// blind key search cannot run again until its actual decryption inputs change.
 #[derive(Clone)]
-struct ProtocolGroupSenderKeyRetry {
-    inputs: BTreeMap<NdrDevicePubkey, GroupSenderKeyRetryInput>,
-    ready: std::collections::VecDeque<(NdrDevicePubkey, String)>,
-    queued: HashSet<String>,
-    started: Option<std::time::Instant>,
-    attempts: usize,
-    key_trials_remaining: usize,
-    active: Option<ActiveGroupSenderKeyDecrypt>,
-    prepared: Option<(String, nostr_double_ratchet::GroupSenderKeyReceivePlan)>,
-    fresh: std::collections::VecDeque<FreshGroupSenderKeyCandidate>,
-    yielded: bool,
+pub(super) struct ProtocolGroupSenderKeyRetry {
+    pub(super) inputs: BTreeMap<NdrDevicePubkey, GroupSenderKeyRetryInput>,
+    pub(super) ready: std::collections::VecDeque<(NdrDevicePubkey, String)>,
+    pub(super) queued: HashSet<String>,
+    pub(super) started: Option<std::time::Instant>,
+    pub(super) attempts: usize,
+    pub(super) key_trials_remaining: usize,
+    pub(super) active: Option<ActiveGroupSenderKeyDecrypt>,
+    pub(super) prepared: Option<(String, nostr_double_ratchet::GroupSenderKeyReceivePlan)>,
+    pub(super) fresh: std::collections::VecDeque<FreshGroupSenderKeyCandidate>,
+    pub(super) yielded: bool,
     #[cfg(test)]
-    total_attempts: usize,
+    pub(super) total_attempts: usize,
     #[cfg(test)]
-    receive_checkpoints: usize,
+    pub(super) receive_checkpoints: usize,
     #[cfg(test)]
-    continuation_ready_comparisons: usize,
+    pub(super) continuation_ready_comparisons: usize,
 }
 
 impl Default for ProtocolGroupSenderKeyRetry {
@@ -62,14 +64,14 @@ impl Default for ProtocolGroupSenderKeyRetry {
 }
 
 impl ProtocolGroupSenderKeyRetry {
-    fn reset_budget(&mut self) {
+    pub(super) fn reset_budget(&mut self) {
         self.started = None;
         self.attempts = 0;
         self.key_trials_remaining = GROUP_SENDER_KEY_TRIALS_PER_TURN;
         self.yielded = false;
     }
 
-    fn remove_ready_for_continuation(&mut self, fingerprint: &str) {
+    pub(super) fn remove_ready_for_continuation(&mut self, fingerprint: &str) {
         // Admission through `queued` makes each fingerprint unique. An active
         // continuation is normally first; stop there instead of visiting the
         // entire backlog. A displaced entry still retains every other position.
@@ -133,7 +135,7 @@ impl ProtocolGroupSenderKeyRetry {
 }
 
 impl ProtocolEngine {
-    fn refresh_group_sender_key_retry_inputs(&self) {
+    pub(super) fn refresh_group_sender_key_retry_inputs(&self) {
         let mut retry = self.group_sender_key_retry.borrow_mut();
         if self.pending_group_sender_key_messages.is_empty() {
             retry.active = None;
@@ -204,7 +206,7 @@ impl ProtocolEngine {
         }
     }
 
-    fn retry_eligible_group_sender_key_messages(
+    pub(super) fn retry_eligible_group_sender_key_messages(
         &mut self,
     ) -> anyhow::Result<ProtocolGroupIncomingResult> {
         if self.batch_depth.get() == 0 {

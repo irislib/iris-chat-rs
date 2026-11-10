@@ -1,3 +1,5 @@
+use super::*;
+
 #[test]
 fn device_sync_typed_records_repair_reactions_and_current_state_with_both_history_choices() {
     run_device_sync_typed_records(None);

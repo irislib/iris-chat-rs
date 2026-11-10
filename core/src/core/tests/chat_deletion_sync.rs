@@ -1,4 +1,6 @@
-fn deliver_sync_snapshot(sender: &AppCore, receiver: &mut AppCore, device: &Keys) {
+use super::*;
+
+pub(super) fn deliver_sync_snapshot(sender: &AppCore, receiver: &mut AppCore, device: &Keys) {
     for packet in sender.build_device_sync_packets_for_test(100, true) {
         receiver.handle_device_sync_packet(&device.public_key().to_hex(), 7369, &packet);
     }

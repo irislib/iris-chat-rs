@@ -1,3 +1,5 @@
+use super::*;
+
 #[test]
 fn remote_signer_client_and_bunker_login_preserve_roster_and_restart_without_signer() {
     for (client_initiated, fault) in [
@@ -201,7 +203,7 @@ fn remote_signer_cancellation_ignores_old_callbacks_and_local_login_supersedes_i
 
 #[test]
 fn remote_signer_links_and_auth_urls_are_validated() {
-    use super::remote_signer_uri::{parse_signer_connection, safe_auth_url};
+    use crate::core::remote_signer_uri::{parse_signer_connection, safe_auth_url};
     let signer = Keys::generate().public_key().to_hex();
     for input in [
         "https://example.com".to_string(),
@@ -289,7 +291,7 @@ fn finish_remote_login_through_suspend(core: &mut AppCore, messages: &flume::Rec
 fn remote_signer_connection_name_uses_percent_encoded_spaces_for_amber() {
     let keys = Keys::generate();
     let relay = RelayUrl::parse("wss://relay.example").unwrap();
-    let uri = super::remote_signer_uri::client_connection_uri(&keys, &[relay], "test-secret");
+    let uri = crate::core::remote_signer_uri::client_connection_uri(&keys, &[relay], "test-secret");
     assert!(uri.contains("name=Iris%20Chat"));
     assert!(!uri.contains('+'));
     let parsed = url::Url::parse(&uri).unwrap();

@@ -1,10 +1,12 @@
-fn crafted_private_invite_response(
+use super::*;
+
+pub(super) fn crafted_private_invite_response(
     invite_url: &str,
     invitee_device: &Keys,
     payload_device_id: Option<String>,
     claimed_owner: Option<PublicKey>,
 ) -> Event {
-    let invite = super::invites::parse_public_invite_input(invite_url)
+    let invite = crate::core::invites::parse_public_invite_input(invite_url)
         .expect("parse private invite for response");
     let (_, envelope) = invite
         .accept_with_owner(
@@ -17,13 +19,19 @@ fn crafted_private_invite_response(
     invite_response_event(&envelope).expect("build private invite response event")
 }
 
-fn create_private_invite_for_test(core: &mut AppCore) -> String {
+pub(super) fn create_private_invite_for_test(core: &mut AppCore) -> String {
     core.pending_relay_publishes.clear();
     core.create_legacy_invite_for_test();
-    super::invites::chat_invite_url(core.private_chat_invites.values().max_by_key(|i| i.created_at).unwrap()).unwrap()
+    crate::core::invites::chat_invite_url(
+        core.private_chat_invites
+            .values()
+            .max_by_key(|i| i.created_at)
+            .unwrap(),
+    )
+    .unwrap()
 }
 
-fn active_session_device_pubkeys(core: &AppCore, owner: PublicKey) -> Vec<PublicKey> {
+pub(super) fn active_session_device_pubkeys(core: &AppCore, owner: PublicKey) -> Vec<PublicKey> {
     let owner = NdrOwnerPubkey::from_bytes(owner.to_bytes());
     core.protocol_engine
         .as_ref()
@@ -40,7 +48,7 @@ fn active_session_device_pubkeys(core: &AppCore, owner: PublicKey) -> Vec<Public
         .collect()
 }
 
-fn stored_session_count(core: &AppCore, owner: PublicKey) -> usize {
+pub(super) fn stored_session_count(core: &AppCore, owner: PublicKey) -> usize {
     let owner = NdrOwnerPubkey::from_bytes(owner.to_bytes());
     core.protocol_engine
         .as_ref()
@@ -54,7 +62,7 @@ fn stored_session_count(core: &AppCore, owner: PublicKey) -> usize {
         .sum()
 }
 
-fn forged_private_invite_url(inviter_device: &Keys, claimed_owner: PublicKey) -> String {
+pub(super) fn forged_private_invite_url(inviter_device: &Keys, claimed_owner: PublicKey) -> String {
     let mut invite = Invite::create_new(
         inviter_device.public_key(),
         Some(inviter_device.public_key().to_hex()),
@@ -64,10 +72,10 @@ fn forged_private_invite_url(inviter_device: &Keys, claimed_owner: PublicKey) ->
     invite.owner_public_key = Some(claimed_owner);
     invite.inviter_owner_pubkey = Some(NdrOwnerPubkey::from_bytes(claimed_owner.to_bytes()));
     invite.purpose = Some("private".to_string());
-    super::invites::chat_invite_url(&invite).expect("serialize forged private invite")
+    crate::core::invites::chat_invite_url(&invite).expect("serialize forged private invite")
 }
 
-fn ingest_invite_owner_app_keys(
+pub(super) fn ingest_invite_owner_app_keys(
     core: &mut AppCore,
     owner: PublicKey,
     events: Vec<Event>,
@@ -79,7 +87,7 @@ fn ingest_invite_owner_app_keys(
     core.resume_pending_outgoing_invite_acceptance(owner);
 }
 
-fn prove_invite_owner(core: &mut AppCore, owner: &Keys, device: &Keys, created_at: u64) {
+pub(super) fn prove_invite_owner(core: &mut AppCore, owner: &Keys, device: &Keys, created_at: u64) {
     let app_keys = signed_app_keys_authorization_event(owner, device.public_key(), created_at);
     ingest_invite_owner_app_keys(core, owner.public_key(), vec![app_keys]);
 }
@@ -102,7 +110,11 @@ fn private_invite_owner_claim_without_roster_waits_before_side_effects() {
         invite_input: invite_url,
     });
 
-    assert!(bob.state.toast.as_deref().is_some_and(|toast| toast.contains("Verifying")));
+    assert!(bob
+        .state
+        .toast
+        .as_deref()
+        .is_some_and(|toast| toast.contains("Verifying")));
     assert!(bob.pending_outgoing_invite_acceptance.is_some());
     assert!(!bob
         .threads
@@ -147,16 +159,9 @@ fn private_invite_owner_claim_from_unlisted_device_is_rejected() {
     bob.handle_action(AppAction::AcceptInvite {
         invite_input: invite_url,
     });
-    let excluding = signed_app_keys_authorization_event(
-        &victim_owner,
-        victim_device.public_key(),
-        10,
-    );
-    ingest_invite_owner_app_keys(
-        &mut bob,
-        victim_owner.public_key(),
-        vec![excluding],
-    );
+    let excluding =
+        signed_app_keys_authorization_event(&victim_owner, victim_device.public_key(), 10);
+    ingest_invite_owner_app_keys(&mut bob, victim_owner.public_key(), vec![excluding]);
 
     assert!(bob.pending_outgoing_invite_acceptance.is_none());
     assert!(bob
@@ -208,11 +213,8 @@ fn claimed_private_invite_owner_waits_for_signed_app_keys_before_import() {
         .compute_protocol_subscription_plan()
         .is_some_and(|plan| plan.roster_authors.contains(&claimed_owner_hex)));
 
-    let authorization = signed_app_keys_authorization_event(
-        &claimed_owner,
-        invitee_device.public_key(),
-        10,
-    );
+    let authorization =
+        signed_app_keys_authorization_event(&claimed_owner, invitee_device.public_key(), 10);
     ingest_invite_owner_app_keys(
         &mut inviter,
         claimed_owner.public_key(),
@@ -228,7 +230,7 @@ fn claimed_private_invite_owner_waits_for_signed_app_keys_before_import() {
     );
 }
 
- #[test]
+#[test]
 fn pending_response_write_failure_stays_retryable_and_never_falls_through() {
     let inviter_owner = Keys::generate();
     let inviter_device = Keys::generate();
@@ -280,7 +282,7 @@ fn pending_response_write_failure_stays_retryable_and_never_falls_through() {
     assert!(active_session_device_pubkeys(&inviter, peer_owner.public_key()).is_empty());
 }
 
- #[test]
+#[test]
 fn expired_pending_response_is_removed_without_consuming_invite() {
     let inviter_owner = Keys::generate();
     let inviter_device = Keys::generate();
@@ -301,9 +303,7 @@ fn expired_pending_response_is_removed_without_consuming_invite() {
     for pending in inviter.pending_private_invite_responses.values_mut() {
         pending.queued_at_secs = unix_now()
             .get()
-            .saturating_sub(
-                super::invites::PENDING_PRIVATE_INVITE_RESPONSE_TTL_SECS,
-            );
+            .saturating_sub(crate::core::invites::PENDING_PRIVATE_INVITE_RESPONSE_TTL_SECS);
     }
 
     inviter.prune_pending_private_invite_responses();
@@ -345,12 +345,14 @@ fn private_invite_owner_spoof_is_quarantined_despite_authorized_payload_device_i
     assert!(!inviter.threads.contains_key(&victim_hex));
     assert!(active_session_device_pubkeys(&inviter, victim_owner.public_key()).is_empty());
     assert!(inviter.debug_log.iter().any(|entry| {
-            entry.detail.contains("action=await_app_keys")
-            && entry.detail.contains(&attacker_device.public_key().to_hex())
+        entry.detail.contains("action=await_app_keys")
+            && entry
+                .detail
+                .contains(&attacker_device.public_key().to_hex())
     }));
 }
 
- #[test]
+#[test]
 fn verified_private_invite_response_import_ignores_payload_device_id() {
     let inviter_owner = Keys::generate();
     let inviter_device = Keys::generate();
@@ -379,11 +381,7 @@ fn verified_private_invite_response_import_ignores_payload_device_id() {
     );
 
     inviter.handle_relay_event(response);
-    ingest_invite_owner_app_keys(
-        &mut inviter,
-        peer_owner.public_key(),
-        vec![app_keys],
-    );
+    ingest_invite_owner_app_keys(&mut inviter, peer_owner.public_key(), vec![app_keys]);
 
     assert_eq!(
         active_session_device_pubkeys(&inviter, peer_owner.public_key()),
@@ -438,11 +436,8 @@ fn pending_private_invite_response_survives_restart() {
         .contains_key(&peer_owner.public_key().to_hex()));
     assert!(active_session_device_pubkeys(&restarted, peer_owner.public_key()).is_empty());
 
-    let authorization = signed_app_keys_authorization_event(
-        &peer_owner,
-        peer_device.public_key(),
-        10,
-    );
+    let authorization =
+        signed_app_keys_authorization_event(&peer_owner, peer_device.public_key(), 10);
     restarted.handle_relay_event(authorization);
 
     assert!(restarted.pending_private_invite_responses.is_empty());
@@ -512,7 +507,7 @@ fn explicit_self_owned_private_invite_response_is_self_authenticated() {
         .contains_key(&peer_device.public_key().to_hex()));
 }
 
-  #[test]
+#[test]
 fn pending_private_invite_responses_are_bounded_per_invite() {
     let inviter_owner = Keys::generate();
     let inviter_device = Keys::generate();
@@ -535,7 +530,7 @@ fn pending_private_invite_responses_are_bounded_per_invite() {
 
     assert_eq!(
         inviter.pending_private_invite_responses.len(),
-        super::invites::PENDING_PRIVATE_INVITE_RESPONSE_PER_INVITE_LIMIT
+        crate::core::invites::PENDING_PRIVATE_INVITE_RESPONSE_PER_INVITE_LIMIT
     );
     assert!(!inviter.private_chat_invites.is_empty());
 }

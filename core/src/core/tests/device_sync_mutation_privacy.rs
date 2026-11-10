@@ -1,3 +1,5 @@
+use super::*;
+
 #[test]
 fn device_sync_mutations_reject_unknown_and_pre_link_targets_on_import() {
     for unknown in [false, true] {
