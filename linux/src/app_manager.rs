@@ -26,9 +26,10 @@ use std::time::{Duration, Instant};
 
 use gtk::prelude::{ObjectExt, WidgetExt};
 use iris_chat_core::{
-    AppAction, AppReconciler, AppState, AppUpdate, ChatThreadSnapshot, DesktopNearbyObserver,
-    DesktopNearbySnapshot, DeviceAuthorizationState, FfiApp, FfiDesktopNearby, OutgoingAttachment,
-    Router, Screen, SearchResultSnapshot,
+    optimistic_push_screen_stack, pending_navigation_settled, AppAction, AppReconciler, AppState,
+    AppUpdate, ChatThreadSnapshot, DesktopNearbyObserver, DesktopNearbySnapshot,
+    DeviceAuthorizationState, FfiApp, FfiDesktopNearby, OutgoingAttachment, Router, Screen,
+    SearchResultSnapshot,
 };
 use serde::Serialize;
 
@@ -596,7 +597,15 @@ impl AppManager {
                 true
             }
             AppAction::PushScreen { screen } => {
-                if let Some(stack) = self.stack_by_applying_push_screen(&screen) {
+                let predicted = {
+                    let state = self.local_state.borrow();
+                    optimistic_push_screen_stack(
+                        state.account.is_some(),
+                        state.router.screen_stack.clone(),
+                        screen.clone(),
+                    )
+                };
+                if let Some(stack) = predicted {
                     self.navigate_optimistically(stack, AppAction::PushScreen { screen });
                 } else {
                     self.dispatch_to_rust(AppAction::PushScreen { screen }, false);
@@ -608,83 +617,6 @@ impl AppManager {
                 true
             }
             _ => false,
-        }
-    }
-
-    fn stack_by_applying_push_screen(&self, screen: &Screen) -> Option<Vec<Screen>> {
-        let state = self.local_state.borrow();
-        if state.account.is_none() {
-            return match screen {
-                Screen::Welcome => Some(Vec::new()),
-                Screen::CreateAccount
-                | Screen::RestoreAccount
-                | Screen::RemoteSigner
-                | Screen::AddDevice => Some(vec![screen.clone()]),
-                _ => None,
-            };
-        }
-
-        match screen {
-            Screen::ChatList => Some(Vec::new()),
-            Screen::NewChat
-            | Screen::NewGroup
-            | Screen::CreateInvite
-            | Screen::JoinInvite
-            | Screen::Settings
-            | Screen::DeviceRoster => Some(vec![screen.clone()]),
-            Screen::Chat { chat_id } => {
-                let trimmed = chat_id.trim();
-                if trimmed.is_empty() {
-                    None
-                } else {
-                    Some(vec![Screen::Chat {
-                        chat_id: trimmed.to_string(),
-                    }])
-                }
-            }
-            Screen::DirectChatInfo { chat_id } => {
-                let trimmed = chat_id.trim();
-                if trimmed.is_empty() {
-                    None
-                } else {
-                    let mut stack = state.router.screen_stack.clone();
-                    let info = Screen::DirectChatInfo {
-                        chat_id: trimmed.to_string(),
-                    };
-                    if stack.last() != Some(&info) {
-                        stack.push(info);
-                    }
-                    Some(stack)
-                }
-            }
-            Screen::GroupDetails { group_id } => {
-                let trimmed = group_id.trim();
-                if trimmed.is_empty() {
-                    return None;
-                }
-                let group_chat_id = format!("group:{trimmed}");
-                let mut stack = if active_chat_id(&state).as_deref() == Some(group_chat_id.as_str())
-                {
-                    state.router.screen_stack.clone()
-                } else {
-                    vec![Screen::Chat {
-                        chat_id: group_chat_id,
-                    }]
-                };
-                let details = Screen::GroupDetails {
-                    group_id: trimmed.to_string(),
-                };
-                if stack.last() != Some(&details) {
-                    stack.push(details);
-                }
-                Some(stack)
-            }
-            Screen::CreateAccount
-            | Screen::RestoreAccount
-            | Screen::RemoteSigner
-            | Screen::AddDevice
-            | Screen::DeviceRevoked
-            | Screen::Welcome => None,
         }
     }
 
@@ -704,15 +636,12 @@ impl AppManager {
         let Some(pending) = pending_slot.as_ref() else {
             return next_state;
         };
-        if next_state.account.is_none() {
-            *pending_slot = None;
-            return next_state;
-        }
-        if next_state.router.screen_stack == pending.stack {
-            *pending_slot = None;
-            return next_state;
-        }
-        if Instant::now() >= pending.expires_at {
+        if pending_navigation_settled(
+            next_state.account.is_some(),
+            pending.stack.clone(),
+            next_state.router.screen_stack.clone(),
+            Instant::now() >= pending.expires_at,
+        ) {
             *pending_slot = None;
             return next_state;
         }

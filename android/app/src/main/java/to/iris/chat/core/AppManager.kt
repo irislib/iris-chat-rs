@@ -75,6 +75,8 @@ import to.iris.chat.rust.PeerProfileDebugSnapshot
 import to.iris.chat.rust.Screen
 import to.iris.chat.rust.SearchResultSnapshot
 import to.iris.chat.rust.downloadHashtreeAttachment
+import to.iris.chat.rust.optimisticPushScreenStack
+import to.iris.chat.rust.pendingNavigationSettled
 import to.iris.chat.push.AndroidMobilePushRuntime
 import to.iris.chat.update.AndroidSelfUpdateManager
 private const val ACTIVE_CHAT_SEEN_IDLE_LIMIT_SECS = 5 * 60L
@@ -684,7 +686,13 @@ class AppManager(
                 true
             }
             is AppAction.PushScreen -> {
-                val stack = stackByApplyingPushScreen(action.screen)
+                val current = mutableState.value
+                val stack =
+                    optimisticPushScreenStack(
+                        hasAccount = current.account != null,
+                        screenStack = current.router.screenStack,
+                        screen = action.screen,
+                    )
                 if (stack == null) {
                     dispatchToRust(action)
                 } else {
@@ -702,79 +710,6 @@ class AppManager(
             }
             else -> false
         }
-
-    private fun stackByApplyingPushScreen(screen: Screen): List<Screen>? {
-        if (mutableState.value.account == null) {
-            return when (screen) {
-                is Screen.Welcome -> emptyList()
-                is Screen.CreateAccount,
-                is Screen.RestoreAccount, is Screen.RemoteSigner,
-                is Screen.AddDevice,
-                -> listOf(screen)
-                else -> null
-            }
-        }
-
-        return when (screen) {
-            is Screen.ChatList -> emptyList()
-            is Screen.NewChat,
-            is Screen.NewGroup,
-            is Screen.CreateInvite,
-            is Screen.JoinInvite,
-            is Screen.Settings,
-            is Screen.DeviceRoster,
-            -> listOf(screen)
-            is Screen.Chat -> {
-                val trimmed = screen.chatId.trim()
-                if (trimmed.isEmpty()) null else listOf(Screen.Chat(trimmed))
-            }
-            is Screen.DirectChatInfo -> {
-                val trimmed = screen.chatId.trim()
-                if (trimmed.isEmpty()) {
-                    null
-                } else {
-                    val currentStack = mutableState.value.router.screenStack
-                    val info = Screen.DirectChatInfo(trimmed)
-                    if (currentStack.lastOrNull() == info) {
-                        currentStack
-                    } else {
-                        currentStack + info
-                    }
-                }
-            }
-            is Screen.GroupDetails -> {
-                val trimmed = screen.groupId.trim()
-                if (trimmed.isEmpty()) {
-                    null
-                } else {
-                    val groupChatId = "$MOBILE_PUSH_GROUP_CHAT_PREFIX$trimmed"
-                    val current = mutableState.value
-                    val activeScreen =
-                        current.router.screenStack.lastOrNull() ?: current.router.defaultScreen
-                    val routeChatId = (activeScreen as? Screen.Chat)?.chatId?.trim()
-                    val currentChatId = current.currentChat?.chatId?.trim()
-                    val baseStack =
-                        if (routeChatId == groupChatId || currentChatId == groupChatId) {
-                            current.router.screenStack
-                        } else {
-                            listOf(Screen.Chat(groupChatId))
-                        }
-                    val details = Screen.GroupDetails(trimmed)
-                    if (baseStack.lastOrNull() == details) {
-                        baseStack
-                    } else {
-                        baseStack + details
-                    }
-                }
-            }
-            is Screen.CreateAccount,
-            is Screen.RestoreAccount, is Screen.RemoteSigner,
-            is Screen.AddDevice,
-            is Screen.DeviceRevoked,
-            is Screen.Welcome,
-            -> null
-        }
-    }
 
     private fun navigateOptimistically(
         stack: List<Screen>,
@@ -1232,15 +1167,13 @@ class AppManager(
 
     private fun stateByReconcilingPendingNavigation(nextState: AppState): AppState {
         val pending = pendingNavigationOverride ?: return nextState
-        if (nextState.account == null) {
-            pendingNavigationOverride = null
-            return nextState
-        }
-        if (nextState.router.screenStack == pending.stack) {
-            pendingNavigationOverride = null
-            return nextState
-        }
-        if (SystemClock.elapsedRealtime() >= pending.expiresAtMs) {
+        if (pendingNavigationSettled(
+                hasAccount = nextState.account != null,
+                pendingStack = pending.stack,
+                coreStack = nextState.router.screenStack,
+                expired = SystemClock.elapsedRealtime() >= pending.expiresAtMs,
+            )
+        ) {
             pendingNavigationOverride = null
             return nextState
         }

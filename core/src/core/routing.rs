@@ -1,5 +1,101 @@
 use super::*;
 
+/// Predicts the screen stack that [`AppCore::push_screen`] will produce, so a
+/// shell can show the destination before the core confirms it. `None` means
+/// the push has no predictable result and the shell must wait for the core.
+#[uniffi::export]
+pub fn optimistic_push_screen_stack(
+    has_account: bool,
+    mut screen_stack: Vec<Screen>,
+    screen: Screen,
+) -> Option<Vec<Screen>> {
+    if !has_account {
+        return match screen {
+            Screen::Welcome => Some(Vec::new()),
+            Screen::CreateAccount
+            | Screen::RestoreAccount
+            | Screen::RemoteSigner
+            | Screen::AddDevice => Some(vec![screen]),
+            _ => None,
+        };
+    }
+
+    match screen {
+        Screen::ChatList => Some(Vec::new()),
+        Screen::NewChat
+        | Screen::NewGroup
+        | Screen::CreateInvite
+        | Screen::JoinInvite
+        | Screen::Settings
+        | Screen::DeviceRoster => Some(vec![screen]),
+        Screen::Chat { chat_id } => {
+            let chat_id = chat_id.trim();
+            (!chat_id.is_empty()).then(|| {
+                vec![Screen::Chat {
+                    chat_id: chat_id.to_string(),
+                }]
+            })
+        }
+        Screen::DirectChatInfo { chat_id } => {
+            let chat_id = chat_id.trim();
+            if chat_id.is_empty() {
+                return None;
+            }
+            let info = Screen::DirectChatInfo {
+                chat_id: chat_id.to_string(),
+            };
+            if screen_stack.last() != Some(&info) {
+                screen_stack.push(info);
+            }
+            Some(screen_stack)
+        }
+        Screen::GroupDetails { group_id } => {
+            let group_id = group_id.trim();
+            if group_id.is_empty() {
+                return None;
+            }
+            let group_chat_id = group_chat_id(group_id);
+            if active_chat_in_stack(&screen_stack) != Some(group_chat_id.as_str()) {
+                screen_stack = vec![Screen::Chat {
+                    chat_id: group_chat_id,
+                }];
+            }
+            let details = Screen::GroupDetails {
+                group_id: group_id.to_string(),
+            };
+            if screen_stack.last() != Some(&details) {
+                screen_stack.push(details);
+            }
+            Some(screen_stack)
+        }
+        Screen::CreateAccount
+        | Screen::RestoreAccount
+        | Screen::RemoteSigner
+        | Screen::AddDevice
+        | Screen::DeviceRevoked
+        | Screen::Welcome => None,
+    }
+}
+
+/// Whether a shell should drop its optimistic stack and show the core's:
+/// the account is gone, the core caught up, or the shell's timeout `expired`.
+#[uniffi::export]
+pub fn pending_navigation_settled(
+    has_account: bool,
+    pending_stack: Vec<Screen>,
+    core_stack: Vec<Screen>,
+    expired: bool,
+) -> bool {
+    !has_account || expired || pending_stack == core_stack
+}
+
+fn active_chat_in_stack(screen_stack: &[Screen]) -> Option<&str> {
+    screen_stack.iter().rev().find_map(|screen| match screen {
+        Screen::Chat { chat_id } => Some(chat_id.as_str()),
+        _ => None,
+    })
+}
+
 impl AppCore {
     pub(super) fn push_screen(&mut self, screen: Screen) {
         if self.state.account.is_none() {
@@ -255,14 +351,7 @@ impl AppCore {
     }
 
     pub(super) fn sync_active_chat_from_router(&mut self) {
-        match self
-            .screen_stack
-            .iter()
-            .rev()
-            .find_map(|screen| match screen {
-                Screen::Chat { chat_id } => Some(chat_id.clone()),
-                _ => None,
-            }) {
+        match active_chat_in_stack(&self.screen_stack).map(str::to_string) {
             Some(chat_id) => {
                 self.active_chat_id = Some(chat_id.clone());
                 if let Some(thread) = self.threads.get_mut(&chat_id) {
@@ -273,5 +362,103 @@ impl AppCore {
                 self.active_chat_id = None;
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod optimistic_navigation_tests {
+    use super::*;
+
+    fn chat(chat_id: &str) -> Screen {
+        Screen::Chat {
+            chat_id: chat_id.to_string(),
+        }
+    }
+
+    fn group_details(group_id: &str) -> Screen {
+        Screen::GroupDetails {
+            group_id: group_id.to_string(),
+        }
+    }
+
+    fn direct_info(chat_id: &str) -> Screen {
+        Screen::DirectChatInfo {
+            chat_id: chat_id.to_string(),
+        }
+    }
+
+    #[test]
+    fn logged_out_pushes_only_predict_onboarding_screens() {
+        let push = |screen| optimistic_push_screen_stack(false, vec![Screen::AddDevice], screen);
+        assert_eq!(push(Screen::Welcome), Some(vec![]));
+        assert_eq!(
+            push(Screen::RestoreAccount),
+            Some(vec![Screen::RestoreAccount])
+        );
+        assert_eq!(push(Screen::RemoteSigner), Some(vec![Screen::RemoteSigner]));
+        assert_eq!(push(Screen::Settings), None);
+        assert_eq!(push(chat("a")), None);
+    }
+
+    #[test]
+    fn logged_in_root_screens_replace_the_stack() {
+        let push = |screen| optimistic_push_screen_stack(true, vec![chat("a")], screen);
+        assert_eq!(push(Screen::ChatList), Some(vec![]));
+        assert_eq!(push(Screen::Settings), Some(vec![Screen::Settings]));
+        assert_eq!(push(chat(" b ")), Some(vec![chat("b")]));
+        assert_eq!(push(chat("  ")), None);
+        assert_eq!(push(Screen::Welcome), None);
+        assert_eq!(push(Screen::AddDevice), None);
+        assert_eq!(push(Screen::DeviceRevoked), None);
+    }
+
+    #[test]
+    fn direct_chat_info_is_pushed_once() {
+        let stack = vec![chat("a")];
+        let pushed = optimistic_push_screen_stack(true, stack, direct_info(" a ")).unwrap();
+        assert_eq!(pushed, vec![chat("a"), direct_info("a")]);
+        assert_eq!(
+            optimistic_push_screen_stack(true, pushed.clone(), direct_info("a")),
+            Some(pushed)
+        );
+        assert_eq!(
+            optimistic_push_screen_stack(true, vec![], direct_info(" ")),
+            None
+        );
+    }
+
+    #[test]
+    fn group_details_opens_the_group_chat_unless_it_is_active() {
+        let opened = vec![chat("group:g"), group_details("g")];
+        assert_eq!(
+            optimistic_push_screen_stack(true, vec![chat("a")], group_details(" g ")),
+            Some(opened.clone())
+        );
+        assert_eq!(
+            optimistic_push_screen_stack(true, vec![chat("group:g")], group_details("g")),
+            Some(opened.clone())
+        );
+        assert_eq!(
+            optimistic_push_screen_stack(true, opened.clone(), group_details("g")),
+            Some(opened)
+        );
+        assert_eq!(
+            optimistic_push_screen_stack(true, vec![], group_details("")),
+            None
+        );
+    }
+
+    #[test]
+    fn pending_navigation_settles_on_logout_match_or_expiry() {
+        let pending = || vec![chat("a")];
+        assert!(!pending_navigation_settled(true, pending(), vec![], false));
+        assert!(pending_navigation_settled(
+            true,
+            pending(),
+            pending(),
+            false
+        ));
+        assert!(pending_navigation_settled(true, pending(), vec![], true));
+        assert!(pending_navigation_settled(false, pending(), vec![], false));
     }
 }

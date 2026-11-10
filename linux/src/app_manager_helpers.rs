@@ -19,21 +19,6 @@ pub(super) fn nearby_avatar_visible(
         })
 }
 
-pub(super) fn active_chat_id(state: &AppState) -> Option<String> {
-    let active = state
-        .router
-        .screen_stack
-        .last()
-        .unwrap_or(&state.router.default_screen);
-    match active {
-        Screen::Chat { chat_id } => Some(chat_id.trim().to_string()),
-        _ => state
-            .current_chat
-            .as_ref()
-            .map(|chat| chat.chat_id.trim().to_string()),
-    }
-}
-
 pub(super) fn action_clears_pending_navigation(action: &AppAction) -> bool {
     matches!(
         action,

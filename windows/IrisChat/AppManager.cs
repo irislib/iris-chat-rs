@@ -234,7 +234,11 @@ public sealed partial class AppManager : INotifyPropertyChanged
 
     public void Push(Screen screen)
     {
-        var stack = StackByApplyingPushScreen(screen);
+        var stack = Native.OptimisticPushScreenStack(
+            _state.account != null,
+            _state.router.screenStack ?? Array.Empty<Screen>(),
+            screen
+        );
         if (stack is null)
         {
             DispatchToRust(new AppAction.PushScreen(screen));
@@ -956,62 +960,6 @@ public sealed partial class AppManager : INotifyPropertyChanged
             StopNearbySafely(showToastOnFailure: false);
     }
 
-    private Screen[]? StackByApplyingPushScreen(Screen screen)
-    {
-        if (_state.account == null)
-        {
-            return screen switch
-            {
-                Screen.Welcome => Array.Empty<Screen>(),
-                Screen.CreateAccount or Screen.RestoreAccount or Screen.RemoteSigner or Screen.AddDevice => new[] { screen },
-                _ => null,
-            };
-        }
-
-        switch (screen)
-        {
-            case Screen.ChatList:
-                return Array.Empty<Screen>();
-            case Screen.NewChat:
-            case Screen.NewGroup:
-            case Screen.CreateInvite:
-            case Screen.JoinInvite:
-            case Screen.Settings:
-            case Screen.DeviceRoster:
-                return new[] { screen };
-            case Screen.Chat chat:
-            {
-                var trimmed = chat.chatId.Trim();
-                return string.IsNullOrEmpty(trimmed) ? null : new Screen[] { new Screen.Chat(trimmed) };
-            }
-            case Screen.DirectChatInfo info:
-            {
-                var trimmed = info.chatId.Trim();
-                if (string.IsNullOrEmpty(trimmed)) return null;
-                var infoScreen = new Screen.DirectChatInfo(trimmed);
-                var stack = _state.router.screenStack ?? Array.Empty<Screen>();
-                return stack.LastOrDefault()?.Equals(infoScreen) == true
-                    ? stack
-                    : stack.Append(infoScreen).ToArray();
-            }
-            case Screen.GroupDetails details:
-            {
-                var groupId = details.groupId.Trim();
-                if (string.IsNullOrEmpty(groupId)) return null;
-                var groupChatId = $"group:{groupId}";
-                var stack = ActiveChatId(_state) == groupChatId
-                    ? (_state.router.screenStack ?? Array.Empty<Screen>())
-                    : new Screen[] { new Screen.Chat(groupChatId) };
-                var detailsScreen = new Screen.GroupDetails(groupId);
-                return stack.LastOrDefault()?.Equals(detailsScreen) == true
-                    ? stack
-                    : stack.Append(detailsScreen).ToArray();
-            }
-            default:
-                return null;
-        }
-    }
-
     private bool NavigateOptimistically(Screen[] stack, AppAction action, bool showToastOnFailure = true)
     {
         _pendingNavigationOverride = new PendingNavigationOverride(
@@ -1035,17 +983,11 @@ public sealed partial class AppManager : INotifyPropertyChanged
     {
         var pending = _pendingNavigationOverride;
         if (pending == null) return next;
-        if (next.account == null)
-        {
-            _pendingNavigationOverride = null;
-            return next;
-        }
-        if (next.router.screenStack.SequenceEqual(pending.Stack))
-        {
-            _pendingNavigationOverride = null;
-            return next;
-        }
-        if (DateTimeOffset.UtcNow >= pending.ExpiresAt)
+        if (Native.PendingNavigationSettled(
+                next.account != null,
+                pending.Stack,
+                next.router.screenStack ?? Array.Empty<Screen>(),
+                DateTimeOffset.UtcNow >= pending.ExpiresAt))
         {
             _pendingNavigationOverride = null;
             return next;
@@ -1095,16 +1037,6 @@ public sealed partial class AppManager : INotifyPropertyChanged
             currentChat = currentChat,
             groupDetails = groupDetails
         };
-    }
-
-    private static string? ActiveChatId(AppState state)
-    {
-        var active = state.router.screenStack.LastOrDefault() ?? state.router.defaultScreen;
-        if (active is Screen.Chat chat)
-        {
-            return chat.chatId.Trim();
-        }
-        return state.currentChat?.chatId?.Trim();
     }
 
     private void ApplySafely(AppUpdate update)

@@ -145,7 +145,7 @@ mod publishing;
 mod publishing_fact_events;
 mod publishing_identity;
 mod relay;
-mod routing;
+pub(crate) mod routing;
 mod social_connection;
 mod storage;
 mod support;

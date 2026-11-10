@@ -56,6 +56,7 @@ pub use core::{download_hashtree_attachment, download_hashtree_attachment_with_l
 #[cfg(feature = "stack-fixture")]
 #[doc(hidden)]
 pub mod stack_mesh_fixture;
+pub use crate::core::routing::{optimistic_push_screen_stack, pending_navigation_settled};
 pub use desktop_nearby::*;
 pub use desktop_update::*;
 pub use emoji::*;

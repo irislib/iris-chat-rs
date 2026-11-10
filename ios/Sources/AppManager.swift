@@ -1352,7 +1352,11 @@ final class AppManager: ObservableObject {
             )
             return true
         case .pushScreen(let screen):
-            guard let stack = stackByApplyingPushScreen(screen) else {
+            guard let stack = optimisticPushScreenStack(
+                hasAccount: state.account != nil,
+                screenStack: state.router.screenStack,
+                screen: screen
+            ) else {
                 dispatchToRust(action)
                 return true
             }
@@ -1367,62 +1371,6 @@ final class AppManager: ObservableObject {
             return true
         default:
             return false
-        }
-    }
-
-    private func stackByApplyingPushScreen(_ screen: Screen) -> [Screen]? {
-        if state.account == nil {
-            switch screen {
-            case .welcome:
-                return []
-            case .createAccount, .restoreAccount, .remoteSigner, .addDevice:
-                return [screen]
-            default:
-                return nil
-            }
-        }
-
-        switch screen {
-        case .chatList:
-            return []
-        case .newChat,
-             .newGroup,
-             .createInvite,
-             .joinInvite,
-             .settings,
-             .deviceRoster:
-            return [screen]
-        case .chat(let chatId):
-            let trimmed = chatId.trimmingCharacters(in: .whitespacesAndNewlines)
-            return trimmed.isEmpty ? nil : [.chat(chatId: trimmed)]
-        case .directChatInfo(let chatId):
-            let trimmed = chatId.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty else { return nil }
-            var stack = state.router.screenStack
-            let infoScreen = Screen.directChatInfo(chatId: trimmed)
-            if stack.last != infoScreen {
-                stack.append(infoScreen)
-            }
-            return stack
-        case .groupDetails(let groupId):
-            let trimmed = groupId.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty else { return nil }
-            let groupChatId = "group:\(trimmed)"
-            var stack = state.router.screenStack
-            if activeChatID(in: state) != groupChatId {
-                stack = [.chat(chatId: groupChatId)]
-            }
-            let detailsScreen = Screen.groupDetails(groupId: trimmed)
-            if stack.last != detailsScreen {
-                stack.append(detailsScreen)
-            }
-            return stack
-        case .createAccount,
-             .restoreAccount, .remoteSigner,
-             .addDevice,
-             .deviceRevoked,
-             .welcome:
-            return nil
         }
     }
 
@@ -3297,15 +3245,12 @@ final class AppManager: ObservableObject {
         guard let pending = pendingNavigationOverride else {
             return nextState
         }
-        guard nextState.account != nil else {
-            pendingNavigationOverride = nil
-            return nextState
-        }
-        if nextState.router.screenStack == pending.stack {
-            pendingNavigationOverride = nil
-            return nextState
-        }
-        guard Date() < pending.expiresAt else {
+        if pendingNavigationSettled(
+            hasAccount: nextState.account != nil,
+            pendingStack: pending.stack,
+            coreStack: nextState.router.screenStack,
+            expired: Date() >= pending.expiresAt
+        ) {
             pendingNavigationOverride = nil
             return nextState
         }
