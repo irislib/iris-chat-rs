@@ -597,7 +597,8 @@ struct ChatMessageRow: View, Equatable {
                                         names: mentionNames
                                     ),
                                     isOutgoing: message.isOutgoing,
-                                    bodyFont: irisMessageBodyFont(for: parsed.body)
+                                    bodyFont: irisMessageBodyFont(for: parsed.body),
+                                    messageID: message.id
                                 )
                                 .environment(\.openURL, OpenURLAction { url in
                                     let prefix = "irischat-mention:"
@@ -909,12 +910,23 @@ struct ChatMessageRow: View, Equatable {
 
 struct ChatTimelineMessageLayout<Content: View>: View {
     let content: Content
-    init(@ViewBuilder content: () -> Content) { self.content = content() }
+    let chatID: String
+    let messageIDs: [String]
+#if os(macOS)
+    @StateObject private var selection = IrisDesktopMessageSelection()
+#endif
+    init(chatID: String = "", messageIDs: [String] = [], @ViewBuilder content: () -> Content) {
+        self.chatID = chatID
+        self.messageIDs = messageIDs
+        self.content = content()
+    }
     var body: some View {
 #if os(iOS)
         VStack(spacing: 0) { content }
 #else
         LazyVStack(spacing: 0) { content }
+            .environment(\.irisMessageSelection, selection)
+            .background(IrisDesktopSelectionScope(selection: selection, chatID: chatID, ids: messageIDs))
 #endif
     }
 }

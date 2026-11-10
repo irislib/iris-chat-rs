@@ -46,7 +46,7 @@ pub(super) fn update_people_graph(
             // The relay input remains bounded even when signed by a followed account.
             let max_edges = if event.pubkey == owner { 5_000 } else { 1_000 };
             let mut seen = HashSet::new();
-            let tags = event
+            let tags: Vec<Vec<String>> = event
                 .tags
                 .iter()
                 .filter_map(|tag| {
@@ -58,8 +58,10 @@ pub(super) fn update_people_graph(
                     seen.insert(target.clone())
                         .then(|| vec!["p".to_string(), target])
                 })
-                .take(max_edges)
+                .take(max_edges + 1)
                 .collect();
+            let incomplete = tags.len() > max_edges;
+            let tags = tags.into_iter().take(max_edges).collect();
             graph.handle_event(
                 &NostrEvent {
                     pubkey: event.pubkey.to_hex(),
@@ -73,6 +75,9 @@ pub(super) fn update_people_graph(
                 true,
                 1.0,
             );
+            if incomplete {
+                graph.mark_list_incomplete(&event.pubkey.to_hex(), kind.as_u16().into());
+            }
         }
     }
     graph.to_binary().ok()
@@ -147,5 +152,38 @@ mod tests {
         )
         .unwrap();
         assert!(!read(&unmuted));
+    }
+
+    #[test]
+    fn projected_head_keeps_its_id_but_is_not_advertised_complete() {
+        let root = Keys::generate();
+        let friend = Keys::generate();
+        let targets = (0..1001)
+            .map(|_| Keys::generate().public_key())
+            .collect::<Vec<_>>();
+        let root_head = event(&root, Kind::ContactList, 1, &[friend.public_key()]);
+        let friend_head = event(&friend, Kind::ContactList, 2, &targets);
+        let bytes = update_people_graph(
+            root.public_key(),
+            Some(&root_head),
+            &[friend.public_key()],
+            &[friend_head.clone()],
+            Vec::new(),
+            None,
+            100,
+        )
+        .unwrap();
+        let graph = SocialGraph::from_binary(&root.public_key().to_hex(), &bytes).unwrap();
+        let revision = graph
+            .get_list_revision(&friend.public_key().to_hex(), 3)
+            .unwrap();
+        assert_eq!(revision.id, friend_head.id.to_hex());
+        assert!(!revision.complete);
+        assert_eq!(
+            graph
+                .get_followed_by_user(&friend.public_key().to_hex())
+                .len(),
+            1000
+        );
     }
 }

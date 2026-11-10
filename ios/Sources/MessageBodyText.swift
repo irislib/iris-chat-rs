@@ -10,6 +10,7 @@ struct TruncatableMessageBody: View {
     let attributed: AttributedString
     let isOutgoing: Bool
     let bodyFont: Font
+    var messageID: String? = nil
     @Environment(\.irisPalette) private var palette
     @State private var isExpanded = false
 
@@ -37,16 +38,14 @@ struct TruncatableMessageBody: View {
     @ViewBuilder
     private var messageText: some View {
 #if os(macOS)
-        if attributed.runs.contains(where: { $0.link != nil }) {
-            IrisDesktopLinkedText(
-                attributed: attributed,
-                foreground: isOutgoing ? palette.onBubbleMine : palette.onBubbleTheirs,
-                lineLimit: needsTruncation && !isExpanded ? collapsedLineLimit : nil
-            )
-            .fixedSize(horizontal: false, vertical: true)
-        } else {
-            swiftUIText
-        }
+        IrisDesktopLinkedText(
+            attributed: attributed,
+            foreground: isOutgoing ? palette.onBubbleMine : palette.onBubbleTheirs,
+            lineLimit: needsTruncation && !isExpanded ? collapsedLineLimit : nil,
+            messageID: messageID,
+            pointSize: irisMessageBodyPointSize(for: String(attributed.characters))
+        )
+        .fixedSize(horizontal: false, vertical: true)
 #else
         swiftUIText
 #endif
@@ -96,20 +95,12 @@ extension View {
 }
 
 func irisMessageBodyFont(for text: String) -> Font {
-    switch irisJumbomojiCount(text) {
-    case 1:
-        return .system(size: 56, weight: .regular, design: .rounded)
-    case 2:
-        return .system(size: 48, weight: .regular, design: .rounded)
-    case 3:
-        return .system(size: 40, weight: .regular, design: .rounded)
-    case 4:
-        return .system(size: 36, weight: .regular, design: .rounded)
-    case 5:
-        return .system(size: 32, weight: .regular, design: .rounded)
-    default:
-        return .system(.body, design: .rounded)
-    }
+    if let size = irisMessageBodyPointSize(for: text) { return .system(size: size, weight: .regular, design: .rounded) }
+    return .system(.body, design: .rounded)
+}
+
+func irisMessageBodyPointSize(for text: String) -> CGFloat? {
+    [1: 56, 2: 48, 3: 40, 4: 36, 5: 32][irisJumbomojiCount(text)]
 }
 
 func irisJumbomojiCount(_ text: String) -> Int {

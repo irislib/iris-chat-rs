@@ -36,7 +36,9 @@ internal static class MentionText
         }
         AppendLinks(view, paragraph, text[cursor..]);
         view.IsTabStop = paragraph.Inlines.OfType<Hyperlink>().Any();
-        view.Document = new FlowDocument(paragraph) { PagePadding = new Thickness(0) };
+        var document = new FlowDocument(paragraph) { PagePadding = new Thickness(0) };
+        if (view is MessageSelectionTextBox body) body.SetBodyDocument(text, document);
+        else view.Document = document;
     }
 
     private static readonly Regex Links = new(@"(?i)(?:^|(?<=[\s(\[{<]))(?:https?://|www\.)[^\s<]+", RegexOptions.Compiled, TimeSpan.FromMilliseconds(100));

@@ -395,9 +395,9 @@ fn mobile_push_large_group_notification_cleanup_has_one_protocol_load_and_bounde
         loads, 1,
         "a notification batch must not reload all groups and sessions for each alert"
     );
-    assert!(
-        checkpoint_bytes < before.len() * 2,
-        "read-only preview must not serialize the entire protocol state for each alert"
+    assert_eq!(
+        checkpoint_bytes, 0,
+        "read-only preview must not serialize the protocol state, even once at startup"
     );
     // A real receive must persist its ratchet and delivery journal immediately,
     // but must not rewrite the unrelated multi-megabyte group/fanout history.

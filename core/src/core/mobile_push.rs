@@ -856,11 +856,9 @@ pub(in crate::core) fn direct_message_preview_engine(
         keys.public_key().to_hex(),
     )) as Arc<dyn StorageAdapter>;
     let overlay = Arc::new(NotificationPreviewStorage::new(base)) as Arc<dyn StorageAdapter>;
-    let engine = ProtocolEngine::load_or_create_for_local_device(overlay, owner, keys).ok()?;
-    // This engine is discarded after previewing. Its mutations must stay in
-    // memory, without serializing a full checkpoint after each notification.
-    engine.enter_batch();
-    Some(engine)
+    ProtocolEngine::load_for_notification_preview(overlay, owner, keys)
+        .ok()
+        .flatten()
 }
 
 pub(in crate::core) fn preview_direct_messages_in_engine(

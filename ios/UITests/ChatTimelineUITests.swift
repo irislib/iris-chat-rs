@@ -332,6 +332,40 @@ final class IrisChatTimelineUITests: IrisChatUITestCase {
         XCTAssertTrue(landed, "Search must load and visibly land on the message outside the initial 80-message page")
     }
 
+#if os(macOS)
+    func testClickReplyQuoteLandsOnOriginalOutsideLoadedPage() {
+        let app = launchCleanApp(seedPeer: validPeerNpub, seedCount: 120)
+        submitWelcomeName(app)
+        XCTAssertTrue(waitForChatList(app, timeout: 60))
+        openSeededChat(app)
+        let original = "FIRST_SCROLL_SENTINEL lorem ipsum dolor sit amet consectetur adipiscing elit sed do eiusmod tempor incididunt ut labore et dolore magna aliqua"
+        let input = editableElement(app, "chatMessageInput")
+        XCTAssertTrue(input.waitForExistence(timeout: 10))
+        typeText("↩ ios tester: \(original.prefix(96))\n\nA reply to the first message", into: input, app: app)
+        element(app, "chatSendButton").click()
+        let preview = element(app, "chatReplyPreview")
+        XCTAssertTrue(preview.waitForExistence(timeout: 10))
+        let timeline = element(app, "chatTimeline")
+        let target = timeline.descendants(matching: .any).matching(
+            NSPredicate(format: "label == %@ OR value == %@", original, original)
+        ).firstMatch
+        func originalIsVisible() -> Bool {
+            target.exists && target.isHittable && timeline.frame.intersects(target.frame)
+        }
+        XCTAssertFalse(originalIsVisible())
+        preview.click()
+        XCTAssertTrue(waitUntil(timeout: 10) { originalIsVisible() })
+        // A delayed lazy-layout or latest-follow update must not undo the jump.
+        let lost = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in !originalIsVisible() }, object: nil)
+        lost.isInverted = true
+        wait(for: [lost], timeout: 1)
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = "reply-quote-historical-landing"
+        shot.lifetime = .keepAlways
+        add(shot)
+    }
+#endif
+
     func testDesktopSidebarGroupedSearchOpensHistoricalMessage() throws {
 #if os(macOS)
         let app = launchCleanApp(seedPeer: validPeerNpub, seedCount: 120)

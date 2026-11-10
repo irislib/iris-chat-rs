@@ -1055,6 +1055,11 @@ jobs:
         run: |
           dotnet run --project windows/KeyboardTests/KeyboardTests.csproj -c Release -- work/keyboard
           if ($LASTEXITCODE -ne 0) { throw 'Native keyboard tests failed' }
+      - name: Exercise selection across WPF messages
+        if: ${{ !cancelled() }}
+        run: |
+          dotnet run --project windows/SelectionTests/SelectionTests.csproj -p:RestoreLockedMode=true -- work/keyboard
+          if ($LASTEXITCODE -ne 0) { throw 'Native message text selection tests failed' }
       - name: Exercise Windows light and dark themes
         if: ${{ !cancelled() && steps.native-build.outcome == 'success' }}
         run: |

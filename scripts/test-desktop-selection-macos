@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+OUTPUT="${1:-$ROOT/artifacts/desktop-selection}"
+DEVELOPER="$(xcode-select -p)/Platforms/MacOSX.platform/Developer"
+mkdir -p "$OUTPUT"
+# UI-only tests: no account, core build, bindings generation or installed app.
+xcrun swiftc -D IRIS_SELECTION_STANDALONE \
+  -F "$DEVELOPER/Library/Frameworks" -I "$DEVELOPER/usr/lib" -L "$DEVELOPER/usr/lib" \
+  -Xlinker -rpath -Xlinker "$DEVELOPER/Library/Frameworks" \
+  -Xlinker -rpath -Xlinker "$DEVELOPER/usr/lib" \
+  "$ROOT/ios/Sources/IrisDesktopMessageSelection.swift" \
+  "$ROOT/ios/Sources/IrisDesktopLinkedText.swift" \
+  "$ROOT/ios/Tests/DesktopMessageSelectionTests.swift" \
+  "$ROOT/macos/SelectionTests/main.swift" -o "$OUTPUT/macos-selection-tests"
+IRIS_SELECTION_EVIDENCE_DIR="$OUTPUT" "$OUTPUT/macos-selection-tests"

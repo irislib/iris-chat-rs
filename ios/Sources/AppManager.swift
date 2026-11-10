@@ -1460,6 +1460,56 @@ final class AppManager: ObservableObject {
         loadChatAroundMessage(chatId: trimmedChat, messageId: trimmedMessage)
     }
 
+    /// Existing replies identify a message by its quoted text and author label.
+    /// Scan local history one page at a time. Only the matching page enters the timeline.
+    func revealQuotedMessage(_ quote: ReplyPreview, before replyID: String, in chatID: String) async -> Bool {
+        guard !Task.isCancelled, activeChatID(in: state) == chatID,
+              let current = state.currentChat, current.chatId == chatID,
+              let index = current.messages.firstIndex(where: { $0.id == replyID }) else { return false }
+        var lookup = ReplyQuoteLookup(quote: quote)
+        if let id = lookup.match(in: current.messages[..<index]) {
+            pendingScrollMessageId = id
+            return true
+        }
+
+        let generation = chatPageGeneration
+        let coreGeneration = reconciliationGeneration
+        let runner = ChatPageLoadRunner(rust: rust)
+        let size = Self.chatPageSize
+        // Start directly before the reply. Previously opened search results can
+        // leave gaps between the displayed messages even within one chat.
+        var cursor = replyID
+        var fallbackPage: CurrentChatSnapshot?
+        while !Task.isCancelled {
+            let before = cursor
+            let page: CurrentChatSnapshot? = await withCheckedContinuation { continuation in
+                Self.chatPageQueue.async {
+                    continuation.resume(returning: runner.before(chatId: chatID, beforeMessageId: before, limit: size))
+                }
+            }
+            guard !Task.isCancelled, generation == chatPageGeneration,
+                  coreGeneration == reconciliationGeneration else { return false }
+            guard let page, page.chatId == chatID else { break }
+            let exact = lookup.match(in: page.messages[...])
+            if let fallback = lookup.uniqueSnippetID, page.messages.contains(where: { $0.id == fallback }) {
+                fallbackPage = page
+            }
+            let atStart = page.messages.isEmpty
+            if let id = exact ?? (atStart ? lookup.uniqueSnippetID : nil) {
+                if let matchPage = exact == nil ? fallbackPage : page {
+                    mergeCurrentChatSnapshot(matchPage)
+                }
+                guard state.currentChat?.messages.contains(where: { $0.id == id }) == true else { break }
+                pendingScrollMessageId = id
+                return true
+            }
+            guard let first = page.messages.first, first.id != before else { break }
+            cursor = first.id
+        }
+        if !Task.isCancelled { showToast("Original message unavailable") }
+        return false
+    }
+
     /// ChatScreen calls this after it's actually scrolled the
     /// timeline to the target — clears the one-shot so navigating
     /// away and back doesn't re-scroll to the same hit.
@@ -2854,8 +2904,9 @@ final class AppManager: ObservableObject {
         guard iosSideEffectGate.shouldSyncShareSuggestions(chatList: chatList) else {
             return
         }
-        shareSuggestionDonor.syncRecentChats(chatList)
-        shareSuggestionsExporter.export(chats: chatList)
+        shareSuggestionsExporter.export(chats: chatList, manager: self) { [weak self] avatars in
+            self?.shareSuggestionDonor.syncRecentChats(chatList, avatars: avatars)
+        }
     }
 
     private func syncMobilePushIfNeeded(state: AppState) {

@@ -161,6 +161,7 @@ impl ProtocolEngine {
             local_owner,
             local_device,
             local_device_keys.secret_key().to_secret_bytes(),
+            false,
         )?
         else {
             return Ok(false);

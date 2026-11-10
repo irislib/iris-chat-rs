@@ -13,6 +13,7 @@ impl ProtocolEngine {
             local_owner,
             local_device,
             device_secret,
+            false,
         )?
         .unwrap_or_else(|| Self {
             owner_pubkey,
@@ -80,14 +81,20 @@ impl ProtocolEngine {
         local_owner: NdrOwnerPubkey,
         local_device: NdrDevicePubkey,
         device_secret: [u8; 32],
+        notification_preview: bool,
     ) -> anyhow::Result<Option<Self>> {
         let Some(raw) = storage.get(PROTOCOL_ENGINE_STATE_KEY)? else {
             return Ok(None);
         };
-        let mut state =
-            serde_json::from_str::<ProtocolEnginePersistedState>(&raw).map_err(|_| {
-                anyhow::anyhow!("Saved chat state could not be read. Existing data has been kept.")
-            })?;
+        let mut state = if notification_preview {
+            serde_json::from_str::<NotificationPreviewPersistedState>(&raw)
+                .map(|preview| preview.state)
+        } else {
+            serde_json::from_str::<ProtocolEnginePersistedState>(&raw)
+        }
+        .map_err(|_| {
+            anyhow::anyhow!("Saved chat state could not be read. Existing data has been kept.")
+        })?;
         anyhow::ensure!(
             state.version == PROTOCOL_ENGINE_STATE_VERSION,
             "Saved chat state uses an unsupported version. Existing data has been kept."
@@ -99,6 +106,12 @@ impl ProtocolEngine {
             &mut state.session_manager,
             &state.verified_app_keys_owners,
         );
+        let checkpoint_layout = if notification_preview {
+            ProtocolCheckpointLayout::default()
+        } else {
+            ProtocolCheckpointLayout::from_json(&raw)
+        };
+        drop(raw);
         let session_manager = SessionManager::from_snapshot(state.session_manager, device_secret)?;
         let group_manager = GroupEventManager::from_snapshot(state.group_manager)?;
         let mut answered_group_sender_key_repairs = state.answered_group_sender_key_repairs;
@@ -147,7 +160,7 @@ impl ProtocolEngine {
             subscription_generation: state.subscription_generation,
             batch_depth: std::cell::Cell::new(0),
             batch_persist_dirty: std::cell::Cell::new(false),
-            checkpoint_layout: std::cell::RefCell::new(ProtocolCheckpointLayout::from_json(&raw)),
+            checkpoint_layout: std::cell::RefCell::new(checkpoint_layout),
         }))
     }
 

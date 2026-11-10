@@ -283,15 +283,25 @@ async fn fetch_user_discovery(
         .take(MAX_SOCIAL_OPINION_AUTHORS)
         .copied()
         .collect::<Vec<_>>();
+    let cached_opinions = decode_opinion_cache(&previous.social_opinion_events);
+    let graph_download_budget = std::sync::atomic::AtomicUsize::new(MAX_OPINION_CACHE_BYTES);
+    // Public graph catch-up has no account signer or private subscription state.
+    let graph_client = Client::builder().build();
+    ensure_session_relays_configured(&graph_client, &relay_urls).await;
+    connect_client_with_timeout(&graph_client, DISCOVERY_REQUEST_TIMEOUT).await;
     let (peer_follow_chunks, mute_chunks, metadata_chunks) = tokio::join!(
-        fetch_author_chunks(
-            &client,
+        fetch_graph_opinion_chunks(
+            &graph_client,
+            &cached_opinions,
+            &graph_download_budget,
             Kind::ContactList,
             opinion_authors.clone(),
             Some(MAX_PEER_FOLLOW_EVENTS_PER_CHUNK),
         ),
-        fetch_author_chunks(
-            &client,
+        fetch_graph_opinion_chunks(
+            &graph_client,
+            &cached_opinions,
+            &graph_download_budget,
             Kind::from(10_000),
             opinion_authors
                 .iter()
@@ -302,6 +312,7 @@ async fn fetch_user_discovery(
         ),
         fetch_author_chunks(&client, Kind::Metadata, followed_owners.clone(), None)
     );
+    graph_client.shutdown().await;
     let now_secs = unix_now().get();
 
     let mut social_failed_chunks = 0usize;
@@ -318,6 +329,17 @@ async fn fetch_user_discovery(
             mute_events.extend(events);
         }
     }
+    let social_opinion_events = encode_opinion_cache(
+        cached_opinions
+            .into_iter()
+            .chain(peer_follow_events.iter().cloned())
+            .chain(mute_events.iter().cloned()),
+        &opinion_authors
+            .iter()
+            .copied()
+            .chain([local_owner])
+            .collect::<HashSet<_>>(),
+    );
     let social_graph = super::user_discovery_graph::update_people_graph(
         local_owner,
         Some(&follow_event),
@@ -391,6 +413,7 @@ async fn fetch_user_discovery(
             social_rank_ready,
             social_friend_support,
             social_graph,
+            social_opinion_events,
         },
         metadata_events,
         detail: format!(
@@ -400,6 +423,194 @@ async fn fetch_user_discovery(
             social_failed_chunks
         ),
     }
+}
+
+const MAX_OPINION_CACHE_BYTES: usize = 2 * 1024 * 1024;
+const MAX_OPINION_EVENT_BYTES: usize = 1024 * 1024;
+
+fn decode_opinion_cache(records: &[String]) -> Vec<Event> {
+    let mut bytes = 0usize;
+    records
+        .iter()
+        .take(2 * (MAX_SOCIAL_OPINION_AUTHORS + 1))
+        .filter_map(|record| {
+            bytes = bytes.saturating_add(record.len());
+            if bytes > MAX_OPINION_CACHE_BYTES || record.len() > MAX_OPINION_EVENT_BYTES {
+                return None;
+            }
+            let event: Event = serde_json::from_str(record).ok()?;
+            (matches!(event.kind.as_u16(), 3 | 10000)
+                && event.verify().is_ok()
+                && discovery_event_time_is_acceptable(event.created_at.as_secs(), unix_now().get()))
+            .then_some(event)
+        })
+        .collect()
+}
+
+fn encode_opinion_cache(
+    events: impl Iterator<Item = Event>,
+    authors: &HashSet<PublicKey>,
+) -> Vec<String> {
+    let mut heads = BTreeMap::new();
+    for event in events.filter(|event| authors.contains(&event.pubkey)) {
+        let key = (event.pubkey, event.kind.as_u16());
+        let wins = heads.get(&key).is_none_or(|old: &Event| {
+            event.created_at > old.created_at
+                || (event.created_at == old.created_at && event.id < old.id)
+        });
+        if wins {
+            heads.insert(key, event);
+        }
+    }
+    let mut bytes = 0usize;
+    heads
+        .into_values()
+        .filter_map(|event| {
+            let record = serde_json::to_string(&event).ok()?;
+            if record.len() > MAX_OPINION_EVENT_BYTES
+                || bytes + record.len() > MAX_OPINION_CACHE_BYTES
+            {
+                return None;
+            }
+            bytes += record.len();
+            Some(record)
+        })
+        .collect()
+}
+
+/// NIP-77 is optional: unsupported relays retain the ordinary bounded REQ path.
+/// Only complete verified cached events are claimed present; graph projections
+/// cannot stand in for the signed lists needed by the verified social ranker.
+async fn fetch_graph_opinion_chunks(
+    client: &Client,
+    cached: &[Event],
+    budget: &std::sync::atomic::AtomicUsize,
+    kind: Kind,
+    authors: Vec<PublicKey>,
+    max_events: Option<usize>,
+) -> Vec<(Vec<PublicKey>, Result<Vec<Event>, String>)> {
+    let chunks = authors
+        .chunks(DISCOVERY_AUTHOR_CHUNK)
+        .map(<[PublicKey]>::to_vec)
+        .collect::<Vec<_>>();
+    stream::iter(chunks)
+        .map(|owners| async move {
+            let known: Vec<Event> = cached
+                .iter()
+                .filter(|event| event.kind == kind && owners.contains(&event.pubkey))
+                .cloned()
+                .collect();
+            let filter = Filter::new().kind(kind).authors(owners.clone());
+            let items = known
+                .iter()
+                .map(|event| (event.id, event.created_at))
+                .collect::<Vec<_>>();
+            let opts = nostr_sdk::SyncOptions::new()
+                .dry_run()
+                .initial_timeout(Duration::from_secs(1));
+            let mut missing = HashSet::new();
+            let mut supported = false;
+            let mut fallback = false;
+            for relay in client.relays().await.into_values().take(2) {
+                match tokio::time::timeout(
+                    DISCOVERY_REQUEST_TIMEOUT,
+                    relay.sync_with_items(filter.clone(), items.clone(), &opts),
+                )
+                .await
+                {
+                    Ok(Ok(result)) => {
+                        supported = true;
+                        missing.extend(result.remote);
+                    }
+                    _ => fallback = true,
+                }
+            }
+            let limit = max_events
+                .unwrap_or(MAX_PEER_FOLLOW_EVENTS_PER_CHUNK)
+                .min(owners.len().saturating_mul(2).max(1));
+            if missing.len() > limit {
+                return (
+                    owners,
+                    Err("graph reconciliation event limit exceeded".to_string()),
+                );
+            }
+            let query = if !supported || fallback {
+                Some(filter.limit(limit + 1))
+            } else if missing.is_empty() {
+                None
+            } else {
+                Some(Filter::new().ids(missing).limit(limit + 1))
+            };
+            let result = if let Some(query) = query {
+                async {
+                    if budget.load(std::sync::atomic::Ordering::Relaxed) == 0 {
+                        return Err("graph download byte budget exhausted".to_owned());
+                    }
+                    let mut stream = client
+                        .stream_events(query, DISCOVERY_REQUEST_TIMEOUT)
+                        .await
+                        .map_err(|error| error.to_string())?;
+                    let mut events = Vec::new();
+                    while let Some(event) = stream.next().await {
+                        let bytes = serde_json::to_vec(&event)
+                            .map_err(|error| error.to_string())?
+                            .len();
+                        if bytes > MAX_OPINION_EVENT_BYTES
+                            || events.len() >= limit
+                            || budget
+                                .fetch_update(
+                                    std::sync::atomic::Ordering::Relaxed,
+                                    std::sync::atomic::Ordering::Relaxed,
+                                    |remaining| remaining.checked_sub(bytes),
+                                )
+                                .is_err()
+                        {
+                            return Err("graph download byte or event budget exhausted".to_owned());
+                        }
+                        events.push(event);
+                    }
+                    Ok(events)
+                }
+                .await
+            } else {
+                Ok(Vec::new())
+            };
+            let result = result.and_then(|events| {
+                if events.len() > limit {
+                    return Err("graph event limit exceeded".to_string());
+                }
+                let mut retained = known;
+                for event in events {
+                    if event.kind != kind
+                        || !owners.contains(&event.pubkey)
+                        || event.verify().is_err()
+                    {
+                        continue;
+                    }
+                    if !discovery_event_time_is_acceptable(
+                        event.created_at.as_secs(),
+                        unix_now().get(),
+                    ) || serde_json::to_vec(&event)
+                        .map_or(true, |bytes| bytes.len() > MAX_OPINION_EVENT_BYTES)
+                    {
+                        // A rejected signed head is not evidence of an empty list.
+                        // Existing verified cache may still preserve this author's opinion.
+                        if retained.iter().any(|old| old.pubkey == event.pubkey) {
+                            continue;
+                        }
+                        return Err(
+                            "unsupported signed graph head without cached revision".to_string()
+                        );
+                    }
+                    retained.push(event);
+                }
+                Ok(newest_verified_events_by_author(retained, kind))
+            });
+            (owners, result)
+        })
+        .buffer_unordered(DISCOVERY_CONCURRENT_REQUESTS)
+        .collect()
+        .await
 }
 
 async fn fetch_author_chunks(
@@ -603,3 +814,52 @@ mod refresh_tests;
 #[cfg(test)]
 #[path = "user_discovery_fetch_tests.rs"]
 mod fetch_tests;
+
+#[cfg(test)]
+mod opinion_cache_tests {
+    use super::*;
+
+    fn head(keys: &Keys, kind: Kind, time: u64) -> Event {
+        nostr::EventBuilder::new(kind, "")
+            .custom_created_at(nostr::Timestamp::from(time))
+            .sign_with_keys(keys)
+            .unwrap()
+    }
+
+    #[test]
+    fn opinion_cache_keeps_winning_follow_and_mute_heads_after_restart() {
+        let keys = Keys::generate();
+        let authors = HashSet::from([keys.public_key()]);
+        let follow = head(&keys, Kind::ContactList, 20);
+        let mute = head(&keys, Kind::from(10_000), 30);
+        let records = encode_opinion_cache(
+            [
+                follow.clone(),
+                mute.clone(),
+                head(&keys, Kind::ContactList, 10),
+            ]
+            .into_iter(),
+            &authors,
+        );
+        let loaded = decode_opinion_cache(&records);
+        assert_eq!(loaded.len(), 2);
+        assert!(loaded.iter().any(|event| event.id == follow.id));
+        assert!(loaded.iter().any(|event| event.id == mute.id));
+        assert!(loaded.iter().all(|event| event.tags.is_empty()));
+    }
+
+    #[test]
+    fn opinion_cache_does_not_claim_forged_or_oversized_events_present() {
+        let keys = Keys::generate();
+        let mut forged = head(&keys, Kind::ContactList, 20);
+        forged.content = "changed after signing".to_owned();
+        assert!(decode_opinion_cache(&[serde_json::to_string(&forged).unwrap()]).is_empty());
+        assert!(decode_opinion_cache(&[" ".repeat(MAX_OPINION_CACHE_BYTES + 1)]).is_empty());
+        let other = Keys::generate();
+        assert!(encode_opinion_cache(
+            [head(&other, Kind::ContactList, 20)].into_iter(),
+            &HashSet::from([keys.public_key()])
+        )
+        .is_empty());
+    }
+}

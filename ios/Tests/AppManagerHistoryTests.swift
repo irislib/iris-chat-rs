@@ -26,7 +26,8 @@ final class AppManagerHistoryTests: XCTestCase {
 
     private func manager(_ rust: MockRustApp, replacement: MockRustApp? = nil) -> AppManager {
         AppManager(rust: rust, secretStore: InMemorySecretStore(),
-                   pendingDeviceLinkSecretStore: InMemoryPendingDeviceLinkSecretStore(), dataDir: directory,
+                   pendingDeviceLinkSecretStore: InMemoryPendingDeviceLinkSecretStore(),
+                   desktopNotifications: NoopDesktopNotificationPoster(), dataDir: directory,
                    environment: ["IRIS_UI_TEST_RUN_ID": "history-unit"],
                    rustFactory: replacement.map { next in { next } })
     }
@@ -57,6 +58,38 @@ final class AppManagerHistoryTests: XCTestCase {
         next.account?.publicKeyHex = "another-synthetic-account"
         await apply(next, via: rust, to: app)
         XCTAssertEqual(app.state.currentChat?.messages.map(\.id), (1161...1240).map(String.init))
+    }
+
+    func testQuoteLoadsOnlyMatchingHistoryPageAndUsesOriginalTextAfterEdit() async {
+        let rust = MockRustApp(state: snapshot(["201", "202"]))
+        rust.pagesBefore["chat-1|202"] = page((121...200).map(String.init))
+        var older = page(["119", "120"])
+        older.messages[0].editHistory = [
+            MessageEditSnapshot(id: "v1", body: "the original wording", createdAtSecs: 119)
+        ]
+        rust.pagesBefore["chat-1|121"] = older
+        let app = manager(rust)
+        let found = await app.revealQuotedMessage(ReplyPreview(author: "owner", body: "the original wording"),
+                                                  before: "202", in: chatID)
+        XCTAssertTrue(found)
+        XCTAssertEqual(app.pendingScrollMessageId, "119")
+        XCTAssertEqual(app.state.currentChat?.messages.map(\.id), ["119", "120", "201", "202"])
+    }
+
+    func testRenamedAuthorUsesOnlyAnUnambiguousOlderQuote() async {
+        for duplicated in [false, true] {
+            let rust = MockRustApp(state: snapshot(["201", "202"]))
+            var older = page(["119", "120"])
+            older.messages[1].body = "same words"
+            if duplicated { older.messages[0].body = "same words" }
+            rust.pagesBefore["chat-1|202"] = older
+            rust.pagesBefore["chat-1|119"] = page([])
+            let app = manager(rust)
+            let found = await app.revealQuotedMessage(ReplyPreview(author: "old name", body: "same words"),
+                                                      before: "202", in: chatID)
+            XCTAssertEqual(found, !duplicated)
+            XCTAssertEqual(app.pendingScrollMessageId, duplicated ? nil : "120")
+        }
     }
 
     func testFullStateKeepsLoadedSearchHitContextForVisibleChat() async {

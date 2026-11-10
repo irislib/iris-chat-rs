@@ -321,29 +321,26 @@ private struct IrisAvatarImage: View {
     }
 
     var body: some View {
-        ZStack {
-            Circle()
-                .fill((avatarImage == nil ? groupSenderColorKey : nil).map {
-                    irisGroupSenderNameColor(for: $0, isDarkMode: colorScheme == .dark)
-                } ?? (emphasize ? palette.accent : palette.panelAlt))
-                .overlay(Circle().stroke(palette.border, lineWidth: 1))
-
-            if let avatarImage, loadedSourceKey == imageSourceKey {
-                Image(platformImage: avatarImage)
-                    .resizable()
-                    .scaledToFill()
-                    .clipShape(Circle())
-                if let loadedImageIdentifier {
-                    Color.clear
-                        .frame(width: 1, height: 1)
-                        .accessibilityIdentifier(loadedImageIdentifier)
-                        .allowsHitTesting(false)
-                }
-            } else {
-                avatarInitial
+        IrisAvatarContent(
+            image: avatarImage.flatMap { loadedSourceKey == imageSourceKey ? Image(platformImage: $0) : nil },
+            label: label,
+            size: size,
+            background: (avatarImage == nil ? groupSenderColorKey : nil).map {
+                irisGroupSenderNameColor(for: $0, isDarkMode: colorScheme == .dark)
+            } ?? (emphasize ? palette.accent : palette.panelAlt),
+            foreground: groupSenderColorKey == nil
+                ? (emphasize ? palette.onAccent : palette.textPrimary)
+                : (colorScheme == .dark ? Color.black : Color.white),
+            border: palette.border
+        )
+        .overlay {
+            if avatarImage != nil, loadedSourceKey == imageSourceKey, let loadedImageIdentifier {
+                Color.clear
+                    .frame(width: 1, height: 1)
+                    .accessibilityIdentifier(loadedImageIdentifier)
+                    .allowsHitTesting(false)
             }
         }
-        .frame(width: size, height: size)
         .overlay(alignment: .topLeading) {
             if socialConnection?.isFavorite == true {
                 IrisFavoriteBadge(size: max(14, min(22, size * 0.3)))
@@ -392,21 +389,7 @@ private struct IrisAvatarImage: View {
             return
         }
 
-        let image: PlatformImage?
-        let maxPixelSize = Int(ceil(size * 3))
-        switch source {
-        case .hashtree(let nhash):
-            if let manager, let data = await manager.resolveHashtreePictureBytes(nhash: nhash) {
-                image = await loadIrisAvatarImage(data: data, maxPixelSize: maxPixelSize)
-            } else {
-                image = nil
-            }
-        case .http(let urls, let originalURL, let allowOriginalRedirects):
-            image = await loadIrisHttpAvatarImage(
-                urls: urls, originalURL: originalURL,
-                allowOriginalRedirects: allowOriginalRedirects, maxPixelSize: maxPixelSize
-            )
-        }
+        let image = await loadIrisAvatarImage(source: source, manager: manager, maxPixelSize: Int(ceil(size * 3)))
 
         guard !Task.isCancelled, imageSourceKey == key else { return }
         guard let image else {
@@ -418,12 +401,18 @@ private struct IrisAvatarImage: View {
         avatarImage = image
         loadedSourceKey = key
     }
+}
 
-    private var avatarInitial: some View {
-        Text(String((label.trimmingCharacters(in: .whitespacesAndNewlines).first ?? "?")).uppercased())
-            .font(.system(size: size * 0.42, weight: .bold, design: .rounded))
-            .foregroundStyle(groupSenderColorKey == nil
-                ? (emphasize ? palette.onAccent : palette.textPrimary)
-                : (colorScheme == .dark ? Color.black : Color.white))
+// Both in-app avatars and system share thumbnails use the same privacy-aware loader.
+func loadIrisAvatarImage(source: IrisAvatarImageSource, manager: AppManager?, maxPixelSize: Int) async -> PlatformImage? {
+    switch source {
+    case .hashtree(let nhash):
+        guard let manager, let data = await manager.resolveHashtreePictureBytes(nhash: nhash) else { return nil }
+        return await loadIrisAvatarImage(data: data, maxPixelSize: maxPixelSize)
+    case .http(let urls, let originalURL, let allowOriginalRedirects):
+        return await loadIrisHttpAvatarImage(
+            urls: urls, originalURL: originalURL,
+            allowOriginalRedirects: allowOriginalRedirects, maxPixelSize: maxPixelSize
+        )
     }
 }
