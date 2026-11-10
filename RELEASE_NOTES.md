@@ -2,6 +2,43 @@
 
 Each release has channel-specific notes. The release tag must match the `##` heading exactly.
 
+## v2026.11.10
+
+### GitHub
+
+- Sort incoming direct messages into chats and requests. People you follow are accepted, people in your wider network and unknown senders arrive as requests, and each group has its own setting. Requests are limited per sender and decided on device after decryption, without adding social identities to network filters.
+- Hold an authenticated group message until the group's details arrive, and ask a member for them privately. Retries are bounded and survive restarts.
+- Remove location and device details from photos and videos before upload.
+- Recognise Cashu tokens and Lightning invoices in message text.
+- Suggest chats in the system share sheet with shared avatar rendering and thumbnails.
+- Jump to the original message from a reply quote, and select text across messages on desktop.
+- Use the revision-aware social graph. Sync public follow and mute lists with optional Negentropy and bound each download.
+- Use per-peer tokens for nearby Bluetooth discovery.
+- Adopt the verified FIPS 0.4.119 idle-repair transport releases.
+- Avoid loading the outgoing backlog for notification previews.
+- Share screen navigation rules across all five apps from the core, and build the protocol engine and core tests as ordinary modules.
+- Update the protocol library to 0.3.16 and the CLI to 0.1.64.
+
+### Apple
+
+- Messages from people you don't follow now arrive as requests, with settings for who can reach you.
+- Photos and videos are sent without location or device details.
+- Payment links for Cashu and Lightning are recognised in messages.
+- Suggested chats in the share sheet show the right pictures.
+- Tap a quoted reply to jump to the original message. Select text across messages on Mac.
+- Group messages wait for their group details before appearing.
+- Improve finding nearby devices over Bluetooth.
+
+### Zapstore
+
+- Messages from people you don't follow now arrive as requests, with settings for who can reach you.
+- Photos and videos are sent without location or device details.
+- Payment links for Cashu and Lightning are recognised in messages.
+- Suggested chats in the share sheet show the right pictures.
+- Tap a quoted reply to jump to the original message.
+- Group messages wait for their group details before appearing.
+- Improve finding nearby devices over Bluetooth.
+
 ## v2026.11.5.1
 
 ### GitHub

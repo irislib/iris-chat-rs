@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.16
+
+- Report authenticated group key distributions that are still waiting for
+  their group's metadata, and let an existing member resend that metadata
+  privately to another member.
+- Avoid allocating the outgoing backlog when loading state for a notification
+  preview.
+- Build the engine and its tests as ordinary modules. No wire or storage
+  format changes.
+
 ## 0.3.15
 
 - Deliver Note to Self to each reachable linked device. Retry missing copies across restarts while honoring device removals.

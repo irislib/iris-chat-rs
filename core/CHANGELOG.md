@@ -8,6 +8,20 @@
   and mDNS behavior, ICE consent, candidate comparison and cleanup, and native
   socket protection, preserving the compatible iOS dependencies.
 
+## 0.1.64
+
+- Sort incoming direct messages into accepted chats and requests using the
+  user's follows, with separate settings for people in the wider network and
+  for unknown senders. Requests are limited per sender and decided on device
+  after decryption.
+- Hold a group message until the group's details arrive, and ask a member for
+  them privately.
+- Remove location and device details from photos and videos before upload.
+- Recognise Cashu tokens and Lightning invoices in message text.
+- Use the revision-aware social graph and sync public follow and mute lists
+  with optional Negentropy.
+- Update the protocol library to 0.3.16.
+
 ## 0.1.61
 
 - Let a linked device receive a Note to Self file offer while another device is unavailable.

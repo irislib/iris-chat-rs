@@ -1,6 +1,6 @@
 [package]
 name = "iris-chat"
-version = "0.1.63"
+version = "0.1.64"
 edition = "2021"
 description = "Iris Chat command line client and shared encrypted chat core"
 license = "MIT"
@@ -69,7 +69,7 @@ hashtree-network = "=0.3.0"
 hashtree-resolver = { version = "=0.3.0", features = ["nostr"] }
 hashtree-updater = { version = "=0.3.0", features = ["peer-storage"] }
 hmac = "0.12"
-iris-chat-protocol = { version = "=0.3.15", path = "../chat-protocol" }
+iris-chat-protocol = { version = "=0.3.16", path = "../chat-protocol" }
 nostr = { version = "0.44.7", default-features = false, features = ["std", "nip44"] }
 nostr-sdk = { version = "0.44.1", default-features = false, features = ["nip44"] }
 nostr-pubsub = "=0.1.20"
