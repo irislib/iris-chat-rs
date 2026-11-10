@@ -26,7 +26,9 @@ EXPECTED = {
     "nostr-pubsub-fips": "0.5.51",
     "nostr-pubsub-relay": "0.1.16",
     "nostr-pubsub-social-graph": "0.2.4",
-    "nostr-social-graph": "0.1.4",
+    # The pubsub transport still builds on 0.1.4. Chat's own revision-aware
+    # people graph uses 0.2.0 directly; the two do not exchange graph types.
+    "nostr-social-graph": {"0.1.4", "0.2.0"},
 }
 
 
@@ -127,7 +129,8 @@ class DependencyLockConsistencyTests(unittest.TestCase):
             with self.subTest(lock=lock_path.relative_to(ROOT)):
                 versions = package_versions(lock_path)
                 for package, expected in EXPECTED.items():
-                    self.assertEqual(versions.get(package), {expected}, f"{package} in {lock_path}")
+                    accepted = expected if isinstance(expected, set) else {expected}
+                    self.assertEqual(versions.get(package), accepted, f"{package} in {lock_path}")
                 self.assertIn(
                     "0.6.0",
                     versions.get("nostr-identity", set()),
