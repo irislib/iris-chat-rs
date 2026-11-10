@@ -46,7 +46,7 @@ fi
 
 # The published ICE archive now carries the consent/candidate fixes. Its exact
 # checksum is pinned by test_dependency_lock_consistency.py; the package's own
-# release checks cover those regressions. Do not compile the inactive old vendor.
+# release checks cover those regressions.
 
 # Preserve the capped-process calibration and peak-memory evidence in Linux
 # release logs; successful output is otherwise hidden by either suite runner.
