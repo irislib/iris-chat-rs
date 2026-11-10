@@ -6,8 +6,24 @@ pub(super) fn messaging_group(
 ) -> adw::PreferencesGroup {
     let group = adw::PreferencesGroup::builder().title("Messaging").build();
 
+    let network_requests = adw::SwitchRow::builder()
+        .title("Allow requests from your network")
+        .subtitle("People you follow are accepted automatically.")
+        .build();
+    network_requests.set_active(prefs.accept_social_graph_direct_messages);
+    {
+        let manager = manager.clone();
+        network_requests.connect_active_notify(move |row| {
+            manager.dispatch(AppAction::SetAcceptSocialGraphDirectMessages {
+                enabled: row.is_active(),
+            });
+        });
+    }
+    group.add(&network_requests);
+
     let accept_requests = adw::SwitchRow::builder()
-        .title("Accept message requests from unknowns")
+        .title("Allow requests from everyone else")
+        .subtitle("Keeps the newest 50 requests from outside your network.")
         .build();
     accept_requests.set_active(prefs.accept_unknown_direct_messages);
     {
@@ -19,6 +35,20 @@ pub(super) fn messaging_group(
         });
     }
     group.add(&accept_requests);
+
+    let overmuted_requests = adw::SwitchRow::builder()
+        .title("Allow requests from frequently muted people")
+        .build();
+    overmuted_requests.set_active(prefs.accept_overmuted_direct_messages);
+    {
+        let manager = manager.clone();
+        overmuted_requests.connect_active_notify(move |row| {
+            manager.dispatch(AppAction::SetAcceptOvermutedDirectMessages {
+                enabled: row.is_active(),
+            });
+        });
+    }
+    group.add(&overmuted_requests);
 
     let hide_blocked = adw::SwitchRow::builder()
         .title("Hide past group messages from blocked people")

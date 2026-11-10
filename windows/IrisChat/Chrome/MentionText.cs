@@ -45,6 +45,22 @@ internal static class MentionText
     private static void AppendLinks(RichTextBox view, Paragraph paragraph, string text)
     {
         var cursor = 0;
+        foreach (var payment in Native.MessagePaymentLinks(text))
+        {
+            var start = (int)payment.start;
+            AppendWebLinks(view, paragraph, text[cursor..start]);
+            var link = new Hyperlink(new Run(payment.label)) { Cursor = Cursors.Hand };
+            link.SetBinding(TextElement.ForegroundProperty, new Binding(nameof(Control.Foreground)) { Source = view });
+            link.Click += (_, _) => PlatformDocumentOpener.OpenUrl(payment.uri);
+            paragraph.Inlines.Add(link);
+            cursor = start + (int)payment.length;
+        }
+        AppendWebLinks(view, paragraph, text[cursor..]);
+    }
+
+    private static void AppendWebLinks(RichTextBox view, Paragraph paragraph, string text)
+    {
+        var cursor = 0;
         foreach (Match match in Links.Matches(text))
         {
             var visible = match.Value.TrimEnd('.', ',', ';', ':', '!', '?', ')', ']');

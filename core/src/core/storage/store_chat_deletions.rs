@@ -52,6 +52,10 @@ impl AppStore {
             params![chat_id, deleted_at as i64],
         )?;
         if !keep_thread {
+            tx.execute(
+                "DELETE FROM message_request_arrivals WHERE chat_id = ?1",
+                [chat_id],
+            )?;
             tx.execute("DELETE FROM threads WHERE chat_id = ?1", [chat_id])?;
             tx.execute(
                 "DELETE FROM chat_message_ttls WHERE chat_id = ?1",

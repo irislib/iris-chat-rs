@@ -8,6 +8,32 @@ pub(super) struct LinkifiedText {
 }
 
 pub(super) fn linkified_text(text: &str) -> LinkifiedText {
+    let mut output = LinkifiedText {
+        markup: String::new(),
+        urls: vec![],
+    };
+    let mut cursor = 0;
+    for payment in iris_chat_core::message_payment_links(text.to_owned()) {
+        let (Some(start), Some(end)) = (
+            super::mention_text::byte_at_utf16(text, payment.start),
+            super::mention_text::byte_at_utf16(text, payment.start + payment.length),
+        ) else {
+            continue;
+        };
+        let plain = web_linkified_text(&text[cursor..start]);
+        output.markup.push_str(&plain.markup);
+        output.urls.extend(plain.urls);
+        push_link_markup(&mut output.markup, &payment.label, &payment.uri);
+        output.urls.push(payment.uri);
+        cursor = end;
+    }
+    let plain = web_linkified_text(&text[cursor..]);
+    output.markup.push_str(&plain.markup);
+    output.urls.extend(plain.urls);
+    output
+}
+
+fn web_linkified_text(text: &str) -> LinkifiedText {
     let mut markup = String::new();
     let mut urls = Vec::new();
 
@@ -170,7 +196,8 @@ fn compact_url(value: &str) -> String {
 }
 
 fn open_url(url: &str) {
-    if let Err(error) = gio::AppInfo::launch_default_for_uri(url, gio::AppLaunchContext::NONE) {
-        eprintln!("Failed to open link {url}: {error}");
+    if gio::AppInfo::launch_default_for_uri(url, gio::AppLaunchContext::NONE).is_err() {
+        // Wallet URIs contain bearer data; launcher errors can echo the URI.
+        eprintln!("Failed to open link");
     }
 }

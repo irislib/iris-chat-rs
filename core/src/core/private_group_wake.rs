@@ -75,7 +75,11 @@ impl AppCore {
         if !sender_matches(engine, sender, &event) {
             // A distribution may arrive after the wake. Keep that delivery
             // retryable, but discard a known author's wrong sender binding.
-            return Some(engine.is_known_group_sender_event_author(event.pubkey));
+            if engine.is_known_group_sender_event_author(event.pubkey) {
+                return Some(true);
+            }
+            self.request_missing_group_context(sender, None, Some(event.pubkey));
+            return Some(false);
         }
         let source_id = event.id.to_hex();
         if let Some(wake_id) = outer_event_id.as_deref() {

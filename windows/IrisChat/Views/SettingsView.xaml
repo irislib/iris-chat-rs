@@ -224,9 +224,19 @@
 
                 <Border x:Name="MessagingPage">
                     <StackPanel>
+                        <TextBlock Text="People you follow are accepted automatically." TextWrapping="Wrap" />
+                        <CheckBox x:Name="NetworkRequestsToggle"
+                                  Checked="OnNetworkRequestsChanged" Unchecked="OnNetworkRequestsChanged" AutomationProperties.Name="Allow requests from your network">
+                            <TextBlock Text="Allow requests from your network" TextWrapping="Wrap" />
+                        </CheckBox>
                         <CheckBox x:Name="AcceptChatRequestsToggle"
-                                  Checked="OnAcceptChatRequestsChanged" Unchecked="OnAcceptChatRequestsChanged" AutomationProperties.Name="Accept chat requests">
-                            <TextBlock Text="Accept chat requests" TextWrapping="Wrap" />
+                                  Checked="OnAcceptChatRequestsChanged" Unchecked="OnAcceptChatRequestsChanged" AutomationProperties.Name="Allow requests from everyone else">
+                            <TextBlock Text="Allow requests from everyone else" TextWrapping="Wrap" />
+                        </CheckBox>
+                        <TextBlock Text="Keeps the newest 50 requests from outside your network." TextWrapping="Wrap" />
+                        <CheckBox x:Name="OvermutedRequestsToggle"
+                                  Checked="OnOvermutedRequestsChanged" Unchecked="OnOvermutedRequestsChanged" AutomationProperties.Name="Allow requests from frequently muted people">
+                            <TextBlock Text="Allow requests from frequently muted people" TextWrapping="Wrap" />
                         </CheckBox>
                         <CheckBox x:Name="TypingToggle"
                                   Checked="OnTypingChanged" Unchecked="OnTypingChanged" AutomationProperties.Name="Typing indicators">

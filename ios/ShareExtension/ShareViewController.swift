@@ -714,8 +714,7 @@ extension ShareViewController: UITableViewDataSource, UITableViewDelegate {
         guard !filteredSuggestions.isEmpty else { return nil }
         let header = tableView.dequeueReusableHeaderFooterView(withIdentifier: ShareSectionHeaderView.reuseId)
             as? ShareSectionHeaderView ?? ShareSectionHeaderView(reuseIdentifier: ShareSectionHeaderView.reuseId)
-        let title = searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Recent chats" : "Chats"
-        header.configure(title: title)
+        header.configure(title: "Chats")
         return header
     }
 

@@ -16,16 +16,18 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{OnceLock, RwLock, Weak};
 use std::time::Duration;
-use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio::sync::RwLock as AsyncRwLock;
 use tokio_util::compat::TokioAsyncReadCompatExt;
 
 mod local_store;
 mod message_commit;
+mod photo_metadata;
 mod provider_reads;
 mod provider_route;
 mod readiness;
 mod replication;
+mod video_metadata;
 use local_store::AttachmentChunkStore;
 pub(in crate::core) use provider_reads::ProviderReadOptions;
 pub(super) use replication::AttachmentService;
@@ -368,7 +370,13 @@ impl AppCore {
                     "attachment.upload.finish",
                     format!("chat_id={} success=false error={}", chat_id, error),
                 );
-                self.state.toast = Some("Attachment upload failed.".to_string());
+                self.state.toast = Some(
+                    if error == photo_metadata::ERROR || error == video_metadata::ERROR {
+                        error
+                    } else {
+                        "Attachment upload failed.".to_string()
+                    },
+                );
                 self.emit_state();
             }
         }
@@ -525,15 +533,41 @@ async fn upload_file_to_store<S: Store + 'static>(
         encrypted: true,
         ..HashTreeConfig::new(store)
     });
-    let file = tokio::fs::File::open(path).await?;
+    let mut file = tokio::fs::File::open(path).await?;
     let metadata = file.metadata().await?;
     if !metadata.is_file() || metadata.len() > MAX_ATTACHMENT_BYTES {
         anyhow::bail!("attachment is too large or is not a regular file");
     }
+    // Inspect content as well as the extension (pickers often use temporary
+    // filenames). Finish photo cleanup before storing or uploading any bytes.
+    let mut prefix = Vec::with_capacity(32);
+    (&mut file).take(32).read_to_end(&mut prefix).await?;
+    file.rewind().await?;
+    let format = photo_metadata::detect(&prefix, path).map_err(anyhow::Error::msg)?;
+    let is_video =
+        format.is_none() && video_metadata::detect(&prefix, path).map_err(anyhow::Error::msg)?;
+    let reader: Box<dyn tokio::io::AsyncRead + Unpin + Send> = if format.is_some() || is_video {
+        let mut data = Vec::new();
+        file.take(MAX_ATTACHMENT_BYTES + 1)
+            .read_to_end(&mut data)
+            .await?;
+        if data.len() as u64 > MAX_ATTACHMENT_BYTES {
+            anyhow::bail!("attachment is too large");
+        }
+        let cleaned = tokio::task::spawn_blocking(move || match format {
+            Some(format) => photo_metadata::clean(&data, format),
+            None => video_metadata::clean(&data),
+        })
+        .await?
+        .map_err(anyhow::Error::msg)?;
+        Box::new(std::io::Cursor::new(cleaned))
+    } else {
+        Box::new(file)
+    };
     // Recheck the opened file and cap the stream in case it grows during upload.
     // Never send a link that the attachment download limit makes unusable.
     let (cid, size) = tree
-        .put_stream(file.take(MAX_ATTACHMENT_BYTES + 1).compat())
+        .put_stream(reader.take(MAX_ATTACHMENT_BYTES + 1).compat())
         .await
         .map_err(|error| anyhow::anyhow!("hashtree upload failed: {error}"))?;
     if size > MAX_ATTACHMENT_BYTES {

@@ -72,6 +72,12 @@ pub(super) fn hash_preferences(preferences: &PreferencesSnapshot) -> u64 {
     preferences.pinned_chat_ids.hash(&mut hasher);
     preferences.debug_logging_enabled.hash(&mut hasher);
     preferences.accept_unknown_direct_messages.hash(&mut hasher);
+    preferences
+        .accept_social_graph_direct_messages
+        .hash(&mut hasher);
+    preferences
+        .accept_overmuted_direct_messages
+        .hash(&mut hasher);
     preferences.blocked_owner_pubkeys.hash(&mut hasher);
     preferences.accepted_owner_pubkeys.hash(&mut hasher);
     preferences.nearby_mailbag_enabled.hash(&mut hasher);
@@ -93,7 +99,7 @@ pub(super) fn load_preferences(
                     debug_logging_enabled, accept_unknown_direct_messages,
                     nearby_enabled,
                     blocked_owner_pubkeys_json, accepted_owner_pubkeys_json,
-                    nearby_mailbag_enabled, nearby_show_in_chat_list, image_proxy_fallback_enabled, voice_calls_enabled, video_calls_enabled, call_quality, call_max_bitrate_bps, timed_chat_mutes_json, allow_message_deletion_by_others, hide_blocked_group_messages, silent_mention_chat_ids_json
+                    nearby_mailbag_enabled, nearby_show_in_chat_list, image_proxy_fallback_enabled, voice_calls_enabled, video_calls_enabled, call_quality, call_max_bitrate_bps, timed_chat_mutes_json, allow_message_deletion_by_others, hide_blocked_group_messages, silent_mention_chat_ids_json, accept_social_graph_direct_messages, accept_overmuted_direct_messages
              FROM preferences WHERE id = 1",
             [],
             |row| {
@@ -121,6 +127,8 @@ pub(super) fn load_preferences(
                         .unwrap_or_default(),
                     debug_logging_enabled: row.get::<_, i64>(15)? != 0,
                     accept_unknown_direct_messages: row.get::<_, i64>(16)? != 0,
+                    accept_social_graph_direct_messages: row.get::<_, i64>(31)? != 0,
+                    accept_overmuted_direct_messages: row.get::<_, i64>(32)? != 0,
                     nearby_enabled: row.get::<_, i64>(17)? != 0,
                     blocked_owner_pubkeys: serde_json::from_str(&row.get::<_, String>(18)?)
                         .unwrap_or_default(),
@@ -155,8 +163,8 @@ pub(super) fn write_preferences(
             mobile_push_server_url, muted_chat_ids_json, pinned_chat_ids_json,
             debug_logging_enabled, accept_unknown_direct_messages, nearby_enabled,
             blocked_owner_pubkeys_json, accepted_owner_pubkeys_json,
-            nearby_mailbag_enabled, nearby_show_in_chat_list, image_proxy_fallback_enabled, voice_calls_enabled, video_calls_enabled, call_quality, call_max_bitrate_bps, timed_chat_mutes_json, allow_message_deletion_by_others, hide_blocked_group_messages, silent_mention_chat_ids_json
-         ) VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31)
+            nearby_mailbag_enabled, nearby_show_in_chat_list, image_proxy_fallback_enabled, voice_calls_enabled, video_calls_enabled, call_quality, call_max_bitrate_bps, timed_chat_mutes_json, allow_message_deletion_by_others, hide_blocked_group_messages, silent_mention_chat_ids_json, accept_social_graph_direct_messages, accept_overmuted_direct_messages
+         ) VALUES (1, ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27, ?28, ?29, ?30, ?31, ?32, ?33)
          ON CONFLICT(id) DO UPDATE SET
             voice_calls_enabled = excluded.voice_calls_enabled,
             video_calls_enabled = excluded.video_calls_enabled,
@@ -184,6 +192,8 @@ pub(super) fn write_preferences(
             pinned_chat_ids_json = excluded.pinned_chat_ids_json,
             debug_logging_enabled = excluded.debug_logging_enabled,
             accept_unknown_direct_messages = excluded.accept_unknown_direct_messages,
+            accept_social_graph_direct_messages = excluded.accept_social_graph_direct_messages,
+            accept_overmuted_direct_messages = excluded.accept_overmuted_direct_messages,
             nearby_enabled = excluded.nearby_enabled,
             blocked_owner_pubkeys_json = excluded.blocked_owner_pubkeys_json,
             accepted_owner_pubkeys_json = excluded.accepted_owner_pubkeys_json,
@@ -221,6 +231,8 @@ pub(super) fn write_preferences(
             preferences.allow_message_deletion_by_others as i64,
             preferences.hide_blocked_group_messages as i64,
             serde_json::to_string(&preferences.silent_mention_chat_ids)?,
+            preferences.accept_social_graph_direct_messages as i64,
+            preferences.accept_overmuted_direct_messages as i64,
         ],
     )?;
     Ok(())

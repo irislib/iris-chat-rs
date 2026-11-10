@@ -118,8 +118,7 @@ impl AppCore {
         batch: ProtocolRetryBatch,
     ) {
         if batch.is_empty() {
-            let new_chats = self.finish_pending_new_chat_notifications();
-            if self.drain_queued_direct_text_messages(reason) || new_chats {
+            if self.drain_queued_direct_text_messages(reason) {
                 self.persist_best_effort();
                 self.rebuild_state();
                 self.emit_state();
@@ -190,13 +189,13 @@ impl AppCore {
         self.request_protocol_subscription_refresh();
         self.schedule_fast_protocol_retry_if_pending();
         self.drain_queued_direct_text_messages(reason);
-        self.finish_pending_new_chat_notifications();
         self.persist_best_effort();
         self.rebuild_state();
         self.emit_state();
     }
 
     pub(super) fn retry_protocol_engine_pending_work(&mut self, reason: &'static str) {
+        self.retry_missing_group_metadata();
         if self.pending_private_invite_cleanup_retry {
             self.retry_all_pending_private_invite_responses();
         }
@@ -1716,26 +1715,12 @@ impl AppCore {
 
     /// Walks every active and inactive session and returns the
     /// expected event-author pubkeys (hex), narrowed to peers the
-    /// user actually wants traffic from: blocked owners are always
-    /// excluded, and when the unknown-users toggle is off, owners
-    /// outside accepted conversations are excluded too. The owner
+    /// user actually wants traffic from, using the private request policy.
+    /// Blocked and disallowed request senders are excluded. The owner
     /// gate is applied per-session (so we never include any of a
     /// blocked owner's device-ephemeral event authors). The result
     /// feeds the mobile-push subscription body.
     pub(super) fn subscribable_message_author_hexes(&self) -> HashSet<String> {
-        let accept_unknown = self.preferences.accept_unknown_direct_messages;
-        let blocked: HashSet<String> = self
-            .preferences
-            .blocked_owner_pubkeys
-            .iter()
-            .cloned()
-            .collect();
-        let accepted: HashSet<String> = self
-            .preferences
-            .accepted_owner_pubkeys
-            .iter()
-            .cloned()
-            .collect();
         // Group sender-key updates use pairwise transport. Accepting that
         // group permits its transport without whitelisting each member's DM.
         let group_peers: HashSet<String> = self
@@ -1763,10 +1748,11 @@ impl AppCore {
                     return true;
                 }
                 let hex = owner.to_hex();
-                if blocked.contains(&hex) {
+                if self.is_owner_blocked(&hex) {
                     return false;
                 }
-                accept_unknown || accepted.contains(&hex) || group_peers.contains(&hex)
+                self.direct_request_access(&hex) != message_requests::RequestAccess::Denied
+                    || group_peers.contains(&hex)
             })
             .into_iter()
             .map(|pubkey| pubkey.to_hex())

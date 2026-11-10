@@ -400,10 +400,12 @@ fun NdrApp(
 
             if (pendingShare != null && pendingShare?.shortcutId == null && pendingShare?.targetChatId == null && bootstrapState is AccountBootstrapState.LoggedIn) {
                 val chatList by appManager.chatList.collectAsStateWithLifecycle()
+                val account by appManager.account.collectAsStateWithLifecycle()
                 ShareTargetDialog(
                     appManager = appManager,
-                    chats = chatList,
-                    nearbyPeers = shareNearbySnapshot.peers,
+                    accountId = account?.publicKeyHex,
+                    chats = remember(account, chatList) { to.iris.chat.rust.shareTargetChats(account, chatList) },
+                    nearbyPeers = shareNearbySnapshot.peers.filter { it.ownerPubkeyHex != account?.publicKeyHex },
                     preferences = preferences,
                     title = if (pendingShare?.isForward == true) "Forward" else "Share",
                     onSend = { chatIds -> appManager.sendPendingShareToChats(chatIds) },
@@ -540,6 +542,7 @@ private fun screenRouteKey(screen: Screen): String =
 @Composable
 private fun ShareTargetDialog(
     appManager: AppManager,
+    accountId: String?,
     chats: List<ChatThreadSnapshot>,
     nearbyPeers: List<IrisNearbyService.Peer>,
     preferences: PreferencesSnapshot,
@@ -549,7 +552,7 @@ private fun ShareTargetDialog(
     onDismiss: () -> Unit,
 ) {
     var query by remember { mutableStateOf("") }
-    var selectedChatIds by remember { mutableStateOf(emptySet<String>()) }
+    var selectedChatIds by remember(accountId) { mutableStateOf(emptySet<String>()) }
     val haptics = rememberIrisHapticFeedback()
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = false)
     val availableChatIds = remember(chats) { chats.mapTo(mutableSetOf()) { it.chatId } }
@@ -678,7 +681,7 @@ private fun ShareTargetDialog(
                     }
                     if (filteredChats.isNotEmpty()) {
                         item(key = "share-chats-header") {
-                            ShareTargetSectionHeader(if (query.isBlank()) "Recent chats" else "Chats")
+                            ShareTargetSectionHeader("Chats")
                         }
                     }
                     items(filteredChats, key = { it.chatId }) { chat ->
@@ -686,6 +689,7 @@ private fun ShareTargetDialog(
                         ShareTargetRow(
                             appManager = appManager,
                             chat = chat,
+                            profileName = chat.subtitle.takeIf { chat.chatId == accountId },
                             preferences = preferences,
                             selected = selected,
                             onClick = {
@@ -896,6 +900,7 @@ private fun ShareNearbyTargetRow(
 private fun ShareTargetRow(
     appManager: AppManager,
     chat: ChatThreadSnapshot,
+    profileName: String?,
     preferences: PreferencesSnapshot,
     selected: Boolean,
     onClick: () -> Unit,
@@ -933,17 +938,24 @@ private fun ShareTargetRow(
             imageRequest = avatarUrl,
             imageData = avatarData,
         )
-        Text(
-            text = chat.displayName,
-            modifier =
-                Modifier
-                    .weight(1f)
-                    .padding(start = 16.dp, end = 16.dp),
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            style = MaterialTheme.typography.bodyLarge,
-            color = MaterialTheme.colorScheme.onSurface,
-        )
+        Column(Modifier.weight(1f).padding(horizontal = 16.dp)) {
+            Text(
+                text = chat.displayName,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurface,
+            )
+            if (!profileName.isNullOrBlank()) {
+                Text(
+                    text = profileName,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = IrisTheme.palette.muted,
+                )
+            }
+        }
         ShareTargetSelectionIndicator(selected = selected)
     }
 }

@@ -3,6 +3,31 @@ use std::sync::{Arc, RwLock};
 use tempfile::TempDir;
 
 #[test]
+fn disabled_relays_do_not_start_public_graph_refresh() {
+    let temp = TempDir::new().unwrap();
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let mut core = AppCore::new(
+        flume::unbounded().0,
+        flume::unbounded().0,
+        temp.path().to_string_lossy().to_string(),
+        Arc::new(RwLock::new(AppState::empty())),
+    );
+    core.logged_in = Some(LoggedInState {
+        owner_pubkey: owner.public_key(),
+        owner_keys: Some(owner),
+        device_keys: device.clone(),
+        client: Client::new(device),
+        relay_urls: Vec::new(),
+        authorization_state: LocalAuthorizationState::Authorized,
+    });
+    core.request_user_discovery_refresh(true);
+    assert!(!core.user_discovery_runtime.in_flight);
+    assert!(!core.user_discovery_runtime.refresh_pending);
+    assert!(core.user_discovery_runtime.last_started_at.is_none());
+}
+
+#[test]
 fn completed_fetch_starts_one_pending_refresh_despite_reconnect_floor() {
     let temp = TempDir::new().unwrap();
     let owner = Keys::generate();

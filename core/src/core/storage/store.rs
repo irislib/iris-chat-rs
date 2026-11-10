@@ -14,6 +14,9 @@ use std::collections::hash_map::DefaultHasher;
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::hash::{Hash, Hasher};
 
+#[path = "store_message_requests.rs"]
+mod store_message_requests;
+
 #[path = "store_chat_deletions.rs"]
 mod store_chat_deletions;
 

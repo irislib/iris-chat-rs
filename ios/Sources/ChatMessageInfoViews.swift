@@ -741,6 +741,7 @@ struct ChatMessageActionDock: View {
     @Binding var isOverflowPresented: Bool
     var canReplyAndReact = true
     var canCopyAndForward = true
+    var cashuTokens: [String] = []
     var onEdit: (() -> Void)? = nil
     var onEditHistory: (() -> Void)? = nil
     var onDeleteForEveryone: (() -> Void)? = nil
@@ -784,6 +785,7 @@ struct ChatMessageActionDock: View {
             .popover(isPresented: $isOverflowPresented, arrowEdge: .bottom) {
                 ChatMessageOverflowActionsPopover(
                     canCopyAndForward: canCopyAndForward,
+                    cashuTokens: cashuTokens,
                     onEdit: onEdit,
                     onEditHistory: onEditHistory,
                     onDeleteForEveryone: onDeleteForEveryone,
@@ -822,6 +824,7 @@ struct ChatMessageActionDock: View {
 private struct ChatMessageOverflowActionsPopover: View {
     @Environment(\.irisPalette) private var palette
     let canCopyAndForward: Bool
+    let cashuTokens: [String]
     let onEdit: (() -> Void)?
     let onEditHistory: (() -> Void)?
     let onDeleteForEveryone: (() -> Void)?
@@ -851,6 +854,10 @@ private struct ChatMessageOverflowActionsPopover: View {
                     identifier: "messageCopyMenuItem",
                     action: onCopy
                 )
+                ForEach(cashuTokens.indices, id: \.self) { index in
+                    actionButton(cashuTokens.count == 1 ? "Copy token" : "Copy token \(index + 1)",
+                                 systemName: "doc.on.doc.fill", identifier: "messageCopyToken\(index)") { PlatformClipboard.setString(cashuTokens[index]) }
+                }
             }
             actionButton(
                 "Delete for me",

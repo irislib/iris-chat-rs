@@ -115,11 +115,13 @@ struct RootView: View {
             ) { share in
 #if os(iOS)
                 ShareTargetSheet(manager: manager, share: share)
+                    .id(manager.state.account?.publicKeyHex)
                     .irisModalSurface()
                     .presentationDetents([.large])
                     .presentationDragIndicator(.visible)
 #elseif os(macOS)
                 ShareTargetSheet(manager: manager, share: share)
+                    .id(manager.state.account?.publicKeyHex)
                     .frame(minWidth: 380, minHeight: 420)
 #endif
             }

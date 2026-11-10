@@ -409,8 +409,23 @@ struct SettingsScreen: View {
                 .irisControlTint()
                 .accessibilityIdentifier("myProfileReadReceiptsToggle")
 
+                Text("People you follow are accepted automatically.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+
                 Toggle(
-                    "Accept message requests from unknowns",
+                    "Allow requests from your network",
+                    isOn: Binding(
+                        get: { manager.state.preferences.acceptSocialGraphDirectMessages },
+                        set: { manager.dispatch(.setAcceptSocialGraphDirectMessages(enabled: $0)) }
+                    )
+                )
+                .irisHoverPointer()
+                .irisControlTint()
+                .accessibilityIdentifier("myProfileAcceptNetworkMessagesToggle")
+
+                Toggle(
+                    "Allow requests from everyone else",
                     isOn: Binding(
                         get: { manager.state.preferences.acceptUnknownDirectMessages },
                         set: { enabled in
@@ -421,6 +436,21 @@ struct SettingsScreen: View {
                 .irisHoverPointer()
                 .irisControlTint()
                 .accessibilityIdentifier("myProfileAcceptUnknownMessagesToggle")
+
+                Text("Keeps the newest 50 requests from outside your network.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+
+                Toggle(
+                    "Allow requests from frequently muted people",
+                    isOn: Binding(
+                        get: { manager.state.preferences.acceptOvermutedDirectMessages },
+                        set: { manager.dispatch(.setAcceptOvermutedDirectMessages(enabled: $0)) }
+                    )
+                )
+                .irisHoverPointer()
+                .irisControlTint()
+                .accessibilityIdentifier("myProfileAcceptOvermutedMessagesToggle")
 
                 Toggle(
                     "Hide past group messages from blocked people",

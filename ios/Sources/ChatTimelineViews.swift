@@ -456,6 +456,7 @@ struct ChatMessageRow: View, Equatable {
             isOverflowPresented: actionDockOverflowBinding,
             canReplyAndReact: canReplyAndReact,
             canCopyAndForward: !message.deletedForEveryone,
+            cashuTokens: message.deletedForEveryone ? [] : copyableCashuTokens(message.body),
             onEdit: irisCanEditMessage(message) && canReplyAndReact ? onEdit : nil,
             onEditHistory: irisCanViewMessageEditHistory(message) ? onEditHistory : nil,
             onDeleteForEveryone: message.isOutgoing && !message.deletedForEveryone && canReplyAndReact ? onDeleteForEveryone : nil,

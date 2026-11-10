@@ -1,6 +1,89 @@
 use super::*;
 
 impl ProtocolEngine {
+    /// Resolve an authenticated private carrier without advertising group authors.
+    pub fn group_id_for_sender_event_author(&self, author: PublicKey) -> Option<String> {
+        self.group_manager
+            .group_id_for_sender_event_pubkey(ndr_device(author))
+    }
+
+    pub fn has_pending_group_pairwise_payloads(&self) -> bool {
+        !self.pending_group_pairwise_payloads.is_empty()
+    }
+
+    /// A bounded rotating slice of durable, authenticated key distributions
+    /// still waiting for their group metadata, including after a restart.
+    pub fn missing_group_metadata_sources(&self) -> Vec<(PublicKey, String, PublicKey)> {
+        let pending = &self.pending_group_pairwise_payloads;
+        if pending.is_empty() {
+            return Vec::new();
+        }
+        let start = ((unix_now().get() / 60) as usize % pending.len().div_ceil(32)) * 32;
+        pending
+            .iter()
+            .skip(start)
+            .take(32)
+            .filter_map(|pending| {
+                let owner = match self.resolve_group_pairwise_sender_owner(
+                    pending.sender_owner,
+                    pending.sender_device,
+                ) {
+                    ProtocolSenderOwnerResolution::Verified { owner } => owner,
+                    _ => return None,
+                };
+                let GroupPairwiseCommand::SenderKeyDistribution { distribution } =
+                    JsonGroupPayloadCodecV1
+                        .decode_pairwise_command(&pending.payload)
+                        .ok()??
+                else {
+                    return None;
+                };
+                if self.group_manager.group(&distribution.group_id).is_some() {
+                    return None;
+                }
+                Some((
+                    public_owner(owner).ok()?,
+                    distribution.group_id,
+                    public_device(distribution.sender_event_pubkey).ok()?,
+                ))
+            })
+            .collect()
+    }
+
+    /// Resend only to an existing member. Ordinary members' metadata copies still
+    /// pass the normal admin admission check; they cannot establish authority.
+    pub fn resend_private_group_context(
+        &mut self,
+        group_id: &str,
+        requester: PublicKey,
+        author: Option<PublicKey>,
+    ) -> anyhow::Result<Vec<ProtocolEffect>> {
+        let Some(group) = self.group_manager.group(group_id) else {
+            return Ok(Vec::new());
+        };
+        if !group.members.contains(&self.local_owner)
+            || !group.members.contains(&ndr_owner(requester))
+        {
+            return Ok(Vec::new());
+        }
+        self.with_state_checkpoint(|engine| {
+            let effects = engine.sender_key_repair_response_effects(
+                ndr_owner(requester),
+                &SenderKeyRepairRequest {
+                    group_id: group.group_id,
+                    sender_event_pubkey: author.map(ndr_device).unwrap_or(engine.local_device),
+                    key_id: None,
+                    message_number: None,
+                    required_revision: Some(group.revision),
+                    created_at: NdrUnixSeconds(unix_now().get()),
+                },
+                NdrUnixSeconds(unix_now().get()),
+            )?;
+            engine.retain_group_publications(&effects, Some(ndr_owner(requester)))?;
+            engine.persist()?;
+            Ok(effects)
+        })
+    }
     pub(super) fn queue_pending_group_sender_key_message(
         &mut self,
         parsed: nostr_double_ratchet::wire::ParsedGroupSenderKeyMessageEvent,

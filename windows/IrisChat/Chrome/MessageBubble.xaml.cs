@@ -177,6 +177,18 @@ public partial class MessageBubble : UserControl
         copy.Click += OnCopyText;
         if (!message.deletedForEveryone) menu.Items.Add(copy);
 
+        if (!message.deletedForEveryone)
+        {
+            var tokens = Native.MessagePaymentLinks(message.body).Where(p => p.cashu != null).ToArray();
+            for (var index = 0; index < tokens.Length; index++)
+            {
+                var token = tokens[index].uri[6..];
+                var copyToken = new MenuItem { Header = tokens.Length == 1 ? "Copy token" : $"Copy token {index + 1}" };
+                copyToken.Click += (_, _) => PlatformClipboard.SetString(token);
+                menu.Items.Add(copyToken);
+            }
+        }
+
         var info = new MenuItem { Header = "Info" };
         info.Click += OnShowInfo;
         menu.Items.Add(info);
@@ -661,7 +673,7 @@ public partial class MessageBubble : UserControl
         var trimmed = Native.FormatForwardedMessage(text);
         if (string.IsNullOrEmpty(trimmed)) return;
 
-        var chats = App.CurrentManager.ChatList;
+        var chats = Native.ShareTargetChats(App.CurrentManager.Account, App.CurrentManager.ChatList);
         var owner = Window.GetWindow(this);
         var window = new Window
         {

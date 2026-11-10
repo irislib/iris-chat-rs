@@ -1,4 +1,3 @@
-#if os(iOS)
 import Foundation
 
 /// Share-extension files can arrive while the app is running. Keep directory
@@ -54,4 +53,3 @@ actor IrisPendingShares {
         }
     }
 }
-#endif

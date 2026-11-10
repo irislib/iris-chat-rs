@@ -1,6 +1,6 @@
 use super::*;
 
-const PREVIEW_PREFIX: &str = "mobile_push_invite:";
+const PREVIEW_PREFIX: &str = "mobile_push_personal_invite:";
 
 impl AppCore {
     pub(in crate::core) fn cache_invite_acceptance_preview(
@@ -28,7 +28,7 @@ impl AppCore {
                     serde_json::to_string(&(owner, chat_id))?
                 ],
             )?;
-            tx.execute("DELETE FROM app_meta WHERE key IN (SELECT key FROM app_meta WHERE key LIKE 'mobile_push_invite:%' ORDER BY rowid DESC LIMIT -1 OFFSET 256)", [])?;
+            tx.execute("DELETE FROM app_meta WHERE key IN (SELECT key FROM app_meta WHERE key LIKE 'mobile_push_personal_invite:%' ORDER BY rowid DESC LIMIT -1 OFFSET 256)", [])?;
             tx.commit()?;
             Ok(())
         };
@@ -75,17 +75,20 @@ pub(super) fn pending_invite_response_owner(
         device_keys.public_key().to_hex(),
     ));
     let device_secret = device_keys.secret_key().to_secret_bytes();
-    // The protocol checkpoint owns the current invite. The legacy device-invite
-    // record can be missing or stale after restoration or rotation.
+    // Public device handshakes also establish group transport. Only a deliberately
+    // shared personal invite is evidence that the user expects a new direct chat.
     let mut preview_engine = direct_message_preview_engine(data_dir, owner_pubkey, device_keys)?;
-    let mut invites = preview_engine
-        .local_invite()
+    let issued = super::super::issued_invites::load_issued_invites(storage.as_ref()).ok()?;
+    let invites = super::super::invites::load_private_chat_invites(storage.as_ref())
+        .ok()?
         .into_iter()
+        .filter(|(key, _)| {
+            issued
+                .get(key)
+                .is_none_or(|record| record.record.kind != "group")
+        })
+        .map(|(_, invite)| invite)
         .collect::<Vec<_>>();
-    if let Ok(private_invites) = super::super::invites::load_private_chat_invites(storage.as_ref())
-    {
-        invites.extend(private_invites.into_values());
-    }
 
     invites.into_iter().find_map(|mut invite| {
         // Re-decrypt for presentation even if the live runtime already consumed
@@ -132,6 +135,7 @@ fn permits_invite_notification(
     event: &Event,
 ) -> bool {
     chat_id != owner.to_hex()
+        && request_policy::allows(conn, &owner.to_hex(), chat_id)
         && !block_policy::suppresses(conn, chat_id, Some(event.created_at.as_secs()))
         && !is_chat_muted_in(conn, chat_id)
 }

@@ -421,6 +421,9 @@ fn mobile_push_device_authored_direct_rumors_match_foreground_sender_validation(
     .sign_with_keys(&farm.owners[0])
     .unwrap();
     farm.devices[1].core.handle_relay_event(roster);
+    farm.devices[1]
+        .core
+        .accept_message_request(&sender_owner.to_hex());
     farm.devices[1].core.persist_best_effort();
     assert!(farm.devices[1]
         .core

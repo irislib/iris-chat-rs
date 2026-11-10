@@ -420,6 +420,8 @@ enum RelayCommands {
 enum PrivacyCommands {
     MessageDeletion { mode: UnknownUsersMode },
     UnknownUsers { mode: UnknownUsersMode },
+    NetworkRequests { mode: UnknownUsersMode },
+    OvermutedRequests { mode: UnknownUsersMode },
 }
 
 #[derive(Clone, Copy, Debug, ValueEnum)]
@@ -1055,6 +1057,26 @@ fn handle_privacy_command(cli: &CliApp, command: PrivacyCommands) -> Result<Valu
                 json!({"allow_message_deletion_by_others":cli.app.state().preferences.allow_message_deletion_by_others}),
             )
         }
+        PrivacyCommands::NetworkRequests { mode } => {
+            let enabled = matches!(mode, UnknownUsersMode::Allow);
+            cli.dispatch_and_wait(
+                AppAction::SetAcceptSocialGraphDirectMessages { enabled },
+                Duration::from_secs(2),
+            )?;
+            Ok(
+                json!({"accept_social_graph_direct_messages": cli.app.state().preferences.accept_social_graph_direct_messages}),
+            )
+        }
+        PrivacyCommands::OvermutedRequests { mode } => {
+            let enabled = matches!(mode, UnknownUsersMode::Allow);
+            cli.dispatch_and_wait(
+                AppAction::SetAcceptOvermutedDirectMessages { enabled },
+                Duration::from_secs(2),
+            )?;
+            Ok(
+                json!({"accept_overmuted_direct_messages": cli.app.state().preferences.accept_overmuted_direct_messages}),
+            )
+        }
         PrivacyCommands::UnknownUsers { mode } => {
             let accept = matches!(mode, UnknownUsersMode::Allow);
             cli.dispatch_and_wait(
@@ -1630,6 +1652,8 @@ fn state_json(state: &AppState) -> Value {
         "current_chat": state.current_chat.as_ref().map(|chat| chat_json(chat, usize::MAX)),
         "message_servers": state.preferences.nostr_relay_urls,
         "accept_unknown_direct_messages": state.preferences.accept_unknown_direct_messages,
+        "accept_social_graph_direct_messages": state.preferences.accept_social_graph_direct_messages,
+        "accept_overmuted_direct_messages": state.preferences.accept_overmuted_direct_messages,
         "toast": state.toast,
     })
 }

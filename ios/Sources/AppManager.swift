@@ -49,11 +49,19 @@ struct PendingShare: Codable, Identifiable, Equatable, Sendable {
         isForward == true
     }
 
-    var suggestedTargetChatIds: [String] {
+    // The extension and system suggestions can refer to "myself" without
+    // publishing an account ID or addressing a previous account after logout.
+    static let noteToSelfTarget = "iris:note-to-self"
+
+    func suggestedTargetChatIds(for account: AccountSnapshot?) -> [String] {
         var seen = Set<String>()
         var result = [String]()
         for raw in (suggestedChatIds ?? []) + [suggestedChatId].compactMap({ $0 }) {
-            let chatId = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            var chatId = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            if chatId == Self.noteToSelfTarget {
+                guard let account, account.authorizationState == .authorized else { continue }
+                chatId = account.publicKeyHex
+            }
             if chatId.isEmpty || seen.contains(chatId) {
                 continue
             }
@@ -785,7 +793,20 @@ final class AppManager: ObservableObject {
     private static let supportBundleQueue = DispatchQueue(label: "fi.siriusbusiness.irischat.support-bundle", qos: .utility)
 
     @Published private(set) var state: AppState {
-        didSet { profiles.apply(state); recordInteractionState() }
+        didSet {
+            if cachedSharingChats != nil && (oldValue.account != state.account || oldValue.chatList != state.chatList) {
+                cachedSharingChats = nil
+            }
+            profiles.apply(state)
+            recordInteractionState()
+        }
+    }
+    private var cachedSharingChats: [ChatThreadSnapshot]?
+    var sharingChats: [ChatThreadSnapshot] {
+        if let cachedSharingChats { return cachedSharingChats }
+        let chats = shareTargetChats(account: state.account, chats: state.chatList)
+        cachedSharingChats = chats
+        return chats
     }
     let profiles = IrisProfileStore()
     let interactionTimingController: IrisInteractionTimingController
@@ -890,6 +911,7 @@ final class AppManager: ObservableObject {
     @Published private(set) var reviewDemoFailed = false
     private var reviewDemoTask: Task<Void, Never>?
     private var reviewDemoAttempted = false
+#endif
     private lazy var pendingShares = IrisPendingShares(
         containerOverride: sharedContainerOverride,
         appGroupIdentifier: AppPaths.appGroupIdentifier,
@@ -898,7 +920,6 @@ final class AppManager: ObservableObject {
     private var pendingShareReadTask: Task<Void, Never>?
     private var pendingShareRescanRequested = false
     private var consumedPendingShareIDs = Set<String>()
-#endif
     @Published private var pendingShareSendTask: Task<Void, Never>?
     var isSendingPendingShare: Bool { pendingShareSendTask != nil }
     private var clientDebugLog: [ClientDebugLogEntry] = []
@@ -1062,7 +1083,7 @@ final class AppManager: ObservableObject {
             syncStartupAtLoginPreference(initialState.preferences.startupAtLoginEnabled)
         }
 #if os(iOS)
-        syncShareSuggestionsIfNeeded(chatList: initialState.chatList)
+        syncShareSuggestionsIfNeeded()
 #endif
 #if os(iOS)
         registerPendingShareObserver()
@@ -1632,7 +1653,7 @@ final class AppManager: ObservableObject {
         guard url.scheme?.lowercased() == "irischat",
               url.host?.lowercased() == "share",
               let shareID = url.pathComponents.dropFirst().first,
-              !shareID.isEmpty else {
+              !shareID.isEmpty, shareID != ".", shareID != "..", !shareID.contains("/") else {
             return false
         }
         let autoSend = URLComponents(url: url, resolvingAgainstBaseURL: false)?
@@ -1646,14 +1667,12 @@ final class AppManager: ObservableObject {
     func clearPendingShare() {
         pendingShareSendTask?.cancel()
         pendingShareSendTask = nil
-#if os(iOS)
         pendingShareReadTask?.cancel()
         pendingShareReadTask = nil
         pendingShareRescanRequested = false
         if let pendingShare {
             removePendingShareFiles(for: pendingShare)
         }
-#endif
         pendingShare = nil
     }
 
@@ -1741,13 +1760,11 @@ final class AppManager: ObservableObject {
             return
         }
 #if os(iOS)
-        shareSuggestionDonor.donateSelectedChats(
-            state.chatList.filter { targets.contains($0.chatId) }
-        )
+        shareSuggestionDonor.donateSelectedChats(resolvedShareSuggestionChats(
+            sharingChats.filter { targets.contains($0.chatId) }, ownChatId: state.account?.publicKeyHex
+        ) { profiles[$0] })
 #endif
-#if os(iOS)
         removePendingShareFiles(for: share)
-#endif
         pendingShare = nil
     }
 
@@ -1766,16 +1783,10 @@ final class AppManager: ObservableObject {
     }
 
     private func loadPendingShare(id: String, autoSend: Bool = false) {
-#if os(iOS)
         pendingShareReadTask?.cancel()
         readPendingShare(id: id, autoSend: autoSend)
-#else
-        _ = id
-        _ = autoSend
-#endif
     }
 
-#if os(iOS)
     private func processPendingShareFilesIfNeeded() {
         guard pendingShare == nil else {
             processPendingShareIfReady()
@@ -1823,11 +1834,10 @@ final class AppManager: ObservableObject {
     private func processPendingShareIfReady() {
         guard let share = pendingShare,
               share.shouldAutoSend,
-              !share.suggestedTargetChatIds.isEmpty,
               state.account?.authorizationState == .authorized else {
             return
         }
-        sendPendingShare(to: share.suggestedTargetChatIds)
+        sendPendingShare(to: share.suggestedTargetChatIds(for: state.account))
     }
 
     private func removePendingShareFiles(for share: PendingShare) {
@@ -1838,7 +1848,6 @@ final class AppManager: ObservableObject {
             self?.processPendingShareFilesIfNeeded()
         }
     }
-#endif
 
 #if os(iOS)
     func setCallPushToken(_ token: String?) {
@@ -2751,10 +2760,10 @@ final class AppManager: ObservableObject {
         // deterministic boundary for clearing deferred notification navigation.
         pendingNotificationTarget = nil
         notificationTapSequence &+= 1
-#if os(iOS)
         pendingShareReadTask?.cancel()
         pendingShareReadTask = nil
         pendingShareRescanRequested = false
+#if os(iOS)
         callPushRuntime.unregister(state: state, ownerNsec: (storedAccountBundle ?? secretStore.load())?.mobilePushAuthNsec)
         mobilePushRuntime.unregisterStoredSubscription(state: state, ownerNsec: (storedAccountBundle ?? secretStore.load())?.mobilePushAuthNsec)
 #endif
@@ -2848,12 +2857,15 @@ final class AppManager: ObservableObject {
     }
 
 #if os(iOS)
-    private func syncShareSuggestionsIfNeeded(chatList: [ChatThreadSnapshot]) {
-        guard iosSideEffectGate.shouldSyncShareSuggestions(chatList: chatList) else {
+    private func syncShareSuggestionsIfNeeded() {
+        // Direct-chat rows resolve profiles separately from chat snapshots. Use
+        // that same source here, including profile-only revisions.
+        let chats = resolvedShareSuggestionChats(sharingChats, ownChatId: state.account?.publicKeyHex) { profiles[$0] }
+        guard iosSideEffectGate.shouldSyncShareSuggestions(chatList: chats) else {
             return
         }
-        shareSuggestionsExporter.export(chats: chatList, manager: self) { [weak self] avatars in
-            self?.shareSuggestionDonor.syncRecentChats(chatList, avatars: avatars)
+        shareSuggestionsExporter.export(chats: chats, manager: self) { [weak self] avatars in
+            self?.shareSuggestionDonor.syncRecentChats(chats, avatars: avatars)
         }
     }
 
@@ -2877,7 +2889,7 @@ final class AppManager: ObservableObject {
     }
 
     private func syncIosStateSideEffects(for state: AppState) {
-        syncShareSuggestionsIfNeeded(chatList: state.chatList)
+        syncShareSuggestionsIfNeeded()
         syncMobilePushIfNeeded(state: state)
         if let bundle = storedAccountBundle {
             readNotificationCleanup.schedule(dataDir: dataDir.path, bundle: bundle)
@@ -2999,8 +3011,8 @@ final class AppManager: ObservableObject {
             showToast(toast)
         }
         runPendingTestSeedIfNeeded()
-#if os(iOS)
         processPendingShareIfReady()
+#if os(iOS)
         startReviewDemoIfNeeded()
 #endif
     }

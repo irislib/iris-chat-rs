@@ -62,6 +62,9 @@ pub(super) fn update_people_graph(
                 .collect();
             let incomplete = tags.len() > max_edges;
             let tags = tags.into_iter().take(max_edges).collect();
+            let author = event.pubkey.to_hex();
+            let list_kind = kind.as_u16().into();
+            let previous_revision = graph.get_list_revision(&author, list_kind);
             graph.handle_event(
                 &NostrEvent {
                     pubkey: event.pubkey.to_hex(),
@@ -75,8 +78,18 @@ pub(super) fn update_people_graph(
                 true,
                 1.0,
             );
-            if incomplete {
-                graph.mark_list_incomplete(&event.pubkey.to_hex(), kind.as_u16().into());
+            // A rejected stale/tie-losing event (or an already complete replay)
+            // must not downgrade the retained signed head's completeness.
+            let accepted_projection =
+                graph
+                    .get_list_revision(&author, list_kind)
+                    .is_some_and(|revision| {
+                        revision.id == event.id.to_hex()
+                            && revision.created_at == event.created_at.as_secs()
+                            && previous_revision.as_ref() != Some(&revision)
+                    });
+            if incomplete && accepted_projection {
+                graph.mark_list_incomplete(&author, list_kind);
             }
         }
     }
@@ -185,5 +198,80 @@ mod tests {
                 .len(),
             1000
         );
+    }
+
+    fn graph_with_complete_head(root: PublicKey, head: &Event) -> Vec<u8> {
+        let mut graph = SocialGraph::new(&root.to_hex());
+        graph.handle_event(
+            &NostrEvent {
+                pubkey: head.pubkey.to_hex(),
+                kind: head.kind.as_u16().into(),
+                created_at: head.created_at.as_secs(),
+                id: head.id.to_hex(),
+                tags: head
+                    .tags
+                    .iter()
+                    .map(|tag| tag.as_slice().to_vec())
+                    .collect(),
+                content: String::new(),
+                sig: String::new(),
+            },
+            true,
+            1.0,
+        );
+        graph.to_binary().unwrap()
+    }
+
+    #[test]
+    fn rejected_oversized_heads_preserve_complete_follow_and_mute_revisions() {
+        let root = Keys::generate();
+        let friend = Keys::generate();
+        let targets = (0..1001)
+            .map(|_| Keys::generate().public_key())
+            .collect::<Vec<_>>();
+        for kind in [Kind::ContactList, Kind::from(10_000)] {
+            let stale = event(&friend, kind, 19, &targets);
+            let current = event(&friend, kind, 20, &targets[..1]);
+            let a = event(&friend, kind, 20, &targets);
+            let b = EventBuilder::new(kind, "tie")
+                .tags(targets.iter().copied().map(Tag::public_key))
+                .custom_created_at(Timestamp::from(20))
+                .sign_with_keys(&friend)
+                .unwrap();
+            let (winner, loser) = if a.id < b.id { (a, b) } else { (b, a) };
+            for (saved, rejected) in [(&current, &stale), (&winner, &loser), (&winner, &winner)] {
+                let before = graph_with_complete_head(root.public_key(), saved);
+                let (follows, mutes) = if kind == Kind::ContactList {
+                    (vec![rejected.clone()], vec![])
+                } else {
+                    (vec![], vec![rejected.clone()])
+                };
+                let after = update_people_graph(
+                    root.public_key(),
+                    None,
+                    &[friend.public_key()],
+                    &follows,
+                    mutes,
+                    Some(&before),
+                    100,
+                )
+                .unwrap();
+                let graph = SocialGraph::from_binary(&root.public_key().to_hex(), &after).unwrap();
+                let revision = graph
+                    .get_list_revision(&friend.public_key().to_hex(), kind.as_u16().into())
+                    .unwrap();
+                assert_eq!(revision.id, saved.id.to_hex());
+                assert!(
+                    revision.complete,
+                    "rejected oversized input must not invalidate a complete head"
+                );
+                let retained = if kind == Kind::ContactList {
+                    graph.get_followed_by_user(&friend.public_key().to_hex())
+                } else {
+                    graph.get_muted_by_user(&friend.public_key().to_hex())
+                };
+                assert_eq!(retained.len(), saved.tags.len());
+            }
+        }
     }
 }

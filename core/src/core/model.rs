@@ -607,6 +607,10 @@ pub(super) struct PersistedPreferences {
     pub(super) debug_logging_enabled: bool,
     #[serde(default = "default_true")]
     pub(super) accept_unknown_direct_messages: bool,
+    #[serde(default = "default_true")]
+    pub(super) accept_social_graph_direct_messages: bool,
+    #[serde(default)]
+    pub(super) accept_overmuted_direct_messages: bool,
 }
 
 impl Default for PersistedPreferences {
@@ -645,6 +649,8 @@ impl Default for PersistedPreferences {
             accepted_owner_pubkeys: defaults.accepted_owner_pubkeys,
             debug_logging_enabled: defaults.debug_logging_enabled,
             accept_unknown_direct_messages: defaults.accept_unknown_direct_messages,
+            accept_social_graph_direct_messages: defaults.accept_social_graph_direct_messages,
+            accept_overmuted_direct_messages: defaults.accept_overmuted_direct_messages,
         }
     }
 }

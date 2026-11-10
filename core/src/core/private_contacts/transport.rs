@@ -11,6 +11,14 @@ impl AppCore {
             return Some(disposition);
         }
         match rumor.kind {
+            group_metadata_recovery::GROUP_CONTEXT_REQUEST_KIND => {
+                if message_expiration_from_tags(rumor.tags.iter())
+                    .is_some_and(|expires| expires <= unix_now().get())
+                {
+                    return Some(true);
+                }
+                Some(self.receive_group_context_request(owner, &rumor.content))
+            }
             // An old client would bridge these facts into static-key relay records.
             10451 => Some(true),
             block_sync::BLOCK_CONTROL_KIND => {

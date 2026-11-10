@@ -74,6 +74,8 @@ internal object AppManagerContractDefaults {
                     acceptedOwnerPubkeys = emptyList(),
                     debugLoggingEnabled = false,
                     acceptUnknownDirectMessages = true,
+                    acceptSocialGraphDirectMessages = true,
+                    acceptOvermutedDirectMessages = false,
                     mobilePushServerUrl = "",
                 ),
             toast = null,

@@ -10,6 +10,8 @@ impl AppCore {
             .as_deref()
             .zip(self.user_discovery.social_graph.as_deref())
             .and_then(|(owner, bytes)| SocialGraph::from_binary(owner, bytes).ok());
+        self.accept_followed_message_requests();
+        self.mark_mobile_push_dirty();
     }
 
     pub(super) fn social_connection(&self, target: &str) -> Option<SocialConnectionSnapshot> {

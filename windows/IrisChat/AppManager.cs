@@ -618,9 +618,6 @@ public sealed partial class AppManager : INotifyPropertyChanged
     public void SetReadReceiptsEnabled(bool enabled) =>
         DispatchToRust(new AppAction.SetReadReceiptsEnabled(enabled));
 
-    public void SetAcceptUnknownDirectMessages(bool enabled) =>
-        DispatchToRust(new AppAction.SetAcceptUnknownDirectMessages(enabled));
-
     public void SetDesktopNotificationsEnabled(bool enabled) =>
         DispatchToRust(new AppAction.SetDesktopNotificationsEnabled(enabled));
 
@@ -1380,6 +1377,8 @@ public sealed partial class AppManager : INotifyPropertyChanged
             acceptedOwnerPubkeys: Array.Empty<string>(),
             debugLoggingEnabled: false,
             acceptUnknownDirectMessages: true,
+            acceptSocialGraphDirectMessages: true,
+            acceptOvermutedDirectMessages: false,
             mobilePushServerUrl: ""
         ),
         0, false,

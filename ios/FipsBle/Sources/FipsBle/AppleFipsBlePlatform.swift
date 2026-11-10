@@ -23,13 +23,14 @@ public final class AppleFipsBlePlatform: NSObject, FipsBlePlatform {
     private var peripherals: [UUID: CBPeripheral] = [:]
     private var bootstrapDiscovery = AppleBleBootstrapDiscovery()
     private var bootstrapRetry: DispatchWorkItem?
+    private var bootstrapReads: [UUID: AppleBootstrapRead] = [:]
     // Explicit service advertisements and completed GATT reads identify useful
     // peers. Apple's overflow UUID matches alone are only tentative.
     private var identifiedServicePeers: Set<UUID> = []
     #if os(macOS)
     private let bluetoothAudio = MacBluetoothAudioActivity()
     #endif
-    private var connectRequests: [UUID: (requestId: UInt64, psm: UInt16)] = [:]
+    private var connectRequests: [UUID: (requestId: UInt64, psm: UInt16, peerToken: String)] = [:]
     private var outgoingConnections = AppleBlePeripheralConnections()
     private var nextConnectionId: UInt64 = 1
     private var connections: [UInt64: AppleBleConnection] = [:]
@@ -64,6 +65,7 @@ public final class AppleFipsBlePlatform: NSObject, FipsBlePlatform {
                     self.backgrounded = notification.name == UIApplication.didEnterBackgroundNotification
                     self.scheduleBootstrapRetry()
                     if self.backgrounded { self.armBackgroundReconnects() }
+                    else { self.discoverConnectedPeripherals() }
                 })
             }
 #else
@@ -204,11 +206,13 @@ public final class AppleFipsBlePlatform: NSObject, FipsBlePlatform {
         }
         scanRequest = requestId
         bootstrapDiscovery.reset()
+        bootstrapReads.removeAll()
         identifiedServicePeers.removeAll()
         central.scanForPeripherals(withServices: [fipsServiceUuid], options: [
             CBCentralManagerScanOptionAllowDuplicatesKey: false,
         ])
         emit(.scanningStarted(requestId: requestId))
+        discoverConnectedPeripherals()
 #if os(iOS)
         resumeRestoredPeers()
 #endif
@@ -227,6 +231,7 @@ public final class AppleFipsBlePlatform: NSObject, FipsBlePlatform {
             }
         }
         bootstrapDiscovery.reset()
+        bootstrapReads.removeAll()
         identifiedServicePeers.removeAll()
     }
 
@@ -235,12 +240,16 @@ public final class AppleFipsBlePlatform: NSObject, FipsBlePlatform {
             emit(.failed(requestId: requestId, message: centralStateMessage()))
             return
         }
-        guard let identifier = UUID(uuidString: peerToken) else {
+        guard let identifier = AppleBlePeerToken.peripheralIdentifier(peerToken) else {
             emit(.failed(requestId: requestId, message: "Invalid Apple BLE peer token"))
             return
         }
         guard outgoingConnections.canConnect(identifier) else {
             emit(.failed(requestId: requestId, message: "BLE peripheral is still disconnecting"))
+            return
+        }
+        guard connectRequests[identifier] == nil else {
+            emit(.failed(requestId: requestId, message: "BLE peripheral already has a pending open"))
             return
         }
         let peripheral = peripherals[identifier] ?? central.retrievePeripherals(withIdentifiers: [identifier]).first
@@ -250,7 +259,7 @@ public final class AppleFipsBlePlatform: NSObject, FipsBlePlatform {
         }
         peripherals[identifier] = peripheral
         peripheral.delegate = self
-        connectRequests[identifier] = (requestId, psm)
+        connectRequests[identifier] = (requestId, psm, peerToken)
         if peripheral.state == .connected {
             peripheral.openL2CAPChannel(CBL2CAPPSM(psm))
         } else {
@@ -268,7 +277,8 @@ public final class AppleFipsBlePlatform: NSObject, FipsBlePlatform {
 
     private func register(
         channel: CBL2CAPChannel,
-        outgoingRequest: UInt64?
+        outgoingRequest: UInt64?,
+        outgoingPeerToken: String? = nil
     ) {
         guard connections.count < maxPlatformConnections else {
             channel.inputStream.close()
@@ -312,7 +322,7 @@ public final class AppleFipsBlePlatform: NSObject, FipsBlePlatform {
         )
         connections[connectionId] = connection
         connection.open()
-        let token = channel.peer.identifier.uuidString
+        let token = outgoingPeerToken ?? channel.peer.identifier.uuidString
         if let requestId = outgoingRequest {
             emit(.connected(
                 requestId: requestId,
@@ -346,6 +356,7 @@ public final class AppleFipsBlePlatform: NSObject, FipsBlePlatform {
 
     private func failDiscovery(_ peripheral: CBPeripheral) {
         guard bootstrapDiscovery.isPending(peripheral.identifier) else { return }
+        bootstrapReads.removeValue(forKey: peripheral.identifier)
         bootstrapDiscovery.fail(peripheral.identifier)
         retirePeripheral(peripheral)
         scheduleBootstrapRetry()
@@ -367,6 +378,7 @@ public final class AppleFipsBlePlatform: NSObject, FipsBlePlatform {
             guard let self, self.scanRequest != nil, self.central.state == .poweredOn else { return }
             let now = ProcessInfo.processInfo.systemUptime
             for identifier in self.bootstrapDiscovery.expirePending(now: now) {
+                self.bootstrapReads.removeValue(forKey: identifier)
                 if let peripheral = self.peripherals[identifier] {
                     self.retirePeripheral(peripheral)
                 }
@@ -408,7 +420,17 @@ public final class AppleFipsBlePlatform: NSObject, FipsBlePlatform {
     }
     #endif
 
-    private func discoverBootstrap(_ peripheral: CBPeripheral, refresh: Bool = false) {
+    private func discoverConnectedPeripherals() {
+        guard !isClosed, scanRequest != nil, central.state == .poweredOn else { return }
+        // A peer connected by another app may no longer advertise. CoreBluetooth
+        // still requires our own local connection before reading its services.
+        for peripheral in central.retrieveConnectedPeripherals(withServices: [fipsServiceUuid]).prefix(maxPlatformConnections) {
+            identifiedServicePeers.insert(peripheral.identifier)
+            discoverBootstrap(peripheral, connectLocally: true)
+        }
+    }
+
+    private func discoverBootstrap(_ peripheral: CBPeripheral, refresh: Bool = false, connectLocally: Bool = false) {
         guard scanRequest != nil, central.state == .poweredOn else { return }
         let identifier = peripheral.identifier
         peripherals[identifier] = peripheral
@@ -417,10 +439,41 @@ public final class AppleFipsBlePlatform: NSObject, FipsBlePlatform {
             identifier, refresh: refresh, canRead: canDiscoverBootstrap(identifier)
         ) else { return }
         scheduleBootstrapRetry()
-        if peripheral.state == .connected {
+        if peripheral.state == .connected && !connectLocally {
             peripheral.discoverServices([fipsServiceUuid])
         } else {
             central.connect(peripheral)
+        }
+    }
+
+    private func readNextBootstrap(_ peripheral: CBPeripheral) {
+        guard bootstrapDiscovery.isPending(peripheral.identifier),
+              let read = bootstrapReads[peripheral.identifier] else { return }
+        if !read.characteristics.isEmpty {
+            let characteristic = read.characteristics.removeFirst()
+            read.characteristic = characteristic
+            read.instance += 1
+            peripheral.readValue(for: characteristic)
+        } else if !read.services.isEmpty {
+            let service = read.services.removeFirst()
+            read.service = service
+            read.characteristic = nil
+            peripheral.discoverCharacteristics([fipsBootstrapUuid], for: service)
+        } else {
+            bootstrapReads.removeValue(forKey: peripheral.identifier)
+            guard !read.values.isEmpty else {
+                failDiscovery(peripheral)
+                return
+            }
+            guard bootstrapDiscovery.complete(peripheral.identifier) else { return }
+            identifiedServicePeers.insert(peripheral.identifier)
+#if os(iOS)
+            rememberPeer(peripheral)
+#endif
+            scheduleBootstrapRetry()
+            for (token, value) in read.values {
+                emit(.peerDiscovered(peerToken: token, bootstrap: value))
+            }
         }
     }
 
@@ -644,6 +697,7 @@ extension AppleFipsBlePlatform: CBCentralManagerDelegate {
         didFailToConnect peripheral: CBPeripheral,
         error: Error?
     ) {
+        bootstrapReads.removeValue(forKey: peripheral.identifier)
         bootstrapDiscovery.fail(peripheral.identifier)
         outgoingConnections.didDisconnect(peripheral.identifier)
         scheduleBootstrapRetry()
@@ -660,6 +714,7 @@ extension AppleFipsBlePlatform: CBCentralManagerDelegate {
         didDisconnectPeripheral peripheral: CBPeripheral,
         error: Error?
     ) {
+        bootstrapReads.removeValue(forKey: peripheral.identifier)
         bootstrapDiscovery.fail(peripheral.identifier)
         outgoingConnections.didDisconnect(peripheral.identifier)
         scheduleBootstrapRetry()
@@ -684,12 +739,15 @@ extension AppleFipsBlePlatform: CBPeripheralDelegate {
     public func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
         guard bootstrapDiscovery.isPending(peripheral.identifier) else { return }
         guard error == nil,
-              let service = peripheral.services?.first(where: { $0.uuid == fipsServiceUuid })
+              let services = peripheral.services?.filter({ $0.uuid == fipsServiceUuid }), !services.isEmpty
         else {
             failDiscovery(peripheral)
             return
         }
-        peripheral.discoverCharacteristics([fipsBootstrapUuid], for: service)
+        // Multiple apps share the peripheral's GATT server and service UUID.
+        // Discover each endpoint separately instead of choosing the first app.
+        bootstrapReads[peripheral.identifier] = AppleBootstrapRead(services: Array(services.prefix(maxPlatformConnections)))
+        readNextBootstrap(peripheral)
     }
 
     public func peripheral(
@@ -697,15 +755,13 @@ extension AppleFipsBlePlatform: CBPeripheralDelegate {
         didDiscoverCharacteristicsFor service: CBService,
         error: Error?
     ) {
-        guard service.uuid == fipsServiceUuid,
-              bootstrapDiscovery.isPending(peripheral.identifier) else { return }
-        guard error == nil,
-              let characteristic = service.characteristics?.first(where: { $0.uuid == fipsBootstrapUuid })
-        else {
-            failDiscovery(peripheral)
-            return
+        guard bootstrapDiscovery.isPending(peripheral.identifier),
+              let read = bootstrapReads[peripheral.identifier], read.service === service else { return }
+        if error == nil {
+            read.characteristics = Array((service.characteristics ?? [])
+                .filter { $0.uuid == fipsBootstrapUuid }.prefix(maxPlatformConnections - read.instance))
         }
-        peripheral.readValue(for: characteristic)
+        readNextBootstrap(peripheral)
     }
 
     public func peripheral(
@@ -713,19 +769,12 @@ extension AppleFipsBlePlatform: CBPeripheralDelegate {
         didUpdateValueFor characteristic: CBCharacteristic,
         error: Error?
     ) {
-        guard characteristic.uuid == fipsBootstrapUuid,
-              bootstrapDiscovery.isPending(peripheral.identifier) else { return }
-        guard error == nil, let value = characteristic.value else {
-            failDiscovery(peripheral)
-            return
+        guard bootstrapDiscovery.isPending(peripheral.identifier),
+              let read = bootstrapReads[peripheral.identifier], read.characteristic === characteristic else { return }
+        if error == nil, let value = characteristic.value {
+            read.values.append((AppleBlePeerToken.forCharacteristic(peripheral.identifier, instance: read.instance), value))
         }
-        guard bootstrapDiscovery.complete(peripheral.identifier) else { return }
-        identifiedServicePeers.insert(peripheral.identifier)
-#if os(iOS)
-        rememberPeer(peripheral)
-#endif
-        scheduleBootstrapRetry()
-        emit(.peerDiscovered(peerToken: peripheral.identifier.uuidString, bootstrap: value))
+        readNextBootstrap(peripheral)
     }
 
     public func peripheral(
@@ -749,8 +798,19 @@ extension AppleFipsBlePlatform: CBPeripheralDelegate {
             discoverBootstrap(peripheral, refresh: true)
             return
         }
-        register(channel: channel, outgoingRequest: request.requestId)
+        register(channel: channel, outgoingRequest: request.requestId, outgoingPeerToken: request.peerToken)
     }
+}
+
+private final class AppleBootstrapRead {
+    var services: [CBService]
+    var service: CBService?
+    var characteristics: [CBCharacteristic] = []
+    var characteristic: CBCharacteristic?
+    var instance = 0
+    var values: [(String, Data)] = []
+
+    init(services: [CBService]) { self.services = services }
 }
 
 private final class AppleBleConnection: NSObject, StreamDelegate {

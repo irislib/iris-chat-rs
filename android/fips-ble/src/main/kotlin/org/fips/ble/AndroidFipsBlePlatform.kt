@@ -24,6 +24,7 @@ import android.content.Context
 import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
+import android.os.SystemClock
 import android.os.ParcelUuid
 import java.io.IOException
 import java.util.UUID
@@ -64,7 +65,8 @@ class AndroidFipsBlePlatform(context: Context) : FipsBlePlatform {
     private val pendingConnectRequests = mutableSetOf<Long>()
     private val pendingConnectSockets = ConcurrentHashMap<Long, BluetoothSocket>()
     private val discoveryGatts = mutableMapOf<String, BluetoothGatt>()
-    private val discoveredTokens = BootstrapDiscoveryCache()
+    private val discoveredTokens = BootstrapDiscoveryCache(clock = SystemClock::elapsedRealtime)
+    private val bootstrapRetry = Runnable { retryBootstrapDiscovery() }
     private var eventSink = HostBleEventSink {}
     private var serverSocket: BluetoothServerSocket? = null
     private var gattServer: BluetoothGattServer? = null
@@ -397,28 +399,84 @@ class AndroidFipsBlePlatform(context: Context) : FipsBlePlatform {
                 }
             discoveryGatts[token] = gatt
         } catch (_: Exception) {
-            runCatching { discoveredTokens.invalidate(device.address) }
+            runCatching { discoveredTokens.fail(device.address) }
         }
+        scheduleBootstrapRetry()
+    }
+
+    private fun scheduleBootstrapRetry() {
+        state.removeCallbacks(bootstrapRetry)
+        if (scanRequest == null) return
+        val deadline = discoveredTokens.nextWakeupAt() ?: return
+        state.postDelayed(bootstrapRetry, (deadline - SystemClock.elapsedRealtime()).coerceAtLeast(0))
+    }
+
+    private fun retryBootstrapDiscovery() {
+        if (scanRequest == null) return
+        for (token in discoveredTokens.expirePending()) {
+            discoveryGatts.remove(token)?.let(::closeDiscoveryGatt)
+        }
+        val bluetooth = adapter
+        if (bluetooth == null || !bluetooth.isEnabled) {
+            val requestId = scanRequest ?: return
+            stopScanning()
+            emit(HostBleEvent.Failed(requestId, "Bluetooth is unavailable or off"))
+            return
+        }
+        // Retry even if Android batches or coalesces further advertisements.
+        for (token in discoveredTokens.dueRetries()) {
+            discoverBootstrap(bluetooth.getRemoteDevice(token))
+        }
+        scheduleBootstrapRetry()
+    }
+
+    private fun closeDiscoveryGatt(gatt: BluetoothGatt) {
+        runCatching { gatt.disconnect() }
+        runCatching { gatt.close() }
     }
 
     private inner class BootstrapGattCallback(private val token: String) : BluetoothGattCallback() {
         private val finished = AtomicBoolean(false)
+        private val reads = ArrayDeque<BluetoothGattCharacteristic>()
+        private val bootstraps = linkedMapOf<String, ByteArray>()
+        private var reading: BluetoothGattCharacteristic? = null
 
         override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
-            if (status == BluetoothGatt.GATT_SUCCESS && newState == BluetoothProfile.STATE_CONNECTED) {
-                if (!gatt.discoverServices()) finish(gatt, null)
-            } else if (newState == BluetoothProfile.STATE_DISCONNECTED || status != BluetoothGatt.GATT_SUCCESS) {
-                finish(gatt, null)
+            state.post {
+                if (!isCurrent(gatt)) return@post
+                if (status == BluetoothGatt.GATT_SUCCESS && newState == BluetoothProfile.STATE_CONNECTED) {
+                    if (!gatt.discoverServices()) finish(gatt)
+                } else if (newState == BluetoothProfile.STATE_DISCONNECTED || status != BluetoothGatt.GATT_SUCCESS) {
+                    finish(gatt)
+                }
             }
         }
 
         override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
-            if (status != BluetoothGatt.GATT_SUCCESS) {
-                finish(gatt, null)
-                return
+            state.post {
+                if (!isCurrent(gatt)) return@post
+                if (status != BluetoothGatt.GATT_SUCCESS) {
+                    finish(gatt)
+                    return@post
+                }
+                // iOS exposes services from multiple apps on one peripheral.
+                // getService(UUID) selects only the first, which may be a VPN
+                // or another Iris installation rather than the desired peer.
+                reads.addAll(gatt.services.filter { it.uuid == FIPS_SERVICE_UUID }
+                    .flatMap { it.characteristics }.filter { it.uuid == FIPS_BOOTSTRAP_UUID }
+                    .take(MAX_PLATFORM_CONNECTIONS))
+                readNext(gatt)
             }
-            val characteristic = gatt.getService(FIPS_SERVICE_UUID)?.getCharacteristic(FIPS_BOOTSTRAP_UUID)
-            if (characteristic == null || !gatt.readCharacteristic(characteristic)) finish(gatt, null)
+        }
+
+        private fun readNext(gatt: BluetoothGatt) {
+            while (reads.isNotEmpty()) {
+                val characteristic = reads.removeFirst()
+                reading = characteristic
+                if (gatt.readCharacteristic(characteristic)) return
+            }
+            reading = null
+            finish(gatt)
         }
 
         override fun onCharacteristicRead(
@@ -445,36 +503,42 @@ class AndroidFipsBlePlatform(context: Context) : FipsBlePlatform {
             value: ByteArray,
             status: Int,
         ) {
-            val bytes =
-                value.takeIf {
-                    status == BluetoothGatt.GATT_SUCCESS && characteristic.uuid == FIPS_BOOTSTRAP_UUID
-                }
-            finish(gatt, bytes)
-        }
-
-        private fun finish(gatt: BluetoothGatt, bootstrap: ByteArray?) {
-            if (!finished.compareAndSet(false, true)) return
+            val bytes = value.copyOf()
             state.post {
-                discoveryGatts.remove(token)
-                if (bootstrap == null || scanRequest == null) {
-                    discoveredTokens.invalidate(token)
-                } else {
-                    discoveredTokens.complete(token)
-                    emit(HostBleEvent.PeerDiscovered(token, bootstrap.copyOf()))
+                if (!isCurrent(gatt) || reading?.instanceId != characteristic.instanceId) return@post
+                if (status == BluetoothGatt.GATT_SUCCESS && characteristic.uuid == FIPS_BOOTSTRAP_UUID) {
+                    bootstraps[BlePeerToken.forCharacteristic(token, characteristic.instanceId)] = bytes
                 }
-                gatt.disconnect()
-                gatt.close()
+                readNext(gatt)
             }
         }
+
+        private fun finish(gatt: BluetoothGatt) {
+            if (!finished.compareAndSet(false, true)) return
+            state.post {
+                // A timeout or stopped scan may already have replaced this
+                // GATT. Its late callbacks must not complete the new read.
+                if (discoveryGatts[token] !== gatt) return@post
+                discoveryGatts.remove(token)
+                if (bootstraps.isEmpty() || scanRequest == null) {
+                    discoveredTokens.fail(token)
+                } else if (discoveredTokens.complete(token)) {
+                    bootstraps.forEach { (peerToken, bytes) -> emit(HostBleEvent.PeerDiscovered(peerToken, bytes)) }
+                }
+                closeDiscoveryGatt(gatt)
+                scheduleBootstrapRetry()
+            }
+        }
+
+        private fun isCurrent(gatt: BluetoothGatt): Boolean =
+            !finished.get() && scanRequest != null && discoveryGatts[token] === gatt
     }
 
     private fun stopScanning() {
         runCatching { adapter?.bluetoothLeScanner?.stopScan(scanCallback) }
         scanRequest = null
-        discoveryGatts.values.forEach {
-            it.disconnect()
-            it.close()
-        }
+        state.removeCallbacks(bootstrapRetry)
+        discoveryGatts.values.forEach(::closeDiscoveryGatt)
         discoveryGatts.clear()
         discoveredTokens.clear()
     }
@@ -499,7 +563,7 @@ class AndroidFipsBlePlatform(context: Context) : FipsBlePlatform {
                 var socket: BluetoothSocket? = null
                 try {
                     if (closing.get()) return@execute
-                    val device = bluetooth.getRemoteDevice(command.peerToken)
+                    val device = bluetooth.getRemoteDevice(BlePeerToken.deviceAddress(command.peerToken))
                     socket = device.createInsecureL2capChannel(command.psm)
                     pendingConnectSockets[command.requestId] = socket
                     if (closing.get()) {
@@ -520,9 +584,10 @@ class AndroidFipsBlePlatform(context: Context) : FipsBlePlatform {
                     runCatching { socket?.close() }
                     state.post {
                         pendingConnectRequests.remove(command.requestId)
-                        discoveredTokens.invalidate(command.peerToken)
+                        val address = BlePeerToken.deviceAddress(command.peerToken)
+                        discoveredTokens.invalidate(address)
                         emit(HostBleEvent.Failed(command.requestId, error.bleMessage("connect")))
-                        runCatching { bluetooth.getRemoteDevice(command.peerToken) }
+                        runCatching { bluetooth.getRemoteDevice(address) }
                             .onSuccess(::discoverBootstrap)
                     }
                 }

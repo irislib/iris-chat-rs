@@ -234,6 +234,12 @@ pub enum AppAction {
     SetDebugLoggingEnabled {
         enabled: bool,
     },
+    SetAcceptSocialGraphDirectMessages {
+        enabled: bool,
+    },
+    SetAcceptOvermutedDirectMessages {
+        enabled: bool,
+    },
     SetAcceptUnknownDirectMessages {
         enabled: bool,
     },

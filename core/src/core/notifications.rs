@@ -56,6 +56,16 @@ pub fn decide_notifications(
 
     let mut out = Vec::new();
     for chat in next_chats {
+        if chat.kind == crate::state::ChatKind::Direct
+            && chat.is_request
+            && chat
+                .social_connection
+                .as_ref()
+                .and_then(|connection| connection.follow_distance)
+                .is_none()
+        {
+            continue;
+        }
         if suppressing_open_chat == Some(chat.chat_id.as_str()) {
             continue;
         }

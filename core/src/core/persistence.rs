@@ -203,6 +203,8 @@ pub(super) fn apply_persisted_preferences(
     preferences.mobile_push_server_url = persisted.mobile_push_server_url.clone();
     preferences.debug_logging_enabled = persisted.debug_logging_enabled;
     preferences.accept_unknown_direct_messages = persisted.accept_unknown_direct_messages;
+    preferences.accept_social_graph_direct_messages = persisted.accept_social_graph_direct_messages;
+    preferences.accept_overmuted_direct_messages = persisted.accept_overmuted_direct_messages;
     preferences.muted_chat_ids = persisted.muted_chat_ids.clone();
     preferences.muted_chat_ids.sort();
     preferences.muted_chat_ids.dedup();

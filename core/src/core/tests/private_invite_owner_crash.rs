@@ -94,6 +94,7 @@ fn unchanged_roster_replay_finishes_invite_cleanup_visibly_and_durably() {
     let dir = tempfile::tempdir().unwrap();
     let data_dir = dir.path().to_string_lossy().into_owned();
     let mut core = logged_in_test_core_at_data_dir(&owner, &device, data_dir.clone());
+    request_network_peer(&mut core, &owner, peer.public_key());
     let invite_url = create_private_invite_for_test(&mut core);
     let invite_key = core.private_chat_invites.keys().next().unwrap().clone();
     core.screen_stack = vec![Screen::Settings];

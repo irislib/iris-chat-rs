@@ -120,6 +120,7 @@ mod message_mutations;
 pub(crate) mod startup_restore;
 use message_mutations::{MessageMutation, MESSAGE_DELETE_KIND, MESSAGE_EDIT_KIND};
 pub(crate) mod desktop_read_notifications;
+mod group_metadata_recovery;
 mod invite_notifications;
 mod mobile_push;
 mod model;
@@ -133,6 +134,7 @@ mod profile;
 mod profile_directory;
 pub(crate) use profile::{fallback_profile_name_for_identity, profile_name_for_identity};
 mod app_core_state;
+mod message_requests;
 mod profile_helpers;
 mod profile_search;
 mod profile_search_capability;
@@ -669,7 +671,6 @@ pub struct AppCore {
     open_invite_chat_on_join: bool,
     pending_private_invite_responses: BTreeMap<String, invites::PendingPrivateInviteResponseV1>,
     pending_private_invite_cleanup_retry: bool,
-    pending_new_chat_responses: BTreeMap<String, Event>,
     new_chat_notifications: BTreeMap<String, String>,
     pending_private_invite_lookup: Option<(String, device_sync::InviteAcceptanceIntent)>,
     pending_outgoing_invite_acceptance: Option<invites::PendingOutgoingInviteAcceptance>,

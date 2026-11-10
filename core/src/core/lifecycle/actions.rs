@@ -207,6 +207,14 @@ impl AppCore {
             AppAction::SetDebugLoggingEnabled { enabled } => {
                 self.set_debug_logging_enabled(enabled)
             }
+            AppAction::SetAcceptSocialGraphDirectMessages { enabled } => {
+                self.preferences.accept_social_graph_direct_messages = enabled;
+                self.message_request_policy_changed();
+            }
+            AppAction::SetAcceptOvermutedDirectMessages { enabled } => {
+                self.preferences.accept_overmuted_direct_messages = enabled;
+                self.message_request_policy_changed();
+            }
             AppAction::SetAcceptUnknownDirectMessages { enabled } => {
                 self.set_accept_unknown_direct_messages(enabled)
             }

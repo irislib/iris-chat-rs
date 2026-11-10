@@ -8,7 +8,7 @@ pub(super) struct GroupScaleDevice {
     pub(super) keys: Keys,
     pub(super) core: AppCore,
     pub(super) _dir: tempfile::TempDir,
-    delivered: HashSet<nostr::EventId>,
+    pub(super) delivered: HashSet<nostr::EventId>,
     pub(super) online: bool,
 }
 

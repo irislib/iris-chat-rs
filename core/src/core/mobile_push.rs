@@ -12,6 +12,7 @@ mod diagnostics;
 mod invite_owner;
 pub(super) mod mention_policy;
 mod read_state;
+pub(super) mod request_policy;
 pub(super) mod subscriptions;
 use invite_owner::pending_invite_response_owner;
 pub(crate) use read_state::read_mobile_push_notification_indexes;
@@ -529,6 +530,17 @@ fn decrypted_mobile_push_resolution(
     {
         return read_state::dismissed_resolution();
     }
+    if inner_kind == MOBILE_PUSH_CHAT_MESSAGE_KIND
+        && group_id.is_none()
+        && sender_owner != local_owner
+        && !request_policy::allows_in_data_dir(
+            data_dir,
+            &local_owner.to_hex(),
+            &sender_owner.to_hex(),
+        )
+    {
+        return suppressed_resolution();
+    }
     if mention_policy::suppresses_in_data_dir(
         data_dir,
         &resolved_chat_id,
@@ -674,6 +686,12 @@ fn lookup_mobile_push_source_preview(
     }
     if dismiss {
         return Some(read_state::dismissed_resolution());
+    }
+    if !is_group_chat_id(&chat_id)
+        && chat_id != owner_pubkey_hex
+        && !request_policy::allows(conn, owner_pubkey_hex, &chat_id)
+    {
+        return Some(suppressed_resolution());
     }
     let group_id = chat_id.strip_prefix(GROUP_CHAT_PREFIX);
     if mention_policy::suppresses(conn, &chat_id, owner_pubkey_hex, &body, true) {
@@ -1339,6 +1357,7 @@ mod tests {
         )
         .expect("insert message");
 
+        crate::core::tests::accept_notification_peer_in_store(&conn, "direct-chat-id");
         let resolution =
             lookup_mobile_push_preview(tmp.path().to_str().unwrap(), "outer-event-id", "")
                 .expect("resolved preview");
@@ -1375,6 +1394,7 @@ mod tests {
         )
         .expect("insert message");
 
+        crate::core::tests::accept_notification_peer_in_store(&conn, "direct-chat-id");
         let resolution =
             lookup_mobile_push_preview(tmp.path().to_str().unwrap(), "outer-event-id", "")
                 .expect("resolved preview");

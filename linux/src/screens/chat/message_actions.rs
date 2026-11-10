@@ -34,6 +34,32 @@ pub(super) fn append_actions(
     chat: &CurrentChatSnapshot,
     manager: &Rc<AppManager>,
 ) {
+    if !message.deleted_for_everyone {
+        let tokens: Vec<_> = iris_chat_core::message_payment_links(message.body.clone())
+            .into_iter()
+            .filter(|link| link.cashu.is_some())
+            .collect();
+        for (index, link) in tokens.iter().enumerate() {
+            let title = if tokens.len() == 1 {
+                "Copy token".to_owned()
+            } else {
+                format!("Copy token {}", index + 1)
+            };
+            let copy = gtk::Button::with_label(&title);
+            copy.add_css_class("flat");
+            let token = link
+                .uri
+                .strip_prefix("cashu:")
+                .unwrap_or(&link.uri)
+                .to_owned();
+            let popover = popover.clone();
+            copy.connect_clicked(move |_| {
+                crate::platform::clipboard::copy(&token);
+                popover.popdown();
+            });
+            column.append(&copy);
+        }
+    }
     if !is_removed_group(chat) && can_edit(message) {
         let edit = gtk::Button::with_label("Edit message");
         edit.add_css_class("flat");

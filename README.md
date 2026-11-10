@@ -89,6 +89,17 @@ just run-windows
 `just build` builds the native app for the local desktop platform and prints
 the app output path.
 
+## Payment messages
+
+Cashu tokens (v3/v4) and Lightning invoices (BOLT11) in messages appear as
+compact wallet links with their amounts. Cashu links also show the mint and
+“Not checked”; decoded amounts are sender-provided, not verified funds.
+Parsing stays on device. Opening a link hands it to an installed wallet;
+Iris does not automatically contact mints, redeem tokens, or pay invoices.
+Use **Copy token** in a message's actions, including on sent messages, to
+receive or reclaim it in another wallet. **Copy text** preserves the original
+message. Spent checks and an integrated wallet are not included.
+
 ## Check
 
 ```bash

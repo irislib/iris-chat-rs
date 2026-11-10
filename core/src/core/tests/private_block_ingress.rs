@@ -105,6 +105,9 @@ fn private_block_mobile_push_decryption_and_cache_suppress_blocked_period() {
         let owner = Keys::generate();
         let peer = Keys::generate();
         let (mut core, _, dir) = logged_in_test_core_with_updates("block-push", &owner, &owner);
+        if !group {
+            core.accept_message_request(&peer.public_key().to_hex());
+        }
         core.app_store.bind_account(owner.public_key()).unwrap();
         let invite = core
             .protocol_engine

@@ -21,7 +21,6 @@ impl AppCore {
         self.pending_invite_upload = None;
         self.pending_private_invite_responses.clear();
         self.pending_private_invite_cleanup_retry = false;
-        self.pending_new_chat_responses.clear();
         self.new_chat_notifications.clear();
         self.timers.device_invite_poll = self.timers.device_invite_poll.saturating_add(1);
         self.timers.chat_mute_expiry = self.timers.chat_mute_expiry.wrapping_add(1);

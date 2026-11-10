@@ -1,4 +1,4 @@
-use crate::{AccountSnapshot, ChatKind, ChatThreadSnapshot};
+use crate::{AccountSnapshot, ChatKind, ChatThreadSnapshot, DeviceAuthorizationState};
 
 pub(crate) const NOTE_TO_SELF: &str = "Note to self";
 
@@ -10,7 +10,11 @@ pub(crate) fn include_note_to_self(chats: &mut Vec<ChatThreadSnapshot>, account:
     {
         return;
     }
-    chats.push(ChatThreadSnapshot {
+    chats.push(note_to_self_thread(account));
+}
+
+fn note_to_self_thread(account: &AccountSnapshot) -> ChatThreadSnapshot {
+    ChatThreadSnapshot {
         new_chat_notification_id: None,
         social_connection: Some(crate::SocialConnectionSnapshot {
             is_favorite: false,
@@ -41,7 +45,33 @@ pub(crate) fn include_note_to_self(chats: &mut Vec<ChatThreadSnapshot>, account:
         is_pinned: false,
         draft: String::new(),
         is_request: false,
-    });
+    }
+}
+
+/// A picker can offer the account's own conversation before it has any history.
+#[uniffi::export]
+pub fn share_target_chats(
+    account: Option<AccountSnapshot>,
+    mut chats: Vec<ChatThreadSnapshot>,
+) -> Vec<ChatThreadSnapshot> {
+    let Some(account) =
+        account.filter(|a| a.authorization_state == DeviceAuthorizationState::Authorized)
+    else {
+        return Vec::new();
+    };
+    let mut own_chat = match chats
+        .iter()
+        .position(|chat| chat.chat_id == account.public_key_hex)
+    {
+        Some(index) => chats.remove(index),
+        None => note_to_self_thread(&account),
+    };
+    own_chat.display_name = NOTE_TO_SELF.into();
+    own_chat.subtitle = Some(account.display_name);
+    own_chat.picture_url = account.picture_url;
+    own_chat.is_request = false;
+    chats.insert(0, own_chat);
+    chats
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]

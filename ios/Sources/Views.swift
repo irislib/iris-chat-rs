@@ -187,12 +187,15 @@ func loadPickedPhotoItem(_ item: PhotosPickerItem, directoryName: String) async 
         return nil
     }
     let ext = item.supportedContentTypes.first?.preferredFilenameExtension ?? "jpg"
+    guard let prepared = irisPreparePickedPhoto(data: data, filenameExtension: ext) else {
+        return nil
+    }
     let directory = FileManager.default.temporaryDirectory
         .appendingPathComponent(directoryName, isDirectory: true)
     try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-    let url = directory.appendingPathComponent("\(UUID().uuidString).\(ext)")
+    let url = directory.appendingPathComponent("\(UUID().uuidString).\(prepared.filenameExtension)")
     do {
-        try data.write(to: url, options: [.atomic])
+        try prepared.data.write(to: url, options: [.atomic])
         return url
     } catch {
         return nil

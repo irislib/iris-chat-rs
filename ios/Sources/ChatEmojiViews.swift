@@ -83,6 +83,7 @@ let irisEmojiSearchAliasMap: [String: String] = {
 
 struct ChatMessageActionsSheet: View {
     @Environment(\.irisPalette) private var palette
+    @Environment(\.dismiss) private var dismiss
     let message: ChatMessageSnapshot
     let bodyText: String
     var explicitAuthorName: String? = nil
@@ -115,6 +116,13 @@ struct ChatMessageActionsSheet: View {
                     if !message.deletedForEveryone {
                         actionRow(icon: "arrowshape.turn.up.right", label: "Forward", action: onForward)
                         actionRow(icon: "doc.on.doc", label: "Copy", action: onCopy)
+                        let tokens = copyableCashuTokens(message.body)
+                        ForEach(tokens.indices, id: \.self) { index in
+                            actionRow(icon: "doc.on.doc.fill", label: tokens.count == 1 ? "Copy token" : "Copy token \(index + 1)") {
+                                PlatformClipboard.setString(tokens[index])
+                                dismiss()
+                            }
+                        }
                     }
                     actionRow(icon: "info.circle", label: "Info", action: onInfo)
                     actionRow(icon: "trash", label: "Delete for me", destructive: true, action: onDelete)

@@ -50,6 +50,8 @@ openh264 = { version = "=0.9.9", optional = true }
 image = { version = "0.25", default-features = false, optional = true }
 async-trait = "0.1"
 base64 = "0.22"
+ciborium = "=0.2.2"
+lightning-invoice = { version = "=0.34.1", features = ["std"] }
 clap = { version = "4", features = ["derive", "env"] }
 futures-util = "0.3"
 flume = "0.11"

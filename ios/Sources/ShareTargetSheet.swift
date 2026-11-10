@@ -25,18 +25,25 @@ struct ShareTargetSheet: View {
     private var filteredChats: [ChatThreadSnapshot] {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !query.isEmpty else {
-            return manager.state.chatList
+            return manager.sharingChats
         }
-        return manager.state.chatList.filter { chat in
+        return manager.sharingChats.filter { chat in
             chat.displayName.lowercased().contains(query)
                 || (chat.subtitle?.lowercased().contains(query) ?? false)
                 || (chat.lastMessagePreview?.lowercased().contains(query) ?? false)
         }
     }
 
+    private var nearbySharePeers: [IrisNearbyPeer] {
+        manager.nearbyIris.peers.filter { peer in
+            guard let owner = peer.ownerPubkeyHex else { return false }
+            return owner != manager.state.account?.publicKeyHex
+        }
+    }
+
     private var filteredNearbyPeers: [IrisNearbyPeer] {
         let peers = sortedNearbyPeers(
-            manager.nearbyIris.peers.filter { $0.ownerPubkeyHex != nil },
+            nearbySharePeers,
             manager: manager,
             bluetoothPeerIDs: Set(manager.nearbyIris.bluetoothPeers.map(\.id)),
             lanPeerIDs: Set(manager.nearbyIris.lanPeers.map(\.id))
@@ -52,16 +59,16 @@ struct ShareTargetSheet: View {
     }
 
     private var hasShareTargets: Bool {
-        !manager.state.chatList.isEmpty || !manager.nearbyIris.peers.filter { $0.ownerPubkeyHex != nil }.isEmpty
+        !manager.sharingChats.isEmpty || !nearbySharePeers.isEmpty
     }
 
     private var selectedChats: [ChatThreadSnapshot] {
-        manager.state.chatList.filter { selectedChatIds.contains($0.chatId) }
+        manager.sharingChats.filter { selectedChatIds.contains($0.chatId) }
     }
 
     private var selectedNamesText: String {
         let chatNames = selectedChats.map(\.displayName)
-        let nearbyNames = manager.nearbyIris.peers.compactMap { peer -> String? in
+        let nearbyNames = nearbySharePeers.compactMap { peer -> String? in
             guard let owner = peer.ownerPubkeyHex, selectedChatIds.contains(owner) else {
                 return nil
             }
@@ -176,7 +183,7 @@ struct ShareTargetSheet: View {
                             shareTargetRow(chat)
                         }
                     } header: {
-                        Text(searchText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Recent chats" : "Chats")
+                        Text("Chats")
                             .font(.system(size: 13, weight: .semibold))
                             .foregroundStyle(palette.muted)
                             .textCase(nil)
@@ -315,7 +322,7 @@ struct ShareTargetSheet: View {
             } label: {
                 HStack(spacing: 12) {
                     IrisAvatar(
-                        socialConnection: nearbyPeerChat(owner: peer.ownerPubkeyHex, chats: manager.state.chatList)?.socialConnection,
+                        socialConnection: nearbyPeerChat(owner: peer.ownerPubkeyHex, chats: manager.sharingChats)?.socialConnection,
                         ownerPubkeyHex: owner,
                         label: name,
                         size: 40,
@@ -355,8 +362,8 @@ struct ShareTargetSheet: View {
         guard selectedChatIds.isEmpty else {
             return
         }
-        let suggested = Set(share.suggestedTargetChatIds)
-        let available = manager.state.chatList
+        let suggested = Set(share.suggestedTargetChatIds(for: manager.state.account))
+        let available = manager.sharingChats
             .map(\.chatId)
             .filter { suggested.contains($0) }
         selectedChatIds.formUnion(available)

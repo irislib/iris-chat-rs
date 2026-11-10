@@ -17,20 +17,25 @@ import java.util.UUID
 import org.json.JSONArray
 import org.json.JSONObject
 import to.iris.chat.MainActivity
+import to.iris.chat.rust.AccountSnapshot
 import to.iris.chat.rust.AppState
 import to.iris.chat.rust.ChatKind
+import to.iris.chat.rust.ChatThreadSnapshot
 import to.iris.chat.rust.DeviceAuthorizationState
+import to.iris.chat.rust.shareTargetChats
 
 internal data class ShareRecipient(val chatId: String, val name: String, val lastSent: Long?)
 
 internal data class ShareShortcutState(val accountId: String?, val recipients: List<ShareRecipient>) {
     companion object {
-        fun from(state: AppState): ShareShortcutState {
-            val account = state.account?.takeIf { it.authorizationState == DeviceAuthorizationState.AUTHORIZED }
+        fun from(state: AppState): ShareShortcutState = from(state.account, state.chatList, state.preferences.blockedOwnerPubkeys)
+
+        fun from(accountSnapshot: AccountSnapshot?, chats: List<ChatThreadSnapshot>, blockedOwners: List<String>): ShareShortcutState {
+            val account = accountSnapshot?.takeIf { it.authorizationState == DeviceAuthorizationState.AUTHORIZED }
                 ?: return ShareShortcutState(null, emptyList())
-            val blocked = state.preferences.blockedOwnerPubkeys.toSet()
-            return ShareShortcutState(account.publicKeyHex, state.chatList.filter {
-                it.kind == ChatKind.DIRECT && !it.isRequest && it.chatId != account.publicKeyHex && it.chatId !in blocked
+            val blocked = blockedOwners.toSet()
+            return ShareShortcutState(account.publicKeyHex, shareTargetChats(account, chats).filter {
+                it.kind == ChatKind.DIRECT && !it.isRequest && it.chatId !in blocked
             }.map {
                 ShareRecipient(it.chatId, it.displayName.trim().ifEmpty { "Chat" },
                     it.lastMessageAtSecs?.toLong()?.takeIf { _ -> it.lastMessageIsOutgoing == true })
@@ -55,9 +60,9 @@ internal class DirectShareShortcuts(context: Context, preferencesName: String = 
             val records = if (state.accountId == null) emptyList() else state.recipients.mapNotNull { recipient ->
                 val old = byChat[recipient.chatId]
                 val sent = maxOf(old?.lastSent ?: 0, recipient.lastSent ?: 0)
-                if (sent <= 0 || sent < now - RECENT_SECONDS) null
+                if (recipient.chatId != state.accountId && (sent <= 0 || sent < now - RECENT_SECONDS)) null
                 else Record(recipient.chatId, old?.shortcutId ?: PREFIX + UUID.randomUUID(), sent)
-            }.sortedWith(compareByDescending<Record> { it.lastSent }.thenBy { it.shortcutId })
+            }.sortedWith(compareByDescending<Record> { it.chatId == state.accountId }.thenByDescending { it.lastSent }.thenBy { it.shortcutId })
 
             // Persist before publication so a cold-start tap can always resolve its opaque ID.
             if (records != previous || preferences.getString("account", null) != state.accountId) {
@@ -93,7 +98,9 @@ internal class DirectShareShortcuts(context: Context, preferencesName: String = 
 
     fun resolve(shortcutId: String, state: ShareShortcutState, now: Long = System.currentTimeMillis() / 1000): String? {
         if (state.accountId == null || preferences.getString("account", null) != state.accountId) return null
-        val record = readRecords().firstOrNull { it.shortcutId == shortcutId && it.lastSent >= now - RECENT_SECONDS } ?: return null
+        val record = readRecords().firstOrNull {
+            it.shortcutId == shortcutId && (it.chatId == state.accountId || it.lastSent >= now - RECENT_SECONDS)
+        } ?: return null
         return record.chatId.takeIf { id -> state.recipients.any { it.chatId == id } }
     }
 

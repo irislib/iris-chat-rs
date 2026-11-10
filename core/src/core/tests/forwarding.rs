@@ -1,6 +1,48 @@
 use super::*;
 
 #[test]
+fn sharing_to_self_before_opening_a_chat_reuses_the_same_conversation() {
+    let dir = tempfile::tempdir().unwrap();
+    let owner = Keys::generate();
+    let mut core = logged_in_test_core_at_data_dir(
+        &owner,
+        &Keys::generate(),
+        dir.path().to_string_lossy().into_owned(),
+    );
+    core.rebuild_state();
+    let account = core.state.account.clone().unwrap();
+    assert!(core.state.chat_list.is_empty());
+    let targets = crate::share_target_chats(Some(account.clone()), vec![]);
+    assert_eq!(targets.len(), 1);
+    assert_eq!(targets[0].chat_id, owner.public_key().to_hex());
+    assert_eq!(targets[0].display_name, "Note to self");
+    assert_eq!(targets[0].subtitle.as_ref(), Some(&account.display_name));
+
+    core.handle_action(AppAction::SendMessage {
+        chat_id: targets[0].chat_id.clone(),
+        text: "Shared link".into(),
+    });
+    assert_eq!(core.state.chat_list.len(), 1);
+    let mut existing = core.state.chat_list[0].clone();
+    existing.is_request = true;
+    let mut other = existing.clone();
+    other.chat_id = "another-chat".into();
+    let targets = crate::share_target_chats(Some(account.clone()), vec![other.clone(), existing]);
+    assert_eq!(targets.len(), 2);
+    assert_eq!(targets[0].chat_id, account.public_key_hex);
+    assert!(!targets[0].is_request);
+    assert_eq!(
+        targets[0].last_message_preview.as_deref(),
+        Some("Shared link")
+    );
+    assert_eq!(targets[1], other);
+    let mut revoked = account;
+    revoked.authorization_state = crate::DeviceAuthorizationState::Revoked;
+    assert!(crate::share_target_chats(Some(revoked), targets.clone()).is_empty());
+    assert!(crate::share_target_chats(None, targets).is_empty());
+}
+
+#[test]
 fn forwarded_content_survives_encryption_projection_and_storage_without_source_author() {
     let sender_owner = Keys::generate();
     let sender_device = Keys::generate();

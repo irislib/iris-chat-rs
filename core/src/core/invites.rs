@@ -305,6 +305,18 @@ impl AppCore {
             return false;
         }
 
+        let is_group_invite = self
+            .issued_invites
+            .get(&pending.invite_key)
+            .is_some_and(|issued| issued.record.kind == "group");
+        if !is_group_invite
+            && self.direct_request_access(&pending.claimed_owner.to_hex())
+                == message_requests::RequestAccess::Denied
+        {
+            self.remove_pending_private_invite_response(&event_id);
+            return true;
+        }
+
         // A reusable response may be wrapped in another valid outer event.
         // Pin the receipt to its proved session key, not the transport event ID.
         let receipt_id = if self.issued_invites.contains_key(&pending.invite_key) {
@@ -362,7 +374,9 @@ impl AppCore {
             .issued_invites
             .get(&pending.invite_key)
             .is_some_and(|issued| issued.record.kind == "group");
-        self.cache_invite_acceptance_preview(&event_id, &pending.claimed_owner.to_hex());
+        if !is_group_invite {
+            self.cache_invite_acceptance_preview(&event_id, &pending.claimed_owner.to_hex());
+        }
         if let Err(error) = self.consume_private_chat_invite_after_response(&pending.invite_key) {
             self.pending_private_invite_cleanup_retry = true;
             self.push_debug_log(
@@ -383,7 +397,7 @@ impl AppCore {
         self.schedule_tracked_peer_catch_up(Duration::from_secs(2));
 
         let chat_id = pending.claimed_owner.to_hex();
-        if !is_group_invite {
+        if !is_group_invite && self.prepare_direct_request_message(&chat_id, "") {
             self.record_new_chat_notification(&chat_id, &event_id);
             self.ensure_thread_record(&chat_id, unix_now().get())
                 .unread_count = 0;

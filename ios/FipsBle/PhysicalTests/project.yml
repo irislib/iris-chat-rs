@@ -1,0 +1,41 @@
+name: IrisBleProbe
+options:
+  deploymentTarget:
+    iOS: "16.0"
+packages:
+  FipsBle:
+    path: ..
+targets:
+  IrisBleProbe:
+    type: application
+    platform: iOS
+    sources:
+      - ProbeApp.swift
+    dependencies:
+      - package: FipsBle
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: to.iris.bleprobe
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_NSBluetoothAlwaysUsageDescription: Test Bluetooth discovery between nearby phones.
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
+  IrisBleProbeTests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - PhysicalProbeUITests.swift
+    dependencies:
+      - target: IrisBleProbe
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: to.iris.bleprobe.tests
+        GENERATE_INFOPLIST_FILE: YES
+schemes:
+  IrisBleProbe:
+    build:
+      targets:
+        IrisBleProbe: all
+    test:
+      targets:
+        - IrisBleProbeTests

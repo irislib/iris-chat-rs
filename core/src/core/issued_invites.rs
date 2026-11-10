@@ -62,8 +62,6 @@ impl AppCore {
         self.pending_invite_upload = None;
         self.pending_private_invite_responses =
             super::invites::load_pending_private_invite_responses(storage)?;
-        self.pending_new_chat_responses =
-            super::invite_notifications::load_pending_responses(storage)?;
         Ok(())
     }
 

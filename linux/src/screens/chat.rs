@@ -2101,7 +2101,8 @@ fn present_forward_dialog(parent: Option<&gtk::Window>, text: &str, manager: &Rc
         return;
     }
 
-    let chats = manager.current_state().chat_list;
+    let state = manager.current_state();
+    let chats = iris_chat_core::share_target_chats(state.account, state.chat_list);
     let dialog = adw::Dialog::builder()
         .title("Forward")
         .content_width(360)

@@ -66,7 +66,7 @@ async fn attachment_upload_encrypts_every_stored_chunk_and_requires_the_key() {
             "document.txt",
             b"Private attachment regression fixture".as_slice(),
         ),
-        ("large-video.mp4", large.as_slice()),
+        ("large-document.bin", large.as_slice()),
         ("empty.txt", b"".as_slice()),
     ] {
         let path = dir.path().join(name);
@@ -86,7 +86,11 @@ async fn attachment_upload_encrypts_every_stored_chunk_and_requires_the_key() {
             read_hashtree_attachment(&cid, store.clone(), MAX_ATTACHMENT_BYTES)
                 .await
                 .unwrap(),
-            data
+            if let Some(format) = photo_metadata::detect(data, &path).unwrap() {
+                photo_metadata::clean(data, format).unwrap()
+            } else {
+                data.to_vec()
+            }
         );
         let ciphertext = store.0.lock().unwrap().clone();
         let mut pending = vec![cid.clone()];
@@ -123,6 +127,100 @@ async fn attachment_upload_encrypts_every_stored_chunk_and_requires_the_key() {
             unkeyed.is_err() || unkeyed.unwrap() != data,
             "{name}: hash alone exposed attachment"
         );
+    }
+}
+
+#[tokio::test]
+async fn photo_metadata_is_removed_before_encrypted_upload_and_original_is_untouched() {
+    let dir = tempfile::tempdir().unwrap();
+    // Content detection also covers photo pickers using extensionless temp files.
+    let path = dir.path().join("selected-photo");
+    let original = photo_metadata::tests::private_png();
+    fs::write(&path, &original).unwrap();
+    for _ in 0..2 {
+        let store = Arc::new(RecordedAttachmentStore::default());
+        let link = upload_file_to_store(&path, store.clone()).await.unwrap();
+        let decoded = nhash_decode(&link).unwrap();
+        let received = read_hashtree_attachment(
+            &Cid {
+                hash: decoded.hash,
+                key: decoded.decrypt_key,
+            },
+            store,
+            MAX_ATTACHMENT_BYTES,
+        )
+        .await
+        .unwrap();
+        assert!(!received.windows(3).any(|part| part == b"GPS"));
+        assert!(!received.windows(12).any(|part| part == b"CameraSerial"));
+        assert_ne!(received, original);
+        assert_eq!(fs::read(&path).unwrap(), original);
+    }
+}
+
+#[tokio::test]
+async fn photo_metadata_failure_never_uploads_the_original() {
+    let dir = tempfile::tempdir().unwrap();
+    for (name, data) in [
+        ("broken.jpg", b"\xff\xd8\xff\xe1\0\x05GPS".as_slice()),
+        ("camera.heic", b"\0\0\0\x18ftypheicGPS".as_slice()),
+    ] {
+        let path = dir.path().join(name);
+        fs::write(&path, data).unwrap();
+        let store = Arc::new(RecordedAttachmentStore::default());
+        let error = upload_file_to_store(&path, store.clone())
+            .await
+            .unwrap_err();
+        assert_eq!(error.to_string(), photo_metadata::ERROR);
+        assert!(store.0.lock().unwrap().is_empty());
+        assert_eq!(fs::read(&path).unwrap(), data);
+    }
+}
+
+#[tokio::test]
+async fn video_metadata_is_removed_before_encrypted_upload_on_each_attempt() {
+    let dir = tempfile::tempdir().unwrap();
+    let original = include_bytes!("../../../../test-fixtures/video-metadata.mp4");
+    let path = dir.path().join("selected-video.tmp");
+    fs::write(&path, original).unwrap();
+    for _ in 0..2 {
+        let store = Arc::new(RecordedAttachmentStore::default());
+        let link = upload_file_to_store(&path, store.clone()).await.unwrap();
+        let decoded = nhash_decode(&link).unwrap();
+        let received = read_hashtree_attachment(
+            &Cid {
+                hash: decoded.hash,
+                key: decoded.decrypt_key,
+            },
+            store,
+            MAX_ATTACHMENT_BYTES,
+        )
+        .await
+        .unwrap();
+        for needle in [b"Private".as_slice(), b"60.1699", b"2026-10-31"] {
+            assert!(!received.windows(needle.len()).any(|part| part == needle));
+        }
+        assert_eq!(received.len(), original.len());
+        assert_eq!(fs::read(&path).unwrap(), original);
+    }
+}
+
+#[tokio::test]
+async fn video_metadata_failure_never_uploads_the_original() {
+    let dir = tempfile::tempdir().unwrap();
+    for (name, data) in [
+        ("broken.mp4", b"\0\0\0\x18ftypisomGPS".as_slice()),
+        ("clip.webm", b"\x1a\x45\xdf\xa3GPS".as_slice()),
+    ] {
+        let path = dir.path().join(name);
+        fs::write(&path, data).unwrap();
+        let store = Arc::new(RecordedAttachmentStore::default());
+        let error = upload_file_to_store(&path, store.clone())
+            .await
+            .unwrap_err();
+        assert_eq!(error.to_string(), video_metadata::ERROR);
+        assert!(store.0.lock().unwrap().is_empty());
+        assert_eq!(fs::read(&path).unwrap(), data);
     }
 }
 

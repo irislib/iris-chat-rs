@@ -29,6 +29,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -234,10 +235,11 @@ class AppManager(
         IrisDebugLog.d(TAG, "init rev=${initial.rev} defaultScreen=${initial.router.defaultScreen}")
         publishState(initial)
         applicationScope.launch(ioDispatcher) {
-            combine(state, bootstrapState, foregroundedAtSecs) { snapshot, bootstrap, foregrounded ->
-                if (bootstrap is AccountBootstrapState.Loading && snapshot.account?.authorizationState != DeviceAuthorizationState.REVOKED) null
+            val shareInputs = state.map { Triple(it.account, it.chatList, it.preferences.blockedOwnerPubkeys) }.distinctUntilChanged()
+            combine(shareInputs, bootstrapState, foregroundedAtSecs) { (account, chats, blocked), bootstrap, foregrounded ->
+                if (bootstrap is AccountBootstrapState.Loading && account?.authorizationState != DeviceAuthorizationState.REVOKED) null
                 else (if (bootstrap is AccountBootstrapState.NeedsLogin) ShareShortcutState(null, emptyList())
-                    else ShareShortcutState.from(snapshot)) to foregrounded
+                    else ShareShortcutState.from(account, chats, blocked)) to foregrounded
             }.filterNotNull().distinctUntilChanged().collect { (shortcuts, _) ->
                 directShareShortcuts.update(shortcuts)
             }

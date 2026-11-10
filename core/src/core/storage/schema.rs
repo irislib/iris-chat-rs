@@ -7,7 +7,7 @@ use rusqlite::{params, Connection, Transaction};
 // Bump when a non-additive change to the schema lands and migrate
 // inside `ensure_schema` below. Greenfield: version 1 is the initial
 // shape and there is no previous JSON layout to migrate from.
-const SCHEMA_VERSION: u32 = 47;
+const SCHEMA_VERSION: u32 = 48;
 
 const INITIAL_SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS direct_file_transfers (
@@ -704,6 +704,20 @@ pub(super) fn ensure_schema(conn: &mut Connection) -> anyhow::Result<()> {
     }
     if !column_exists(&tx, "user_discovery_state", "social_opinion_events_json")? {
         tx.execute_batch("ALTER TABLE user_discovery_state ADD COLUMN social_opinion_events_json TEXT NOT NULL DEFAULT '[]';")?;
+    }
+    if !column_exists(&tx, "preferences", "accept_social_graph_direct_messages")? {
+        tx.execute_batch("ALTER TABLE preferences ADD COLUMN accept_social_graph_direct_messages INTEGER NOT NULL DEFAULT 1;
+            UPDATE preferences SET accept_social_graph_direct_messages = accept_unknown_direct_messages;")?;
+    }
+    if !column_exists(&tx, "preferences", "accept_overmuted_direct_messages")? {
+        tx.execute_batch("ALTER TABLE preferences ADD COLUMN accept_overmuted_direct_messages INTEGER NOT NULL DEFAULT 0;")?;
+    }
+    tx.execute_batch("CREATE TABLE IF NOT EXISTS message_request_arrivals (chat_id TEXT PRIMARY KEY, received_at_ms INTEGER NOT NULL);")?;
+    if current < 48 {
+        tx.execute_batch(
+            "INSERT OR IGNORE INTO message_request_arrivals(chat_id, received_at_ms)
+            SELECT chat_id, updated_at_secs * 1000 FROM threads WHERE chat_id NOT LIKE 'group:%';",
+        )?;
     }
     tx.pragma_update(None, "user_version", SCHEMA_VERSION as i64)?;
     tx.commit()?;

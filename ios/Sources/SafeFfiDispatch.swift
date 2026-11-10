@@ -439,6 +439,8 @@ private func fallbackAppState(toast: String?) -> AppState {
             acceptedOwnerPubkeys: [],
             debugLoggingEnabled: false,
             acceptUnknownDirectMessages: true,
+            acceptSocialGraphDirectMessages: true,
+            acceptOvermutedDirectMessages: false,
             mobilePushServerUrl: ""
         ),
         userDiscoveryRevision: 0,

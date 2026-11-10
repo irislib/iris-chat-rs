@@ -245,7 +245,6 @@ impl AppCore {
                     }
                     super::invites::PrivateInviteResponseDisposition::NotMatched => {}
                 }
-                let unqueued_new_chat_sender = self.queue_new_chat_response(&event);
                 let retry_results = self
                     .protocol_engine
                     .as_mut()
@@ -253,9 +252,6 @@ impl AppCore {
                     .transpose();
                 match retry_results {
                     Ok(Some(results)) => {
-                        if let Some((owner, device)) = unqueued_new_chat_sender {
-                            self.record_verified_new_chat_response(&event, owner, device);
-                        }
                         self.process_protocol_engine_retry_batch("invite_response", results);
                         self.refresh_local_authorization_state();
                     }

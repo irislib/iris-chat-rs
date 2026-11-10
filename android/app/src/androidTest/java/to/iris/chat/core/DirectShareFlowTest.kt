@@ -114,6 +114,21 @@ class DirectShareFlowTest {
         assertNull(manager.takePendingShareForChat(state.chatList.first().chatId))
     }
 
+    @Test fun firstNoteShortcutRoutesWithoutAnExistingChatOrRecentSend() {
+        state = state.copy(chatList = emptyList(), currentChat = null)
+        emit(state)
+        val owner = state.account!!.publicKeyHex
+        compose.waitUntil(5_000) { ShortcutManagerCompat.getDynamicShortcuts(context).any { it.shortLabel == "Note to self" } }
+        val id = ShortcutManagerCompat.getDynamicShortcuts(context).single { it.shortLabel == "Note to self" }.id
+        val shortcuts = DirectShareShortcuts(context)
+        val recipients = ShareShortcutState.from(state)
+        assertEquals(owner, shortcuts.resolve(id, recipients, System.currentTimeMillis() / 1000 + 31 * 86400))
+        assertNull(shortcuts.resolve(id, recipients.copy(accountId = "other")))
+        compose.runOnUiThread { manager.receiveShare("Remember this", emptyList(), id) }
+        assertEquals(owner, manager.pendingShare.value?.targetChatId)
+        assertEquals("Remember this", manager.takePendingShareForChat(owner)?.text)
+    }
+
     @Test fun invalidAndBlockedTargetsFallBackToRecipientSelection() {
         emit(state)
         compose.runOnUiThread { manager.receiveShare("Review this", emptyList(), "forged-id") }

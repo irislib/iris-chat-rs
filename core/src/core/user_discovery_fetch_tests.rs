@@ -4,6 +4,240 @@ use tempfile::TempDir;
 
 const CLEARLY_FUTURE_OFFSET_SECS: u64 = 60 * 60;
 
+async fn graph_wire_relay(
+    events: Vec<Event>,
+) -> (
+    RelayUrl,
+    std::sync::Arc<std::sync::Mutex<Vec<(usize, serde_json::Value)>>>,
+    tokio::task::JoinHandle<()>,
+) {
+    use futures_util::SinkExt;
+    use tokio_tungstenite::tungstenite::Message;
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = RelayUrl::parse(&format!("ws://{}", listener.local_addr().unwrap())).unwrap();
+    let frames = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let captured = frames.clone();
+    let task = tokio::spawn(async move {
+        let mut connection = 0;
+        while let Ok((socket, _)) = listener.accept().await {
+            connection += 1;
+            let captured = captured.clone();
+            let events = events.clone();
+            tokio::spawn(async move {
+                let mut socket = tokio_tungstenite::accept_async(socket).await.unwrap();
+                socket
+                    .send(Message::Text(
+                        serde_json::json!(["AUTH", "graph-wire-challenge"])
+                            .to_string()
+                            .into(),
+                    ))
+                    .await
+                    .unwrap();
+                while let Some(Ok(message)) = socket.next().await {
+                    let text = match message {
+                        Message::Text(text) => text,
+                        Message::Ping(data) => {
+                            let _ = socket.send(Message::Pong(data)).await;
+                            continue;
+                        }
+                        Message::Close(_) => break,
+                        _ => continue,
+                    };
+                    let frame: serde_json::Value = serde_json::from_str(&text).unwrap();
+                    captured.lock().unwrap().push((connection, frame.clone()));
+                    if frame[0] == "AUTH" {
+                        let _ = socket
+                            .send(Message::Text(
+                                serde_json::json!(["OK", frame[1]["id"], true, ""])
+                                    .to_string()
+                                    .into(),
+                            ))
+                            .await;
+                    } else if frame[0] == "NEG-OPEN" {
+                        let _ = socket
+                            .send(Message::Text(
+                                serde_json::json!(["NEG-ERR", frame[1], "unsupported"])
+                                    .to_string()
+                                    .into(),
+                            ))
+                            .await;
+                    } else if frame[0] == "REQ" {
+                        for event in &events {
+                            if frame.as_array().unwrap()[2..].iter().any(|filter| {
+                                filter.get("kinds").is_none_or(|kinds| {
+                                    kinds.as_array().unwrap().iter().any(|kind| {
+                                        kind.as_u64() == Some(event.kind.as_u16() as u64)
+                                    })
+                                }) && filter.get("authors").is_none_or(|authors| {
+                                    authors.as_array().unwrap().iter().any(|author| {
+                                        author.as_str() == Some(event.pubkey.to_hex().as_str())
+                                    })
+                                }) && filter.get("ids").is_none_or(|ids| {
+                                    ids.as_array()
+                                        .unwrap()
+                                        .iter()
+                                        .any(|id| id.as_str() == Some(event.id.to_hex().as_str()))
+                                })
+                            }) {
+                                let value = serde_json::to_value(event).unwrap();
+                                let _ = socket
+                                    .send(Message::Text(
+                                        serde_json::json!(["EVENT", frame[1], value])
+                                            .to_string()
+                                            .into(),
+                                    ))
+                                    .await;
+                            }
+                        }
+                        let _ = socket
+                            .send(Message::Text(
+                                serde_json::json!(["EOSE", frame[1]]).to_string().into(),
+                            ))
+                            .await;
+                    }
+                }
+            });
+        }
+    });
+    (url, frames, task)
+}
+
+#[test]
+fn graph_wire_negentropy_has_public_scope_and_never_authenticates_or_uploads() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let owner = Keys::generate();
+        let friend = Keys::generate();
+        let private_device = Keys::generate();
+        let mutes = EventBuilder::new(Kind::from(10_000), "")
+            .tags([Tag::public_key(owner.public_key())])
+            .custom_created_at(Timestamp::from(3))
+            .sign_with_keys(&friend)
+            .unwrap();
+        let (url, frames, server) = graph_wire_relay(vec![
+            follow_event(&owner, 1, &[friend.public_key()]),
+            follow_event(&friend, 2, &[owner.public_key()]),
+            mutes,
+        ])
+        .await;
+        let private_client = Client::new(private_device.clone());
+        let result = fetch_user_discovery(
+            private_client.clone(),
+            vec![url],
+            owner.public_key(),
+            UserDiscoveryCache::default(),
+        )
+        .await;
+        private_client.disconnect().await;
+        assert!(result.cache.social_graph.is_some());
+        let frames = frames.lock().unwrap();
+        let public_connections = frames
+            .iter()
+            .filter(|(_, frame)| frame[0] == "NEG-OPEN")
+            .map(|(connection, _)| *connection)
+            .collect::<HashSet<_>>();
+        assert!(
+            !public_connections.is_empty(),
+            "must exercise actual NIP-77 wire requests"
+        );
+        let mut kinds = std::collections::BTreeSet::new();
+        for (connection, frame) in frames
+            .iter()
+            .filter(|(connection, _)| public_connections.contains(connection))
+        {
+            assert!(
+                frame[0] != "AUTH" && frame[0] != "EVENT",
+                "anonymous graph connection {connection} sent {frame}"
+            );
+            assert!(!frame
+                .to_string()
+                .contains(&private_device.public_key().to_hex()));
+            if frame[0] == "NEG-OPEN" {
+                assert!(frame.to_string().len() < 16_384);
+                let filter = &frame[2];
+                for kind in filter["kinds"].as_array().unwrap() {
+                    kinds.insert(kind.as_u64().unwrap());
+                }
+                let authors = filter["authors"].as_array().unwrap();
+                assert!(authors.len() <= DISCOVERY_AUTHOR_CHUNK);
+                assert!(authors.iter().all(|author| [
+                    owner.public_key().to_hex(),
+                    friend.public_key().to_hex()
+                ]
+                .iter()
+                .any(|allowed| author.as_str() == Some(allowed.as_str()))));
+            }
+        }
+        assert_eq!(kinds, std::collections::BTreeSet::from([3, 10_000]));
+        server.abort();
+    });
+}
+
+#[test]
+fn graph_wire_follow_and_mute_downloads_share_one_byte_budget() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let author = Keys::generate();
+        let heads = [3, 10_000]
+            .into_iter()
+            .map(|kind| {
+                EventBuilder::new(Kind::from(kind), "x".repeat(1500))
+                    .custom_created_at(Timestamp::from(10))
+                    .sign_with_keys(&author)
+                    .unwrap()
+            })
+            .collect();
+        let (url, _, server) = graph_wire_relay(heads).await;
+        let client = Client::builder().build();
+        ensure_session_relays_configured(&client, &[url]).await;
+        connect_client_with_timeout(&client, DISCOVERY_REQUEST_TIMEOUT).await;
+        let budget = std::sync::atomic::AtomicUsize::new(2048);
+        let (follows, mutes) = tokio::join!(
+            fetch_graph_opinion_chunks(
+                &client,
+                &[],
+                &budget,
+                Kind::ContactList,
+                vec![author.public_key()],
+                None
+            ),
+            fetch_graph_opinion_chunks(
+                &client,
+                &[],
+                &budget,
+                Kind::from(10_000),
+                vec![author.public_key()],
+                None
+            ),
+        );
+        let results = follows
+            .into_iter()
+            .chain(mutes)
+            .map(|(_, result)| result)
+            .collect::<Vec<_>>();
+        assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
+        assert!(results.iter().any(|result| result
+            .as_ref()
+            .err()
+            .is_some_and(|error| error.contains("byte or event budget"))));
+        let retained_bytes = results
+            .into_iter()
+            .filter_map(Result::ok)
+            .flatten()
+            .map(|event| serde_json::to_vec(&event).unwrap().len())
+            .sum::<usize>();
+        assert!(retained_bytes <= 2048);
+        client.disconnect().await;
+        server.abort();
+    });
+}
+
 fn follow_event(keys: &Keys, created_at: u64, followed: &[PublicKey]) -> Event {
     EventBuilder::new(Kind::ContactList, "")
         .tags(followed.iter().copied().map(Tag::public_key))

@@ -10,12 +10,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import to.iris.chat.rust.messageMentions
 
-internal fun linkedMentionMessageAnnotatedString(text: String, color: Color, onMention: (String) -> Unit, names: Map<String, String> = emptyMap()): AnnotatedString =
+internal fun linkedMentionMessageAnnotatedString(text: String, color: Color, onMention: (String) -> Unit, names: Map<String, String> = emptyMap(), onPayment: ((String) -> Unit)? = null): AnnotatedString =
     buildAnnotatedString {
         var cursor = 0
         for (mention in messageMentions(text)) {
             val start = mention.start.toInt()
-            append(linkedPlainMessageAnnotatedString(text.substring(cursor, start), color))
+            append(linkedPlainMessageAnnotatedString(text.substring(cursor, start), color, onPayment))
             val labelStart = length
             append(names[mention.ownerPubkeyHex]?.let { "@$it" } ?: mention.label)
             addLink(LinkAnnotation.Clickable(mention.ownerPubkeyHex,
@@ -24,5 +24,5 @@ internal fun linkedMentionMessageAnnotatedString(text: String, color: Color, onM
             }, labelStart, length)
             cursor = start + mention.length.toInt()
         }
-        append(linkedPlainMessageAnnotatedString(text.substring(cursor), color))
+        append(linkedPlainMessageAnnotatedString(text.substring(cursor), color, onPayment))
     }

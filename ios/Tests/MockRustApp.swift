@@ -165,6 +165,8 @@ final class MockRustApp: RustAppClient {
             acceptedOwnerPubkeys: [],
             debugLoggingEnabled: false,
             acceptUnknownDirectMessages: true,
+            acceptSocialGraphDirectMessages: true,
+            acceptOvermutedDirectMessages: false,
             mobilePushServerUrl: ""
         ),
         userDiscoveryRevision: 0,

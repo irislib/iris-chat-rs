@@ -600,7 +600,6 @@ impl AppCore {
         self.groups.clear();
         self.chat_message_ttl_seconds.clear();
         self.recent_handshake_peers.clear();
-        self.pending_new_chat_responses.clear();
         self.new_chat_notifications.clear();
         self.seen_event_ids.clear();
         self.seen_event_order.clear();

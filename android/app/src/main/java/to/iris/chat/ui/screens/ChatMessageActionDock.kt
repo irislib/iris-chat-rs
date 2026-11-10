@@ -47,6 +47,8 @@ internal fun MessageActionDock(
     onInfo: () -> Unit,
     onDelete: () -> Unit,
     canCopyAndForward: Boolean = true,
+    cashuTokens: List<String> = emptyList(),
+    onCopyToken: (String) -> Unit = {},
     onEdit: (() -> Unit)? = null,
     onEditHistory: (() -> Unit)? = null,
     onDeleteForEveryone: (() -> Unit)? = null,
@@ -100,6 +102,12 @@ internal fun MessageActionDock(
                             onCopy()
                         },
                     )
+                    if (canCopyAndForward) cashuTokens.forEachIndexed { index, token ->
+                        DropdownMenuItem(
+                            text = { Text(if (cashuTokens.size == 1) "Copy token" else "Copy token ${index + 1}") },
+                            onClick = { menuOpen = false; onCopyToken(token) },
+                        )
+                    }
                     DropdownMenuItem(
                         text = { Text("Info") },
                         onClick = {

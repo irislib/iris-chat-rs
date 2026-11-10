@@ -1,6 +1,34 @@
 import XCTest
 
 final class NoteToSelfUITests: IrisChatUITestCase {
+#if os(iOS)
+    func testForwardToSelfBeforeWritingTheFirstNote() {
+        let app = launchCleanApp()
+        createAccount(app)
+        openSelfOnlyGroup(app)
+        let text = "Save the picnic date"
+        typeText(text, into: editableElement(app, "chatMessageInput"), app: app)
+        element(app, "chatSendButton").tap()
+        dismissNotificationPromptIfPresent(app: app)
+        let message = app.staticTexts[text].firstMatch
+        XCTAssertTrue(message.waitForExistence(timeout: 10))
+        message.press(forDuration: 0.6)
+        let forward = app.buttons["Forward"].firstMatch
+        XCTAssertTrue(forward.waitForExistence(timeout: 5))
+        forward.tap()
+
+        let target = app.buttons["Note to self, not selected"].firstMatch
+        XCTAssertTrue(target.waitForExistence(timeout: 5))
+        target.tap()
+        capture(app, "note-to-self-forward-target")
+        element(app, "shareTargetSendButton").tap()
+        let header = element(app, "chatHeaderTitleButton")
+        XCTAssertTrue(waitUntil(timeout: 10) { header.label.contains("Note to self") })
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", text))
+            .firstMatch.waitForExistence(timeout: 10))
+    }
+#endif
+
     func testSearchAndProfileOpenTheSameSelfChat() {
         let app = launchCleanApp(runId: "note-to-self-\(UUID().uuidString)")
         createAccount(app)

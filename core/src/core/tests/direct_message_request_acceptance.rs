@@ -1,7 +1,7 @@
 use super::*;
 
 #[test]
-fn private_invite_capability_response_ignores_unknown_dm_setting_after_owner_roster() {
+fn private_invite_response_respects_unknown_request_setting_after_owner_roster() {
     let alice_owner = Keys::generate();
     let alice_device = Keys::generate();
     let bob_owner = Keys::generate();
@@ -42,8 +42,8 @@ fn private_invite_capability_response_ignores_unknown_dm_setting_after_owner_ros
     prove_invite_owner(&mut alice, &bob_owner, &bob_device, 10);
 
     assert!(
-        alice.threads.contains_key(&bob_owner.public_key().to_hex()),
-        "possession of the private invite capability plus owner roster admits the response"
+        !alice.threads.contains_key(&bob_owner.public_key().to_hex()),
+        "a stranger answering our invite must still pass the private request policy"
     );
     assert!(
         !alice.private_chat_invites.is_empty(),

@@ -80,6 +80,8 @@ public partial class SettingsView : UserControl
         var prefs = App.CurrentManager.Preferences;
         _suppressToggleDispatch = true;
         AcceptChatRequestsToggle.IsChecked = prefs.acceptUnknownDirectMessages;
+        NetworkRequestsToggle.IsChecked = prefs.acceptSocialGraphDirectMessages;
+        OvermutedRequestsToggle.IsChecked = prefs.acceptOvermutedDirectMessages;
         TypingToggle.IsChecked = prefs.sendTypingIndicators;
         ReceiptsToggle.IsChecked = prefs.sendReadReceipts;
         AllowMessageDeletionToggle.IsChecked = prefs.allowMessageDeletionByOthers;
@@ -283,6 +285,18 @@ public partial class SettingsView : UserControl
     {
         if (_suppressToggleDispatch) return;
         App.CurrentManager.SetAcceptUnknownDirectMessages(AcceptChatRequestsToggle.IsChecked == true);
+    }
+
+    private void OnNetworkRequestsChanged(object sender, RoutedEventArgs e)
+    {
+        if (_suppressToggleDispatch) return;
+        App.CurrentManager.SetAcceptSocialGraphDirectMessages(NetworkRequestsToggle.IsChecked == true);
+    }
+
+    private void OnOvermutedRequestsChanged(object sender, RoutedEventArgs e)
+    {
+        if (_suppressToggleDispatch) return;
+        App.CurrentManager.SetAcceptOvermutedDirectMessages(OvermutedRequestsToggle.IsChecked == true);
     }
 
     private void OnReceiptsChanged(object sender, RoutedEventArgs e)

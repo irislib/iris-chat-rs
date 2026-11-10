@@ -37,6 +37,7 @@ impl AppCore {
 
         match self.open_direct_chat_from_peer_input(peer_input) {
             Ok(chat_id) => {
+                self.sync_request_acceptance(&chat_id);
                 self.push_debug_log(
                     "chat.create",
                     format!("peer_input={} chat_id={chat_id}", peer_input.trim()),
@@ -1342,6 +1343,20 @@ impl AppCore {
             return true;
         }
         if is_group_chat_id(&chat_id) {
+            if !is_outgoing && kind == CHAT_MESSAGE_KIND {
+                if let Some(group_id) =
+                    parse_group_id_from_chat_id(&chat_id).filter(|id| !self.groups.contains_key(id))
+                {
+                    self.request_missing_group_context(
+                        effective_sender_owner,
+                        Some(group_id),
+                        None,
+                    );
+                    // Keep the authenticated delivery pending until group
+                    // metadata arrives, including across an offline restart.
+                    return false;
+                }
+            }
             self.cache_direct_group_preview_carrier(outer_event_id.as_deref());
         }
         self.cache_mobile_push_control(
@@ -1462,6 +1477,9 @@ impl AppCore {
             delivered &= self.apply_group_decrypted_event(group_event);
         }
         self.process_protocol_engine_effects(group_outcome.effects);
+        if !from_local_sibling {
+            self.request_context_for_pending_group_payload(sender_owner, sender_device, payload);
+        }
         self.request_protocol_subscription_refresh();
         self.schedule_fast_protocol_retry_if_pending();
         if !delivered {
@@ -1540,7 +1558,7 @@ impl AppCore {
     pub(super) fn should_accept_direct_runtime_message(
         &mut self,
         sender_owner: PublicKey,
-        chat_id: Option<&str>,
+        _chat_id: Option<&str>,
     ) -> bool {
         let Some(local_owner) = self
             .logged_in
@@ -1563,20 +1581,7 @@ impl AppCore {
             );
             return false;
         }
-        if sender_owner == local_owner || self.preferences.accept_unknown_direct_messages {
-            return true;
-        }
-        let known = chat_id
-            .and_then(|chat_id| self.threads.get(chat_id))
-            .is_some()
-            || self.threads.contains_key(&sender_hex);
-        if !known {
-            self.push_debug_log(
-                "runtime_rumor.unknown_sender.skip",
-                format!("sender_owner={sender_hex}"),
-            );
-        }
-        known
+        self.direct_request_access(&sender_hex) != message_requests::RequestAccess::Denied
     }
 
     fn direct_owner_for_known_device_pubkey(&self, device_pubkey: PublicKey) -> Option<PublicKey> {
@@ -1683,6 +1688,9 @@ impl AppCore {
                 expires_at_secs,
                 DeliveryState::Sent,
             );
+            return;
+        }
+        if !is_group_chat_id(&chat_id) && !self.prepare_direct_request_message(&chat_id, &body) {
             return;
         }
         self.push_incoming_message_from(

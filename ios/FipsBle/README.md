@@ -5,10 +5,16 @@ It was vendored from `platform/apple` in FIPS commit `29e784207` so Iris builds
 without a sibling checkout. Keep its protocol types in sync with the pinned
 `fips-core` revision in `core/Cargo.toml`.
 
-Each peer is reported once per scan, with a fresh discovery after service
+Each GATT bootstrap endpoint is reported once per scan, with a fresh discovery after service
 invalidation or a rejected L2CAP open. Repeated advertisements must not reopen
 a Bluetooth link FIPS closed because it already has a healthy network path.
 FIPS retains the bootstrap parameters and owns connection retries.
+
+Discovery reads all matching service instances, keeping apps on the same phone
+as separate candidates. Starting a scan or returning to the foreground also
+checks peripherals already connected by another app; these may no longer
+advertise. A retrieved peripheral is connected locally before its services are
+read. The service UUID, bootstrap bytes and FIPS wire protocol remain unchanged.
 
 Failed GATT discovery retries back off from five seconds to one minute. These
 failures occur before FIPS receives a peer candidate, so its connection backoff
@@ -57,3 +63,13 @@ ends. Polling and write completions cannot renew the allowance. The physical gat
 `scripts/physical_ble_idle.py --background` additionally requires an Android peer
 with no IP route to receive a delivery receipt before the iPhone returns to the
 foreground; unit tests do not establish that L2CAP wakes a suspended phone.
+
+For foreground adapter isolation, `PhysicalTests/project.yml` defines a separate
+development app and UI test; generate its project with XcodeGen and build it for
+testing. Pair it with Android's `:fips-ble:assembleDebugAndroidTest` output. Run
+both tests concurrently with the same fresh 32-character hexadecimal token:
+`IRIS_BLE_PROBE_TOKEN` in the Apple test's `.xctestrun` environment, and Android
+instrumentation argument `-e probeToken`. Reserve both physical devices first.
+The dedicated bundles are `to.iris.bleprobe`, its UI-test runner, and
+`org.fips.ble.test`; no Iris account is needed. Require an actual passing test on
+each phone, not a skipped test or just a successful instrumentation command.

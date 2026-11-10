@@ -560,20 +560,7 @@ struct IrisComposerBar: View {
     }
 
     nonisolated private static func loadPickedPhoto(_ item: PhotosPickerItem) async -> URL? {
-        guard let data = try? await item.loadTransferable(type: Data.self) else {
-            return nil
-        }
-        let ext = item.supportedContentTypes.first?.preferredFilenameExtension ?? "jpg"
-        let directory = FileManager.default.temporaryDirectory
-            .appendingPathComponent("iris-photo-picks", isDirectory: true)
-        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        let url = directory.appendingPathComponent("\(UUID().uuidString).\(ext)")
-        do {
-            try data.write(to: url, options: .atomic)
-            return url
-        } catch {
-            return nil
-        }
+        await loadPickedPhotoItem(item, directoryName: "iris-photo-picks")
     }
     #endif
 

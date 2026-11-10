@@ -374,13 +374,27 @@ fun MyProfileSheet(
                                     tag = "myProfileVideoCallsSwitch",
                                 )
                                 CallQualitySetting(appManager, preferences)
+                                Text("People you follow are accepted automatically.", style = MaterialTheme.typography.bodySmall)
                                 SettingsToggleRow(
-                                    title = "Accept message requests from unknowns",
+                                    title = "Allow requests from your network",
+                                    checked = preferences.acceptSocialGraphDirectMessages,
+                                    onCheckedChange = { appManager.dispatch(AppAction.SetAcceptSocialGraphDirectMessages(it)) },
+                                    tag = "myProfileAcceptNetworkMessagesSwitch",
+                                )
+                                SettingsToggleRow(
+                                    title = "Allow requests from everyone else",
                                     checked = preferences.acceptUnknownDirectMessages,
                                     onCheckedChange = { enabled ->
                                         appManager.dispatch(AppAction.SetAcceptUnknownDirectMessages(enabled))
                                     },
                                     tag = "myProfileAcceptChatRequestsSwitch",
+                                )
+                                Text("Keeps the newest 50 requests from outside your network.", style = MaterialTheme.typography.bodySmall)
+                                SettingsToggleRow(
+                                    title = "Allow requests from frequently muted people",
+                                    checked = preferences.acceptOvermutedDirectMessages,
+                                    onCheckedChange = { appManager.dispatch(AppAction.SetAcceptOvermutedDirectMessages(it)) },
+                                    tag = "myProfileAcceptOvermutedMessagesSwitch",
                                 )
                                 SettingsToggleRow(
                                     title = "Hide past group messages from blocked people",

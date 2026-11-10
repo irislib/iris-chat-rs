@@ -96,6 +96,12 @@ func linkedMessageAttributedString(_ text: String, foreground: Color, names: [St
         let name = names[mention.ownerPubkeyHex]
         return (NSRange(location: Int(mention.start), length: Int(mention.length)), name.map { "@" + $0 } ?? mention.label, url, true)
     }
+    for payment in messagePaymentLinks(text: text) {
+        let range = NSRange(location: Int(payment.start), length: Int(payment.length))
+        guard !parts.contains(where: { NSIntersectionRange($0.range, range).length > 0 }),
+              let url = URL(string: payment.uri) else { continue }
+        parts.append((range, payment.label, url, false))
+    }
     for match in messageURLMatches(in: text) {
         let range = NSRange(match.range, in: text)
         if parts.contains(where: { NSIntersectionRange($0.range, range).length > 0 }) { continue }
@@ -143,6 +149,13 @@ func messageURLMatches(in text: String) -> [(range: Range<String.Index>, url: UR
         guard let url = URL(string: normalized) else {
             return
         }
+        // Database filenames are not bare web addresses. An explicit URL prefix
+        // still allows links to those hosts or to files with these extensions.
+        let hasURLPrefix = lowercase.hasPrefix("http://") || lowercase.hasPrefix("https://") || lowercase.hasPrefix("www.")
+        if !hasURLPrefix, let suffix = url.host?.lowercased().split(separator: ".").last,
+           suffix == "db" || suffix == "sqlite" {
+            return
+        }
         matches.append((range.lowerBound..<end, url))
     }
     return matches
@@ -157,6 +170,10 @@ func copyableMessageText(_ message: ChatMessageSnapshot) -> String {
     }
     pieces.append(contentsOf: message.attachments.map(\.htreeUrl))
     return pieces.joined(separator: "\n")
+}
+
+func copyableCashuTokens(_ text: String) -> [String] {
+    messagePaymentLinks(text: text).filter { $0.cashu != nil }.map { String($0.uri.dropFirst(6)) }
 }
 
 func forwardableMessageText(_ message: ChatMessageSnapshot) -> String {

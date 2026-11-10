@@ -172,6 +172,8 @@ func makeAppState(
         acceptedOwnerPubkeys: [],
         debugLoggingEnabled: false,
         acceptUnknownDirectMessages: true,
+        acceptSocialGraphDirectMessages: true,
+        acceptOvermutedDirectMessages: false,
         mobilePushServerUrl: ""
     ),
     toast: String? = nil

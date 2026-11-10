@@ -3,6 +3,75 @@ use nostr::Keys;
 use nostr_double_ratchet::DeviceEntry;
 
 #[test]
+fn migrates_v46_discovery_cache_and_preserves_signed_heads_after_close_reopen() {
+    use crate::core::storage::AppStore;
+    use std::sync::{Arc, Mutex};
+
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("core.sqlite3");
+    let keys = Keys::generate();
+    let owner = keys.public_key().to_hex();
+    let follow = nostr::EventBuilder::new(nostr::Kind::ContactList, "")
+        .custom_created_at(nostr::Timestamp::from(10))
+        .sign_with_keys(&keys)
+        .unwrap();
+    let mute = nostr::EventBuilder::new(nostr::Kind::MuteList, "")
+        .custom_created_at(nostr::Timestamp::from(11))
+        .sign_with_keys(&keys)
+        .unwrap();
+    let follow_json = serde_json::to_string(&follow).unwrap();
+    let mute_json = serde_json::to_string(&mute).unwrap();
+    let graph = nostr_social_graph::SocialGraph::new(&owner)
+        .to_binary()
+        .unwrap();
+    {
+        let mut conn = Connection::open(&path).unwrap();
+        ensure_schema(&mut conn).unwrap();
+        conn.execute_batch("ALTER TABLE user_discovery_state DROP COLUMN social_opinion_events_json; PRAGMA user_version = 46;").unwrap();
+        conn.execute("INSERT INTO user_discovery_state(id, owner_pubkey_hex, follow_event_id, follow_created_at_secs, social_rank_ready, social_graph, follow_event_json)
+            VALUES (1, ?1, ?2, 10, 1, ?3, ?4)", params![owner, follow.id.to_hex(), graph, follow_json]).unwrap();
+        conn.execute("INSERT INTO user_discovery_users(owner_pubkey_hex, follow_position, petname) VALUES (?1, 3, 'Friend')", [&owner]).unwrap();
+        conn.execute("INSERT INTO user_discovery_social(account_owner_pubkey_hex, target_owner_pubkey_hex, friend_support) VALUES (?1, ?1, 2)", [&owner]).unwrap();
+    }
+    {
+        let mut conn = Connection::open(&path).unwrap();
+        ensure_schema(&mut conn).unwrap();
+        assert_eq!(user_version(&conn), SCHEMA_VERSION);
+        let mut store = AppStore::new(Arc::new(Mutex::new(conn)));
+        let mut cache = store.load_user_discovery().unwrap();
+        assert!(cache.social_opinion_events.is_empty());
+        assert_eq!(cache.owner_pubkey_hex.as_deref(), Some(owner.as_str()));
+        assert_eq!(cache.follow_event_id, Some(follow.id.to_hex()));
+        assert_eq!(
+            cache.follow_event_json.as_deref(),
+            Some(follow_json.as_str())
+        );
+        assert_eq!(cache.social_graph.as_deref(), Some(graph.as_slice()));
+        assert_eq!(cache.users[&owner].follow_position, 3);
+        assert_eq!(cache.social_friend_support[&owner], 2);
+        assert!(cache.social_rank_ready);
+        cache.social_opinion_events = vec![follow_json.clone(), mute_json.clone()];
+        store.replace_user_discovery(&cache).unwrap();
+    }
+    {
+        let mut conn = Connection::open(&path).unwrap();
+        ensure_schema(&mut conn).unwrap();
+        assert_eq!(user_version(&conn), SCHEMA_VERSION);
+        let cache = AppStore::new(Arc::new(Mutex::new(conn)))
+            .load_user_discovery()
+            .unwrap();
+        assert_eq!(
+            cache.social_opinion_events,
+            vec![follow_json.clone(), mute_json]
+        );
+        assert_eq!(cache.follow_event_json, Some(follow_json));
+        assert_eq!(cache.social_graph, Some(graph));
+        assert_eq!(cache.users[&owner].petname.as_deref(), Some("Friend"));
+        assert_eq!(cache.social_friend_support[&owner], 2);
+    }
+}
+
+#[test]
 fn migrates_v39_notices_without_guessing_a_profile_from_the_name() {
     let mut conn = Connection::open_in_memory().unwrap();
     ensure_schema(&mut conn).unwrap();
@@ -564,4 +633,23 @@ fn migrates_v41_blocked_history_visibility_without_changing_existing_preferences
         .unwrap();
     assert_eq!(retained, (1, None, 100));
     assert_eq!(user_version(&conn), SCHEMA_VERSION);
+}
+
+#[test]
+fn migrates_v47_request_policy_without_enabling_previously_disabled_requests() {
+    for enabled in [false, true] {
+        let mut conn = Connection::open_in_memory().unwrap();
+        ensure_schema(&mut conn).unwrap();
+        conn.execute("INSERT INTO preferences(id, send_typing_indicators, send_read_receipts, desktop_notifications_enabled, startup_at_login_enabled, nostr_relay_urls_json, image_proxy_enabled, image_proxy_url, image_proxy_key_hex, image_proxy_salt_hex, mobile_push_server_url, accept_unknown_direct_messages)
+            VALUES (1,1,1,1,0,'[]',1,'','','','',?1)", [enabled]).unwrap();
+        conn.execute_batch(
+            "ALTER TABLE preferences DROP COLUMN accept_social_graph_direct_messages;
+            ALTER TABLE preferences DROP COLUMN accept_overmuted_direct_messages;
+            PRAGMA user_version=47;",
+        )
+        .unwrap();
+        ensure_schema(&mut conn).unwrap();
+        let actual: (bool, bool, bool) = conn.query_row("SELECT accept_unknown_direct_messages, accept_social_graph_direct_messages, accept_overmuted_direct_messages FROM preferences", [], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?))).unwrap();
+        assert_eq!(actual, (enabled, enabled, false));
+    }
 }

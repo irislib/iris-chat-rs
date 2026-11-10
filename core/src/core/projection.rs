@@ -369,19 +369,7 @@ impl AppCore {
                 } else {
                     None
                 };
-                let group_creator_hex = group_snapshot
-                    .as_ref()
-                    .map(|group| group.created_by.to_string());
-                let is_request = is_message_request_thread(
-                    thread,
-                    &thread_kind,
-                    &self.preferences.accepted_owner_pubkeys,
-                    group_creator_hex.as_deref(),
-                    local_owner_hex.as_deref(),
-                    self.request_decision(&thread.chat_id)
-                        .map(|state| state.decision)
-                        .as_deref(),
-                );
+                let is_request = self.thread_is_message_request(&thread.chat_id);
                 ChatThreadSnapshot {
                     new_chat_notification_id: self
                         .new_chat_notifications
@@ -458,19 +446,7 @@ impl AppCore {
                     None
                 };
                 let current_chat_kind = chat_kind_for_id(&thread.chat_id);
-                let current_group_creator_hex = group_snapshot
-                    .as_ref()
-                    .map(|group| group.created_by.to_string());
-                let is_request = is_message_request_thread(
-                    thread,
-                    &current_chat_kind,
-                    &self.preferences.accepted_owner_pubkeys,
-                    current_group_creator_hex.as_deref(),
-                    local_owner_hex.as_deref(),
-                    self.request_decision(&thread.chat_id)
-                        .map(|state| state.decision)
-                        .as_deref(),
-                );
+                let is_request = self.thread_is_message_request(&thread.chat_id);
                 CurrentChatSnapshot {
                     contact_identity: self.contact_identity(&thread.chat_id),
                     social_connection: self.social_connection(&thread.chat_id),

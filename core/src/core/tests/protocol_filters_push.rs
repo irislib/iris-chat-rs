@@ -1591,6 +1591,13 @@ fn mobile_push_decrypt_preview_does_not_mutate_persisted_ratchet_state() {
     let bob_keys = Keys::generate();
     let temp_dir = tempfile::TempDir::new().expect("temp dir");
     let data_dir = temp_dir.path().to_path_buf();
+    accept_notification_peer_in_store(
+        &crate::core::storage::open_database(&data_dir)
+            .unwrap()
+            .lock()
+            .unwrap(),
+        &alice_keys.public_key().to_hex(),
+    );
     let bob_storage = Arc::new(crate::core::storage::SqliteStorageAdapter::new(
         crate::core::storage::open_database(&data_dir).expect("bob db"),
         bob_keys.public_key().to_hex(),
@@ -1678,6 +1685,13 @@ fn mobile_push_decrypts_signed_apns_event_payload() {
     let bob_keys = Keys::generate();
     let temp_dir = tempfile::TempDir::new().expect("temp dir");
     let data_dir = temp_dir.path().to_path_buf();
+    accept_notification_peer_in_store(
+        &crate::core::storage::open_database(&data_dir)
+            .unwrap()
+            .lock()
+            .unwrap(),
+        &alice_keys.public_key().to_hex(),
+    );
     let bob_storage = Arc::new(crate::core::storage::SqliteStorageAdapter::new(
         crate::core::storage::open_database(&data_dir).expect("bob db"),
         bob_keys.public_key().to_hex(),
@@ -1876,6 +1890,9 @@ fn mobile_push_preview_resolves_from_sqlite_when_decrypt_fails() {
     });
     // Pretend Alice's profile is already known.
     let alice = Keys::generate();
+    core.preferences
+        .accepted_owner_pubkeys
+        .push(alice.public_key().to_hex());
     core.owner_profiles.insert(
         alice.public_key().to_hex(),
         OwnerProfileRecord {
@@ -2188,6 +2205,7 @@ fn mobile_push_decrypt_renders_matching_pending_invite_response_with_chat_id() {
     let device = Keys::generate();
     let peer = Keys::generate();
     let mut core = logged_in_test_core("mobile-push-invite-response-match", &owner, &device);
+    request_network_peer(&mut core, &owner, peer.public_key());
     publish_personal_invite_for_test(&mut core);
     let invite = core
         .private_chat_invites
@@ -2294,6 +2312,7 @@ fn mobile_push_decrypt_uses_verified_invite_owner_claim() {
     let peer_owner = Keys::generate();
     let peer_device = Keys::generate();
     let mut core = logged_in_test_core("mobile-push-invite-owner-verified", &owner, &device);
+    request_network_peer(&mut core, &owner, peer_owner.public_key());
     publish_personal_invite_for_test(&mut core);
     let invite = core
         .private_chat_invites

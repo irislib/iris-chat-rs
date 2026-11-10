@@ -106,7 +106,12 @@ pub struct PreferencesSnapshot {
     /// outgoing message implicitly adds them.
     pub accepted_owner_pubkeys: Vec<String>,
     pub debug_logging_enabled: bool,
+    /// Requests from people outside the reachable social graph.
     pub accept_unknown_direct_messages: bool,
+    #[uniffi(default = true)]
+    pub accept_social_graph_direct_messages: bool,
+    #[uniffi(default = false)]
+    pub accept_overmuted_direct_messages: bool,
     /// User-configurable notification server URL. Empty string means
     /// "use the platform default" (notifications.iris.to in release,
     /// notifications-sandbox.iris.to in debug). When non-empty, the
@@ -148,6 +153,8 @@ impl Default for PreferencesSnapshot {
             accepted_owner_pubkeys: Vec::new(),
             debug_logging_enabled: false,
             accept_unknown_direct_messages: true,
+            accept_social_graph_direct_messages: true,
+            accept_overmuted_direct_messages: false,
             mobile_push_server_url: String::new(),
         }
     }
