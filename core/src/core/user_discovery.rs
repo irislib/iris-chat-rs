@@ -558,7 +558,7 @@ async fn fetch_graph_opinion_chunks(
                         if bytes > MAX_OPINION_EVENT_BYTES
                             || events.len() >= limit
                             || budget
-                                .fetch_update(
+                                .try_update(
                                     std::sync::atomic::Ordering::Relaxed,
                                     std::sync::atomic::Ordering::Relaxed,
                                     |remaining| remaining.checked_sub(bytes),
