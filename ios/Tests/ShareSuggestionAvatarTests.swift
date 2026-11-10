@@ -1,3 +1,4 @@
+#if os(iOS)
 import XCTest
 @testable import IrisChat
 
@@ -130,3 +131,4 @@ final class ShareSuggestionAvatarTests: XCTestCase {
         XCTAssertTrue(decoded[1].isGroup)
     }
 }
+#endif
