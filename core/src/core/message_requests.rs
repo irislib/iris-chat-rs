@@ -163,7 +163,10 @@ impl AppCore {
         pending.sort_by(|a, b| a.1.cmp(&b.1).then_with(|| a.0.cmp(&b.0)));
         let remove = pending.len().saturating_sub(MAX_UNCONNECTED_REQUESTS - 1);
         for (peer, _) in pending.into_iter().take(remove) {
-            let cutoff = unix_now().get().max(self.threads[&peer].updated_at_secs);
+            let Some(thread) = self.threads.get(&peer) else {
+                continue;
+            };
+            let cutoff = unix_now().get().max(thread.updated_at_secs);
             // Reuse durable, privately synced deletion cutoffs. Replayed old
             // messages cannot resurrect an evicted request after restart.
             if !self.apply_chat_deletion(&peer, cutoff) {

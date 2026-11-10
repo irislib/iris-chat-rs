@@ -18,11 +18,12 @@ pub(in crate::core) fn allows(conn: &rusqlite::Connection, owner: &str, peer: &s
             let mut reset = false;
             if let Some(record) = record {
                 let record: serde_json::Value = serde_json::from_str(&record)?;
-                let event: PrivateEvent = serde_json::from_value(record["event"].clone())?;
+                let event: PrivateEvent =
+                    serde_json::from_value(record.get("event").cloned().unwrap_or_default())?;
                 let (_, target, value) =
                     nostr_identity::parse_private_setting(&event, PublicKey::from_hex(owner)?)?;
                 anyhow::ensure!(target == peer, "Request decision target mismatch");
-                match value["decision"].as_str() {
+                match value.get("decision").and_then(|decision| decision.as_str()) {
                     Some("accepted") => return Ok(true),
                     Some("rejected") => return Ok(false),
                     Some("none") => reset = true,

@@ -239,11 +239,10 @@ impl AppCore {
             Ok(None) => return true,
             Err(_) => return false,
         };
-        let result = self
-            .protocol_engine
-            .as_mut()
-            .unwrap()
-            .resend_private_group_context(&group_id, requester, request.author);
+        let Some(engine) = self.protocol_engine.as_mut() else {
+            return false;
+        };
+        let result = engine.resend_private_group_context(&group_id, requester, request.author);
         match result {
             Ok(effects) => {
                 self.process_protocol_engine_effects(effects);
@@ -262,11 +261,12 @@ impl AppCore {
                     *admin != requester && member(*admin) && !self.is_owner_blocked(&admin.to_hex())
                 })
                 .collect::<Vec<_>>();
-            if !admins.is_empty() {
+            // Rotate on bounded retries instead of broadcasting to every admin.
+            let next = admins.get(attempt as usize % admins.len().max(1)).copied();
+            if let Some(admin) = next {
                 request.group_id = Some(group_id);
                 request.requester = Some(requester);
-                // Rotate on bounded retries instead of broadcasting to every admin.
-                self.send_group_context_request(admins[attempt as usize % admins.len()], &request);
+                self.send_group_context_request(admin, &request);
             }
         }
         self.schedule_fast_protocol_retry_if_pending();
