@@ -557,13 +557,7 @@ async fn fetch_graph_opinion_chunks(
                             .len();
                         if bytes > MAX_OPINION_EVENT_BYTES
                             || events.len() >= limit
-                            || budget
-                                .try_update(
-                                    std::sync::atomic::Ordering::Relaxed,
-                                    std::sync::atomic::Ordering::Relaxed,
-                                    |remaining| remaining.checked_sub(bytes),
-                                )
-                                .is_err()
+                            || !take_download_budget(budget, bytes)
                         {
                             return Err("graph download byte or event budget exhausted".to_owned());
                         }
@@ -655,6 +649,17 @@ fn newest_verified_event(events: Vec<Event>, kind: Kind, author: PublicKey) -> O
         .into_iter()
         .filter(|event| event.kind == kind && event.pubkey == author && event.verify().is_ok())
         .min_by(compare_replaceable_heads)
+}
+
+/// Reserve `bytes` from the shared download budget, or report it exhausted.
+// Newer toolchains rename `fetch_update` to `try_update`; the oldest toolchain
+// this crate still builds with only has the former.
+#[allow(deprecated)]
+fn take_download_budget(budget: &std::sync::atomic::AtomicUsize, bytes: usize) -> bool {
+    use std::sync::atomic::Ordering::Relaxed;
+    budget
+        .fetch_update(Relaxed, Relaxed, |remaining| remaining.checked_sub(bytes))
+        .is_ok()
 }
 
 pub(super) fn newest_verified_events_by_author(events: Vec<Event>, kind: Kind) -> Vec<Event> {
