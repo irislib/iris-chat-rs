@@ -118,8 +118,8 @@ impl AppCore {
     }
 
     pub(super) fn schedule_chat_mute_expiry(&mut self) {
-        self.chat_mute_expiry_token = self.chat_mute_expiry_token.wrapping_add(1);
-        let token = self.chat_mute_expiry_token;
+        self.timers.chat_mute_expiry = self.timers.chat_mute_expiry.wrapping_add(1);
+        let token = self.timers.chat_mute_expiry;
         let now = unix_now().get();
         let Some(next) = self
             .preferences
@@ -140,7 +140,7 @@ impl AppCore {
     }
 
     pub(super) fn handle_chat_mute_expiry(&mut self, token: u64) {
-        if token != self.chat_mute_expiry_token {
+        if token != self.timers.chat_mute_expiry {
             return;
         }
         self.preferences
@@ -514,9 +514,11 @@ impl AppCore {
                 .iter()
                 .filter_map(|url| normalize_nostr_relay_url(url).ok())
                 .collect::<HashSet<_>>();
-            self.relay_status_watch_urls
+            self.relay_status
+                .watch_urls
                 .retain(|url| configured_relays.contains(url));
-            self.relay_status_by_url
+            self.relay_status
+                .by_url
                 .retain(|url, _| configured_relays.contains(url));
             self.schedule_session_connect();
             self.request_protocol_subscription_refresh_forced();

@@ -54,7 +54,7 @@ fn timed_mute_expiry_is_inclusive_and_stale_timers_cannot_clear_a_new_mute() {
         chat_id: peer.clone(),
         until_secs: unix_now().get() + 3600,
     });
-    let old = core.chat_mute_expiry_token;
+    let old = core.timers.chat_mute_expiry;
     core.handle_action(AppAction::SetChatMuteUntil {
         chat_id: peer.clone(),
         until_secs: unix_now().get() + 28800,
@@ -78,7 +78,7 @@ fn timed_mute_expiry_is_inclusive_and_stale_timers_cannot_clear_a_new_mute() {
         !mobile_push::is_chat_muted_in(&core.app_store.shared().lock().unwrap(), &peer),
         "background resolver checks deadline without foreground timer"
     );
-    core.handle_chat_mute_expiry(core.chat_mute_expiry_token);
+    core.handle_chat_mute_expiry(core.timers.chat_mute_expiry);
     assert!(core.preferences.timed_chat_mutes.is_empty());
 }
 
@@ -151,13 +151,13 @@ fn timed_mute_resumes_foreground_expiry_after_suspended_timer_was_dropped() {
         until_secs: unix_now().get() + 3600,
     });
     core.preferences.timed_chat_mutes[0].until_secs = unix_now().get();
-    let old_token = core.chat_mute_expiry_token;
+    let old_token = core.timers.chat_mute_expiry;
     core.suspended = true;
     core.handle_internal(InternalEvent::ExpireChatMutes { token: old_token });
     assert_eq!(core.preferences.timed_chat_mutes.len(), 1);
     core.handle_action(AppAction::AppForegrounded);
     assert!(core.preferences.timed_chat_mutes.is_empty());
-    assert_ne!(core.chat_mute_expiry_token, old_token);
+    assert_ne!(core.timers.chat_mute_expiry, old_token);
     assert!(!core.is_chat_muted(&peer));
 }
 

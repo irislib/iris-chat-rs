@@ -132,6 +132,7 @@ mod private_group_wake;
 mod profile;
 mod profile_directory;
 pub(crate) use profile::{fallback_profile_name_for_identity, profile_name_for_identity};
+mod app_core_state;
 mod profile_helpers;
 mod profile_search;
 mod profile_search_capability;
@@ -145,6 +146,7 @@ mod publishing;
 mod publishing_fact_events;
 mod publishing_identity;
 mod relay;
+use app_core_state::{BatchState, DebugSnapshotState, RelayStatusState, TimerTokens};
 pub(crate) mod routing;
 mod social_connection;
 mod storage;
@@ -713,21 +715,14 @@ pub struct AppCore {
     seen_event_ids: HashSet<String>,
     seen_event_order: VecDeque<String>,
     event_validation: relay::EventValidationCache,
-    device_invite_poll_token: u64,
-    pending_device_link_poll_token: u64,
-    message_expiry_token: u64,
-    chat_mute_expiry_token: u64,
-    protocol_reconnect_token: u64,
-    protocol_liveness_token: u64,
+    timers: TimerTokens,
     defer_owner_app_keys_publish: bool,
     owner_registration_lookup_generation: Option<u64>,
     current_device_labels: Option<CurrentDeviceLabels>,
     discovery_relays: Arc<protocol::public_discovery::DiscoveryRelays>,
     protocol_subscription_runtime: ProtocolSubscriptionRuntime,
     relay_transport_runtime: RelayTransportRuntime,
-    relay_status_watch_urls: HashSet<String>,
-    relay_status_watch_generation: u64,
-    relay_status_by_url: BTreeMap<String, RelayStatus>,
+    relay_status: RelayStatusState,
     relay_connected_count: u64,
     all_relays_offline_since_secs: Option<u64>,
     device_sync: Option<DeviceSyncRuntime>,
@@ -754,29 +749,8 @@ pub struct AppCore {
     debug_log: VecDeque<DebugLogEntry>,
     fips_nearby_receive_diagnostics: fips_nearby::ReceiveDiagnostics,
     debug_event_counters: DebugEventCounters,
-    debug_snapshot_write_generation: u64,
-    debug_snapshot_write_inflight: bool,
-    debug_snapshot_write_dirty: bool,
-    /// Wall-clock millis of the last debug-snapshot file write. The
-    /// snapshot is purely a test harness fixture (only `core/tests`,
-    /// iOS InteropHarnessTests, and the Android RealRelayHarnessTest
-    /// read it) — never read in production. We throttle to one
-    /// rebuild per `DEBUG_SNAPSHOT_MIN_INTERVAL_MS` so a busy chat
-    /// can't rebuild a full SessionManager clone × N known users on
-    /// every relay event (the macOS CPU loop and the
-    /// sluggish-over-time regression both traced back here).
-    debug_snapshot_last_built_at_ms: u64,
-    /// Cumulative call count of `build_runtime_debug_snapshot`. Read
-    /// by `core_perf_counters()` so the release gate can budget core
-    /// hot-loop work, not just FFI surface traffic.
-    debug_snapshot_build_count: u64,
-    /// Reentrancy guard: while > 0, `rebuild_state` / `emit_state` /
-    /// `persist_best_effort` only set the matching dirty flag. The outermost
-    /// `exit_batch()` call performs a single rebuild + persist + emit so a
-    /// catch-up burst of N events triggers one UI re-render instead of N.
-    batch_depth: u32,
-    batch_dirty_state: bool,
-    batch_dirty_persist: bool,
+    debug_snapshot: DebugSnapshotState,
+    batch: BatchState,
     /// Outgoing read-receipts queued during the current batch. Each
     /// `send_receipt` call inside an `enter_batch()/exit_batch()` scope
     /// pushes its message ids here keyed by `(chat_id, receipt_type)`,

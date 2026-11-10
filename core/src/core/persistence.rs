@@ -23,8 +23,8 @@ impl AppCore {
     }
 
     pub(super) fn persist_best_effort(&mut self) {
-        if self.batch_depth > 0 {
-            self.batch_dirty_persist = true;
+        if self.batch.depth > 0 {
+            self.batch.dirty_persist = true;
             return;
         }
         self.persist_best_effort_inner();
@@ -92,8 +92,8 @@ impl AppCore {
         if !debug_snapshot_file_writes_enabled() {
             return;
         }
-        if self.debug_snapshot_write_inflight {
-            self.debug_snapshot_write_dirty = true;
+        if self.debug_snapshot.write_inflight {
+            self.debug_snapshot.write_dirty = true;
             return;
         }
         // Throttle: even in debug builds, every relay event /
@@ -102,15 +102,15 @@ impl AppCore {
         // with multi-second budgets, so a 5s floor is invisible to
         // them and stops the loop the release sample caught.
         let now_ms = unix_now_ms();
-        if now_ms.saturating_sub(self.debug_snapshot_last_built_at_ms)
+        if now_ms.saturating_sub(self.debug_snapshot.last_built_at_ms)
             < DEBUG_SNAPSHOT_MIN_INTERVAL_MS
         {
-            self.debug_snapshot_write_dirty = true;
+            self.debug_snapshot.write_dirty = true;
             return;
         }
         let snapshot = self.build_runtime_debug_snapshot();
-        self.debug_snapshot_build_count = self.debug_snapshot_build_count.saturating_add(1);
-        self.debug_snapshot_last_built_at_ms = now_ms;
+        self.debug_snapshot.build_count = self.debug_snapshot.build_count.saturating_add(1);
+        self.debug_snapshot.last_built_at_ms = now_ms;
         let path = self.debug_snapshot_path();
         let data_dir = self.data_dir.clone();
 
@@ -125,11 +125,11 @@ impl AppCore {
 
         #[cfg(not(target_os = "ios"))]
         {
-            self.debug_snapshot_write_inflight = true;
-            self.debug_snapshot_write_dirty = false;
-            self.debug_snapshot_write_generation =
-                self.debug_snapshot_write_generation.wrapping_add(1);
-            let generation = self.debug_snapshot_write_generation;
+            self.debug_snapshot.write_inflight = true;
+            self.debug_snapshot.write_dirty = false;
+            self.debug_snapshot.write_generation =
+                self.debug_snapshot.write_generation.wrapping_add(1);
+            let generation = self.debug_snapshot.write_generation;
             let tx = self.core_sender.clone();
             self.runtime.spawn_blocking(move || {
                 if let Ok(bytes) = serde_json::to_vec_pretty(&snapshot) {
@@ -146,17 +146,17 @@ impl AppCore {
     /// Read by `FfiApp::core_perf_counters` so the release gate can
     /// budget core-internal hot loops, not just FFI surface traffic.
     pub(crate) fn debug_snapshot_build_count(&self) -> u64 {
-        self.debug_snapshot_build_count
+        self.debug_snapshot.build_count
     }
 
     #[cfg(not(target_os = "ios"))]
     pub(super) fn handle_debug_snapshot_write_finished(&mut self, generation: u64) {
-        if generation != self.debug_snapshot_write_generation {
+        if generation != self.debug_snapshot.write_generation {
             return;
         }
-        self.debug_snapshot_write_inflight = false;
-        if self.debug_snapshot_write_dirty {
-            self.debug_snapshot_write_dirty = false;
+        self.debug_snapshot.write_inflight = false;
+        if self.debug_snapshot.write_dirty {
+            self.debug_snapshot.write_dirty = false;
             self.persist_debug_snapshot_best_effort();
         }
     }

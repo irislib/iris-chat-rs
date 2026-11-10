@@ -8,10 +8,10 @@ impl AppCore {
         // Only app projection/persistence is coalesced here. Protocol commits
         // keep their existing ordering, including when no outer batch exists.
         // The caller owns the completed-state emission after this checked save.
-        let previous_depth = self.batch_depth;
-        let previous_state = self.batch_dirty_state;
-        let previous_persist = self.batch_dirty_persist;
-        self.batch_depth = previous_depth
+        let previous_depth = self.batch.depth;
+        let previous_state = self.batch.dirty_state;
+        let previous_persist = self.batch.dirty_persist;
+        self.batch.depth = previous_depth
             .checked_add(1)
             .context("restore projection batch depth overflow")?;
         let result = self
@@ -20,9 +20,9 @@ impl AppCore {
                 self.persist_app_state()
                     .context("persist restored device-sync projection")
             });
-        self.batch_depth = previous_depth;
-        self.batch_dirty_state = previous_state;
-        self.batch_dirty_persist = if result.is_ok() {
+        self.batch.depth = previous_depth;
+        self.batch.dirty_state = previous_state;
+        self.batch.dirty_persist = if result.is_ok() {
             false
         } else {
             previous_persist

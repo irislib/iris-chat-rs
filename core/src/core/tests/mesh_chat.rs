@@ -41,9 +41,9 @@ fn idle_mesh_liveness_replaces_a_closed_callback_with_unchanged_filters() {
     assert!(!core.has_mesh_protocol_retry_work());
     core.schedule_protocol_subscription_liveness_check(Duration::from_secs(2));
     let earlier_due = core.protocol_subscription_runtime.liveness_due_at;
-    let token = core.protocol_liveness_token;
+    let token = core.timers.protocol_liveness;
     core.reconcile_mesh_protocol_subscriptions();
-    assert_eq!(core.protocol_liveness_token, token);
+    assert_eq!(core.timers.protocol_liveness, token);
     assert_eq!(
         core.protocol_subscription_runtime.liveness_due_at,
         earlier_due
@@ -70,7 +70,7 @@ fn idle_mesh_liveness_replaces_a_closed_callback_with_unchanged_filters() {
             .unwrap(),
     );
     core.device_sync.as_mut().unwrap().pubsub = Some(replacement.clone());
-    core.handle_protocol_subscription_liveness_check(core.protocol_liveness_token);
+    core.handle_protocol_subscription_liveness_check(core.timers.protocol_liveness);
     assert_eq!(replacement.active_subscription_count().unwrap(), count);
     assert!(core.protocol_subscription_runtime.liveness_due_at.is_some());
     core.stop_device_sync_now();
@@ -500,7 +500,7 @@ fn encrypted_chat_crosses_fips_transit_by_direct_recipient_route_without_message
         {
             while let Ok(message) = receiver.try_recv() {
                 if let CoreMsg::Internal(event) = &message {
-                    if matches!(event.as_ref(), InternalEvent::ProtocolSubscriptionLivenessCheck { token } if *token == core.protocol_liveness_token)
+                    if matches!(event.as_ref(), InternalEvent::ProtocolSubscriptionLivenessCheck { token } if *token == core.timers.protocol_liveness)
                     {
                         liveness_wakes[index] += 1;
                     }

@@ -104,7 +104,7 @@ fn nsec_restore_queues_until_local_device_approval_is_available() {
 
     let device = core.logged_in.as_ref().unwrap().device_keys.public_key();
     core.complete_owner_registration_lookup(
-        core.relay_status_watch_generation,
+        core.relay_status.watch_generation,
         owner.public_key(),
         device,
         2,

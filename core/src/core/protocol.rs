@@ -392,8 +392,8 @@ impl AppCore {
             return;
         }
         self.protocol_subscription_runtime.liveness_due_at = Some(due_at);
-        self.protocol_liveness_token = self.protocol_liveness_token.saturating_add(1);
-        let token = self.protocol_liveness_token;
+        self.timers.protocol_liveness = self.timers.protocol_liveness.saturating_add(1);
+        let token = self.timers.protocol_liveness;
         let tx = self.priority_sender.clone();
         self.runtime.spawn(async move {
             sleep_until(due_at).await;
@@ -407,8 +407,8 @@ impl AppCore {
         if !self.can_poll_pending_device_invites() {
             return;
         }
-        self.device_invite_poll_token = self.device_invite_poll_token.saturating_add(1);
-        let token = self.device_invite_poll_token;
+        self.timers.device_invite_poll = self.timers.device_invite_poll.saturating_add(1);
+        let token = self.timers.device_invite_poll;
         let tx = self.core_sender.clone();
         self.runtime.spawn(async move {
             sleep(after).await;
@@ -886,7 +886,7 @@ impl AppCore {
         for relay_url in &relay_urls {
             let normalized = normalize_nostr_relay_url(&relay_url.to_string())
                 .unwrap_or_else(|_| relay_url.to_string());
-            if self.relay_status_watch_urls.insert(normalized.clone()) {
+            if self.relay_status.watch_urls.insert(normalized.clone()) {
                 watch_urls.insert(normalized);
             }
         }
@@ -894,7 +894,7 @@ impl AppCore {
             return;
         }
 
-        let generation = self.relay_status_watch_generation;
+        let generation = self.relay_status.watch_generation;
         let tx = self.core_sender.clone();
         self.runtime.spawn(async move {
             ensure_session_relays_configured(&client, &relay_urls).await;
@@ -1295,7 +1295,7 @@ impl AppCore {
         self.handle_relay_status_changed_for_generation(
             relay_url,
             status,
-            self.relay_status_watch_generation,
+            self.relay_status.watch_generation,
         );
     }
 
@@ -1305,7 +1305,7 @@ impl AppCore {
         status: RelayStatus,
         generation: u64,
     ) {
-        if generation != self.relay_status_watch_generation {
+        if generation != self.relay_status.watch_generation {
             return;
         }
         let normalized_relay_url =
@@ -1316,7 +1316,7 @@ impl AppCore {
         {
             return;
         }
-        let previous_status = self.relay_status_by_url.get(&normalized_relay_url).cloned();
+        let previous_status = self.relay_status.by_url.get(&normalized_relay_url).cloned();
         if previous_status
             .as_ref()
             .is_some_and(|existing| *existing == status)
@@ -1328,7 +1328,8 @@ impl AppCore {
             .unwrap_or("offline");
         let next_visible_status = relay_connection_status(status);
         let was_connected = self.relay_connected_count > 0;
-        self.relay_status_by_url
+        self.relay_status
+            .by_url
             .insert(normalized_relay_url.clone(), status);
         self.refresh_relay_connection_status_from_cached_statuses();
         let is_connected = self.relay_connected_count > 0;
@@ -1386,7 +1387,8 @@ impl AppCore {
         let configured = self.configured_relay_url_set();
         let configured_relay_count = configured.len();
         self.relay_connected_count = self
-            .relay_status_by_url
+            .relay_status
+            .by_url
             .iter()
             .filter(|(url, status)| {
                 configured.contains(url.as_str()) && **status == RelayStatus::Connected
@@ -1397,7 +1399,7 @@ impl AppCore {
 
     fn apply_relay_statuses(&mut self, relay_statuses: Vec<(String, RelayStatus)>) {
         for (relay_url, status) in relay_statuses {
-            self.relay_status_by_url.insert(relay_url, status);
+            self.relay_status.by_url.insert(relay_url, status);
         }
         self.refresh_relay_connection_status_from_cached_statuses();
     }
@@ -1451,7 +1453,7 @@ impl AppCore {
     }
 
     pub(super) fn handle_protocol_subscription_liveness_check(&mut self, token: u64) {
-        if token != self.protocol_liveness_token {
+        if token != self.timers.protocol_liveness {
             return;
         }
         self.protocol_subscription_runtime.liveness_due_at = None;
@@ -1567,7 +1569,7 @@ impl AppCore {
             .reconcile_token
             .wrapping_add(1);
         let token = self.protocol_subscription_runtime.reconcile_token;
-        let generation = self.protocol_reconnect_token;
+        let generation = self.timers.protocol_reconnect;
         let tx = self.priority_sender.clone();
         self.runtime.spawn(async move {
             let apply_result = tokio::time::timeout(
@@ -1677,7 +1679,7 @@ impl AppCore {
             format!(
                 "reason={reason} generation={} current_generation={} connected_before={connected_before} connected_after={connected_after} filters={filter_count} success={success} dirty={refresh_dirty} error={}",
                 generation,
-                self.protocol_reconnect_token,
+                self.timers.protocol_reconnect,
                 error.as_deref().unwrap_or("")
             ),
         );

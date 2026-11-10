@@ -249,7 +249,7 @@ impl AppCore {
         };
         // Catch-up changes ratchet authors repeatedly. Subscribe to the final
         // state once, instead of cloning and reconciling every intermediate state.
-        if self.batch_depth > 0 {
+        if self.batch.depth > 0 {
             mesh.protocol_subscriptions.reconcile_pending = true;
             return;
         }

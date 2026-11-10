@@ -791,7 +791,7 @@ fn accepting_message_request_sends_receipt_for_messages_already_seen() {
 
     // Hold the outgoing batch open so the assertion can inspect the receipt
     // IDs without requiring a ratchet session in this focused unit test.
-    core.batch_depth = 1;
+    core.batch.depth = 1;
     core.handle_action(AppAction::SetMessageRequestAccepted {
         chat_id: chat_id.clone(),
     });

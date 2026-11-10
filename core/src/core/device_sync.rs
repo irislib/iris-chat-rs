@@ -529,7 +529,7 @@ impl AppCore {
         let Some(tcp) = runtime.tcp.clone().filter(|_| !runtime.siblings.is_empty()) else {
             return;
         };
-        if self.batch_depth > 0 {
+        if self.batch.depth > 0 {
             runtime.snapshot_pending = true;
             return;
         }

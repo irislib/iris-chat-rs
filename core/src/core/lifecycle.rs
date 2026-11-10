@@ -136,21 +136,14 @@ impl AppCore {
             seen_event_ids: HashSet::new(),
             seen_event_order: VecDeque::new(),
             event_validation: Default::default(),
-            device_invite_poll_token: 0,
-            pending_device_link_poll_token: 0,
-            message_expiry_token: 0,
-            chat_mute_expiry_token: 0,
-            protocol_reconnect_token: 0,
-            protocol_liveness_token: 0,
+            timers: TimerTokens::default(),
             defer_owner_app_keys_publish: false,
             owner_registration_lookup_generation: None,
             current_device_labels: None,
             discovery_relays: Arc::default(),
             protocol_subscription_runtime: ProtocolSubscriptionRuntime::default(),
             relay_transport_runtime: RelayTransportRuntime::default(),
-            relay_status_watch_urls: HashSet::new(),
-            relay_status_watch_generation: 0,
-            relay_status_by_url: BTreeMap::new(),
+            relay_status: RelayStatusState::default(),
             relay_connected_count: 0,
             all_relays_offline_since_secs: None,
             device_sync: None,
@@ -176,14 +169,8 @@ impl AppCore {
             debug_log: VecDeque::new(),
             fips_nearby_receive_diagnostics: Default::default(),
             debug_event_counters: DebugEventCounters::default(),
-            debug_snapshot_write_generation: 0,
-            debug_snapshot_write_inflight: false,
-            debug_snapshot_write_dirty: false,
-            debug_snapshot_last_built_at_ms: 0,
-            debug_snapshot_build_count: 0,
-            batch_depth: 0,
-            batch_dirty_state: false,
-            batch_dirty_persist: false,
+            debug_snapshot: DebugSnapshotState::default(),
+            batch: BatchState::default(),
             pending_outgoing_receipts: BTreeMap::new(),
             pending_delivered_receipts: BTreeMap::new(),
             pending_delivered_receipt_flush_due_at: None,
@@ -474,15 +461,15 @@ impl AppCore {
         self.reset_public_discovery();
         self.clear_update_sources();
         self.reset_pending_invite_acceptance();
-        self.device_invite_poll_token = self.device_invite_poll_token.saturating_add(1);
-        self.protocol_reconnect_token = self.protocol_reconnect_token.saturating_add(1);
-        self.protocol_liveness_token = self.protocol_liveness_token.saturating_add(1);
-        self.relay_status_watch_generation = self.relay_status_watch_generation.wrapping_add(1);
-        self.relay_status_watch_urls.clear();
-        self.relay_status_by_url.clear();
-        self.debug_snapshot_write_generation = self.debug_snapshot_write_generation.wrapping_add(1);
-        self.debug_snapshot_write_inflight = false;
-        self.debug_snapshot_write_dirty = false;
+        self.timers.device_invite_poll = self.timers.device_invite_poll.saturating_add(1);
+        self.timers.protocol_reconnect = self.timers.protocol_reconnect.saturating_add(1);
+        self.timers.protocol_liveness = self.timers.protocol_liveness.saturating_add(1);
+        self.relay_status.watch_generation = self.relay_status.watch_generation.wrapping_add(1);
+        self.relay_status.watch_urls.clear();
+        self.relay_status.by_url.clear();
+        self.debug_snapshot.write_generation = self.debug_snapshot.write_generation.wrapping_add(1);
+        self.debug_snapshot.write_inflight = false;
+        self.debug_snapshot.write_dirty = false;
         self.protocol_engine = None;
         if let Some(existing) = self.logged_in.take() {
             self.runtime.block_on(async {
@@ -638,7 +625,8 @@ impl AppCore {
                 self.handle_ready_protocol_retry(due_at);
             }
             InternalEvent::PollPendingDeviceInvites { token } => {
-                if token != self.device_invite_poll_token || !self.can_poll_pending_device_invites()
+                if token != self.timers.device_invite_poll
+                    || !self.can_poll_pending_device_invites()
                 {
                     return;
                 }
@@ -648,13 +636,13 @@ impl AppCore {
                 ));
             }
             InternalEvent::PollPendingDeviceLink { token } => {
-                if token != self.pending_device_link_poll_token {
+                if token != self.timers.pending_device_link_poll {
                     return;
                 }
                 self.refresh_pending_linked_device();
             }
             InternalEvent::PendingDeviceLinkRefreshFinished { token, events } => {
-                if token != self.pending_device_link_poll_token {
+                if token != self.timers.pending_device_link_poll {
                     return;
                 }
                 if let Some(pending) = self.pending_linked_device.as_mut() {

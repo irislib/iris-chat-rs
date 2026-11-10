@@ -159,7 +159,7 @@ fn full_invite_preserves_siblings_when_deferred_registration_completes() {
         .iter()
         .all(|(label, _)| *label != "app-keys"));
     core.complete_owner_registration_lookup(
-        core.relay_status_watch_generation,
+        core.relay_status.watch_generation,
         owner.public_key(),
         device.public_key(),
         1,

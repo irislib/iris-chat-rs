@@ -319,8 +319,8 @@ impl AppCore {
             return;
         }
         pending.refresh_in_flight = true;
-        self.pending_device_link_poll_token = self.pending_device_link_poll_token.wrapping_add(1);
-        let token = self.pending_device_link_poll_token;
+        self.timers.pending_device_link_poll = self.timers.pending_device_link_poll.wrapping_add(1);
+        let token = self.timers.pending_device_link_poll;
         let client = pending.pairing_client.clone();
         let filters = Self::pending_linked_device_filters(pending);
         let relay_urls = self.device_approval_relay_urls.clone();
@@ -356,8 +356,8 @@ impl AppCore {
         if self.pending_linked_device.is_none() || self.suspended {
             return;
         }
-        self.pending_device_link_poll_token = self.pending_device_link_poll_token.wrapping_add(1);
-        let token = self.pending_device_link_poll_token;
+        self.timers.pending_device_link_poll = self.timers.pending_device_link_poll.wrapping_add(1);
+        let token = self.timers.pending_device_link_poll;
         let tx = self.core_sender.clone();
         self.runtime.spawn(async move {
             sleep(after).await;
@@ -368,7 +368,7 @@ impl AppCore {
     }
 
     pub(super) fn pause_pending_linked_device(&mut self) {
-        self.pending_device_link_poll_token = self.pending_device_link_poll_token.wrapping_add(1);
+        self.timers.pending_device_link_poll = self.timers.pending_device_link_poll.wrapping_add(1);
         let Some(pending) = self.pending_linked_device.as_mut() else {
             return;
         };
@@ -388,7 +388,7 @@ impl AppCore {
     }
 
     fn stop_pending_linked_device_inner(&mut self, clear_persisted: bool) {
-        self.pending_device_link_poll_token = self.pending_device_link_poll_token.wrapping_add(1);
+        self.timers.pending_device_link_poll = self.timers.pending_device_link_poll.wrapping_add(1);
         let Some(pending) = self.pending_linked_device.take() else {
             return;
         };
@@ -608,9 +608,9 @@ impl AppCore {
         self.protocol_subscription_runtime = ProtocolSubscriptionRuntime::default();
         self.reset_public_discovery();
         self.relay_transport_runtime = RelayTransportRuntime::default();
-        self.relay_status_watch_generation = self.relay_status_watch_generation.wrapping_add(1);
-        self.relay_status_watch_urls.clear();
-        self.relay_status_by_url.clear();
+        self.relay_status.watch_generation = self.relay_status.watch_generation.wrapping_add(1);
+        self.relay_status.watch_urls.clear();
+        self.relay_status.by_url.clear();
         self.relay_connected_count = 0;
         self.all_relays_offline_since_secs = None;
         self.defer_owner_app_keys_publish = false;
@@ -618,9 +618,9 @@ impl AppCore {
         self.pending_relay_publish_inflight.clear();
         self.debug_log.clear();
         self.debug_event_counters = DebugEventCounters::default();
-        self.debug_snapshot_write_generation = self.debug_snapshot_write_generation.wrapping_add(1);
-        self.debug_snapshot_write_inflight = false;
-        self.debug_snapshot_write_dirty = false;
+        self.debug_snapshot.write_generation = self.debug_snapshot.write_generation.wrapping_add(1);
+        self.debug_snapshot.write_inflight = false;
+        self.debug_snapshot.write_dirty = false;
         self.next_message_id = 1;
 
         let persisted = if allow_restore {
@@ -852,8 +852,8 @@ impl AppCore {
         self.retry_all_pending_private_invite_responses();
         self.load_pending_relay_publish_queue(owner_pubkey);
         self.start_private_contact_sync();
-        self.protocol_reconnect_token = self.protocol_reconnect_token.saturating_add(1);
-        self.protocol_liveness_token = self.protocol_liveness_token.saturating_add(1);
+        self.timers.protocol_reconnect = self.timers.protocol_reconnect.saturating_add(1);
+        self.timers.protocol_liveness = self.timers.protocol_liveness.saturating_add(1);
         self.start_relay_status_watchers();
         self.schedule_session_connect();
         self.request_user_discovery_refresh(true);

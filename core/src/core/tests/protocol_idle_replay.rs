@@ -57,7 +57,7 @@ async fn another_relays_eose_does_not_complete_the_observed_subscription() {
 }
 
 fn tick(core: &mut AppCore, incoming: &flume::Receiver<CoreMsg>) {
-    core.handle_protocol_subscription_liveness_check(core.protocol_liveness_token);
+    core.handle_protocol_subscription_liveness_check(core.timers.protocol_liveness);
     reconcile(core, incoming);
 }
 

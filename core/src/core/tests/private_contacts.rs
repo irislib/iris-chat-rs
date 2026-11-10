@@ -10,7 +10,8 @@ fn private_contact_recovery_ignores_secondary_relay_reconnects() {
         "wss://stable.example".into(),
         "wss://flapping.example".into(),
     ];
-    core.relay_status_by_url
+    core.relay_status
+        .by_url
         .insert("wss://stable.example".into(), RelayStatus::Connected);
     core.refresh_relay_connection_status_from_cached_statuses();
     let before = pending_publish_changes(core);

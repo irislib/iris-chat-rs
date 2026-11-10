@@ -13,7 +13,7 @@ pub(super) fn deferred_registration_core(label: &str) -> (AppCore, Keys, Keys) {
 fn restored_account_registers_after_completed_empty_server_lookup() {
     let (mut core, owner, device) = deferred_registration_core("empty-registration-recovery");
     core.complete_owner_registration_lookup(
-        core.relay_status_watch_generation,
+        core.relay_status.watch_generation,
         owner.public_key(),
         device.public_key(),
         1,
@@ -45,7 +45,7 @@ fn incomplete_registration_lookup_never_publishes_an_empty_replacement() {
     let (mut core, owner, device) = deferred_registration_core("incomplete-registration-recovery");
     for (completed, queried) in [(0, 0), (0, 1), (1, 2)] {
         core.complete_owner_registration_lookup(
-            core.relay_status_watch_generation,
+            core.relay_status.watch_generation,
             owner.public_key(),
             device.public_key(),
             completed,
@@ -75,7 +75,7 @@ fn registration_recovery_migrates_signed_legacy_devices_without_reviving_current
         .sign_with_keys(&owner)
         .unwrap();
     core.complete_owner_registration_lookup(
-        core.relay_status_watch_generation,
+        core.relay_status.watch_generation,
         owner.public_key(),
         device.public_key(),
         1,
@@ -92,7 +92,7 @@ fn registration_recovery_migrates_signed_legacy_devices_without_reviving_current
     core.app_keys.remove(&owner.public_key().to_hex());
     core.defer_owner_app_keys_publish = true;
     core.complete_owner_registration_lookup(
-        core.relay_status_watch_generation,
+        core.relay_status.watch_generation,
         owner.public_key(),
         device.public_key(),
         1,
@@ -112,7 +112,7 @@ fn registration_recovery_migrates_signed_legacy_devices_without_reviving_current
 fn stale_registration_lookup_cannot_register_a_different_session() {
     let (mut core, owner, device) = deferred_registration_core("stale-registration-recovery");
     core.complete_owner_registration_lookup(
-        core.relay_status_watch_generation.wrapping_add(1),
+        core.relay_status.watch_generation.wrapping_add(1),
         owner.public_key(),
         device.public_key(),
         1,
@@ -121,7 +121,7 @@ fn stale_registration_lookup_cannot_register_a_different_session() {
     );
     assert!(core.defer_owner_app_keys_publish);
     core.complete_owner_registration_lookup(
-        core.relay_status_watch_generation,
+        core.relay_status.watch_generation,
         owner.public_key(),
         Keys::generate().public_key(),
         1,
@@ -154,7 +154,7 @@ fn restored_account_invite_waits_for_local_approval_then_resumes_automatically()
         );
         assert!(sender.pending_outgoing_invite_acceptance.is_some());
         sender.complete_owner_registration_lookup(
-            sender.relay_status_watch_generation,
+            sender.relay_status.watch_generation,
             owner.public_key(),
             device.public_key(),
             1,

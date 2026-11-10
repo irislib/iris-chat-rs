@@ -15,8 +15,8 @@ impl AppCore {
     }
 
     pub(super) fn schedule_next_message_expiry(&mut self) {
-        self.message_expiry_token = self.message_expiry_token.wrapping_add(1);
-        let token = self.message_expiry_token;
+        self.timers.message_expiry = self.timers.message_expiry.wrapping_add(1);
+        let token = self.timers.message_expiry;
         let now = unix_now().get();
         let next_loaded = self.next_loaded_message_expiration_after(now);
         let next_stored = match self.app_store.next_message_expiration_after(now) {
@@ -42,7 +42,7 @@ impl AppCore {
     }
 
     pub(super) fn handle_prune_expired_messages(&mut self, token: u64) {
-        if token != self.message_expiry_token {
+        if token != self.timers.message_expiry {
             return;
         }
         let removed = self.prune_expired_messages(unix_now().get());

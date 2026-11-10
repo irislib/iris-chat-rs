@@ -3,7 +3,7 @@ use nostr::RelayMessage;
 
 impl AppCore {
     pub(super) fn recover_deferred_owner_registration(&mut self) {
-        let generation = self.relay_status_watch_generation;
+        let generation = self.relay_status.watch_generation;
         if !self.defer_owner_app_keys_publish
             || self.owner_registration_lookup_generation == Some(generation)
         {
@@ -107,7 +107,7 @@ impl AppCore {
         queried: usize,
         events: Vec<Event>,
     ) {
-        if generation != self.relay_status_watch_generation {
+        if generation != self.relay_status.watch_generation {
             return;
         }
         self.owner_registration_lookup_generation = None;

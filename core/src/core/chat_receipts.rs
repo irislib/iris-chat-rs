@@ -225,7 +225,7 @@ impl AppCore {
         // ids by (chat, receipt_type) and let exit_batch flush them all at
         // once. Outside a batch — e.g. a single `markMessagesSeen` from the
         // shell — fall through and send immediately, same as before.
-        if self.batch_depth > 0 {
+        if self.batch.depth > 0 {
             self.pending_outgoing_receipts
                 .entry((chat_id.to_string(), receipt_type.to_string()))
                 .or_default()

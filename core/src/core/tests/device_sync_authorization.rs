@@ -453,7 +453,7 @@ fn restored_authorization_projection_commits_one_complete_app_snapshot() {
             .any(|update| matches!(update, AppUpdate::FullState(_))),
         "the caller publishes the completed restoration, not intermediate authorization heads"
     );
-    assert_eq!(core.batch_depth, 0);
+    assert_eq!(core.batch.depth, 0);
     assert!(shared.lock().unwrap().is_autocommit());
 }
 
@@ -489,7 +489,7 @@ fn restored_authorization_projection_save_failure_preserves_delivery_ack_and_rep
         .unwrap();
     assert!(core.restore_device_sync_record_projection().is_err());
     assert_eq!(
-        core.batch_depth, 1,
+        core.batch.depth, 1,
         "restore must retain its caller's batch"
     );
     assert!(core
@@ -554,7 +554,7 @@ fn restored_authorization_projection_page_failure_cannot_report_completion() {
     assert!(!updates
         .try_iter()
         .any(|update| matches!(update, AppUpdate::FullState(_))));
-    assert_eq!(core.batch_depth, 0);
+    assert_eq!(core.batch.depth, 0);
 }
 
 #[test]

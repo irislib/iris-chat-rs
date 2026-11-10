@@ -189,7 +189,8 @@ fn metadata_privacy_isolates_peer_discovery_from_identity_auth_and_own_receive_f
     core.logged_in.as_mut().unwrap().client = client;
     core.logged_in.as_mut().unwrap().relay_urls = vec![relay.clone()];
     core.preferences.nostr_relay_urls = vec![relay.to_string()];
-    core.relay_status_by_url
+    core.relay_status
+        .by_url
         .insert(relay.to_string(), RelayStatus::Connected);
     let own_invite = core
         .protocol_engine

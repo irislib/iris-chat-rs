@@ -23,11 +23,11 @@ impl AppCore {
         self.pending_private_invite_cleanup_retry = false;
         self.pending_new_chat_responses.clear();
         self.new_chat_notifications.clear();
-        self.device_invite_poll_token = self.device_invite_poll_token.saturating_add(1);
-        self.chat_mute_expiry_token = self.chat_mute_expiry_token.wrapping_add(1);
-        self.message_expiry_token = self.message_expiry_token.wrapping_add(1);
-        self.protocol_reconnect_token = self.protocol_reconnect_token.saturating_add(1);
-        self.protocol_liveness_token = self.protocol_liveness_token.saturating_add(1);
+        self.timers.device_invite_poll = self.timers.device_invite_poll.saturating_add(1);
+        self.timers.chat_mute_expiry = self.timers.chat_mute_expiry.wrapping_add(1);
+        self.timers.message_expiry = self.timers.message_expiry.wrapping_add(1);
+        self.timers.protocol_reconnect = self.timers.protocol_reconnect.saturating_add(1);
+        self.timers.protocol_liveness = self.timers.protocol_liveness.saturating_add(1);
         self.protocol_engine = None;
         if let Some(logged_in) = self.logged_in.take() {
             let client = logged_in.client.clone();
@@ -54,14 +54,14 @@ impl AppCore {
         self.protocol_subscription_runtime = ProtocolSubscriptionRuntime::default();
         self.reset_public_discovery();
         self.relay_transport_runtime = RelayTransportRuntime::default();
-        self.relay_status_watch_generation = self.relay_status_watch_generation.wrapping_add(1);
-        self.relay_status_watch_urls.clear();
-        self.relay_status_by_url.clear();
+        self.relay_status.watch_generation = self.relay_status.watch_generation.wrapping_add(1);
+        self.relay_status.watch_urls.clear();
+        self.relay_status.by_url.clear();
         self.relay_connected_count = 0;
         self.all_relays_offline_since_secs = None;
-        self.debug_snapshot_write_generation = self.debug_snapshot_write_generation.wrapping_add(1);
-        self.debug_snapshot_write_inflight = false;
-        self.debug_snapshot_write_dirty = false;
+        self.debug_snapshot.write_generation = self.debug_snapshot.write_generation.wrapping_add(1);
+        self.debug_snapshot.write_inflight = false;
+        self.debug_snapshot.write_dirty = false;
         self.cached_mobile_push = MobilePushSyncSnapshot::default();
         self.mobile_push_dirty = true;
         self.last_emitted_state = None;

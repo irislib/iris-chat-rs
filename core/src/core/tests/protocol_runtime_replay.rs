@@ -55,11 +55,11 @@ fn assert_unchanged_discovery_replay_is_idle(replay_invite: bool) {
         core.handle_relay_event(event);
     }
     assert!(
-        !core.batch_dirty_persist,
+        !core.batch.dirty_persist,
         "unchanged discovery dirtied the app database"
     );
     assert!(
-        !core.batch_dirty_state,
+        !core.batch.dirty_state,
         "unchanged discovery rebuilt the UI"
     );
     assert!(

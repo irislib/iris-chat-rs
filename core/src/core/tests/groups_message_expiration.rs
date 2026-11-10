@@ -120,7 +120,7 @@ fn send_disappearing_message_action_uses_explicit_expiration_and_persists() {
         Some(expires_at)
     );
     assert!(
-        core.message_expiry_token > 0,
+        core.timers.message_expiry > 0,
         "expiring sends schedule message pruning"
     );
 }

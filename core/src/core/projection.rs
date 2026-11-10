@@ -262,8 +262,8 @@ impl AppCore {
     }
 
     pub(super) fn rebuild_state(&mut self) {
-        if self.batch_depth > 0 {
-            self.batch_dirty_state = true;
+        if self.batch.depth > 0 {
+            self.batch.dirty_state = true;
             return;
         }
         self.rebuild_state_inner();
@@ -670,8 +670,8 @@ impl AppCore {
     }
 
     fn build_relay_connection_snapshots(&self) -> Vec<RelayConnectionSnapshot> {
-        let relay_statuses = self
-            .relay_status_by_url
+        let by_url = &self.relay_status.by_url;
+        let relay_statuses = by_url
             .iter()
             .map(|(url, status)| (url.clone(), relay_connection_status(*status).to_string()))
             .collect::<BTreeMap<_, _>>();
@@ -919,8 +919,8 @@ impl AppCore {
     }
 
     pub(super) fn emit_state(&mut self) {
-        if self.batch_depth > 0 {
-            self.batch_dirty_state = true;
+        if self.batch.depth > 0 {
+            self.batch.dirty_state = true;
             return;
         }
         self.emit_state_inner();
@@ -979,7 +979,7 @@ impl AppCore {
         self.mobile_push_dirty = true;
     }
 
-    /// Enter a batch scope. While `batch_depth > 0`, calls to
+    /// Enter a batch scope. While `batch.depth > 0`, calls to
     /// `rebuild_state` / `emit_state` / `persist_best_effort` are deferred
     /// and coalesced into a single rebuild + persist + emit at the
     /// outermost `exit_batch()`. The protocol engine's own `persist()`
@@ -988,17 +988,17 @@ impl AppCore {
     /// group manager state and holds the SQLite connection mutex while
     /// it runs, so coalescing is what keeps UI reads responsive on iOS.
     pub(super) fn enter_batch(&mut self) {
-        self.batch_depth = self.batch_depth.saturating_add(1);
+        self.batch.depth = self.batch.depth.saturating_add(1);
         if let Some(engine) = self.protocol_engine.as_ref() {
             engine.enter_batch();
         }
     }
 
     pub(super) fn exit_batch(&mut self) {
-        if self.batch_depth == 0 {
+        if self.batch.depth == 0 {
             return;
         }
-        if self.batch_depth == 1 {
+        if self.batch.depth == 1 {
             // Receipt fanout mutates ratchets too. Keep it inside the protocol
             // batch so a group page writes one checkpoint, not one per author.
             let pending = std::mem::take(&mut self.pending_outgoing_receipts);
@@ -1012,15 +1012,15 @@ impl AppCore {
             // Commit local messages/read state and expose the UI update before
             // serializing the potentially large protocol backlog. Delivery
             // acknowledgements produced by the app commit join this checkpoint.
-            if std::mem::take(&mut self.batch_dirty_persist) {
+            if std::mem::take(&mut self.batch.dirty_persist) {
                 self.persist_best_effort_inner();
             }
-            if std::mem::take(&mut self.batch_dirty_state) {
+            if std::mem::take(&mut self.batch.dirty_state) {
                 self.rebuild_state_inner();
                 self.emit_state_inner();
             }
         }
-        self.batch_depth -= 1;
+        self.batch.depth -= 1;
         if let Some(engine) = self.protocol_engine.as_mut() {
             let result = {
                 let _phase = crate::perflog::phase("protocol.exit_batch");
@@ -1030,7 +1030,7 @@ impl AppCore {
                 self.push_debug_log("protocol.persist.batch_flush_failed", error.to_string());
             }
         }
-        if self.batch_depth > 0 {
+        if self.batch.depth > 0 {
             return;
         }
         self.flush_mesh_protocol_subscriptions();

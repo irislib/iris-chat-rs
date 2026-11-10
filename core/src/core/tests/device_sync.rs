@@ -546,7 +546,7 @@ async fn newly_received_message_is_queued_for_an_authorized_sibling() {
     core.install_device_sync_sender_for_test(endpoint.clone(), tcp, vec![sibling]);
 
     let chat_id = sender.public_key().to_hex();
-    core.batch_depth = 1;
+    core.batch.depth = 1;
     core.apply_runtime_text_message(
         sender.public_key(),
         Some(chat_id.clone()),
@@ -556,7 +556,7 @@ async fn newly_received_message_is_queued_for_an_authorized_sibling() {
         Some("live-message-id".to_string()),
         Some("live-event-id".to_string()),
     );
-    core.batch_depth = 0;
+    core.batch.depth = 0;
 
     let queued = records
         .try_recv()
@@ -655,11 +655,11 @@ async fn newly_received_message_is_queued_for_an_authorized_sibling() {
         core.app_keys[&owner.public_key().to_hex()].clone(),
     );
     let source = local_device.public_key().to_hex();
-    linked.batch_depth = 1;
+    linked.batch.depth = 1;
     linked.handle_device_sync_packet(&source, DEVICE_SYNC_PORT, &incoming_record);
     linked.handle_device_sync_packet(&source, DEVICE_SYNC_PORT, &incoming_record);
     linked.handle_device_sync_packet(&source, DEVICE_SYNC_PORT, &outgoing_record);
-    linked.batch_depth = 0;
+    linked.batch.depth = 0;
     let linked_messages = &linked.threads[&chat_id].messages;
     assert_eq!(linked_messages.len(), 2);
     assert_eq!(linked_messages[0].id, "live-message-id");

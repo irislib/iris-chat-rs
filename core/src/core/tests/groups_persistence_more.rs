@@ -518,7 +518,7 @@ fn internal_prune_expired_messages_event_ignores_stale_tokens_and_updates_state(
     core.persist_best_effort_inner();
     assert_eq!(stored_message_count(&core), 2);
 
-    core.handle_prune_expired_messages(core.message_expiry_token.wrapping_add(1));
+    core.handle_prune_expired_messages(core.timers.message_expiry.wrapping_add(1));
 
     assert_eq!(stored_message_count(&core), 2, "stale token ignored");
     assert_eq!(
@@ -530,7 +530,7 @@ fn internal_prune_expired_messages_event_ignores_stale_tokens_and_updates_state(
         2
     );
 
-    let valid_token = core.message_expiry_token;
+    let valid_token = core.timers.message_expiry;
     core.handle_prune_expired_messages(valid_token);
 
     assert_eq!(stored_message_count(&core), 1);

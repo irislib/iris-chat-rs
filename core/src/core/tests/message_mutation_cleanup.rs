@@ -485,7 +485,7 @@ fn deferred_control_arms_and_runs_expiry_timer_without_a_message_row() {
             .expect("scheduled expiry event");
         if let CoreMsg::Internal(event) = event {
             if let InternalEvent::PruneExpiredMessages { token } = *event {
-                assert_eq!(token, core.message_expiry_token);
+                assert_eq!(token, core.timers.message_expiry);
                 core.handle_prune_expired_messages(token);
                 break;
             }
