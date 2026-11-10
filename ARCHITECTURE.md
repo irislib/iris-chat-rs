@@ -15,8 +15,8 @@ Keep as much product behavior as possible in Rust so that:
 - protocol and relay behavior are cross-platform
 - adding another native shell is mostly a rendering and platform-integration task
 
-Android, iOS, and macOS are intentionally thin shells over one shared Rust app
-core.
+Android, iOS, macOS, Linux, and Windows are intentionally thin shells over one
+shared Rust app core.
 
 ## Repo Shape
 
@@ -24,6 +24,12 @@ core.
   - shared Rust mobile app core
   - UniFFI boundary
   - router, app state, protocol/runtime logic, persistence, and support/debug data
+- `chat-protocol/`
+  - `iris-chat-protocol` crate
+  - double-ratchet protocol engine and its checkpoint storage
+  - consumed by `core/` through an exact-version path dependency
+- `protocol-ffi/`
+  - UniFFI compatibility layer that exposes the protocol engine as `ndr_ffi`
 - `android/`
   - Android shell
   - Compose rendering
@@ -32,13 +38,24 @@ core.
   - iOS shell
   - SwiftUI rendering
   - Keychain and iOS platform integrations
+- `macos/`
+  - macOS shell
+  - compiles `ios/Sources` and adds the macOS app lifecycle, notifications, and
+    share extension
+- `linux/`
+  - GTK/libadwaita shell
+  - links the Rust core directly, without UniFFI bindings
+- `windows/`
+  - WPF/.NET shell over generated C# bindings
+  - Windows Credential Manager and platform integrations
 - `scripts/`
   - local build, test, harness, and release entrypoints
 - `tools/`
   - higher-signal local run and doctor commands
 
-The protocol runtime is an external dependency. The product boundary for this
-app is the `core/` crate in this repo.
+The double-ratchet primitives come from the external `nostr-double-ratchet`
+crate. The protocol engine built on them lives in `chat-protocol/`. The product
+boundary for this app is the `core/` crate in this repo.
 
 ## Core Principles
 
@@ -59,7 +76,7 @@ Native code must not introduce alternate correctness rules for those areas.
 
 ### Native shells render Rust state
 
-Android and iOS should primarily:
+Native shells should primarily:
 
 - construct the Rust core
 - restore secure credentials into Rust at startup
@@ -102,7 +119,9 @@ Native executes platform effects. It does not fork app logic.
 - rendering and UI composition
 - secure secret storage primitives
   - Android Keystore and DataStore
-  - iOS Keychain
+  - iOS and macOS Keychain
+  - Windows Credential Manager
+  - Linux secure storage (`linux/src/secure_storage.rs`)
 - platform lifecycle hooks
 - clipboard, share sheet, camera, and QR host APIs
 - shell-only ephemeral UI state
@@ -293,7 +312,9 @@ Two rules matter here:
 Current shell implementations:
 
 - Android: `android/app/src/main/java/to/iris/chat/core/AppManager.kt`
-- iOS: `ios/Sources/AppManager.swift`
+- iOS and macOS: `ios/Sources/AppManager.swift`
+- Linux: `linux/src/app_manager.rs`
+- Windows: `windows/IrisChat/AppManager.cs`
 
 ## Verification Gates
 
