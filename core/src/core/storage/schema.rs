@@ -713,7 +713,7 @@ pub(super) fn ensure_schema(conn: &mut Connection) -> anyhow::Result<()> {
         tx.execute_batch("ALTER TABLE preferences ADD COLUMN accept_overmuted_direct_messages INTEGER NOT NULL DEFAULT 0;")?;
     }
     tx.execute_batch("CREATE TABLE IF NOT EXISTS message_request_arrivals (chat_id TEXT PRIMARY KEY, received_at_ms INTEGER NOT NULL);")?;
-    if current < 48 {
+    if current < 48 && column_exists(&tx, "threads", "updated_at_secs")? {
         tx.execute_batch(
             "INSERT OR IGNORE INTO message_request_arrivals(chat_id, received_at_ms)
             SELECT chat_id, updated_at_secs * 1000 FROM threads WHERE chat_id NOT LIKE 'group:%';",

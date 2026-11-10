@@ -338,6 +338,9 @@ fn encrypted_chat_crosses_fips_transit_by_direct_recipient_route_without_message
         }
     }
     runtime.block_on(transit.shutdown()).unwrap();
+    // A request from someone not yet accepted is capped; this burst measures
+    // transport recovery between people who already talk to each other.
+    bob.accept_message_request(&alice_owner.public_key().to_hex());
     let burst = 70;
     // Exceed both the 64-event live cache and the 16-event outbox batch.
     for index in 0..burst {

@@ -27,9 +27,7 @@ async fn graph_wire_relay(
                 let mut socket = tokio_tungstenite::accept_async(socket).await.unwrap();
                 socket
                     .send(Message::Text(
-                        serde_json::json!(["AUTH", "graph-wire-challenge"])
-                            .to_string()
-                            .into(),
+                        serde_json::json!(["AUTH", "graph-wire-challenge"]).to_string(),
                     ))
                     .await
                     .unwrap();
@@ -48,17 +46,13 @@ async fn graph_wire_relay(
                     if frame[0] == "AUTH" {
                         let _ = socket
                             .send(Message::Text(
-                                serde_json::json!(["OK", frame[1]["id"], true, ""])
-                                    .to_string()
-                                    .into(),
+                                serde_json::json!(["OK", frame[1]["id"], true, ""]).to_string(),
                             ))
                             .await;
                     } else if frame[0] == "NEG-OPEN" {
                         let _ = socket
                             .send(Message::Text(
-                                serde_json::json!(["NEG-ERR", frame[1], "unsupported"])
-                                    .to_string()
-                                    .into(),
+                                serde_json::json!(["NEG-ERR", frame[1], "unsupported"]).to_string(),
                             ))
                             .await;
                     } else if frame[0] == "REQ" {
@@ -82,16 +76,14 @@ async fn graph_wire_relay(
                                 let value = serde_json::to_value(event).unwrap();
                                 let _ = socket
                                     .send(Message::Text(
-                                        serde_json::json!(["EVENT", frame[1], value])
-                                            .to_string()
-                                            .into(),
+                                        serde_json::json!(["EVENT", frame[1], value]).to_string(),
                                     ))
                                     .await;
                             }
                         }
                         let _ = socket
                             .send(Message::Text(
-                                serde_json::json!(["EOSE", frame[1]]).to_string().into(),
+                                serde_json::json!(["EOSE", frame[1]]).to_string(),
                             ))
                             .await;
                     }

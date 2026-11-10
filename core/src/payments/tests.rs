@@ -189,7 +189,7 @@ fn embedded_urls_identifiers_and_oversized_messages_are_not_payments() {
         message_payment_links(format!("{} {}", "a".repeat(MAX_TEXT_BYTES), V3.trim())).is_empty()
     );
     assert_eq!(
-        message_payment_links(vec![V3.trim(); 8].join(" ")).len(),
+        message_payment_links([V3.trim(); 8].join(" ")).len(),
         MAX_PAYMENTS
     );
     assert!(parse_cashu_token("a".repeat(MAX_TEXT_BYTES + 1)).is_none());

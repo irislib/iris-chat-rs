@@ -108,6 +108,19 @@ fn private_block_mobile_push_decryption_and_cache_suppress_blocked_period() {
         if !group {
             core.accept_message_request(&peer.public_key().to_hex());
         }
+        if group {
+            // Messages for a group whose metadata is unknown now wait for it,
+            // so the group has to exist before its message can be cached.
+            let shared = test_group_snapshot(
+                "shared",
+                "Shared",
+                peer.public_key(),
+                vec![owner.public_key(), peer.public_key()],
+                vec![peer.public_key()],
+                1,
+            );
+            core.apply_group_roster_snapshot(shared, 200);
+        }
         core.app_store.bind_account(owner.public_key()).unwrap();
         let invite = core
             .protocol_engine
@@ -187,7 +200,12 @@ fn private_block_mobile_push_decryption_and_cache_suppress_blocked_period() {
             cached_before.should_show,
             "positive SQLite fallback: {cached_before:?}"
         );
-        assert_eq!(cached_before.body, "blocked cached body");
+        if group {
+            // A known group's notification names the sender before the text.
+            assert!(cached_before.body.ends_with(": blocked cached body"));
+        } else {
+            assert_eq!(cached_before.body, "blocked cached body");
+        }
         // Fixed signed timestamps keep this boundary regression independent of
         // whether the wall clock ticks during the cryptographic fixture setup.
         assert!(core.apply_private_block_event(signed_block_transition(

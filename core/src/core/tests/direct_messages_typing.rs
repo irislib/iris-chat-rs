@@ -240,7 +240,10 @@ fn unknown_users_toggle_off_excludes_non_accepted_peers_from_subs() {
         !alice.preferences.accepted_owner_pubkeys.contains(&bob_hex),
         "group transport must not implicitly accept the member's direct chat"
     );
-    assert!(alice.thread_is_message_request(&bob_hex));
+    assert!(
+        !alice.thread_is_message_request(&bob_hex),
+        "with unknown requests off, a stranger's direct message is not kept as a request"
+    );
     alice.set_user_blocked(&bob_hex, true);
     assert!(bob_event_authors
         .iter()

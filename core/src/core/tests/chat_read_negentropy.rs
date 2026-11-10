@@ -17,6 +17,10 @@ fn run_chat_read_negentropy(include_history: bool, supports_read_states: bool) {
     let peer = Keys::generate();
     let chat = peer.public_key().to_hex();
     let group_chat = "group:read-negentropy";
+    // Read-state limits are measured on an accepted chat, past the request cap.
+    // Acceptance is account-wide, so both devices hold it.
+    pair.a.preferences.accepted_owner_pubkeys.push(chat.clone());
+    pair.b.preferences.accepted_owner_pubkeys.push(chat.clone());
     for (id, time) in [("old-read", 50), ("recent-read", 200)] {
         chat_read_sync_incoming(&mut pair.a, &peer, id, time);
     }
@@ -219,6 +223,9 @@ fn run_chat_read_negentropy(include_history: bool, supports_read_states: bool) {
         pair._b_dir.path().to_string_lossy().into_owned(),
     );
     right.load_persisted().unwrap();
+    if !right.preferences.accepted_owner_pubkeys.contains(&chat) {
+        right.preferences.accepted_owner_pubkeys.push(chat.clone());
+    }
     // The group original can arrive after the read record and another restart.
     right.push_incoming_message_from(
         group_chat,

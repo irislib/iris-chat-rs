@@ -83,11 +83,13 @@ fn signature(bytes: &[u8]) -> bool {
     bytes.len() == 33 && matches!(bytes.first(), Some(2 | 3))
 }
 fn hex(text: &str) -> Option<Vec<u8>> {
-    if text.len() % 2 != 0 || !text.is_ascii() {
+    if !text.len().is_multiple_of(2) || !text.is_ascii() {
         return None;
     }
     text.as_bytes()
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|pair| {
             let high = char::from(*pair.first()?).to_digit(16)?;
             let low = char::from(*pair.get(1)?).to_digit(16)?;
