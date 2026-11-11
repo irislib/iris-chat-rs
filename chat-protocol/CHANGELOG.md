@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.17
 
 - Stop naming the recipient device on message events. Kind 1060 envelopes now
   carry only the version and header tags (nostr-double-ratchet 0.0.178), so a

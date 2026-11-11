@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Adopt FIPS 0.4.106 and matching TCP, pubsub, and Hashtree transport libraries
+  for handshake recovery, tree-announcement retries, and DNS validation.
+- Use `nvpn-webrtc` and `nvpn-webrtc-ice` 0.17.3 to retain the refreshed WebRTC
+  and mDNS behavior, ICE consent, candidate comparison and cleanup, and native
+  socket protection, preserving the compatible iOS dependencies.
+
+## 0.1.65
+
 - Stop revealing which device a private message is for. Message events no
   longer carry a recipient tag, and the app no longer asks message servers for
   events tagged with its own device. The delivery target stays on the sending
@@ -22,12 +30,6 @@
   are kept on the device and marked failed instead of being sent again.
   Older versions reject call wakes and nearby copies from this one until they
   update; delivery through message servers works in both directions.
-- Adopt FIPS 0.4.106 and matching TCP, pubsub, and Hashtree transport libraries
-  for handshake recovery, tree-announcement retries, and DNS validation.
-- Use `nvpn-webrtc` and `nvpn-webrtc-ice` 0.17.3 to retain the refreshed WebRTC
-  and mDNS behavior, ICE consent, candidate comparison and cleanup, and native
-  socket protection, preserving the compatible iOS dependencies.
-
 ## 0.1.64
 
 - Sort incoming direct messages into accepted chats and requests using the
