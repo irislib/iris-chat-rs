@@ -2,7 +2,7 @@
 
 Each release has channel-specific notes. The release tag must match the `##` heading exactly.
 
-## v2026.11.10
+## v2026.11.11
 
 ### GitHub
 
@@ -14,9 +14,17 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 - Jump to the original message from a reply quote, and select text across messages on desktop.
 - Use the revision-aware social graph. Sync public follow and mute lists with optional Negentropy and bound each download.
 - Use per-peer tokens for nearby Bluetooth discovery.
-- Adopt the verified FIPS 0.4.119 idle-repair transport releases.
+- Update the FIPS transport to 0.4.121. A device that cannot use direct connection offers now declines them, which stops repeated offers and lowers idle traffic. Keep anonymous file readers separate from device connections and apply peer restrictions across transports.
 - Avoid loading the outgoing backlog for notification previews.
 - Share screen navigation rules across all five apps from the core, and build the protocol engine and core tests as ordinary modules.
+- Stop repeated routing repairs for private client connections while preserving authenticated recovery.
+- Keep followed and muted profiles current through bounded anonymous discovery, and preserve saved discovery data when upgrading.
+- Preserve typed text and the insertion point on iOS when a chat’s saved draft arrives after typing has begun.
+- Deliver a Note to Self file offer to each ready linked device immediately. Retry the missing copies across restarts.
+- Resume pending history transfer after discovering an authorized linked device, using anonymous device discovery.
+- Fetch attachments from unrelated file providers anonymously and restrict identified private-cache access to verified linked devices.
+- Keep private device connections out of public routing announcements, including when connecting to older peers.
+- Read versioned Hashtree keys in native attachments and invites.
 - Update the protocol library to 0.3.16 and the CLI to 0.1.64.
 
 ### Apple
@@ -28,6 +36,14 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 - Tap a quoted reply to jump to the original message. Select text across messages on Mac.
 - Group messages wait for their group details before appearing.
 - Improve finding nearby devices over Bluetooth.
+- Reduce unnecessary network activity while the app is idle.
+- Keep followed and muted profiles up to date.
+- Keep letters in order and the cursor in place when you start typing as a chat opens on iPhone.
+- Send files to yourself on a connected device even when another linked device is offline.
+- Restore message history more reliably when linking a new device.
+- Improve privacy when downloading files and sharing cached files between your devices.
+- Keep private device connections out of public network announcements.
+- Open attachments and invites that use the updated Hashtree format.
 
 ### Zapstore
 
@@ -38,6 +54,13 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 - Tap a quoted reply to jump to the original message.
 - Group messages wait for their group details before appearing.
 - Improve finding nearby devices over Bluetooth.
+- Reduce unnecessary network activity while the app is idle.
+- Keep followed and muted profiles up to date.
+- Send files to yourself on a connected device even when another linked device is offline.
+- Restore message history more reliably when linking a new device.
+- Improve privacy when downloading files and sharing cached files between your devices.
+- Keep private device connections out of public network announcements.
+- Open attachments and invites that use the updated Hashtree format.
 
 ## v2026.11.5.1
 
