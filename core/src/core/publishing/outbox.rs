@@ -2,6 +2,38 @@ use super::*;
 use nostr::JsonUtil;
 
 impl AppCore {
+    pub(in crate::core) fn publish_runtime_event(
+        &mut self,
+        event: Event,
+        label: &'static str,
+        completion: Option<(String, String)>,
+    ) -> bool {
+        let (inner_event_id, chat_id) = completion
+            .map(|(inner_event_id, chat_id)| (Some(inner_event_id), Some(chat_id)))
+            .unwrap_or((None, None));
+        self.publish_runtime_event_with_metadata(event, label, chat_id, inner_event_id, None, None)
+    }
+
+    pub(in crate::core) fn publish_protocol_event(&mut self, publish: ProtocolPublish) -> bool {
+        // Retry batches may already contain sealed events when a block arrives.
+        // Guard before call push as well as before the durable/network outboxes.
+        if self.blocked_direct_publication(&publish.chat_id)
+            || !self.protocol_publication_allowed(&publish)
+        {
+            return false;
+        }
+        self.publish_call_push_for_protocol(&publish);
+        let pairwise_device = publish.carrier.pairwise_device();
+        self.publish_runtime_event_with_metadata(
+            publish.event,
+            APPCORE_PROTOCOL_LABEL,
+            Some(publish.chat_id),
+            publish.inner_event_id,
+            publish.authored_at_secs,
+            pairwise_device,
+        )
+    }
+
     /// Commit a shared group event and all its private wakes before any carrier
     /// can acknowledge the shared event. Restart then retains every recipient.
     pub(in crate::core) fn persist_group_publish_batch(
@@ -14,14 +46,12 @@ impl AppCore {
         let owner = local.owner_pubkey;
         if !effects.iter().any(|effect| {
             let ProtocolEffect::Publish(publish) = effect;
-            self.protocol_engine.as_ref().is_some_and(|engine| {
-                engine.has_pending_group_publish(&publish.event.id.to_hex())
-                    || super::super::private_group_wake::sender_matches(
-                        engine,
-                        owner,
-                        &publish.event,
-                    ) && publish.event.tags.public_keys().next().is_none()
-            })
+            // Provenance, not tags: shared group ciphertext and pairwise
+            // envelopes are indistinguishable on the wire.
+            publish.carrier == ProtocolCarrier::SharedGroup
+                || self.protocol_engine.as_ref().is_some_and(|engine| {
+                    engine.has_pending_group_publish(&publish.event.id.to_hex())
+                })
         }) {
             return true;
         }
@@ -29,7 +59,7 @@ impl AppCore {
             .iter()
             .filter_map(|effect| {
                 let ProtocolEffect::Publish(publish) = effect;
-                if !self.private_publication_allowed(&publish.event)
+                if !self.protocol_publication_allowed(publish)
                     || self.blocked_direct_publication(&publish.chat_id)
                     || self.is_removed_from_group(&publish.chat_id)
                 {
@@ -46,6 +76,10 @@ impl AppCore {
                         created_at_secs: publish.event.created_at.as_secs(),
                         attempt_count: 0,
                         last_error: None,
+                        pairwise_device_hex: publish
+                            .carrier
+                            .pairwise_device()
+                            .map(|device| device.to_hex()),
                     },
                     publish.authored_at_secs,
                 ))
@@ -82,8 +116,13 @@ impl AppCore {
         chat_id: Option<String>,
         inner_event_id: Option<String>,
         authored_at_secs: Option<u64>,
+        pairwise_device: Option<PublicKey>,
     ) -> Option<PendingPublishChange> {
-        if !self.private_publication_allowed(event) {
+        // The outbox feeds every carrier. A message event enters it only as
+        // a pairwise envelope with a known target, never on its shape alone.
+        if !self.private_publication_allowed(event)
+            || (event.kind.as_u16() as u32 == MESSAGE_EVENT_KIND && pairwise_device.is_none())
+        {
             return None;
         }
         let logged_in = self.logged_in.as_ref()?;
@@ -105,6 +144,7 @@ impl AppCore {
             created_at_secs: event.created_at.as_secs(),
             attempt_count: 0,
             last_error: None,
+            pairwise_device_hex: pairwise_device.map(|device| device.to_hex()),
         };
         let existing = self.pending_relay_publishes.get(&pending.event_id);
         if let Some(existing) = existing {
@@ -118,6 +158,10 @@ impl AppCore {
                 .inner_event_id
                 .or_else(|| existing.inner_event_id.clone());
             pending.chat_id = pending.chat_id.or_else(|| existing.chat_id.clone());
+            pending.pairwise_device_hex = existing
+                .pairwise_device_hex
+                .clone()
+                .or(pending.pairwise_device_hex);
             if &pending == existing && authored_at_secs.is_none() {
                 return Some(PendingPublishChange::Existing);
             }

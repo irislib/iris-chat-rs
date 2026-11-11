@@ -446,9 +446,9 @@ fn recipient_filter_stays_until_every_known_peer_device_has_a_session() {
             )
             .expect("peer session");
         assert_eq!(
-            core.message_recipient_bootstrap_needed(),
+            core.peer_session_bootstrap_needed(),
             index == 0,
-            "the recipient filter is needed exactly while a known peer device lacks a session"
+            "session catch-up is needed exactly while a known peer device lacks a session"
         );
     }
 
@@ -471,7 +471,7 @@ fn recipient_filter_stays_until_every_known_peer_device_has_a_session() {
         4,
     );
     assert!(
-        core.message_recipient_bootstrap_needed(),
+        core.peer_session_bootstrap_needed(),
         "a stale removed-device session must not hide the missing replacement-device session"
     );
 }
@@ -912,6 +912,7 @@ fn message_sent_waits_for_peer_and_local_sibling_publish_acks() {
             created_at_secs: local_event.created_at.as_secs(),
             attempt_count: 0,
             last_error: None,
+            pairwise_device_hex: None,
         },
     );
     let peer_event = EventBuilder::new(Kind::from(MESSAGE_EVENT_KIND as u16), "peer")
@@ -930,6 +931,7 @@ fn message_sent_waits_for_peer_and_local_sibling_publish_acks() {
             created_at_secs: peer_event.created_at.as_secs(),
             attempt_count: 0,
             last_error: None,
+            pairwise_device_hex: None,
         },
     );
     core.handle_relay_publish_finished(
@@ -977,6 +979,7 @@ fn message_sent_waits_for_peer_and_local_sibling_publish_acks() {
             created_at_secs: lingering_local_event.created_at.as_secs(),
             attempt_count: 0,
             last_error: None,
+            pairwise_device_hex: None,
         },
     );
 
@@ -1067,6 +1070,7 @@ fn bootstrap_publish_success_does_not_gate_payload_delivery() {
             created_at_secs: bootstrap_event.created_at.as_secs(),
             attempt_count: 0,
             last_error: None,
+            pairwise_device_hex: None,
         },
     );
 
@@ -1086,6 +1090,7 @@ fn bootstrap_publish_success_does_not_gate_payload_delivery() {
             created_at_secs: payload_event.created_at.as_secs(),
             attempt_count: 0,
             last_error: None,
+            pairwise_device_hex: None,
         },
     );
 
@@ -1175,6 +1180,7 @@ fn relay_publish_success_sweeps_ready_outgoing_messages() {
             created_at_secs: event.created_at.as_secs(),
             attempt_count: 0,
             last_error: None,
+            pairwise_device_hex: None,
         },
     );
 
@@ -1226,7 +1232,12 @@ fn private_group_payload_publish_ack_marks_sent_after_recipient_carrier_success(
         .collect::<Vec<_>>();
     assert_eq!(pending.len(), 1, "one recipient gets one private carrier");
     let event: Event = serde_json::from_str(&pending[0].event_json).unwrap();
-    assert!(event.tags.public_keys().any(|key| *key == recipient));
+    assert!(event.tags.public_keys().next().is_none());
+    assert_eq!(
+        pending[0].pairwise_device_hex.as_deref(),
+        Some(recipient.to_hex().as_str()),
+        "the recipient device is local delivery metadata, never a tag"
+    );
     assert!(!core
         .protocol_engine
         .as_ref()
@@ -1977,12 +1988,7 @@ fn appcore_persists_pending_group_sender_key_outer_when_no_group_message_emits()
     let device = farm.devices[1].keys.clone();
     let carrier = carriers
         .into_iter()
-        .find(|event| {
-            event
-                .tags
-                .public_keys()
-                .any(|key| *key == device.public_key())
-        })
+        .find(|event| queued_for_device(&farm.devices[0].core, event, device.public_key()))
         .expect("recipient-specific ratchet carrier");
     let event_id = carrier.id.to_hex();
     let core = &mut farm.devices[1].core;

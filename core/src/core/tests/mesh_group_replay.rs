@@ -40,7 +40,7 @@ fn private_group_recipient_delivery_survives_sender_restart_while_member_offline
     );
     let carrier = pending
         .iter()
-        .find(|event| event.tags.public_keys().any(|key| *key == c_key))
+        .find(|event| queued_for_device(&farm.devices[0].core, event, c_key))
         .expect("C's private ratchet carrier")
         .clone();
     let sender = &farm.devices[0].core;

@@ -29,14 +29,15 @@ fn private_block_cancels_cloned_drain_and_preserves_other_peer_retry() {
                 Kind::from(MESSAGE_EVENT_KIND as u16),
                 format!("pending {index}"),
             )
-            .tag(nostr::Tag::public_key(PublicKey::from_hex(chat).unwrap()))
+            .tag(nostr::Tag::parse(["header", "test"]).unwrap())
             .tag(nostr::Tag::parse(["v", "2"]).unwrap())
             .sign_with_keys(&transport_keys)
             .unwrap();
-            assert!(core.publish_runtime_event(
+            assert!(core.publish_pairwise_runtime_event_for_test(
                 event.clone(),
                 "test",
-                Some((format!("inner-{index}"), chat.clone()))
+                Some((format!("inner-{index}"), chat.clone())),
+                Keys::generate().public_key(),
             ));
             events.push((event, chat.clone()));
         }
@@ -108,7 +109,8 @@ fn private_block_cancels_cloned_drain_and_preserves_other_peer_retry() {
             authored_at_secs: None,
             event: cancelled_event.clone(),
             chat_id: blocked.clone(),
-            inner_event_id: Some("inner-0".into())
+            inner_event_id: Some("inner-0".into()),
+            carrier: test_pairwise_carrier(),
         }));
         core.set_user_blocked(&blocked, false);
         let healthy = crate::local_relay::TestRelay::start();

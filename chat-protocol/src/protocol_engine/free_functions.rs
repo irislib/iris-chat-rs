@@ -16,6 +16,7 @@ pub(super) fn protocol_effects_from_prepared(
             event,
             chat_id: chat_id.clone(),
             inner_event_id: None,
+            carrier: ProtocolCarrier::Unmarked,
         });
     }
     for delivery in &prepared.deliveries {
@@ -26,6 +27,7 @@ pub(super) fn protocol_effects_from_prepared(
             event,
             chat_id: chat_id.clone(),
             inner_event_id: inner_event_id.clone(),
+            carrier: pairwise_carrier(delivery)?,
         };
         publishes.push(publish);
     }
@@ -47,6 +49,7 @@ pub(super) fn protocol_effects_from_group_prepared_publish(
             event,
             chat_id: chat_id.clone(),
             inner_event_id: None,
+            carrier: ProtocolCarrier::Unmarked,
         });
     }
     for delivery in &prepared.deliveries {
@@ -57,6 +60,7 @@ pub(super) fn protocol_effects_from_group_prepared_publish(
             event,
             chat_id: chat_id.clone(),
             inner_event_id: inner_event_id.clone(),
+            carrier: pairwise_carrier(delivery)?,
         };
         publishes.push(publish);
     }
@@ -68,17 +72,26 @@ pub(super) fn protocol_effects_from_group_prepared_publish(
             event,
             chat_id: chat_id.clone(),
             inner_event_id: inner_event_id.clone(),
+            carrier: ProtocolCarrier::SharedGroup,
         });
     }
     Ok(publishes.into_iter().map(ProtocolEffect::Publish).collect())
 }
 
 pub(super) fn message_event_for_delivery(delivery: &Delivery) -> anyhow::Result<Event> {
-    // Cold delivery needs a recipient, but its sender must remain the ratchet
-    // session key. Never sign this envelope with an account or device identity.
-    let mut envelope = delivery.envelope.clone();
-    envelope.recipient = Some(delivery.device_pubkey);
-    Ok(nostr_double_ratchet::message_event(&envelope)?)
+    // The wire names neither end: the signer is the ratchet session key and no
+    // tag names the recipient device. The target travels beside the event.
+    #[cfg(test)]
+    if tests::legacy_recipient_tags() {
+        return tests::legacy_recipient_message_event(&delivery.envelope, delivery.device_pubkey);
+    }
+    Ok(nostr_double_ratchet::message_event(&delivery.envelope)?)
+}
+
+pub(super) fn pairwise_carrier(delivery: &Delivery) -> anyhow::Result<ProtocolCarrier> {
+    Ok(ProtocolCarrier::Pairwise {
+        device: public_device(delivery.device_pubkey)?,
+    })
 }
 
 /// Resolve the single owner claim carried by an invite and optional caller

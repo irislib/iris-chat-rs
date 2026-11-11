@@ -96,6 +96,31 @@ pub(super) enum ProtocolAppKeysEvidence {
     Ambiguous { created_at_secs: u64 },
 }
 
+/// What a publish effect carries, recorded by the engine that produced it.
+/// It travels beside the event (effect, queue, outbox row) and never on the
+/// wire: message events name no recipient, so a pairwise envelope and shared
+/// group ciphertext cannot be told apart, or routed, from their tags.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ProtocolCarrier {
+    /// Invite responses, and anything queued before carriers were recorded.
+    #[default]
+    Unmarked,
+    /// A recipient-specific ratchet envelope for exactly this device.
+    Pairwise { device: PublicKey },
+    /// Shared group sender-key ciphertext: a local intermediate that only ever
+    /// travels inside pairwise envelopes. Never hand it to a network carrier.
+    SharedGroup,
+}
+
+impl ProtocolCarrier {
+    pub fn pairwise_device(self) -> Option<PublicKey> {
+        match self {
+            Self::Pairwise { device } => Some(device),
+            Self::Unmarked | Self::SharedGroup => None,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ProtocolPublish {
     /// Original plaintext timestamp, preserved when sealing happens on a later retry.
@@ -103,6 +128,19 @@ pub struct ProtocolPublish {
     pub event: Event,
     pub chat_id: String,
     pub inner_event_id: Option<String>,
+    #[serde(default)]
+    pub carrier: ProtocolCarrier,
+}
+
+impl ProtocolPublish {
+    /// Whether any network carrier may take this event. Message events need
+    /// the engine's own pairwise marker and must not name a recipient, which
+    /// also retires envelopes sealed by versions that still tagged one.
+    pub fn is_publishable(&self) -> bool {
+        self.event.kind.as_u16() as u32 != MESSAGE_EVENT_KIND
+            || (self.carrier.pairwise_device().is_some()
+                && self.event.tags.public_keys().next().is_none())
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]

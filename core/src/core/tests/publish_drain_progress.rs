@@ -25,6 +25,7 @@ fn publish_drain_progress_fixture(count: usize) -> (AppCore, Vec<String>) {
                 created_at_secs: event.created_at.as_secs(),
                 attempt_count: 0,
                 last_error: None,
+                pairwise_device_hex: None,
             },
         );
         ids.push(event_id);

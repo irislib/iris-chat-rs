@@ -200,13 +200,14 @@ impl ProtocolEngine {
             typing.ensure_id();
             let typing_payload = serde_json::to_vec(&typing)?;
             let plan = session.plan_send(&typing_payload, ctx.now)?;
-            let mut envelope = session.apply_send(plan).envelope;
-            envelope.recipient = Some(invite.inviter_device_pubkey);
-            let typing_event = message_event_for_delivery(&Delivery {
+            let envelope = session.apply_send(plan).envelope;
+            let typing_delivery = Delivery {
                 owner_pubkey: owner,
                 device_pubkey: invite.inviter_device_pubkey,
                 envelope,
-            })?;
+            };
+            let typing_event = message_event_for_delivery(&typing_delivery)?;
+            let typing_carrier = pairwise_carrier(&typing_delivery)?;
 
             self.session_manager.import_session_state(
                 owner,
@@ -228,12 +229,14 @@ impl ProtocolEngine {
                         event: response_event,
                         chat_id: chat_id.clone(),
                         inner_event_id: None,
+                        carrier: ProtocolCarrier::Unmarked,
                     }),
                     ProtocolEffect::Publish(ProtocolPublish {
                         authored_at_secs: Some(now.get()),
                         event: typing_event,
                         chat_id,
                         inner_event_id: None,
+                        carrier: typing_carrier,
                     }),
                 ],
             })
@@ -547,12 +550,13 @@ impl ProtocolEngine {
             engine.prepare_private_group_wakes(group_id, &mut output, message_id.clone())?;
             // The shared ciphertext is only a payload inside recipient-specific
             // ratchets. It must never create a public channel or publication.
+            // Both shapes look alike on the wire, so only provenance decides.
             let private_ids = output
                 .effects
                 .iter()
                 .filter_map(|effect| {
                     let ProtocolEffect::Publish(publish) = effect;
-                    (publish.event.tags.public_keys().next().is_some())
+                    (publish.carrier != ProtocolCarrier::SharedGroup)
                         .then_some(publish.event.id.to_hex())
                 })
                 .collect::<HashSet<_>>();

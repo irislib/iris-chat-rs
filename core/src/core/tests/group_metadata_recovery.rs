@@ -112,7 +112,11 @@ fn missing_group_context_recovers_from_admin_and_member_without_empty_chats() {
                 event.kind.as_u16() as u32,
                 MESSAGE_EVENT_KIND | INVITE_RESPONSE_KIND
             ));
-            assert_eq!(event.tags.public_keys().count(), 1);
+            // Only an invite response names a target: the public invite key.
+            assert_eq!(
+                event.tags.public_keys().count(),
+                usize::from(event.kind.as_u16() as u32 == INVITE_RESPONSE_KIND)
+            );
         }
         for entry in &farm.devices {
             for filter in build_protocol_subscription_filters(

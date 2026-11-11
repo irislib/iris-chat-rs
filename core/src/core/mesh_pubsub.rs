@@ -231,9 +231,10 @@ impl AppCore {
         }) else {
             return;
         };
-        if let Err(error) = self
-            .app_store
-            .retain_group_envelope(&owner, chat, &message.id, event)
+        let pairwise = self.queued_pairwise_device(event).is_some();
+        if let Err(error) =
+            self.app_store
+                .retain_group_envelope(&owner, chat, &message.id, event, pairwise)
         {
             self.push_debug_log("mesh.group_replay.store", error.to_string());
         }
@@ -336,7 +337,7 @@ impl AppCore {
     }
 
     pub(super) fn publish_mesh_event(&self, event: &Event) {
-        if !self.private_publication_allowed(event) {
+        if !self.carrier_publication_allowed(event) {
             return;
         }
         let Some(mesh) = &self.device_sync else {

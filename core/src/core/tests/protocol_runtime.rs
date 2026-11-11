@@ -92,7 +92,6 @@ pub(super) fn protocol_plan_for_test(
             .into_iter()
             .map(|pubkey| pubkey.to_hex())
             .collect(),
-        message_recipients: Vec::new(),
         group_roster_group_ids: Vec::new(),
         group_roster_authors: Vec::new(),
         group_sender_key_authors: group_sender_key_authors
@@ -506,15 +505,16 @@ fn queued_runtime_publish_retries_when_message_servers_return() {
         .clear();
     let event = EventBuilder::new(Kind::from(MESSAGE_EVENT_KIND as u16), "retry body")
         .tag(nostr::Tag::parse(["v", "2"]).unwrap())
-        .tag(nostr::Tag::public_key(Keys::generate().public_key()))
+        .tag(nostr::Tag::parse(["header", "test"]).unwrap())
         .sign_with_keys(&transport_keys)
         .expect("event");
     let event_id = event.id.to_string();
 
-    core.publish_runtime_event(
+    core.publish_pairwise_runtime_event_for_test(
         event,
         "runtime",
         Some((message_id.clone(), chat_id.clone())),
+        Keys::generate().public_key(),
     );
 
     assert!(core.pending_relay_publishes.contains_key(&event_id));
@@ -596,7 +596,7 @@ fn first_contact_publishes_bootstrap_and_payload_durably() {
         .expect("bootstrap event");
     let payload = EventBuilder::new(Kind::from(MESSAGE_EVENT_KIND as u16), "payload")
         .tag(nostr::Tag::parse(["v", "2"]).unwrap())
-        .tag(nostr::Tag::public_key(Keys::generate().public_key()))
+        .tag(nostr::Tag::parse(["header", "test"]).unwrap())
         .sign_with_keys(&transport_keys)
         .expect("payload event");
     let payload_id = payload.id.to_string();
@@ -605,13 +605,9 @@ fn first_contact_publishes_bootstrap_and_payload_durably() {
         event: bootstrap,
         chat_id: chat_id.clone(),
         inner_event_id: None,
+        carrier: ProtocolCarrier::Unmarked,
     };
-    let payload_publish = ProtocolPublish {
-        authored_at_secs: None,
-        event: payload,
-        chat_id: chat_id.clone(),
-        inner_event_id: Some(message_id.clone()),
-    };
+    let payload_publish = pairwise_publish_for_test(payload, &chat_id, Some(message_id.clone()));
 
     core.process_protocol_engine_effects(vec![
         ProtocolEffect::Publish(bootstrap_publish),
@@ -661,7 +657,7 @@ fn liveness_retries_pending_relay_publish_without_active_protocol_subscription()
 
     let event = EventBuilder::new(Kind::from(MESSAGE_EVENT_KIND as u16), "retry body")
         .tag(nostr::Tag::parse(["v", "2"]).unwrap())
-        .tag(nostr::Tag::public_key(Keys::generate().public_key()))
+        .tag(nostr::Tag::parse(["header", "test"]).unwrap())
         .sign_with_keys(&transport_keys)
         .expect("event");
     let event_id = event.id.to_string();
@@ -677,6 +673,7 @@ fn liveness_retries_pending_relay_publish_without_active_protocol_subscription()
             created_at_secs: event.created_at.as_secs(),
             attempt_count: 0,
             last_error: Some("initial offline publish failed".to_string()),
+            pairwise_device_hex: Some(Keys::generate().public_key().to_hex()),
         },
     );
 
@@ -768,6 +765,7 @@ fn failed_publish_drain_batches_results_and_schedules_one_retry() {
                 created_at_secs: event.created_at.as_secs(),
                 attempt_count: 0,
                 last_error: None,
+                pairwise_device_hex: None,
             },
         );
         results.push(RelayPublishDrainResult {
@@ -825,6 +823,7 @@ fn pending_relay_publish_batch_selection_is_bounded_and_ordered() {
                 created_at_secs,
                 attempt_count: 0,
                 last_error: None,
+                pairwise_device_hex: None,
             },
         );
     };
@@ -882,6 +881,7 @@ fn pending_relay_control_publish_cap_keeps_message_linked_publishes() {
                 created_at_secs,
                 attempt_count: 0,
                 last_error: None,
+                pairwise_device_hex: None,
             },
         );
     };
@@ -1041,6 +1041,7 @@ fn protocol_invite_response_publish_prunes_superseded_pending_bootstrap() {
         event: older,
         chat_id: chat_id.clone(),
         inner_event_id: None,
+        carrier: ProtocolCarrier::Unmarked,
     }));
     assert!(core.pending_relay_publishes.contains_key(&older_id));
 
@@ -1049,6 +1050,7 @@ fn protocol_invite_response_publish_prunes_superseded_pending_bootstrap() {
         event: newer,
         chat_id,
         inner_event_id: None,
+        carrier: ProtocolCarrier::Unmarked,
     }));
 
     assert!(
@@ -1107,6 +1109,7 @@ fn storage_prunes_superseded_protocol_invite_response_rows_before_load() {
                 created_at_secs: event.created_at.as_secs(),
                 attempt_count: 0,
                 last_error: None,
+                pairwise_device_hex: None,
             })
             .expect("store pending publish");
     }
@@ -1171,6 +1174,7 @@ fn protocol_control_publish_prunes_superseded_rows_already_in_storage() {
                 created_at_secs: event.created_at.as_secs(),
                 attempt_count: 0,
                 last_error: None,
+                pairwise_device_hex: None,
             })
             .expect("store pending publish");
     }
@@ -1180,6 +1184,7 @@ fn protocol_control_publish_prunes_superseded_rows_already_in_storage() {
         event: newest,
         chat_id: chat_id.clone(),
         inner_event_id: None,
+        carrier: ProtocolCarrier::Unmarked,
     }));
 
     let pending = core
@@ -1234,6 +1239,7 @@ fn older_protocol_control_publish_is_skipped_when_newer_row_is_already_stored() 
             created_at_secs: newer.created_at.as_secs(),
             attempt_count: 0,
             last_error: None,
+            pairwise_device_hex: None,
         })
         .expect("store pending publish");
 
@@ -1242,6 +1248,7 @@ fn older_protocol_control_publish_is_skipped_when_newer_row_is_already_stored() 
         event: older,
         chat_id: chat_id.clone(),
         inner_event_id: None,
+        carrier: ProtocolCarrier::Unmarked,
     }));
 
     let pending_ids = core
@@ -1282,6 +1289,7 @@ fn storage_caps_control_pending_publishes_without_pruning_messages() {
                 created_at_secs,
                 attempt_count: 0,
                 last_error: None,
+                pairwise_device_hex: None,
             })
             .expect("store pending publish");
     }
@@ -1479,29 +1487,21 @@ fn distinct_protocol_publishes_for_same_target_are_kept() {
     );
     let first = EventBuilder::new(Kind::from(MESSAGE_EVENT_KIND as u16), "first")
         .tag(nostr::Tag::parse(["v", "2"]).unwrap())
-        .tag(nostr::Tag::public_key(Keys::generate().public_key()))
+        .tag(nostr::Tag::parse(["header", "test"]).unwrap())
         .sign_with_keys(&transport_keys)
         .expect("first event");
     let first_event_id = first.id.to_string();
     let second = EventBuilder::new(Kind::from(MESSAGE_EVENT_KIND as u16), "second")
         .tag(nostr::Tag::parse(["v", "2"]).unwrap())
-        .tag(nostr::Tag::public_key(Keys::generate().public_key()))
+        .tag(nostr::Tag::parse(["header", "test"]).unwrap())
         .sign_with_keys(&transport_keys)
         .expect("second event");
     let second_event_id = second.id.to_string();
 
-    assert!(core.publish_protocol_event(ProtocolPublish {
-        authored_at_secs: None,
-        event: first,
-        chat_id: chat_id.clone(),
-        inner_event_id: Some(message_id.clone()),
-    }));
-    assert!(core.publish_protocol_event(ProtocolPublish {
-        authored_at_secs: None,
-        event: second,
-        chat_id: chat_id.clone(),
-        inner_event_id: Some(message_id),
-    }));
+    for event in [first, second] {
+        let publish = pairwise_publish_for_test(event, &chat_id, Some(message_id.clone()));
+        assert!(core.publish_protocol_event(publish));
+    }
 
     assert!(core.pending_relay_publishes.contains_key(&first_event_id));
     assert!(core.pending_relay_publishes.contains_key(&second_event_id));

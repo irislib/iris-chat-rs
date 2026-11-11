@@ -110,22 +110,22 @@ fn ratcheted_call_wake_for_test(a: &mut AppCore, recipient: &Keys, id: &str) -> 
             unix_now(),
         )
         .unwrap();
-    let encrypted = protocol_effect_events(&result.effects)
-        .into_iter()
-        .find(|event| event.kind.as_u16() as u32 == MESSAGE_EVENT_KIND)
-        .unwrap()
-        .clone();
+    let (encrypted, recipient_device) = result
+        .effects
+        .iter()
+        .find_map(|ProtocolEffect::Publish(publish)| {
+            (publish.event.kind.as_u16() as u32 == MESSAGE_EVENT_KIND)
+                .then(|| (publish.event.clone(), publish.carrier.pairwise_device()))
+        })
+        .unwrap();
+    let recipient_device = recipient_device.expect("the offer has a recorded target device");
+    assert!(encrypted.tags.public_keys().next().is_none());
     EventBuilder::new(
         Kind::from(21111),
         serde_json::json!({"type":"call-wake","v":3,"events":[encrypted]}).to_string(),
     )
-    .tags(
-        encrypted
-            .tags
-            .public_keys()
-            .copied()
-            .map(nostr::Tag::public_key),
-    )
+    // The wake names the device it rings; the message inside names nobody.
+    .tag(nostr::Tag::public_key(recipient_device))
     .sign_with_keys(&Keys::generate())
     .unwrap()
 }

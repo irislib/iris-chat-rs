@@ -1514,7 +1514,6 @@ fn single_protocol_plan_builds_filters_for_all_protocol_inputs() {
         roster_authors: vec![owner.public_key().to_hex()],
         invite_authors: vec![invite_author.public_key().to_hex()],
         message_authors: vec![message_author.public_key().to_hex()],
-        message_recipients: Vec::new(),
         group_roster_group_ids: vec!["test-group".to_string()],
         group_roster_authors: vec![group_admin.public_key().to_hex()],
         group_sender_key_authors: vec![group_author.public_key().to_hex()],
@@ -2294,7 +2293,7 @@ fn queued_runtime_publish_registration_persists_inner_message_id() {
         DeliveryState::Queued,
     );
     let outer_event = EventBuilder::new(Kind::from(MESSAGE_EVENT_KIND as u16), "")
-        .tag(nostr::Tag::public_key(peer.public_key()))
+        .tag(nostr::Tag::parse(["header", "test"]).unwrap())
         .tag(nostr::Tag::parse(["v", "2"]).unwrap())
         .sign_with_keys(&transport_keys)
         .expect("outer event");
@@ -2305,6 +2304,7 @@ fn queued_runtime_publish_registration_persists_inner_message_id() {
         event: outer_event,
         chat_id: chat_id.clone(),
         inner_event_id: Some(inner_message_id.clone()),
+        carrier: test_pairwise_carrier(),
     }));
     let pending = core
         .pending_relay_publishes

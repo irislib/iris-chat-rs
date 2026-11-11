@@ -49,11 +49,7 @@ pub(super) fn private_group_wake_events(
     let receiver = farm
         .devices
         .iter()
-        .find(|device| {
-            wake.tags
-                .public_keys()
-                .any(|key| *key == device.keys.public_key())
-        })
+        .find(|device| queued_for_device(sender, wake, device.keys.public_key()))
         .unwrap();
     let owner = farm.owners[receiver.owner].public_key();
     let message = mobile_push::preview_direct_messages(
@@ -153,16 +149,12 @@ fn mobile_push_cached_group_previews_require_authenticated_carrier_ids() {
     farm.send(0, &chat_id, body);
     let (nested, wakes) = private_group_wake_events(&farm, &group_id);
     let owner = farm.owners[1].public_key();
-    let receiver = &mut farm.devices[1];
+    let receiver_key = farm.devices[1].keys.public_key();
     let wake = wakes
         .iter()
-        .find(|event| {
-            event
-                .tags
-                .public_keys()
-                .any(|key| *key == receiver.keys.public_key())
-        })
+        .find(|event| queued_for_device(&farm.devices[0].core, event, receiver_key))
         .unwrap();
+    let receiver = &mut farm.devices[1];
     receiver.core.handle_relay_event(wake.clone());
     receiver.core.persist_best_effort();
     let data_dir = receiver._dir.path().to_string_lossy().into_owned();
@@ -256,12 +248,7 @@ fn mobile_push_group_wake_binds_outer_rumor_and_nested_sender() {
             .unwrap()
             .send_direct_unsigned_event_to_peer_only(receiver_owner, &chat_id, rumor, unix_now())
             .unwrap();
-        let wake = protocol_publish_events(&result.effects)
-            .into_iter()
-            .find(|event| {
-                event.kind.as_u16() as u32 == MESSAGE_EVENT_KIND
-                    && event.tags.public_keys().any(|key| *key == receiver_device)
-            })
+        let wake = pairwise_event_for_device(&result.effects, receiver_device)
             .expect("recipient-specific ratchet envelope");
         let preview = decrypt_mobile_push_notification(
             farm.devices[1]._dir.path().to_string_lossy().into_owned(),
@@ -302,15 +289,7 @@ fn mobile_push_group_wake_rejects_nested_rumor_author_mismatch() {
             .unwrap();
         let owner = farm.owners[1].public_key();
         let receiver = &mut farm.devices[1];
-        let wake = protocol_publish_events(&result.effects)
-            .into_iter()
-            .find(|event| {
-                event.kind.as_u16() as u32 == MESSAGE_EVENT_KIND
-                    && event
-                        .tags
-                        .public_keys()
-                        .any(|key| *key == receiver.keys.public_key())
-            })
+        let wake = pairwise_event_for_device(&result.effects, receiver.keys.public_key())
             .expect("recipient-specific ratchet envelope");
         let preview = decrypt_mobile_push_notification(
             receiver._dir.path().to_string_lossy().into_owned(),
@@ -350,15 +329,7 @@ fn mobile_push_group_wake_control_preview_survives_foreground_decryption() {
         .unwrap();
     let owner = farm.owners[1].public_key();
     let receiver = &mut farm.devices[1];
-    let wake = protocol_publish_events(&result.effects)
-        .into_iter()
-        .find(|event| {
-            event.kind.as_u16() as u32 == MESSAGE_EVENT_KIND
-                && event
-                    .tags
-                    .public_keys()
-                    .any(|key| *key == receiver.keys.public_key())
-        })
+    let wake = pairwise_event_for_device(&result.effects, receiver.keys.public_key())
         .expect("recipient-specific ratchet envelope")
         .clone();
     let direct = mobile_push::preview_direct_messages(
@@ -463,12 +434,7 @@ fn mobile_push_device_authored_direct_rumors_match_foreground_sender_validation(
                 unix_now(),
             )
             .unwrap();
-        let event = protocol_publish_events(&sent.effects)
-            .into_iter()
-            .find(|event| {
-                event.kind.as_u16() as u32 == MESSAGE_EVENT_KIND
-                    && event.tags.public_keys().any(|key| *key == receiver_device)
-            })
+        let event = pairwise_event_for_device(&sent.effects, receiver_device)
             .unwrap()
             .clone();
         let receiver = &mut farm.devices[1];
@@ -532,12 +498,7 @@ fn mobile_push_direct_group_copies_keep_authenticated_cached_previews() {
             .unwrap()
             .send_direct_unsigned_event_to_peer_only(owner, &chat_id, rumor, unix_now())
             .unwrap();
-        let event = protocol_publish_events(&sent.effects)
-            .into_iter()
-            .find(|event| {
-                event.kind.as_u16() as u32 == MESSAGE_EVENT_KIND
-                    && event.tags.public_keys().any(|key| *key == device)
-            })
+        let event = pairwise_event_for_device(&sent.effects, device)
             .unwrap()
             .clone();
         let receiver = &mut farm.devices[1];
@@ -577,7 +538,7 @@ fn private_group_wake_cold_preview_and_foreground_orders_preserve_exactly_one_me
         let recipient = farm.devices[index].keys.public_key();
         let wake = wakes
             .iter()
-            .find(|event| event.tags.public_keys().any(|key| *key == recipient))
+            .find(|event| queued_for_device(&farm.devices[0].core, event, recipient))
             .expect("recipient-routed wake")
             .clone();
         let wire = serde_json::to_string(&wake).unwrap();
@@ -757,6 +718,10 @@ fn private_group_wake_outbox_failure_and_crash_before_ack_recover_the_complete_b
                             created_at_secs: publish.event.created_at.as_secs(),
                             attempt_count: 7,
                             last_error: Some("preserved retry state".into()),
+                            pairwise_device_hex: publish
+                                .carrier
+                                .pairwise_device()
+                                .map(|device| device.to_hex()),
                         },
                         publish.authored_at_secs,
                     )
@@ -770,8 +735,7 @@ fn private_group_wake_outbox_failure_and_crash_before_ack_recover_the_complete_b
             shared.lock().unwrap().execute_batch(
                 "CREATE TEMP TRIGGER reject_private_wake BEFORE INSERT ON pending_relay_publishes
                  WHEN json_extract(NEW.event_json, '$.kind') = 1060
-                  AND EXISTS (SELECT 1 FROM json_each(NEW.event_json, '$.tags')
-                              WHERE json_extract(value, '$[0]') = 'p')
+                  AND NEW.pairwise_device_hex IS NOT NULL
                  BEGIN SELECT RAISE(ABORT, 'injected private wake failure'); END"
             ).unwrap();
             core.process_protocol_engine_effects(result.effects.clone());
@@ -881,7 +845,8 @@ fn private_groups_never_publish_or_subscribe_shared_channels_or_rosters() {
             assert!(!nostr_double_ratchet::is_group_roster_fact_event(&event));
             assert!(!authors.contains(&event.pubkey));
             if event.kind.as_u16() as u32 == MESSAGE_EVENT_KIND {
-                assert_eq!(event.tags.public_keys().count(), 1);
+                assert_eq!(event.tags.public_keys().count(), 0);
+                assert!(pending.pairwise_device_hex.is_some());
             }
         }
     }

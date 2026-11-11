@@ -49,10 +49,36 @@ fn unrelated_nearby_receipt_preserves_delivery_to_a_late_peer() {
         "opaque message for the later peer",
     )
     .tag(Tag::parse(["v", "2"]).unwrap())
-    .tag(Tag::public_key(late.public_key()))
+    .tag(Tag::parse(["header", "encrypted-header"]).unwrap())
     .sign_with_keys(&Keys::generate())
     .unwrap();
     let event_id = event.id.to_hex();
+    // The message names nobody; its target is the queue's delivery record.
+    core.publish_fips_nearby(&event);
+    assert!(core
+        .device_sync
+        .as_ref()
+        .unwrap()
+        .nearby_outbox
+        .read()
+        .unwrap()
+        .entries
+        .is_empty());
+    core.pending_relay_publishes.insert(
+        event_id.clone(),
+        PendingRelayPublish {
+            owner_pubkey_hex: String::new(),
+            event_id: event_id.clone(),
+            label: "test".into(),
+            event_json: serde_json::to_string(&event).unwrap(),
+            inner_event_id: None,
+            chat_id: None,
+            created_at_secs: event.created_at.as_secs(),
+            attempt_count: 0,
+            last_error: None,
+            pairwise_device_hex: Some(late.public_key().to_hex()),
+        },
+    );
     // Exercise the real publication queue and transport receipt handler.
     // The first peer's transport receipt says nothing about the later peer.
     core.publish_fips_nearby(&event);

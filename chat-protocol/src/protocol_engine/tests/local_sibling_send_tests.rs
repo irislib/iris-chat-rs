@@ -268,17 +268,22 @@ fn note_to_self_delivers_to_ready_device_and_retries_only_the_missing_copy() {
         let invite_key = receiver.local_invite_response_pubkey().unwrap();
         for ProtocolEffect::Publish(publish) in &effects {
             let event = &publish.event;
-            let recipient = match event.kind.as_u16() as u32 {
-                INVITE_RESPONSE_KIND => invite_key,
-                MESSAGE_EVENT_KIND => target.public_key(),
+            let named = event.tags.public_keys().copied().collect::<Vec<_>>();
+            match event.kind.as_u16() as u32 {
+                INVITE_RESPONSE_KIND => assert_eq!(named, [invite_key]),
+                MESSAGE_EVENT_KIND => {
+                    assert!(named.is_empty(), "message events name no recipient");
+                    assert_eq!(publish.carrier.pairwise_device(), Some(target.public_key()));
+                }
                 _ => panic!("unexpected note-to-self publication"),
-            };
-            assert_eq!(
-                event.tags.public_keys().copied().collect::<Vec<_>>(),
-                [recipient]
-            );
+            }
             let wire = serde_json::to_string(event).unwrap();
-            for private in [account.to_hex(), source.public_key().to_hex(), note.into()] {
+            for private in [
+                account.to_hex(),
+                source.public_key().to_hex(),
+                target.public_key().to_hex(),
+                note.into(),
+            ] {
                 assert!(!wire.contains(&private));
             }
             assert_ne!(event.pubkey, target.public_key());

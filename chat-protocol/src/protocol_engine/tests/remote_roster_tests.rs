@@ -196,6 +196,7 @@ fn remote_roster_lookup_allocations_do_not_scale_with_unrelated_sessions() {
         ndr_device(Keys::generate().public_key()),
         nostr_double_ratchet::SkippedKeysEntry {
             message_keys: (0..256).map(|number| (number, [7; 32])).collect(),
+            header_keys: Vec::new(),
         },
     );
     for _ in 0..16 {

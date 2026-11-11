@@ -41,9 +41,7 @@ fn mentions_group_push_and_foreground_use_identity_and_respect_mute_choice() {
         let event = events
             .iter()
             .find(|event| {
-                event.kind.as_u16() as u32 == MESSAGE_EVENT_KIND
-                    && event.tags.public_keys().copied().collect::<Vec<_>>()
-                        == vec![receiver.keys.public_key()]
+                queued_for_device(&farm.devices[0].core, event, receiver.keys.public_key())
                     && farm.devices[0]
                         .core
                         .pending_relay_publishes
@@ -137,11 +135,11 @@ fn mentions_group_push_and_foreground_use_identity_and_respect_mute_choice() {
     let event = sorted_pending_events_for_test(&farm.devices[0].core)
         .into_iter()
         .find(|event| {
-            event
-                .tags
-                .public_keys()
-                .any(|key| *key == farm.devices[1].keys.public_key())
-                && !authors.contains(&event.pubkey)
+            queued_for_device(
+                &farm.devices[0].core,
+                event,
+                farm.devices[1].keys.public_key(),
+            ) && !authors.contains(&event.pubkey)
         })
         .unwrap();
     let receiver = &farm.devices[1];

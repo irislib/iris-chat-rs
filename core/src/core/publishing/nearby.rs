@@ -2,7 +2,7 @@ use super::*;
 
 impl AppCore {
     pub(in crate::core) fn emit_nearby_published_event(&self, event: &Event) {
-        if !self.private_publication_allowed(event) {
+        if !self.carrier_publication_allowed(event) {
             return;
         }
         self.publish_fips_nearby(event);

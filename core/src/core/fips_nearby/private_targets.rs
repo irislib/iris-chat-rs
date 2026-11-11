@@ -26,12 +26,13 @@ pub(super) fn encoded_private_targets(payload: &[u8]) -> Option<BTreeSet<String>
     if !is_private_transport_event(&event) {
         return None;
     }
-    // Invite responses address an ephemeral invite key, not a live endpoint.
-    // Only the protocol's authenticated invite record may supply that mapping.
-    Some(if event.kind.as_u16() as u32 == INVITE_RESPONSE_KIND {
-        BTreeSet::new()
-    } else {
+    // Neither an invite response nor a message event names a live endpoint.
+    // Only local delivery metadata may supply that mapping; a call wake names
+    // the device it rings.
+    Some(if event.kind.as_u16() == 21_111 {
         recipient_device_target(&event)
+    } else {
+        BTreeSet::new()
     })
 }
 
@@ -41,6 +42,14 @@ impl AppCore {
             return true;
         }
         let recipients = event.tags.public_keys().copied().collect::<Vec<_>>();
+        if event.kind.as_u16() as u32 == MESSAGE_EVENT_KIND && recipients.is_empty() {
+            // Message events name nobody. Whether this device can read one is
+            // decided by its ratchet sessions after signature checks, and an
+            // unknown sender only reaches the bounded pending queue.
+            return self.logged_in.is_some()
+                && crate::core::publishing::message_event_names_nobody(event);
+        }
+        // Older clients still name the receiving device on message events.
         let [recipient] = recipients.as_slice() else {
             return false;
         };
@@ -77,8 +86,19 @@ impl AppCore {
         if !is_private_transport_event(event) {
             return None;
         }
-        if event.kind.as_u16() as u32 != INVITE_RESPONSE_KIND {
-            return Some(recipient_device_target(event));
+        match event.kind.as_u16() as u32 {
+            // The target of a message event exists only in the local queue.
+            // Without that record there is nobody to send it to.
+            MESSAGE_EVENT_KIND => {
+                return Some(
+                    self.queued_pairwise_device(event)
+                        .and_then(|device| fips_peer_from_hex(&device.to_hex()))
+                        .map(|peer| BTreeSet::from([peer.npub()]))
+                        .unwrap_or_default(),
+                );
+            }
+            INVITE_RESPONSE_KIND => {}
+            _ => return Some(recipient_device_target(event)),
         }
         let recipients = event.tags.public_keys().collect::<Vec<_>>();
         let [recipient] = recipients.as_slice() else {

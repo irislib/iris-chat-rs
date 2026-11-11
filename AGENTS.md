@@ -21,9 +21,14 @@ before looking up a requested hash. Test both fetches and active cache probes.
 User-to-user relay traffic must use double-ratchet sessions and their invite
 handshakes. Never reveal the identities of both participants through event
 signers, tags, notification filters, authentication, or correlations between them.
-Prefer invite/session keys over identity keys. A recipient device tag is allowed
-when necessary for delivery only if the sender uses a session key unlinkable to
-its identity; invite responses target the invite's ephemeral key. Keep caller
+Prefer invite/session keys over identity keys. Message events (kind 1060) never
+name a recipient: their tags are exactly the version and header, and the target
+device stays in local delivery metadata (the publish effect and the outbox
+row). A recipient tag would let a message server link deliveries, and each
+group fanout burst, to the receiving devices. Do not subscribe to message
+events by recipient either. Only an invite response names a target: the
+invite's ephemeral key. Envelopes from older clients that still tag a recipient
+are read, never written or republished. Keep caller
 and contact authorization on device, after authenticated decryption. FIPS remains
 available for live traffic. Delivery and cold-start fixes must not weaken this
 boundary; do not retain an identity-leaking compatibility fallback.

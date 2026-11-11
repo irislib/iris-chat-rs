@@ -26,12 +26,13 @@ fn pending_publish_replays_do_not_rewrite_offline_outbox() {
                     Kind::from(MESSAGE_EVENT_KIND as u16),
                     format!("pending control {index} {}", "x".repeat(4096)),
                 )
-                .tag(nostr::Tag::public_key(device.public_key()))
+                .tag(nostr::Tag::parse(["header", "test"]).unwrap())
                 .tag(nostr::Tag::parse(["v", "2"]).unwrap())
                 .sign_with_keys(&transport_keys)
                 .unwrap(),
                 chat_id: format!("pending-chat-{index}"),
                 inner_event_id: None,
+                carrier: test_pairwise_carrier(),
             })
         })
         .collect::<Vec<_>>();
@@ -79,12 +80,17 @@ fn pending_publish_replay_preserves_attempts_and_enriches_metadata() {
     let (mut core, _, _dir) =
         logged_in_test_core_with_updates("pending-publish-metadata", &owner, &device);
     let event = EventBuilder::new(Kind::from(MESSAGE_EVENT_KIND as u16), "queued")
-        .tag(nostr::Tag::public_key(device.public_key()))
+        .tag(nostr::Tag::parse(["header", "test"]).unwrap())
         .tag(nostr::Tag::parse(["v", "2"]).unwrap())
         .sign_with_keys(&transport_keys)
         .unwrap();
     let id = event.id.to_hex();
-    core.publish_runtime_event(event.clone(), APPCORE_PROTOCOL_LABEL, None);
+    core.publish_pairwise_runtime_event_for_test(
+        event.clone(),
+        APPCORE_PROTOCOL_LABEL,
+        None,
+        device.public_key(),
+    );
     let mut pending = core.pending_relay_publishes[&id].clone();
     pending.attempt_count = 7;
     pending.last_error = Some("publish attempt in progress".into());
@@ -113,6 +119,7 @@ fn pending_publish_replay_preserves_attempts_and_enriches_metadata() {
         event: event.clone(),
         chat_id: chat.clone(),
         inner_event_id: Some("inner".into()),
+        carrier: test_pairwise_carrier(),
     }));
     let enriched = &core.pending_relay_publishes[&id];
     assert_eq!(enriched.attempt_count, 7);
@@ -126,7 +133,12 @@ fn pending_publish_replay_preserves_attempts_and_enriches_metadata() {
         .outer_event_ids
         .contains(&id));
     let writes = pending_publish_changes(&core);
-    assert!(core.publish_runtime_event(event, APPCORE_PROTOCOL_LABEL, None));
+    assert!(core.publish_pairwise_runtime_event_for_test(
+        event,
+        APPCORE_PROTOCOL_LABEL,
+        None,
+        device.public_key(),
+    ));
     assert_eq!(pending_publish_changes(&core), writes);
     assert_eq!(
         core.pending_relay_publishes[&id].inner_event_id.as_deref(),

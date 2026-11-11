@@ -19,14 +19,13 @@ fn direct_message_and_handshake_wire_hide_sender_identity() {
         let ProtocolEffect::Publish(publish) = effect;
         if publish.event.kind.as_u16() as u32 == MESSAGE_EVENT_KIND {
             messages += 1;
+            assert!(
+                publish.event.tags.public_keys().next().is_none(),
+                "message events name no recipient device"
+            );
             assert_eq!(
-                publish
-                    .event
-                    .tags
-                    .public_keys()
-                    .copied()
-                    .collect::<Vec<_>>(),
-                vec![f.ready_device.public_key()]
+                publish.carrier.pairwise_device(),
+                Some(f.ready_device.public_key())
             );
         } else if publish.event.kind.as_u16() as u32 == INVITE_RESPONSE_KIND {
             assert_eq!(
@@ -45,10 +44,16 @@ fn direct_message_and_handshake_wire_hide_sender_identity() {
             panic!("unexpected private publish kind");
         }
         let wire = serde_json::to_string(&publish.event).unwrap();
-        for identity in [&f.owner, &f.device, &f.peer_owner, &f.late_device] {
+        for identity in [
+            &f.owner,
+            &f.device,
+            &f.peer_owner,
+            &f.ready_device,
+            &f.late_device,
+        ] {
             assert!(
                 !wire.contains(&identity.public_key().to_hex()),
-                "private exchange exposed a sender identity or recipient account"
+                "private exchange exposed an account or device identity"
             );
         }
         for identity in [

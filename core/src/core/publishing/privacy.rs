@@ -5,9 +5,14 @@ impl AppCore {
     /// does not prevent a public signer from identifying the sender.
     pub(in crate::core) fn private_publication_allowed(&self, event: &Event) -> bool {
         let kind = event.kind.as_u16() as u32;
+        // A message event carries the version and header only. Naming its
+        // recipient device would let a relay link deliveries, and each group
+        // fanout burst, to the receiving devices, so envelopes queued by a
+        // version that still tagged one are never republished. Only an invite
+        // response names a target: the public invite key.
         if nostr_double_ratchet::is_group_roster_fact_event(event)
-            || (matches!(kind, MESSAGE_EVENT_KIND | INVITE_RESPONSE_KIND)
-                && event.tags.public_keys().count() != 1)
+            || (kind == MESSAGE_EVENT_KIND && !message_event_names_nobody(event))
+            || (kind == INVITE_RESPONSE_KIND && event.tags.public_keys().count() != 1)
         {
             return false;
         }
@@ -46,6 +51,40 @@ impl AppCore {
             return false;
         }
         !private_envelope || !self.is_public_identity_signer(event.pubkey)
+    }
+
+    /// Whether a publish effect may enter the outbox or any carrier. Shared
+    /// group ciphertext has the same wire shape as a pairwise envelope, so
+    /// only the engine's own record of what it produced tells them apart.
+    pub(in crate::core) fn protocol_publication_allowed(&self, publish: &ProtocolPublish) -> bool {
+        publish.is_publishable() && self.private_publication_allowed(&publish.event)
+    }
+
+    /// Whether a saved outbox row may still be replayed on any carrier.
+    pub(in crate::core) fn pending_publication_allowed(
+        &self,
+        pending: &PendingRelayPublish,
+        event: &Event,
+    ) -> bool {
+        self.private_publication_allowed(event)
+            && (event.kind.as_u16() as u32 != MESSAGE_EVENT_KIND
+                || pending_pairwise_device(pending).is_some())
+    }
+
+    /// The device a queued message event is for, from local delivery
+    /// metadata. The event itself never says.
+    pub(in crate::core) fn queued_pairwise_device(&self, event: &Event) -> Option<PublicKey> {
+        self.pending_relay_publishes
+            .get(&event.id.to_hex())
+            .and_then(pending_pairwise_device)
+    }
+
+    /// For carriers that are handed only an event: a message event must be a
+    /// pairwise envelope this device queued for a known target.
+    pub(in crate::core) fn carrier_publication_allowed(&self, event: &Event) -> bool {
+        self.private_publication_allowed(event)
+            && (event.kind.as_u16() as u32 != MESSAGE_EVENT_KIND
+                || self.queued_pairwise_device(event).is_some())
     }
 
     fn is_public_identity_signer(&self, signer: PublicKey) -> bool {
@@ -94,4 +133,19 @@ impl AppCore {
             }
         }
     }
+}
+
+/// Exactly the version and header tags, as the protocol writes them.
+pub(in crate::core) fn message_event_names_nobody(event: &Event) -> bool {
+    let mut names = event
+        .tags
+        .iter()
+        .map(|tag| tag.as_slice().first().map(String::as_str))
+        .collect::<Vec<_>>();
+    names.sort_unstable();
+    names == [Some("header"), Some("v")]
+}
+
+fn pending_pairwise_device(pending: &PendingRelayPublish) -> Option<PublicKey> {
+    PublicKey::from_hex(pending.pairwise_device_hex.as_deref()?).ok()
 }

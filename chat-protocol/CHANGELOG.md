@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+- Stop naming the recipient device on message events. Kind 1060 envelopes now
+  carry only the version and header tags (nostr-double-ratchet 0.0.177), so a
+  relay can no longer link deliveries, or a group fanout burst, to the devices
+  receiving them. Invite responses still name only the public invite key.
+- Record what each publish effect carries in `ProtocolPublish::carrier`: a
+  pairwise envelope with its target device, or shared group ciphertext. The two
+  now look alike on the wire, so hosts must route and filter by this record
+  (`ProtocolPublish::is_publishable`), never by tags. Shared group ciphertext
+  still never becomes a publication.
+- Keep reading recipient-tagged envelopes from older clients, including
+  dropping ones that name another device. Never offer them for publication:
+  ready publications sealed by an older version are retired.
+
 ## 0.3.16
 
 - Report authenticated group key distributions that are still waiting for

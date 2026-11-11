@@ -284,7 +284,6 @@ pub(crate) struct ProtocolSubscriptionPlan {
     pub(crate) roster_authors: Vec<String>,
     pub(crate) invite_authors: Vec<String>,
     pub(crate) message_authors: Vec<String>,
-    pub(crate) message_recipients: Vec<String>,
     pub(crate) group_roster_group_ids: Vec<String>,
     pub(crate) group_roster_authors: Vec<String>,
     pub(crate) group_sender_key_authors: Vec<String>,
@@ -357,6 +356,12 @@ pub(super) struct PendingRelayPublish {
     pub(super) created_at_secs: u64,
     pub(super) attempt_count: u64,
     pub(super) last_error: Option<String>,
+    /// Set only from the engine's own publish effect: this row is a pairwise
+    /// ratchet envelope for exactly this device. Message events name nobody on
+    /// the wire, so every carrier routes, and tells them apart from shared
+    /// group ciphertext, by this record. Rows from older versions have none.
+    #[serde(default)]
+    pub(super) pairwise_device_hex: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
@@ -465,8 +470,6 @@ pub(super) struct RuntimeProtocolPlanDebug {
     pub(super) invite_authors: Vec<String>,
     #[serde(default)]
     pub(super) message_authors: Vec<String>,
-    #[serde(default)]
-    pub(super) message_recipients: Vec<String>,
     #[serde(default)]
     pub(super) group_roster_group_ids: Vec<String>,
     #[serde(default)]

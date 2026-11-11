@@ -330,6 +330,7 @@ fn legacy_private_roster_is_retired_only_after_exact_public_replacement_ack() {
         created_at_secs: now,
         attempt_count: 0,
         last_error: None,
+        pairwise_device_hex: None,
     };
     core.app_store
         .upsert_pending_relay_publish(&pending)

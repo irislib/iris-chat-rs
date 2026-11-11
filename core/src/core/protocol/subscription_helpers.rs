@@ -14,7 +14,6 @@ pub(in crate::core) fn build_protocol_subscription_filters(
     let roster_authors = pubkeys_from_hexes(&plan.roster_authors);
     let invite_authors = pubkeys_from_hexes(&plan.invite_authors);
     let message_authors = pubkeys_from_hexes(&plan.message_authors);
-    let message_recipients = pubkeys_from_hexes(&plan.message_recipients);
     let invite_response_recipients = plan
         .invite_response_recipient
         .as_deref()
@@ -49,18 +48,14 @@ pub(in crate::core) fn build_protocol_subscription_filters(
                 .authors(invite_authors),
         );
     }
+    // Message events are found only through the sender's ratchet keys. They
+    // name no recipient, and asking a relay for events tagged with this device
+    // would tell it which device is listening.
     if !message_authors.is_empty() {
         filters.push(
             Filter::new()
                 .kind(Kind::from(MESSAGE_EVENT_KIND as u16))
                 .authors(message_authors),
-        );
-    }
-    if !message_recipients.is_empty() {
-        filters.push(
-            Filter::new()
-                .kind(Kind::from(MESSAGE_EVENT_KIND as u16))
-                .pubkeys(message_recipients),
         );
     }
     if !invite_response_recipients.is_empty() {

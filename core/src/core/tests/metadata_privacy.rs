@@ -66,6 +66,7 @@ fn metadata_privacy_quarantines_saved_old_ciphertext_and_preserves_history() {
         created_at_secs: event.created_at.as_secs(),
         attempt_count: 1,
         last_error: None,
+        pairwise_device_hex: None,
     };
     core.app_store
         .upsert_pending_relay_publish(&pending)
@@ -135,6 +136,7 @@ fn metadata_privacy_quarantines_saved_public_group_rosters_and_shared_channels()
                 created_at_secs: event.created_at.as_secs(),
                 attempt_count: 7,
                 last_error: None,
+                pairwise_device_hex: None,
             })
             .unwrap();
     }
@@ -211,7 +213,6 @@ fn metadata_privacy_isolates_peer_discovery_from_identity_auth_and_own_receive_f
         peer_device.to_hex(),
         other_device.to_hex(),
     ];
-    plan.message_recipients = vec![device.public_key().to_hex()];
     plan.invite_response_recipient = Some(own_invite.clone());
     core.protocol_subscription_runtime.desired_plan = Some(plan.clone());
     let (receiver, discovery) =

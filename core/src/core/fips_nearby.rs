@@ -382,7 +382,7 @@ impl AppCore {
     }
 
     pub(super) fn publish_fips_nearby(&self, event: &Event) {
-        if !self.private_publication_allowed(event) {
+        if !self.carrier_publication_allowed(event) {
             return;
         }
         let Some(runtime) = self.device_sync.as_ref() else {
@@ -612,7 +612,7 @@ impl AppCore {
                 // Only the opt-in diagnostic lane computes this extra hash.
                 // Authentication and application effects retain their existing path.
                 let id_valid = debug_snapshot_file_writes_enabled().then(|| event.verify_id());
-                if !self.handle_relay_event_with_channel(event, "FIPS nearby") {
+                if !self.handle_directed_private_event(event, "FIPS nearby") {
                     let reason = if id_valid == Some(false) {
                         "event_hash"
                     } else {

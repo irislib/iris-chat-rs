@@ -6,6 +6,10 @@ mod carrier_cancellation;
 mod nearby;
 mod outbox;
 mod privacy;
+#[cfg(test)]
+mod test_support;
+
+pub(in crate::core) use privacy::message_event_names_nobody;
 
 enum PendingPublishChange {
     Inserted,
@@ -18,36 +22,6 @@ const PENDING_RELAY_DRAIN_STALE_AFTER: Duration = RELAY_PUBLISH_ATTEMPT_TIMEOUT;
 const PENDING_RELAY_PUBLISH_IN_PROGRESS: &str = "publish attempt in progress";
 
 impl AppCore {
-    pub(super) fn publish_runtime_event(
-        &mut self,
-        event: Event,
-        label: &'static str,
-        completion: Option<(String, String)>,
-    ) -> bool {
-        let (inner_event_id, chat_id) = completion
-            .map(|(inner_event_id, chat_id)| (Some(inner_event_id), Some(chat_id)))
-            .unwrap_or((None, None));
-        self.publish_runtime_event_with_metadata(event, label, chat_id, inner_event_id, None)
-    }
-
-    pub(super) fn publish_protocol_event(&mut self, publish: ProtocolPublish) -> bool {
-        // Retry batches may already contain sealed events when a block arrives.
-        // Guard before call push as well as before the durable/network outboxes.
-        if self.blocked_direct_publication(&publish.chat_id)
-            || !self.private_publication_allowed(&publish.event)
-        {
-            return false;
-        }
-        self.publish_call_push_for_protocol(&publish);
-        self.publish_runtime_event_with_metadata(
-            publish.event,
-            APPCORE_PROTOCOL_LABEL,
-            Some(publish.chat_id),
-            publish.inner_event_id,
-            publish.authored_at_secs,
-        )
-    }
-
     pub(super) fn publish_device_approval_result(
         &mut self,
         approval_relay_urls: &[RelayUrl],
@@ -129,6 +103,7 @@ impl AppCore {
         chat_id: Option<String>,
         inner_event_id: Option<String>,
         authored_at_secs: Option<u64>,
+        pairwise_device: Option<PublicKey>,
     ) -> bool {
         if !self.private_publication_allowed(&event) {
             return false;
@@ -172,6 +147,7 @@ impl AppCore {
             chat_id,
             inner_event_id,
             authored_at_secs,
+            pairwise_device,
         ) {
             None => return false,
             Some(PendingPublishChange::Existing) => {
@@ -305,7 +281,7 @@ impl AppCore {
                     continue;
                 }
             };
-            if !self.private_publication_allowed(&event) {
+            if !self.pending_publication_allowed(&pending, &event) {
                 self.quarantine_private_publication(&pending);
                 self.pending_relay_publishes.remove(&pending.event_id);
                 continue;

@@ -1,5 +1,82 @@
 use super::*;
 
+/// The current wire shape: a message event names nobody.
+fn ratchet_message(body: &str) -> Event {
+    EventBuilder::new(Kind::from(MESSAGE_EVENT_KIND as u16), body)
+        .tag(Tag::parse(["v", "2"]).unwrap())
+        .tag(Tag::parse(["header", "encrypted-header"]).unwrap())
+        .sign_with_keys(&Keys::generate())
+        .unwrap()
+}
+
+/// What clients sent before the recipient tag was removed.
+fn recipient_tagged_ratchet_message(body: &str, recipient: PublicKey) -> Event {
+    EventBuilder::new(Kind::from(MESSAGE_EVENT_KIND as u16), body)
+        .tag(Tag::parse(["v", "2"]).unwrap())
+        .tag(Tag::parse(["header", "encrypted-header"]).unwrap())
+        .tag(Tag::public_key(recipient))
+        .sign_with_keys(&Keys::generate())
+        .unwrap()
+}
+
+fn wake_for(recipient: PublicKey, messages: &[&Event]) -> Event {
+    EventBuilder::new(
+        Kind::from(CALL_WAKE_KIND),
+        serde_json::json!({"type":"call-wake","v":3,"events":messages}).to_string(),
+    )
+    .tag(Tag::public_key(recipient))
+    .sign_with_keys(&Keys::generate())
+    .unwrap()
+}
+
+#[test]
+fn wake_target_comes_from_delivery_metadata_and_its_message_names_nobody() {
+    let recipient = Keys::generate().public_key();
+    let encrypted = ratchet_message("already-ratcheted-ciphertext");
+    let event = wake_event(recipient, &encrypted, None).unwrap();
+    // The wake rings one device; the ratchet message inside names nobody.
+    assert_eq!(
+        event.tags.public_keys().copied().collect::<Vec<_>>(),
+        [recipient]
+    );
+    let inner = &wake_messages(&event, recipient).unwrap().events[0];
+    assert_eq!(inner, &encrypted);
+    assert!(inner.tags.public_keys().next().is_none());
+    assert!(!inner.as_json().contains(&recipient.to_hex()));
+    // A message that names a recipient is never wrapped, whoever it names.
+    let tagged = recipient_tagged_ratchet_message("old shape", recipient);
+    assert!(wake_event(recipient, &tagged, None).is_none());
+}
+
+#[test]
+fn wake_from_an_older_client_is_accepted_only_when_it_names_this_device() {
+    let device = Keys::generate().public_key();
+    let other = Keys::generate().public_key();
+    let own = recipient_tagged_ratchet_message("for this device", device);
+    assert_eq!(
+        wake_messages(&wake_for(device, &[&own]), device)
+            .unwrap()
+            .events,
+        vec![own]
+    );
+    let foreign = recipient_tagged_ratchet_message("for another device", other);
+    assert!(wake_messages(&wake_for(device, &[&foreign]), device).is_none());
+    let both = EventBuilder::new(Kind::from(MESSAGE_EVENT_KIND as u16), "two recipients")
+        .tags([
+            Tag::parse(["v", "2"]).unwrap(),
+            Tag::parse(["header", "encrypted-header"]).unwrap(),
+            Tag::public_key(device),
+            Tag::public_key(other),
+        ])
+        .sign_with_keys(&Keys::generate())
+        .unwrap();
+    assert!(wake_messages(&wake_for(device, &[&both]), device).is_none());
+    // An updated sender's wake carries no recipient on the message.
+    let untagged = ratchet_message("from an updated client");
+    assert!(wake_messages(&wake_for(device, &[&untagged]), device).is_some());
+    assert!(wake_messages(&wake_for(device, &[&untagged]), other).is_none());
+}
+
 #[test]
 fn wake_contains_only_recipient_bound_signed_ratchet_ciphertext() {
     let sender = Keys::generate();
@@ -10,10 +87,10 @@ fn wake_contains_only_recipient_bound_signed_ratchet_ciphertext() {
         "already-ratcheted-ciphertext",
     )
     .tag(Tag::parse(["v", "2"]).unwrap())
-    .tag(Tag::public_key(recipient.public_key()))
+    .tag(Tag::parse(["header", "encrypted-header"]).unwrap())
     .sign_with_keys(&ratchet)
     .unwrap();
-    let event = wake_event(&encrypted, None).unwrap();
+    let event = wake_event(recipient.public_key(), &encrypted, None).unwrap();
     assert_eq!(
         wake_messages(&event, recipient.public_key())
             .unwrap()
@@ -22,7 +99,12 @@ fn wake_contains_only_recipient_bound_signed_ratchet_ciphertext() {
     );
     assert_ne!(event.pubkey, sender.public_key());
     assert_ne!(event.pubkey, ratchet.public_key());
-    assert_ne!(event.pubkey, wake_event(&encrypted, None).unwrap().pubkey);
+    assert_ne!(
+        event.pubkey,
+        wake_event(recipient.public_key(), &encrypted, None)
+            .unwrap()
+            .pubkey
+    );
     assert!(!event.as_json().contains(&sender.public_key().to_hex()));
     assert!(wake_messages(&event, Keys::generate().public_key()).is_none());
     let mut tampered = event.clone();
@@ -55,12 +137,8 @@ fn call_wake_v3_oversize_bootstrap_uses_only_exact_id_and_rejects_mixed_forms() 
         .tag(Tag::public_key(Keys::generate().public_key()))
         .sign_with_keys(&Keys::generate())
         .unwrap();
-    let encrypted = EventBuilder::new(Kind::from(MESSAGE_EVENT_KIND as u16), "ratchet-ciphertext")
-        .tag(Tag::parse(["v", "2"]).unwrap())
-        .tag(Tag::public_key(recipient.public_key()))
-        .sign_with_keys(&Keys::generate())
-        .unwrap();
-    let event = wake_event(&encrypted, Some(&response)).unwrap();
+    let encrypted = ratchet_message("ratchet-ciphertext");
+    let event = wake_event(recipient.public_key(), &encrypted, Some(&response)).unwrap();
     let decoded = wake_messages(&event, recipient.public_key()).unwrap();
     assert_eq!(decoded.bootstrap_event_id, Some(response.id.to_hex()));
     assert_eq!(decoded.events, vec![encrypted.clone()]);
@@ -165,15 +243,8 @@ fn call_wake_dispatch_is_anonymous_on_actual_relay_and_http_connections() {
     fixture.core.preferences.mobile_push_server_url = http;
     let wakes = (0..2)
         .map(|_| {
-            let encrypted =
-                EventBuilder::new(Kind::from(MESSAGE_EVENT_KIND as u16), "ratchet ciphertext")
-                    .tags([
-                        Tag::parse(["v", "2"]).unwrap(),
-                        Tag::public_key(Keys::generate().public_key()),
-                    ])
-                    .sign_with_keys(&Keys::generate())
-                    .unwrap();
-            wake_event(&encrypted, None).unwrap()
+            let encrypted = ratchet_message("ratchet ciphertext");
+            wake_event(Keys::generate().public_key(), &encrypted, None).unwrap()
         })
         .collect::<Vec<_>>();
     // The same wake retried, followed by another recipient, needs three contexts.

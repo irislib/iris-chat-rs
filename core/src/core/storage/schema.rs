@@ -7,7 +7,7 @@ use rusqlite::{params, Connection, Transaction};
 // Bump when a non-additive change to the schema lands and migrate
 // inside `ensure_schema` below. Greenfield: version 1 is the initial
 // shape and there is no previous JSON layout to migrate from.
-const SCHEMA_VERSION: u32 = 48;
+const SCHEMA_VERSION: u32 = 49;
 
 const INITIAL_SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS direct_file_transfers (
@@ -717,6 +717,14 @@ pub(super) fn ensure_schema(conn: &mut Connection) -> anyhow::Result<()> {
         tx.execute_batch(
             "INSERT OR IGNORE INTO message_request_arrivals(chat_id, received_at_ms)
             SELECT chat_id, updated_at_secs * 1000 FROM threads WHERE chat_id NOT LIKE 'group:%';",
+        )?;
+    }
+    // Message events no longer name their recipient device. The delivery
+    // target stays in the local queue; rows queued before this have none and
+    // are quarantined instead of republished.
+    if !column_exists(&tx, "pending_relay_publishes", "pairwise_device_hex")? {
+        tx.execute_batch(
+            "ALTER TABLE pending_relay_publishes ADD COLUMN pairwise_device_hex TEXT;",
         )?;
     }
     tx.pragma_update(None, "user_version", SCHEMA_VERSION as i64)?;

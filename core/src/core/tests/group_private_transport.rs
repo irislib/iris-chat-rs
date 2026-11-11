@@ -226,10 +226,8 @@ pub(super) fn take_private_group_cipher_for_test(
             continue;
         }
         if event.kind.as_u16() as u32 != MESSAGE_EVENT_KIND
-            || !event
-                .tags
-                .public_keys()
-                .any(|key| key.to_hex() == local_device)
+            || effect_pairwise_device(effects, &event).map(|device| device.to_hex())
+                != Some(local_device.clone())
         {
             continue;
         }
@@ -539,12 +537,10 @@ pub(super) fn deliver_protocol_effects_without_feedback(
     let mut group_events = Vec::new();
     for event in ordered_protocol_events(effects) {
         if event.kind.as_u16() as u32 == MESSAGE_EVENT_KIND {
-            let direct_target = event.tags.iter().find_map(|tag| {
-                let values = tag.as_slice();
-                (values.first().map(|value| value.as_str()) == Some("p"))
-                    .then(|| values.get(1).map(|value| value.as_str()))
-                    .flatten()
-            });
+            // Message events name nobody. Route each pairwise envelope by
+            // the effect's delivery record, as every carrier must.
+            let direct_target =
+                effect_pairwise_device(effects, &event).map(|device| device.to_hex());
             if direct_target.is_some_and(|target| target != local_device) {
                 continue;
             }

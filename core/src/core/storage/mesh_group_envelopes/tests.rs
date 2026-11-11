@@ -42,8 +42,8 @@ impl Fixture {
     fn event(&self, body: &str) -> Event {
         EventBuilder::new(Kind::Custom(MESSAGE_EVENT_KIND as u16), body)
             .tags([
-                nostr::Tag::public_key(self.owner.public_key()),
                 nostr::Tag::parse(["v", "2"]).unwrap(),
+                nostr::Tag::parse(["header", "encrypted-header"]).unwrap(),
             ])
             .sign_with_keys(&self.author)
             .unwrap()
@@ -62,6 +62,7 @@ impl Fixture {
                 "group:test",
                 &event.id.to_hex(),
                 event,
+                true,
             )
             .unwrap();
     }
@@ -176,7 +177,8 @@ fn group_replay_rejects_forgery_private_publication_wildcards_and_wrong_account(
             &f.owner.public_key().to_hex(),
             "group:test",
             "private",
-            &private
+            &private,
+            true,
         )
         .is_err());
     let runtime = tokio::runtime::Builder::new_current_thread()
@@ -197,7 +199,8 @@ fn group_replay_rejects_forgery_private_publication_wildcards_and_wrong_account(
             &f.owner.public_key().to_hex(),
             "group:test",
             "forged",
-            &forged
+            &forged,
+            true,
         )
         .is_err());
     f.store

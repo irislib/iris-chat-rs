@@ -940,7 +940,7 @@ impl AppCore {
                     .into_iter()
                     .filter(|pending| {
                         let allowed = serde_json::from_str::<Event>(&pending.event_json)
-                            .is_ok_and(|event| self.private_publication_allowed(&event));
+                            .is_ok_and(|event| self.pending_publication_allowed(pending, &event));
                         if !allowed {
                             self.quarantine_private_publication(pending);
                         }

@@ -20,8 +20,9 @@ impl AppStore {
             let mut statement = tx.prepare(
                 "INSERT INTO pending_relay_publishes(
                     event_id, owner_pubkey_hex, label, event_json, inner_event_id,
-                    chat_id, created_at_secs, attempt_count, last_error, authored_at_secs
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+                    chat_id, created_at_secs, attempt_count, last_error, authored_at_secs,
+                    pairwise_device_hex
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
                  ON CONFLICT(event_id) DO NOTHING",
             )?;
             for (event, authored) in pending {
@@ -36,6 +37,7 @@ impl AppStore {
                     event.attempt_count,
                     event.last_error,
                     authored,
+                    event.pairwise_device_hex,
                 ])?;
                 if inserted == 0 {
                     existing_ids.push(event.event_id.clone());
@@ -45,7 +47,8 @@ impl AppStore {
         let committed = {
             let mut select = tx.prepare(
                 "SELECT owner_pubkey_hex, event_id, label, event_json, inner_event_id,
-                        chat_id, created_at_secs, attempt_count, last_error
+                        chat_id, created_at_secs, attempt_count, last_error,
+                        pairwise_device_hex
                  FROM pending_relay_publishes WHERE event_id = ?1",
             )?;
             existing_ids
@@ -62,6 +65,7 @@ impl AppStore {
                             created_at_secs: row.get::<_, i64>(6)?.max(0) as u64,
                             attempt_count: row.get::<_, i64>(7)?.max(0) as u64,
                             last_error: row.get(8)?,
+                            pairwise_device_hex: row.get(9)?,
                         })
                     })
                 })
@@ -81,7 +85,8 @@ impl AppStore {
             .map_err(|_| anyhow::anyhow!("storage connection mutex poisoned"))?;
         let mut stmt = conn.prepare(
             "SELECT owner_pubkey_hex, event_id, label, event_json, inner_event_id,
-                    chat_id, created_at_secs, attempt_count, last_error
+                    chat_id, created_at_secs, attempt_count, last_error,
+                    pairwise_device_hex
              FROM pending_relay_publishes
              WHERE owner_pubkey_hex = ?1
              ORDER BY created_at_secs ASC, event_id ASC",
@@ -97,6 +102,7 @@ impl AppStore {
                 created_at_secs: row.get::<_, i64>(6)?.max(0) as u64,
                 attempt_count: row.get::<_, i64>(7)?.max(0) as u64,
                 last_error: row.get(8)?,
+                pairwise_device_hex: row.get(9)?,
             })
         })?;
         let mut pending = Vec::new();
@@ -248,9 +254,10 @@ impl AppStore {
         conn.execute(
             "INSERT INTO pending_relay_publishes(
                 event_id, owner_pubkey_hex, label, event_json, inner_event_id,
-                chat_id, created_at_secs, attempt_count, last_error, authored_at_secs
+                chat_id, created_at_secs, attempt_count, last_error, authored_at_secs,
+                pairwise_device_hex
              )
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
              ON CONFLICT(event_id) DO UPDATE SET
                 owner_pubkey_hex = excluded.owner_pubkey_hex,
                 label = excluded.label,
@@ -260,7 +267,8 @@ impl AppStore {
                 created_at_secs = excluded.created_at_secs,
                 attempt_count = excluded.attempt_count,
                 last_error = excluded.last_error,
-                authored_at_secs = COALESCE(MAX(pending_relay_publishes.authored_at_secs, excluded.authored_at_secs), pending_relay_publishes.authored_at_secs, excluded.authored_at_secs)",
+                authored_at_secs = COALESCE(MAX(pending_relay_publishes.authored_at_secs, excluded.authored_at_secs), pending_relay_publishes.authored_at_secs, excluded.authored_at_secs),
+                pairwise_device_hex = COALESCE(pending_relay_publishes.pairwise_device_hex, excluded.pairwise_device_hex)",
             params![
                 &pending.event_id,
                 &pending.owner_pubkey_hex,
@@ -272,6 +280,7 @@ impl AppStore {
                 pending.attempt_count as i64,
                 &pending.last_error,
                 authored_at_secs.map(|at| at.min(i64::MAX as u64) as i64),
+                &pending.pairwise_device_hex,
             ],
         )?;
         Ok(())

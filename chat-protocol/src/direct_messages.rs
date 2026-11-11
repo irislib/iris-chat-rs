@@ -552,6 +552,9 @@ impl DirectMessageService {
         let mut commands = Vec::new();
         for effect in effects {
             match effect {
+                // Shared group ciphertext and recipient-tagged envelopes from
+                // older versions never become a network publication.
+                ProtocolEffect::Publish(publish) if !publish.is_publishable() => {}
                 ProtocolEffect::Publish(publish) => {
                     commands.push(DirectMessageCommand::Publish(publish.event));
                 }

@@ -315,14 +315,10 @@ fn repair_coalescing_keeps_ready_ratchet_delivery_across_reload() {
                 assert!(!wire.contains(&identity.public_key().to_hex()));
             }
             assert_ne!(publish.event.pubkey, f.ready_device.public_key());
+            assert!(!wire.contains(&f.ready_device.public_key().to_hex()));
             assert_eq!(
-                publish
-                    .event
-                    .tags
-                    .public_keys()
-                    .copied()
-                    .collect::<Vec<_>>(),
-                vec![f.ready_device.public_key()]
+                publish.carrier.pairwise_device(),
+                Some(f.ready_device.public_key())
             );
         }
         let messages = decrypt_own_sync_effects(&mut f.ready, effects);

@@ -4,11 +4,14 @@ pub(super) const MAX_READY_GROUP_PUBLICATIONS: usize = 4_096;
 
 impl ProtocolEngine {
     fn ready_group_publication_is_allowed(&self, pending: &ProtocolReadyGroupPublish) -> bool {
-        !pending
-            .publish
-            .chat_id
-            .strip_prefix("group:")
-            .is_some_and(|group| self.local_owner_is_inactive_for_group(group))
+        // Envelopes sealed before carriers were recorded still name their
+        // recipient device. They are retired here, never offered again.
+        pending.publish.is_publishable()
+            && !pending
+                .publish
+                .chat_id
+                .strip_prefix("group:")
+                .is_some_and(|group| self.local_owner_is_inactive_for_group(group))
             && !pending
                 .wake_recipient
                 .is_some_and(|owner| self.held_direct_chats.contains(&owner.to_hex()))
@@ -116,8 +119,8 @@ impl ProtocolEngine {
             .filter_map(|effect| {
                 let ProtocolEffect::Publish(publish) = effect;
                 (own_authors.contains(&publish.event.pubkey)
-                    && publish.event.tags.public_keys().next().is_none())
-                .then_some(publish.event.clone())
+                    && publish.carrier == ProtocolCarrier::SharedGroup)
+                    .then_some(publish.event.clone())
             })
             .collect::<Vec<_>>();
         let chat_id = group_chat_id(group_id);

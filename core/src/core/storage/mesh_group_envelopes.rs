@@ -133,7 +133,9 @@ impl GroupEnvelopeReplay {
             if event.id.to_hex() != id
                 || event.kind.as_u16() as u32 != MESSAGE_EVENT_KIND
                 || !nostr_double_ratchet::has_metadata_privacy_version(&event)
-                || event.tags.public_keys().count() != 1
+                // Envelopes cached by a version that still named the
+                // recipient device are kept locally but never served again.
+                || !crate::core::publishing::message_event_names_nobody(&event)
                 || !filters.iter().any(|filter| {
                     filter.match_event(&event, nostr::filter::MatchEventOptions::default())
                 })
@@ -211,6 +213,7 @@ impl AppStore {
         chat: &str,
         message: &str,
         event: &Event,
+        pairwise: bool,
     ) -> anyhow::Result<()> {
         anyhow::ensure!(
             chat.starts_with("group:") && event.kind.as_u16() as u32 == MESSAGE_EVENT_KIND,
@@ -218,8 +221,11 @@ impl AppStore {
         );
         // Retain history locally, but never cache shared group channels for
         // network replay. Every carrier serves only private ratchet envelopes.
-        if !nostr_double_ratchet::has_metadata_privacy_version(event)
-            || event.tags.public_keys().count() != 1
+        // Both look alike on the wire, so the caller must hold the engine's
+        // record that this one is a pairwise envelope.
+        if !pairwise
+            || !nostr_double_ratchet::has_metadata_privacy_version(event)
+            || !crate::core::publishing::message_event_names_nobody(event)
         {
             return Ok(());
         }

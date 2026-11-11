@@ -138,11 +138,11 @@ fn private_group_wake_and_broadcast_share_one_rollback_safe_checkpoint() {
         } else {
             wakes += 1;
             assert_ne!(publish.event.pubkey, fixture.device.public_key());
-            assert!(publish
-                .event
-                .tags
-                .public_keys()
-                .any(|key| *key == fixture.ready_device.public_key()));
+            assert!(publish.event.tags.public_keys().next().is_none());
+            assert_eq!(
+                publish.carrier.pairwise_device(),
+                Some(fixture.ready_device.public_key())
+            );
         }
     }
     assert_eq!((broadcast, wakes), (0, 1));
@@ -286,11 +286,12 @@ fn private_group_wake_and_broadcast_share_one_rollback_safe_checkpoint() {
         assert_ne!(publish.event.pubkey, fixture.late_device.public_key());
         publish.event.verify().unwrap();
         assert!(
-            !publish
-                .event
-                .tags
-                .public_keys()
-                .any(|key| *key == fixture.ready_device.public_key()),
+            publish.event.kind.as_u16() as u32 != MESSAGE_EVENT_KIND
+                || publish.event.tags.public_keys().next().is_none()
+        );
+        assert_ne!(
+            publish.carrier.pairwise_device(),
+            Some(fixture.ready_device.public_key()),
             "restart must not resend the wake to an already prepared device"
         );
     }

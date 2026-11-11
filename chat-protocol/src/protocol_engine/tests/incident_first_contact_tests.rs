@@ -10,17 +10,19 @@ fn deliver_first_contact_effects(
     let invite_author = receiver.local_invite_response_pubkey().unwrap();
     let mut messages = Vec::new();
     for ProtocolEffect::Publish(publish) in effects {
-        let target = if publish.event.kind.as_u16() as u32 == INVITE_RESPONSE_KIND {
-            invite_author
+        // Invite responses name the invite key. Message events name nobody;
+        // the engine's delivery record says which device each one is for.
+        let targeted = if publish.event.kind.as_u16() as u32 == INVITE_RESPONSE_KIND {
+            publish
+                .event
+                .tags
+                .public_keys()
+                .any(|recipient| *recipient == invite_author)
         } else {
-            device.public_key()
+            assert!(publish.event.tags.public_keys().next().is_none());
+            publish.carrier.pairwise_device() == Some(device.public_key())
         };
-        if !publish
-            .event
-            .tags
-            .public_keys()
-            .any(|recipient| *recipient == target)
-        {
+        if !targeted {
             continue;
         }
         match publish.event.kind.as_u16() as u32 {

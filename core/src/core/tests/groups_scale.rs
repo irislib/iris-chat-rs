@@ -585,9 +585,10 @@ fn appcore_group_multi_device_sender_uses_private_sibling_delivery() {
         "the sibling receives a private key distribution, roster, and group delivery"
     );
     for event in &private {
+        assert!(event.tags.public_keys().next().is_none());
         assert_eq!(
-            event.tags.public_keys().collect::<Vec<_>>(),
-            vec![&sibling.public_key()]
+            effect_pairwise_device(&sent.effects, event),
+            Some(sibling.public_key())
         );
         let wire = serde_json::to_string(event).unwrap();
         assert!(!wire.contains(&owner.public_key().to_hex()));
@@ -697,27 +698,30 @@ fn appcore_group_foreign_recipient_never_enters_group_fallback() {
             UnixSeconds(unix_now().get()),
         )
         .unwrap();
+    // The envelope for the other linked device names nobody, so this device
+    // cannot tell it is foreign. It may only wait, bounded, as an unknown
+    // sender: never decrypt, and never become a group ciphertext candidate.
     let target = farm.devices[2].keys.public_key();
-    let event = sent
-        .effects
-        .into_iter()
-        .map(|ProtocolEffect::Publish(publish)| publish.event)
-        .find(|event| {
-            event.kind.as_u16() as u32 == MESSAGE_EVENT_KIND
-                && event
-                    .tags
-                    .public_keys()
-                    .any(|recipient| *recipient == target)
-        })
-        .expect("signed delivery for the other linked device");
-    let event_id = event.id.to_string();
+    let event = pairwise_event_for_device(&sent.effects, target)
+        .expect("signed delivery for the other linked device")
+        .clone();
+    assert!(event.tags.public_keys().next().is_none());
     let receiver = &mut farm.devices[1].core;
+    let chat = farm.owners[0].public_key().to_hex();
+    let before = receiver
+        .threads
+        .get(&chat)
+        .map_or(0, |thread| thread.messages.len());
     receiver.handle_relay_event(event);
-    assert!(
-        !receiver.event_transport_channels.contains_key(&event_id),
-        "foreign recipient is discarded before group/direct dispatch"
+    assert_eq!(
+        receiver
+            .threads
+            .get(&chat)
+            .map_or(0, |thread| thread.messages.len()),
+        before,
+        "another device's envelope must not be readable here"
     );
     let snapshot = receiver.protocol_engine.as_ref().unwrap().debug_snapshot();
-    assert_eq!(snapshot.pending_inbound_count, 0);
+    assert!(snapshot.pending_inbound_count <= 1);
     assert_eq!(snapshot.pending_group_sender_key_message_count, 0);
 }

@@ -50,14 +50,16 @@ fn queue_block_carrier_events(core: &mut AppCore, recipient: &Keys, target: &str
         .enumerate()
         .map(|(index, chat)| {
             let event = EventBuilder::new(Kind::Custom(1060), format!("queued {index}"))
-                .tag(nostr::Tag::public_key(recipient.public_key()))
+                .tag(nostr::Tag::parse(["header", "test"]).unwrap())
                 .tag(nostr::Tag::parse(["v", "2"]).unwrap())
                 .sign_with_keys(&transport_keys)
                 .unwrap();
-            assert!(core.publish_runtime_event(
+            assert!(publish_pairwise_for_test(
+                core,
                 event.clone(),
-                "carrier-test",
-                Some((format!("inner-{index}"), chat.to_owned())),
+                recipient.public_key(),
+                chat,
+                Some(format!("inner-{index}")),
             ));
             event
         })

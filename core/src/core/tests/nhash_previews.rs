@@ -33,11 +33,11 @@ fn nhash_previews_hide_valid_references_in_encrypted_push_cached_push_and_chat_l
         let event = sorted_pending_events_for_test(&farm.devices[0].core)
             .into_iter()
             .find(|event| {
-                event
-                    .tags
-                    .public_keys()
-                    .any(|key| *key == farm.devices[1].keys.public_key())
-                    && !authors.contains(&event.pubkey)
+                queued_for_device(
+                    &farm.devices[0].core,
+                    event,
+                    farm.devices[1].keys.public_key(),
+                ) && !authors.contains(&event.pubkey)
             })
             .unwrap();
         let payload = serde_json::json!({"event":event}).to_string();

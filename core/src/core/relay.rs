@@ -58,16 +58,33 @@ impl AppCore {
     /// Return whether the event authenticated, including valid retransmissions
     /// that still need a transport receipt but no repeated application effects.
     pub(super) fn handle_relay_event_with_channel(&mut self, event: Event, channel: &str) -> bool {
+        self.ingest_event(event, channel, false)
+    }
+
+    /// For a carrier that addressed the event to this device itself: a call
+    /// wake naming it, or a nearby peer's direct copy. A message event names
+    /// nobody, so only such a carrier shows that an unknown sender's message
+    /// is meant for this device while its handshake is still on the way.
+    pub(super) fn handle_directed_private_event(&mut self, event: Event, channel: &str) -> bool {
+        self.ingest_event(event, channel, true)
+    }
+
+    fn ingest_event(&mut self, event: Event, channel: &str, directed: bool) -> bool {
         // Push payloads and other transports also enter here; do not rely on a
         // relay client having authenticated the event before touching any state.
         if !self.event_validation.verify(&event) {
             return false;
         }
-        self.handle_verified_relay_event_with_channel(event, channel);
+        self.handle_verified_relay_event_with_channel(event, channel, directed);
         true
     }
 
-    fn handle_verified_relay_event_with_channel(&mut self, event: Event, channel: &str) {
+    fn handle_verified_relay_event_with_channel(
+        &mut self,
+        event: Event,
+        channel: &str,
+        directed: bool,
+    ) {
         if self.receive_private_contact_event(&event) {
             return;
         }
@@ -273,20 +290,40 @@ impl AppCore {
                     .as_ref()
                     .is_some_and(|engine| !engine.is_known_message_author(event.pubkey));
                 if unknown_message_author {
+                    // Older clients name the receiving device. Messages naming
+                    // another device were already dropped above.
+                    let names_local_device =
+                        message_has_header && self.message_names_local_device(&event);
                     let targets_local_recipient =
-                        message_has_header && self.message_targets_local_protocol_recipient(&event);
+                        names_local_device && (directed || self.peer_session_bootstrap_needed());
                     let has_tracked_sender_session = message_has_header
                         && self.protocol_engine.as_ref().is_some_and(|engine| {
                             engine.header_message_sender_has_tracked_session(&event)
                         });
+                    // A message event names nobody, so the first messages of a
+                    // new session can overtake the invite response that
+                    // introduces their sender. Message servers only return
+                    // subscribed senders, so that happens on carriers that
+                    // addressed this device directly. Hold those while a
+                    // response can still arrive; the engine keeps a bounded
+                    // number, and unrelated public authors never get in.
+                    let awaits_invite_response = directed
+                        && message_has_header
+                        && crate::core::publishing::message_event_names_nobody(&event)
+                        && self
+                            .protocol_engine
+                            .as_ref()
+                            .and_then(ProtocolEngine::local_invite_response_pubkey)
+                            .is_some();
                     let should_keep_unknown_header = has_tracked_sender_session
                         || !self.private_chat_invites.is_empty()
-                        || targets_local_recipient;
+                        || targets_local_recipient
+                        || awaits_invite_response;
                     if !message_has_header || !should_keep_unknown_header {
                         self.push_debug_log(
                             "appcore.protocol.message.ignored",
                             format!(
-                                "unknown message author header={message_has_header} targets_local_recipient={targets_local_recipient} tracked_sender_session={has_tracked_sender_session}"
+                                "unknown message author header={message_has_header} targets_local_recipient={targets_local_recipient} tracked_sender_session={has_tracked_sender_session} awaits_invite_response={awaits_invite_response}"
                             ),
                         );
                         return;
@@ -294,7 +331,7 @@ impl AppCore {
                     self.push_debug_log(
                         "appcore.protocol.message.pending_header",
                         format!(
-                            "unknown message author targets_local_recipient={targets_local_recipient} tracked_sender_session={has_tracked_sender_session}"
+                            "unknown message author targets_local_recipient={targets_local_recipient} tracked_sender_session={has_tracked_sender_session} awaits_invite_response={awaits_invite_response}"
                         ),
                     );
                 }
@@ -381,10 +418,10 @@ impl AppCore {
         self.emit_state();
     }
 
-    fn message_targets_local_protocol_recipient(&self, event: &Event) -> bool {
-        self.protocol_message_recipient_pubkeys()
-            .into_iter()
-            .any(|pubkey| event_has_pubkey_tag(event, pubkey))
+    fn message_names_local_device(&self, event: &Event) -> bool {
+        self.logged_in
+            .as_ref()
+            .is_some_and(|local| event_has_pubkey_tag(event, local.device_keys.public_key()))
     }
 
     fn handle_pending_link_device_response(&mut self, event: Event) -> bool {

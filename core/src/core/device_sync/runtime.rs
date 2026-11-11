@@ -753,7 +753,7 @@ impl AppCore {
                 .rev()
                 .take(super::super::fips_nearby::FIPS_NEARBY_OUTBOX_MAX_EVENTS)
                 .filter_map(|pending| serde_json::from_str::<Event>(&pending.event_json).ok())
-                .filter(|event| self.private_publication_allowed(event))
+                .filter(|event| self.carrier_publication_allowed(event))
                 .filter(|event| {
                     nearby_enabled || super::super::fips_nearby::is_private_transport_event(event)
                 })

@@ -415,10 +415,11 @@ fn nearby_private_transcript_targets_only_the_intended_live_device_after_restart
         let wire = serde_json::to_string(&event).unwrap();
         assert!(!wire.contains(&group_id));
         assert!(!wire.contains(&owner.public_key().to_hex()));
-        assert_eq!(
-            event.tags.public_keys().copied().collect::<Vec<_>>(),
-            vec![peer_device.public_key()]
+        assert!(
+            event.tags.public_keys().next().is_none(),
+            "a nearby copy of a message event names no recipient either"
         );
+        assert!(!wire.contains(&peer_device.public_key().to_hex()));
         if let Some(message) = recipient.process_direct_message_event(&event).unwrap() {
             group_plaintexts.push(message.content);
         }
@@ -440,6 +441,20 @@ fn nearby_private_transcript_targets_only_the_intended_live_device_after_restart
         &device,
         directory.path().to_string_lossy().into_owned(),
     );
+    let mut restored = restored;
+    // Startup reloads the saved queue. A message event names nobody, so its
+    // target must survive the restart in the row, not in the event.
+    for pending in &saved {
+        let event = serde_json::from_str::<Event>(&pending.event_json).unwrap();
+        assert!(restored.pending_publication_allowed(pending, &event));
+        assert_eq!(
+            pending.pairwise_device_hex.is_some(),
+            event.kind.as_u16() as u32 == MESSAGE_EVENT_KIND
+        );
+        restored
+            .pending_relay_publishes
+            .insert(pending.event_id.clone(), pending.clone());
+    }
     let mut restored_queue = FipsNearbyOutbox::default();
     for pending in saved {
         let event = serde_json::from_str::<Event>(&pending.event_json).unwrap();

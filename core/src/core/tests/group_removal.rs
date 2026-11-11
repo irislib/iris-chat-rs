@@ -155,14 +155,15 @@ fn group_removal_discards_durable_message_outbox_but_keeps_membership_controls()
     for (content, message_id) in [("message", Some("message-id".into())), ("membership", None)] {
         let event = EventBuilder::new(Kind::Custom(1060), content)
             .tag(nostr::Tag::parse(["v", "2"]).unwrap())
-            .tag(nostr::Tag::public_key(Keys::generate().public_key()))
+            .tag(nostr::Tag::parse(["header", "test"]).unwrap())
             .sign_with_keys(&transport_keys)
             .unwrap();
         assert!(core.publish_protocol_event(ProtocolPublish {
             authored_at_secs: None,
             event,
             chat_id: chat_id.clone(),
-            inner_event_id: message_id
+            inner_event_id: message_id,
+            carrier: test_pairwise_carrier(),
         }));
     }
     assert_eq!(core.pending_relay_publishes.len(), 2);
@@ -179,14 +180,15 @@ fn group_removal_discards_durable_message_outbox_but_keeps_membership_controls()
     );
     let event = EventBuilder::new(Kind::Custom(1060), "late prepared message")
         .tag(nostr::Tag::parse(["v", "2"]).unwrap())
-        .tag(nostr::Tag::public_key(Keys::generate().public_key()))
+        .tag(nostr::Tag::parse(["header", "test"]).unwrap())
         .sign_with_keys(&transport_keys)
         .unwrap();
     assert!(!core.publish_protocol_event(ProtocolPublish {
         authored_at_secs: None,
         event,
         chat_id,
-        inner_event_id: Some("late-message".into())
+        inner_event_id: Some("late-message".into()),
+        carrier: test_pairwise_carrier(),
     }));
     assert_eq!(core.pending_relay_publishes.len(), 1);
 }

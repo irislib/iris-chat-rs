@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- Stop revealing which device a private message is for. Message events no
+  longer carry a recipient tag, and the app no longer asks message servers for
+  events tagged with its own device. The delivery target stays on the sending
+  device and steers nearby delivery and call wakes from there.
+- Hold a first message that arrives before its handshake, within a fixed
+  limit, instead of relying on the removed recipient tag.
+- Keep reading messages, call wakes and nearby copies from older versions that
+  still tag the recipient. Messages queued by an older version with that tag
+  are kept on the device and marked failed instead of being sent again.
+  Older versions reject call wakes and nearby copies from this one until they
+  update; delivery through message servers works in both directions.
 - Adopt FIPS 0.4.106 and matching TCP, pubsub, and Hashtree transport libraries
   for handshake recovery, tree-announcement retries, and DNS validation.
 - Use `nvpn-webrtc` and `nvpn-webrtc-ice` 0.17.3 to retain the refreshed WebRTC

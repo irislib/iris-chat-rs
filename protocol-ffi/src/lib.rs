@@ -547,6 +547,9 @@ impl SessionManagerInner {
 
     fn enqueue_effect(&mut self, effect: ProtocolEffect) -> Result<(), NdrError> {
         match effect {
+            // Shared group ciphertext and recipient-tagged envelopes from
+            // older versions never become a network publication.
+            ProtocolEffect::Publish(publish) if !publish.is_publishable() => {}
             ProtocolEffect::Publish(publish) => {
                 self.events.push_back(PubSubEvent {
                     kind: "publish_signed".to_string(),

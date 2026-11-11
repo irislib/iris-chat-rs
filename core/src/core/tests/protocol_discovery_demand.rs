@@ -409,7 +409,7 @@ fn discovery_demand_keeps_revocation_and_replacement_device_invites_for_conversa
     assert!(!plan
         .invite_authors
         .contains(&old_device.public_key().to_hex()));
-    assert!(core.message_recipient_bootstrap_needed());
+    assert!(core.peer_session_bootstrap_needed());
     assert_eq!(
         core.protocol_engine
             .as_ref()

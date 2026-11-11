@@ -24,18 +24,18 @@ struct CallWake {
     bootstrap_event_id: Option<String>,
 }
 
-fn wake_event(encrypted: &Event, bootstrap: Option<&Event>) -> Option<Event> {
+/// `target` comes from the engine's delivery record for `encrypted`. The
+/// message event itself names nobody, so it can never supply the device.
+fn wake_event(target: PublicKey, encrypted: &Event, bootstrap: Option<&Event>) -> Option<Event> {
     // This transport envelope never authenticates the caller. Only the inner
     // double-ratchet offer does. An identity signer would reveal the contact pair.
     let keys = Keys::generate();
-    let targets = encrypted.tags.public_keys().copied().collect::<Vec<_>>();
     if encrypted.kind.as_u16() as u32 != MESSAGE_EVENT_KIND
-        || targets.len() != 1
+        || !crate::core::publishing::message_event_names_nobody(encrypted)
         || !nostr_double_ratchet::has_metadata_privacy_version(encrypted)
     {
         return None;
     }
-    let target = targets.first().copied()?;
     let sign = |events, bootstrap_event_id| {
         let content = serde_json::to_string(&CallWake {
             kind: "call-wake".into(),
@@ -87,7 +87,7 @@ fn wake_messages(event: &Event, device: PublicKey) -> Option<CallWake> {
             || !nostr_double_ratchet::has_metadata_privacy_version(message)
             || (is_message
                 && (message.kind.as_u16() as u32 != MESSAGE_EVENT_KIND
-                    || message.tags.public_keys().copied().collect::<Vec<_>>() != vec![device]))
+                    || !wake_message_is_for(message, device)))
             || (!is_message && message.kind.as_u16() as u32 != INVITE_RESPONSE_KIND)
             || message.created_at.as_secs() > now.saturating_add(5)
             || now.saturating_sub(message.created_at.as_secs())
@@ -101,6 +101,19 @@ fn wake_messages(event: &Event, device: PublicKey) -> Option<CallWake> {
         }
     }
     Some(wake)
+}
+
+/// The wake itself names this device. Its message event names nobody, except
+/// from older clients, whose single recipient tag must then be this device.
+fn wake_message_is_for(message: &Event, device: PublicKey) -> bool {
+    if message
+        .tags
+        .iter()
+        .any(|tag| tag.kind() == nostr::TagKind::p())
+    {
+        return message.tags.public_keys().copied().collect::<Vec<_>>() == vec![device];
+    }
+    crate::core::publishing::message_event_names_nobody(message)
 }
 
 fn decrypted_offer(message: &ProtocolDecryptedMessage) -> Option<Signal> {
@@ -149,7 +162,7 @@ impl AppCore {
         let Some(active) = &self.calls.active else {
             return;
         };
-        if !self.private_publication_allowed(&publish.event) {
+        if !self.protocol_publication_allowed(publish) {
             return;
         }
         if publish.event.kind.as_u16() as u32 == INVITE_RESPONSE_KIND && active.outgoing {
@@ -185,12 +198,12 @@ impl AppCore {
         {
             return;
         }
+        // The device to ring comes from the delivery record, never the event.
         let Some(target) = publish
-            .event
-            .tags
-            .public_keys()
-            .next()
-            .map(|key| key.to_hex())
+            .carrier
+            .pairwise_device()
+            .filter(|_| publish.event.kind.as_u16() as u32 == MESSAGE_EVENT_KIND)
+            .map(|device| device.to_hex())
         else {
             return;
         };
@@ -223,7 +236,9 @@ impl AppCore {
         }
         let mut ready = Vec::new();
         active.push_pending_wakes.retain(|target, encrypted| {
-            let Some(event) = wake_event(encrypted, active.push_bootstrap.get(target)) else {
+            let Some(event) = PublicKey::from_hex(target).ok().and_then(|device| {
+                wake_event(device, encrypted, active.push_bootstrap.get(target))
+            }) else {
                 return false;
             };
             let Ok(wake) = serde_json::from_str::<CallWake>(&event.content) else {
@@ -312,8 +327,9 @@ impl AppCore {
         }
         // Preserve a valid ciphertext while its normal authenticated handshake is
         // still arriving. Only the decrypted inner offer can ring the phone.
+        // The wake names this device; the message event inside names nobody.
         for encrypted in wake.events {
-            self.handle_relay_event(encrypted);
+            self.handle_directed_private_event(encrypted, "message servers");
         }
         if let Some(id) = wake
             .bootstrap_event_id

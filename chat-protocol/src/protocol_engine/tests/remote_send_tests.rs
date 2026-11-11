@@ -499,6 +499,8 @@ fn group_fanout_save_failure_keeps_unsent_targets_and_ratchets_retryable() {
 fn direct_foreign_recipient_does_not_enter_retry_queues() {
     let mut f = remote_send_fixture();
     let peer = f.peer_owner.public_key();
+    // Only clients from before recipient tags were removed name a device.
+    let _older_client = LegacyRecipientTags::sender();
     let sent = f
         .sender
         .send_direct_text(
@@ -542,16 +544,18 @@ fn direct_foreign_recipient_does_not_enter_retry_queues() {
 fn direct_foreign_recipient_is_pruned_from_persisted_retry_queues() {
     let mut f = remote_send_fixture();
     let peer = f.peer_owner.public_key();
-    let sent = f
-        .sender
-        .send_direct_text(
-            peer,
-            &peer.to_hex(),
-            "legacy queued foreign delivery",
-            None,
-            UnixSeconds(10),
-        )
-        .unwrap();
+    let sent = {
+        let _older_client = LegacyRecipientTags::sender();
+        f.sender
+            .send_direct_text(
+                peer,
+                &peer.to_hex(),
+                "legacy queued foreign delivery",
+                None,
+                UnixSeconds(10),
+            )
+            .unwrap()
+    };
     let event = sent
         .effects
         .iter()
@@ -600,8 +604,8 @@ fn direct_foreign_recipient_is_pruned_from_persisted_retry_queues() {
 }
 
 #[test]
-fn direct_recipient_routing_preserves_legacy_owner_and_multi_recipient_messages() {
-    for variant in ["legacy", "device", "owner", "multi-device", "multi-owner"] {
+fn direct_recipient_routing_reads_untagged_and_legacy_recipient_tagged_messages() {
+    for variant in ["untagged", "device", "owner", "multi-device", "multi-owner"] {
         let owner = Keys::generate();
         let device = Keys::generate();
         let peer_owner = Keys::generate();
@@ -630,14 +634,18 @@ fn direct_recipient_routing_preserves_legacy_owner_and_multi_recipient_messages(
         let plan = session
             .plan_send(variant.as_bytes(), NdrUnixSeconds(20))
             .unwrap();
-        let mut envelope = session.apply_send(plan).envelope;
-        envelope.recipient = match variant {
-            "legacy" => None,
+        let envelope = session.apply_send(plan).envelope;
+        // "untagged" is the current wire shape; the rest are older clients.
+        let recipient = match variant {
+            "untagged" => None,
             "device" => Some(ndr_device(device.public_key())),
             "owner" => Some(ndr_device(owner.public_key())),
             _ => Some(ndr_device(Keys::generate().public_key())),
         };
-        let mut event = nostr_double_ratchet::message_event(&envelope).unwrap();
+        let mut event = match recipient {
+            Some(recipient) => legacy_recipient_message_event(&envelope, recipient).unwrap(),
+            None => nostr_double_ratchet::message_event(&envelope).unwrap(),
+        };
         if variant.starts_with("multi-") {
             let local = if variant == "multi-device" {
                 device.public_key()

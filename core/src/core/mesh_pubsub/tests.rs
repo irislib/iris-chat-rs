@@ -215,10 +215,28 @@ fn identified_mesh_never_attaches_retained_private_group_replay() {
         )
         .tags([
             nostr::Tag::parse(["v", "2"]).unwrap(),
-            nostr::Tag::public_key(owner.public_key()),
+            nostr::Tag::parse(["header", "encrypted-header"]).unwrap(),
         ])
         .sign_with_keys(&Keys::generate())
         .unwrap();
+        // Only an envelope with a recorded target device is a pairwise one;
+        // shared group ciphertext has the same shape and is never retained.
+        core.retain_mesh_group_envelope(&event, &chat);
+        core.pending_relay_publishes.insert(
+            event.id.to_hex(),
+            PendingRelayPublish {
+                owner_pubkey_hex: owner.public_key().to_hex(),
+                event_id: event.id.to_hex(),
+                label: APPCORE_PROTOCOL_LABEL.into(),
+                event_json: serde_json::to_string(&event).unwrap(),
+                inner_event_id: Some("message".into()),
+                chat_id: Some(chat.clone()),
+                created_at_secs: event.created_at.as_secs(),
+                attempt_count: 0,
+                last_error: None,
+                pairwise_device_hex: Some(Keys::generate().public_key().to_hex()),
+            },
+        );
         core.apply_runtime_text_message(
             peer.public_key(),
             Some(chat.clone()),

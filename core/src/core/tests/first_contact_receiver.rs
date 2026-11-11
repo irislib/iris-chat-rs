@@ -67,7 +67,7 @@ fn first_contact_send_queues_text_until_peer_protocol_state_is_ready() {
 }
 
 #[test]
-fn cold_app_key_first_direct_message_is_recipient_scoped() {
+fn cold_app_key_first_direct_message_names_no_recipient() {
     let alice_owner = Keys::generate();
     let alice_device = Keys::generate();
     let bob_owner = Keys::generate();
@@ -164,30 +164,53 @@ fn cold_app_key_first_direct_message_is_recipient_scoped() {
             .map(|entry| format!("{}:{}", entry.category, entry.detail))
             .collect::<Vec<_>>()
     );
-    assert!(
-        message_events
-            .iter()
-            .all(|event| event_has_pubkey_tag_for_test(event, bob_device.public_key())),
-        "cold app-key direct sends must tag Bob's device as the relay-visible recipient"
-    );
+    // Message events name nobody: a relay must not learn which device a
+    // delivery, or a fanout burst, is for. Bob finds them through the sender
+    // ratchet keys he learns from the invite response instead.
+    for event in &message_events {
+        assert_eq!(
+            event
+                .tags
+                .iter()
+                .map(|tag| tag.as_slice()[0].as_str())
+                .collect::<Vec<_>>(),
+            ["v", "header"],
+            "cold app-key direct sends must not tag a relay-visible recipient"
+        );
+        let wire = serde_json::to_string(event).expect("event json");
+        for identity in [&alice_owner, &alice_device, &bob_owner, &bob_device] {
+            assert!(!wire.contains(&identity.public_key().to_hex()));
+        }
+        assert_eq!(
+            alice.queued_pairwise_device(event),
+            Some(bob_device.public_key()),
+            "the target device stays in local delivery metadata"
+        );
+    }
     let filters = bob.recent_protocol_filters(UnixSeconds(1_777_159_500));
     assert!(
-        has_filter_with_kind_pubkey_for_test(&filters, MESSAGE_EVENT_KIND, bob_device.public_key()),
-        "Bob must ask relays for cold first messages addressed to his device; filters={:?}",
+        !filters.iter().any(|filter| filter
+            .kinds
+            .as_ref()
+            .is_some_and(|kinds| kinds.contains(&Kind::from(MESSAGE_EVENT_KIND as u16)))
+            && !filter.generic_tags.is_empty()),
+        "Bob must not ask relays for messages addressed to his device; filters={:?}",
         filters
             .iter()
             .map(|filter| serde_json::to_value(filter).expect("filter json"))
             .collect::<Vec<_>>()
     );
-}
-
-fn event_has_pubkey_tag_for_test(event: &Event, pubkey: PublicKey) -> bool {
-    let pubkey_hex = pubkey.to_hex();
-    event.tags.iter().any(|tag| {
-        let values = tag.as_slice();
-        values.first().map(|value| value.as_str()) == Some("p")
-            && values.get(1).map(|value| value.as_str()) == Some(pubkey_hex.as_str())
-    })
+    assert!(
+        has_filter_with_kind_pubkey_for_test(
+            &filters,
+            INVITE_RESPONSE_KIND,
+            bob.protocol_engine
+                .as_ref()
+                .and_then(ProtocolEngine::local_invite_response_pubkey)
+                .expect("bob invite key"),
+        ),
+        "the invite response, addressed to the public invite key, opens a cold session"
+    );
 }
 
 fn has_filter_with_kind_pubkey_for_test(filters: &[Filter], kind: u32, pubkey: PublicKey) -> bool {

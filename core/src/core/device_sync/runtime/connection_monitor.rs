@@ -887,25 +887,39 @@ mod tests {
         let bootstrap = Arc::new(RwLock::new(vec![b"nearby bootstrap".to_vec()]));
         let mut outbox = FipsNearbyOutbox::default();
         outbox.insert("queued".to_string(), b"nearby outbox".to_vec());
-        let private = EventBuilder::new(Kind::Custom(1060), "intended private delivery")
-            .tags([
-                nostr::Tag::parse(["v", "2"]).unwrap(),
-                nostr::Tag::public_key(PublicKey::from_hex(&sibling_hex).unwrap()),
-            ])
-            .sign_with_keys(&Keys::generate())
-            .unwrap();
+        // Message events name nobody. Each queued copy carries the target
+        // recorded for it; an unrecorded one has nowhere to go.
+        let message = |body: &str| {
+            EventBuilder::new(Kind::Custom(1060), body)
+                .tags([
+                    nostr::Tag::parse(["v", "2"]).unwrap(),
+                    nostr::Tag::parse(["header", "encrypted-header"]).unwrap(),
+                ])
+                .sign_with_keys(&Keys::generate())
+                .unwrap()
+        };
+        let private = message("intended private delivery");
         let private_payload = crate::core::fips_nearby::encode_fips_nearby_event(&private).unwrap();
-        outbox.insert(private.id.to_hex(), private_payload.clone());
-        let elsewhere = EventBuilder::new(Kind::Custom(1060), "another recipient")
-            .tags([
-                nostr::Tag::parse(["v", "2"]).unwrap(),
-                nostr::Tag::public_key(Keys::generate().public_key()),
-            ])
-            .sign_with_keys(&Keys::generate())
-            .unwrap();
-        outbox.insert(
+        outbox.insert_for_targets(
+            private.id.to_hex(),
+            private_payload.clone(),
+            Some(std::collections::BTreeSet::from([sibling
+                .npub()
+                .to_owned()])),
+        );
+        let elsewhere = message("another recipient");
+        outbox.insert_for_targets(
             elsewhere.id.to_hex(),
             crate::core::fips_nearby::encode_fips_nearby_event(&elsewhere).unwrap(),
+            Some(std::collections::BTreeSet::from([{
+                use nostr::ToBech32;
+                Keys::generate().public_key().to_bech32().unwrap()
+            }])),
+        );
+        let unrecorded = message("no recorded target");
+        outbox.insert(
+            unrecorded.id.to_hex(),
+            crate::core::fips_nearby::encode_fips_nearby_event(&unrecorded).unwrap(),
         );
         let outbox = Arc::new(RwLock::new(outbox));
         let (sender, receiver) = flume::unbounded();

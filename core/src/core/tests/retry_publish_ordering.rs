@@ -24,7 +24,7 @@ fn retry_batch_publish_registration_blocks_delivery_until_relay_success() {
 
     let event = EventBuilder::new(Kind::from(MESSAGE_EVENT_KIND as u16), "payload")
         .tag(nostr::Tag::parse(["v", "2"]).unwrap())
-        .tag(nostr::Tag::public_key(Keys::generate().public_key()))
+        .tag(nostr::Tag::parse(["header", "test"]).unwrap())
         .sign_with_keys(&transport_keys)
         .expect("payload event");
     let event_id = event.id.to_string();
@@ -37,6 +37,7 @@ fn retry_batch_publish_registration_blocks_delivery_until_relay_success() {
                 event,
                 chat_id: chat_id.clone(),
                 inner_event_id: Some(message_id.clone()),
+                carrier: test_pairwise_carrier(),
             })],
             ..ProtocolRetryBatch::default()
         },

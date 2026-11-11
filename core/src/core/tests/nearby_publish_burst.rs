@@ -32,10 +32,15 @@ fn relay_publish_burst_does_not_replay_acknowledged_nearby_backlog() {
     core.relay_transport_runtime.publish_drain_started_at = Some(Instant::now());
     let event = EventBuilder::new(Kind::Custom(1060), "earlier control")
         .tag(nostr::Tag::parse(["v", "2"]).unwrap())
-        .tag(nostr::Tag::public_key(recipient))
+        .tag(nostr::Tag::parse(["header", "test"]).unwrap())
         .sign_with_keys(&transport_keys)
         .unwrap();
-    assert!(core.publish_runtime_event(event.clone(), APPCORE_PROTOCOL_LABEL, None));
+    assert!(core.publish_pairwise_runtime_event_for_test(
+        event.clone(),
+        APPCORE_PROTOCOL_LABEL,
+        None,
+        recipient,
+    ));
     let outbox = core.device_sync.as_ref().unwrap().nearby_outbox.clone();
     outbox
         .write()
@@ -44,10 +49,15 @@ fn relay_publish_burst_does_not_replay_acknowledged_nearby_backlog() {
     for index in 0..20 {
         let next = EventBuilder::new(Kind::Custom(1060), format!("new control {index}"))
             .tag(nostr::Tag::parse(["v", "2"]).unwrap())
-            .tag(nostr::Tag::public_key(recipient))
+            .tag(nostr::Tag::parse(["header", "test"]).unwrap())
             .sign_with_keys(&transport_keys)
             .unwrap();
-        assert!(core.publish_runtime_event(next, APPCORE_PROTOCOL_LABEL, None));
+        assert!(core.publish_pairwise_runtime_event_for_test(
+            next,
+            APPCORE_PROTOCOL_LABEL,
+            None,
+            recipient,
+        ));
     }
     let pending = outbox.read().unwrap().pending_for_link(&recipient_npub, 1);
     assert_eq!(
