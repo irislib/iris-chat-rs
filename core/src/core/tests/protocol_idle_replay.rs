@@ -3,6 +3,10 @@
 use super::*;
 use nostr::{EventId, RelayMessage};
 
+/// These plans hold one chunk of message authors, which travels in its own
+/// request apart from the shared `ndr-protocol` one.
+const MESSAGE_SUBSCRIPTION: &str = "ndr-protocol-messages-0";
+
 async fn received_eose(
     notifications: &mut tokio::sync::broadcast::Receiver<RelayPoolNotification>,
     expected_relay: &nostr::RelayUrl,
@@ -22,8 +26,8 @@ async fn received_eose(
                 RelayMessage::Event {
                     subscription_id,
                     event,
-                } if subscription_id.as_str() == "ndr-protocol" => events.push(event.id),
-                RelayMessage::EndOfStoredEvents(id) if id.as_str() == "ndr-protocol" => {
+                } if subscription_id.as_str() == MESSAGE_SUBSCRIPTION => events.push(event.id),
+                RelayMessage::EndOfStoredEvents(id) if id.as_str() == MESSAGE_SUBSCRIPTION => {
                     return events
                 }
                 _ => {}
@@ -43,7 +47,7 @@ async fn another_relays_eose_does_not_complete_the_observed_subscription() {
     let (sender, mut receiver) = tokio::sync::broadcast::channel(2);
     let eose = |relay_url| RelayPoolNotification::Message {
         relay_url,
-        message: RelayMessage::eose(SubscriptionId::new("ndr-protocol")),
+        message: RelayMessage::eose(SubscriptionId::new(MESSAGE_SUBSCRIPTION)),
     };
     sender.send(eose(second)).unwrap();
     let completion = received_eose(&mut receiver, &first);
@@ -73,7 +77,7 @@ fn protocol_requests(relay: &crate::local_relay::TestRelay) -> usize {
     relay
         .wire()
         .iter()
-        .filter(|(_, frame)| frame[0] == "REQ" && frame[1] == "ndr-protocol")
+        .filter(|(_, frame)| frame[0] == "REQ" && frame[1] == MESSAGE_SUBSCRIPTION)
         .count()
 }
 
@@ -168,7 +172,7 @@ fn populated_history_liveness_does_not_replay_healthy_subscriptions() {
     );
     assert_eq!(
         wire.iter()
-            .filter(|(_, f)| f[0] == "CLOSE" && f[1] == "ndr-protocol")
+            .filter(|(_, f)| f[0] == "CLOSE" && f[1] == MESSAGE_SUBSCRIPTION)
             .count(),
         0
     );
@@ -206,7 +210,7 @@ fn liveness_repairs_closed_and_missing_subscriptions_without_repeated_replay() {
         connect_client_with_timeout(&client, Duration::from_secs(2)).await;
     });
     let sdk_relay = core.runtime.block_on(client.relay(&urls[0])).unwrap();
-    let id = SubscriptionId::new("ndr-protocol");
+    let id = SubscriptionId::new(MESSAGE_SUBSCRIPTION);
     let (tx, rx) = flume::unbounded();
     core.core_sender = tx.clone();
     core.priority_sender = tx;
@@ -231,7 +235,7 @@ fn liveness_repairs_closed_and_missing_subscriptions_without_repeated_replay() {
         "auth-required: authenticate",
         "rate-limited: try later",
     ] {
-        assert_eq!(relay.close_subscription("ndr-protocol", reason), 1);
+        assert_eq!(relay.close_subscription(MESSAGE_SUBSCRIPTION, reason), 1);
         wait_until(|| core.runtime.block_on(sdk_relay.subscription(&id)).is_none());
         tick(&mut core, &rx);
         core.runtime
@@ -309,7 +313,7 @@ fn liveness_repairs_closed_and_missing_subscriptions_without_repeated_replay() {
     // relay's newest wire request to contain the changed plan before counting.
     let expected_request = serde_json::json!([
         "REQ",
-        "ndr-protocol",
+        MESSAGE_SUBSCRIPTION,
         { "authors": [next_author.public_key().to_hex()], "kinds": [MESSAGE_EVENT_KIND] }
     ]);
     wait_until(|| {
@@ -318,7 +322,7 @@ fn liveness_repairs_closed_and_missing_subscriptions_without_repeated_replay() {
                 .wire()
                 .into_iter()
                 .rev()
-                .find(|(_, frame)| frame[0] == "REQ" && frame[1] == "ndr-protocol")
+                .find(|(_, frame)| frame[0] == "REQ" && frame[1] == MESSAGE_SUBSCRIPTION)
                 .is_some_and(|(_, frame)| frame == expected_request)
         })
     });
@@ -366,7 +370,7 @@ fn liveness_repairs_closed_and_missing_subscriptions_without_repeated_replay() {
     let wire = relay.wire();
     let receiving_connections = wire
         .iter()
-        .filter(|(_, frame)| frame[0] == "REQ" && frame[1] == "ndr-protocol")
+        .filter(|(_, frame)| frame[0] == "REQ" && frame[1] == MESSAGE_SUBSCRIPTION)
         .map(|(connection, _)| *connection)
         .collect::<HashSet<_>>();
     for (_, frame) in wire

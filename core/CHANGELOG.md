@@ -8,6 +8,10 @@
   device and steers nearby delivery and call wakes from there.
 - Hold a first message that arrives before its handshake, within a fixed
   limit, instead of relying on the removed recipient tag.
+- Ask message servers and the mesh for messages in bounded groups of sender
+  keys, one request each, and ask again only for a group that changed. A single
+  oversized request was refused whole, which stopped all delivery from that
+  server for accounts with many contacts.
 - Keep reading messages, call wakes and nearby copies from older versions that
   still tag the recipient. Messages queued by an older version with that tag
   are kept on the device and marked failed instead of being sent again.

@@ -11,6 +11,15 @@ pub(super) struct ProtocolSubscriptionApplyOutput {
 pub(in crate::core) fn build_protocol_subscription_filters(
     plan: &ProtocolSubscriptionPlan,
 ) -> Vec<Filter> {
+    build_protocol_subscription_filters_with_chunk_size(plan, RELAY_MESSAGE_AUTHOR_CHUNK_SIZE)
+}
+
+/// `message_author_chunk_size` is the carrier's limit: every message-author
+/// filter this returns must fit one request on it.
+pub(in crate::core) fn build_protocol_subscription_filters_with_chunk_size(
+    plan: &ProtocolSubscriptionPlan,
+    message_author_chunk_size: usize,
+) -> Vec<Filter> {
     let roster_authors = pubkeys_from_hexes(&plan.roster_authors);
     let invite_authors = pubkeys_from_hexes(&plan.invite_authors);
     let message_authors = pubkeys_from_hexes(&plan.message_authors);
@@ -51,13 +60,10 @@ pub(in crate::core) fn build_protocol_subscription_filters(
     // Message events are found only through the sender's ratchet keys. They
     // name no recipient, and asking a relay for events tagged with this device
     // would tell it which device is listening.
-    if !message_authors.is_empty() {
-        filters.push(
-            Filter::new()
-                .kind(Kind::from(MESSAGE_EVENT_KIND as u16))
-                .authors(message_authors),
-        );
-    }
+    filters.extend(message_author_subscription_filters(
+        message_authors,
+        message_author_chunk_size,
+    ));
     if !invite_response_recipients.is_empty() {
         filters.push(
             Filter::new()

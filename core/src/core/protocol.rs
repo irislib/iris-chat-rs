@@ -3,6 +3,7 @@ use crate::core::projection::relay_connection_status;
 
 pub(in crate::core) mod anonymous_reads;
 mod backfill;
+mod message_author_subscriptions;
 pub(super) mod private_reads;
 pub(in crate::core) mod public_discovery;
 mod retry_helpers;
@@ -12,8 +13,16 @@ use self::backfill::{
     direct_message_history_filter, protocol_event_summary, NEW_MESSAGE_AUTHOR_DELAYED_BACKFILL_MS,
     PROTOCOL_BACKFILL_AUTHOR_BATCH_SIZE,
 };
+use self::message_author_subscriptions::{
+    evict_protocol_subscriptions, is_protocol_subscription_id, subscribe_protocol_filters,
+};
+pub(super) use self::message_author_subscriptions::{
+    message_author_subscription_filters, split_message_author_filters,
+    MESH_MESSAGE_AUTHOR_CHUNK_SIZE, RELAY_MESSAGE_AUTHOR_CHUNK_SIZE,
+};
 pub(super) use self::subscription_helpers::{
-    build_protocol_subscription_filters, fetch_events_for_filters, ReadScope,
+    build_protocol_subscription_filters, build_protocol_subscription_filters_with_chunk_size,
+    fetch_events_for_filters, ReadScope,
 };
 use self::subscription_helpers::{
     current_client_relay_statuses, pubkeys_from_comma_separated_hexes, pubkeys_from_hexes,
@@ -601,10 +610,12 @@ impl AppCore {
             DEVICE_INVITE_DISCOVERY_LIMIT,
         ));
         if include_message_history {
-            let message_authors = pubkeys_from_hexes(&plan.message_authors);
-            if !message_authors.is_empty() {
-                filters.push(direct_message_history_filter(message_authors));
-            }
+            // One catch-up request per chunk: an oversized request is
+            // refused whole and would lose the catch-up for every author.
+            filters.extend(message_author_subscription_filters(
+                pubkeys_from_hexes(&plan.message_authors),
+                RELAY_MESSAGE_AUTHOR_CHUNK_SIZE,
+            ));
         }
 
         let private_invite_response_pubkeys = plan
@@ -865,10 +876,7 @@ impl AppCore {
                                     // Cached filters describe the old socket. The SDK's
                                     // second-resolution reconnect check can miss a quick
                                     // reconnect, so repair this relay once through AppCore.
-                                    let id = SubscriptionId::new(PROTOCOL_SUBSCRIPTION_ID);
-                                    if relay.subscription(&id).await.is_some() {
-                                        let _ = relay.unsubscribe(&id).await;
-                                    }
+                                    evict_protocol_subscriptions(&relay).await;
                                 }
                                 let _ = tx.send(CoreMsg::Internal(Box::new(
                                     InternalEvent::RelayStatusChanged {
@@ -892,7 +900,10 @@ impl AppCore {
                                     nostr::RelayMessage::Closed {
                                         subscription_id, ..
                                     },
-                            }) if subscription_id.as_ref().as_str() == PROTOCOL_SUBSCRIPTION_ID => {
+                            }) if is_protocol_subscription_id(
+                                subscription_id.as_ref().as_str(),
+                            ) =>
+                            {
                                 // The SDK retains filters for auth-required/rate-limited
                                 // CLOSED responses. Evict them so the next bounded liveness
                                 // check repairs this relay instead of treating it as healthy.
@@ -902,9 +913,7 @@ impl AppCore {
                             Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
                                 // A missed CLOSED cannot be distinguished from a healthy
                                 // subscription through the SDK's public filter snapshot.
-                                let _ = relay
-                                    .unsubscribe(&SubscriptionId::new(PROTOCOL_SUBSCRIPTION_ID))
-                                    .await;
+                                evict_protocol_subscriptions(&relay).await;
                             }
                             Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                         }
@@ -1522,9 +1531,9 @@ impl AppCore {
                             error: Some("no connected relays".to_string()),
                         };
                     }
-                    let subscription_id = SubscriptionId::new(PROTOCOL_SUBSCRIPTION_ID);
-                    let result =
-                        subscribe_protocol_filters_with_id(&client, subscription_id, filters).await;
+                    // Message authors go out in bounded chunks, one request
+                    // each; only chunks whose authors changed are re-sent.
+                    let result = subscribe_protocol_filters(&client, filters).await;
                     let result = match result {
                         Ok(()) => match discovery_scopes {
                             Ok(scopes) => {

@@ -39,7 +39,7 @@ fn unchanged_filters_repair_only_known_terminal_subscriptions_and_await_close() 
         ];
         let closed = statuses.map(|_| Arc::new(AtomicUsize::new(0)));
         let mut state = MeshProtocolSubscriptions {
-            filters: filters.clone(),
+            groups: groups(&filters),
             subscriptions: statuses
                 .into_iter()
                 .zip(closed.iter())
@@ -54,7 +54,7 @@ fn unchanged_filters_repair_only_known_terminal_subscriptions_and_await_close() 
         };
         let (sender, _receiver) = flume::unbounded();
         state
-            .update(&client, filters.clone(), sender.clone())
+            .update(&client, groups(&filters), sender.clone())
             .await
             .unwrap();
         assert_eq!(
@@ -71,7 +71,10 @@ fn unchanged_filters_repair_only_known_terminal_subscriptions_and_await_close() 
         assert!(state.subscriptions[1..].iter().all(|subscription| {
             subscription.delivery_status() == Some(SubscriptionDeliveryStatus::Active)
         }));
-        state.update(&client, filters, sender).await.unwrap();
+        state
+            .update(&client, groups(&filters), sender)
+            .await
+            .unwrap();
         assert_eq!(
             client.active_subscription_count().unwrap(),
             initial_subscriptions + 2
@@ -93,7 +96,7 @@ fn failed_terminal_replacement_rebuilds_missing_slots_and_drains_terminal_handle
         let filters = vec![Filter::new().kind(Kind::TextNote); 2];
         let closed = [Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0))];
         let mut state = MeshProtocolSubscriptions {
-            filters: filters.clone(),
+            groups: groups(&filters),
             subscriptions: [
                 SubscriptionDeliveryStatus::Closed,
                 SubscriptionDeliveryStatus::Lagged,
@@ -112,7 +115,7 @@ fn failed_terminal_replacement_rebuilds_missing_slots_and_drains_terminal_handle
         let (sender, _receiver) = flume::unbounded();
         client.shutdown_shared().await;
         assert!(state
-            .update(&client, filters.clone(), sender.clone())
+            .update(&client, groups(&filters), sender.clone())
             .await
             .is_err());
         assert!(state.retry_needed);
@@ -128,7 +131,7 @@ fn failed_terminal_replacement_rebuilds_missing_slots_and_drains_terminal_handle
         let (replacement_endpoint, replacement) = fixture().await;
         let initial_subscriptions = replacement.active_subscription_count().unwrap();
         state
-            .update(&replacement, filters.clone(), sender.clone())
+            .update(&replacement, groups(&filters), sender.clone())
             .await
             .unwrap();
         assert_eq!(state.subscriptions.len(), filters.len());
@@ -139,7 +142,7 @@ fn failed_terminal_replacement_rebuilds_missing_slots_and_drains_terminal_handle
             "retry must await the remaining terminal handle"
         );
         state
-            .update(&replacement, filters.clone(), sender.clone())
+            .update(&replacement, groups(&filters), sender.clone())
             .await
             .unwrap();
         assert_eq!(
@@ -154,7 +157,7 @@ fn failed_terminal_replacement_rebuilds_missing_slots_and_drains_terminal_handle
         });
         let changed_filters = vec![Filter::new().kind(Kind::ContactList)];
         state
-            .update(&replacement, changed_filters.clone(), sender)
+            .update(&replacement, groups(&changed_filters), sender)
             .await
             .unwrap();
         assert_eq!(state.subscriptions.len(), changed_filters.len());
@@ -168,6 +171,62 @@ fn failed_terminal_replacement_rebuilds_missing_slots_and_drains_terminal_handle
         endpoint.shutdown().await.unwrap();
         replacement_endpoint.shutdown().await.unwrap();
     });
+}
+
+#[test]
+fn a_changed_group_is_replaced_while_unchanged_groups_keep_their_subscriptions() {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let (endpoint, client) = fixture().await;
+        let initial_subscriptions = client.active_subscription_count().unwrap();
+        // Three chunks of message authors, each in its own subscription.
+        let chunk = |_: usize| {
+            vec![Filter::new()
+                .kind(Kind::Custom(MESSAGE_EVENT_KIND as u16))
+                .authors((0..3).map(|_| Keys::generate().public_key()))]
+        };
+        let before = (0..3).map(chunk).collect::<Vec<_>>();
+        let closed = [0, 1, 2].map(|_| Arc::new(AtomicUsize::new(0)));
+        let mut state = MeshProtocolSubscriptions {
+            groups: before.clone(),
+            subscriptions: closed
+                .iter()
+                .map(|closed| {
+                    Box::new(ObservedSubscription {
+                        status: Some(SubscriptionDeliveryStatus::Active),
+                        closed: closed.clone(),
+                    }) as Box<dyn NostrEventSubscription>
+                })
+                .collect(),
+            ..Default::default()
+        };
+        // A ratchet step changes the middle chunk, and the layout order shifts.
+        let mut changed = before[1].clone();
+        changed[0] = changed[0].clone().author(Keys::generate().public_key());
+        let after = vec![before[2].clone(), changed, before[0].clone()];
+        let (sender, _receiver) = flume::unbounded();
+        state.update(&client, after.clone(), sender).await.unwrap();
+        assert_eq!(
+            client.active_subscription_count().unwrap(),
+            initial_subscriptions + 1,
+            "only the changed chunk is subscribed again"
+        );
+        assert_eq!(state.groups, after);
+        assert_eq!(state.subscriptions.len(), 3);
+        assert!(closed
+            .iter()
+            .all(|closed| closed.load(Ordering::SeqCst) == 0));
+        drop(state);
+        client.shutdown().await;
+        endpoint.shutdown().await.unwrap();
+    });
+}
+
+fn groups(filters: &[Filter]) -> Vec<Vec<Filter>> {
+    filters.iter().cloned().map(|filter| vec![filter]).collect()
 }
 
 fn client_options() -> nostr_pubsub_fips::FipsPubsubClientOptions {

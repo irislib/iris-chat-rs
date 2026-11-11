@@ -19,7 +19,7 @@ const OUTBOX_BATCH: usize = 16;
 mod tests;
 
 pub(super) struct MeshProtocolSubscriptions {
-    filters: Vec<Filter>,
+    groups: Vec<Vec<Filter>>,
     subscriptions: Vec<Box<dyn NostrEventSubscription>>,
     publish_slots: Arc<tokio::sync::Semaphore>,
     outbox_cursor: Option<String>,
@@ -32,7 +32,7 @@ pub(super) struct MeshProtocolSubscriptions {
 impl Default for MeshProtocolSubscriptions {
     fn default() -> Self {
         Self {
-            filters: Vec::new(),
+            groups: Vec::new(),
             subscriptions: Vec::new(),
             publish_slots: Arc::new(tokio::sync::Semaphore::new(64)),
             outbox_cursor: None,
@@ -45,10 +45,13 @@ impl Default for MeshProtocolSubscriptions {
 }
 
 impl MeshProtocolSubscriptions {
+    /// One mesh subscription per group. A group whose filters did not change
+    /// keeps its live subscription, so a changed chunk of message authors does
+    /// not make every other chunk replay.
     async fn update(
         &mut self,
         client: &FipsPubsubClient,
-        filters: Vec<Filter>,
+        groups: Vec<Vec<Filter>>,
         sender: Sender<CoreMsg>,
     ) -> nostr_pubsub::Result<()> {
         let handler = Arc::new(move |delivery: nostr_pubsub::QueryEvent| {
@@ -56,17 +59,19 @@ impl MeshProtocolSubscriptions {
                 delivery.event.into_event(),
             ))));
         });
-        if self.filters == filters && !self.retry_needed {
-            for (index, filters) in filters
-                .chunks(client.options().max_filters_per_subscription)
-                .enumerate()
-            {
-                if !matches!(
-                    self.subscriptions
-                        .get(index)
-                        .and_then(|subscription| subscription.delivery_status()),
-                    Some(SubscriptionDeliveryStatus::Closed | SubscriptionDeliveryStatus::Lagged)
-                ) {
+        let stopped = |subscription: &dyn NostrEventSubscription| {
+            matches!(
+                subscription.delivery_status(),
+                Some(SubscriptionDeliveryStatus::Closed | SubscriptionDeliveryStatus::Lagged)
+            )
+        };
+        if self.groups == groups && !self.retry_needed {
+            for (index, filters) in groups.iter().enumerate() {
+                if !self
+                    .subscriptions
+                    .get(index)
+                    .is_some_and(|subscription| stopped(subscription.as_ref()))
+                {
                     continue;
                 }
                 // Await the terminal forwarder's admitted bodies before
@@ -74,31 +79,67 @@ impl MeshProtocolSubscriptions {
                 self.retry_needed = true;
                 self.subscriptions.remove(index).close().await?;
                 let subscription =
-                    NostrEventSubscriber::subscribe(client, filters.to_vec(), handler.clone())
+                    NostrEventSubscriber::subscribe(client, filters.clone(), handler.clone())
                         .await?;
                 self.subscriptions.insert(index, subscription);
                 self.retry_needed = false;
             }
             return Ok(());
         }
-        let mut subscriptions = Vec::new();
-        for filters in filters.chunks(client.options().max_filters_per_subscription) {
-            subscriptions.push(
-                NostrEventSubscriber::subscribe(client, filters.to_vec(), handler.clone()).await?,
-            );
+        // Subscribe to every new or changed group first. A failure leaves the
+        // previous subscriptions in place.
+        let mut claimed = HashSet::new();
+        let mut sources = Vec::with_capacity(groups.len());
+        let mut fresh = Vec::with_capacity(groups.len());
+        for filters in &groups {
+            let source = (!self.retry_needed)
+                .then(|| {
+                    self.groups
+                        .iter()
+                        .zip(&self.subscriptions)
+                        .enumerate()
+                        .find(|(index, (existing, subscription))| {
+                            !claimed.contains(index)
+                                && *existing == filters
+                                && !stopped(subscription.as_ref())
+                        })
+                        .map(|(index, _)| index)
+                })
+                .flatten();
+            match source {
+                Some(index) => {
+                    claimed.insert(index);
+                    fresh.push(None);
+                }
+                None => fresh.push(Some(
+                    NostrEventSubscriber::subscribe(client, filters.clone(), handler.clone())
+                        .await?,
+                )),
+            }
+            sources.push(source);
         }
+        let mut previous = std::mem::take(&mut self.subscriptions)
+            .into_iter()
+            .map(Some)
+            .collect::<Vec<_>>();
+        self.subscriptions = sources
+            .into_iter()
+            .zip(fresh)
+            .filter_map(|(source, fresh)| {
+                fresh.or_else(|| {
+                    source.and_then(|index| previous.get_mut(index).and_then(Option::take))
+                })
+            })
+            .collect();
         let mut close_error = None;
-        for subscription in std::mem::replace(&mut self.subscriptions, subscriptions) {
-            if matches!(
-                subscription.delivery_status(),
-                Some(SubscriptionDeliveryStatus::Closed | SubscriptionDeliveryStatus::Lagged)
-            ) {
+        for subscription in previous.into_iter().flatten() {
+            if stopped(subscription.as_ref()) {
                 if let Err(error) = subscription.close().await {
                     close_error.get_or_insert(error);
                 }
             }
         }
-        self.filters = filters;
+        self.groups = groups;
         self.retry_needed = close_error.is_some();
         if let Some(error) = close_error {
             return Err(error);
@@ -255,10 +296,17 @@ impl AppCore {
             return;
         }
         mesh.protocol_subscriptions.reconcile_pending = false;
+        // A mesh frame is smaller than a message server's, so the message
+        // authors are split into smaller chunks here.
         let filters = self
             .compute_protocol_subscription_plan()
             .as_ref()
-            .map(super::protocol::build_protocol_subscription_filters)
+            .map(|plan| {
+                super::protocol::build_protocol_subscription_filters_with_chunk_size(
+                    plan,
+                    super::protocol::MESH_MESSAGE_AUTHOR_CHUNK_SIZE,
+                )
+            })
             .unwrap_or_default();
         let (mut filters, mut discovery) = self.split_private_discovery_filters(filters);
         // Sibling keys can change without replacing the live endpoint. Keep
@@ -309,9 +357,17 @@ impl AppCore {
                     &self.runtime,
                 );
             }
+            // The frame limit applies to a whole subscription: each chunk of
+            // message authors gets its own, apart from the small shared filters.
+            let (shared, chunks) = super::protocol::split_message_author_filters(filters);
+            let groups = shared
+                .chunks(client.options().max_filters_per_subscription.max(1))
+                .map(<[Filter]>::to_vec)
+                .chain(chunks.into_iter().map(|chunk| vec![chunk]))
+                .collect();
             self.runtime.block_on(mesh.protocol_subscriptions.update(
                 client,
-                filters,
+                groups,
                 self.core_sender.clone(),
             ))
         });
