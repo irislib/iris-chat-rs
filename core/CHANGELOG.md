@@ -11,7 +11,12 @@
 - Ask message servers and the mesh for messages in bounded groups of sender
   keys, one request each, and ask again only for a group that changed. A single
   oversized request was refused whole, which stopped all delivery from that
-  server for accounts with many contacts.
+  server for accounts with many contacts. A sender key stays in the group it
+  falls in, and past 12,000 keys the ones that only have old missed messages
+  are left out first.
+- Adopt FIPS 0.4.122 with TCP endpoint 0.2.56 and message provider 0.6.4. The
+  provider sends messages that name no recipient, and FIPS bounds queued
+  local-network peer announcements.
 - Keep reading messages, call wakes and nearby copies from older versions that
   still tag the recipient. Messages queued by an older version with that tag
   are kept on the device and marked failed instead of being sent again.

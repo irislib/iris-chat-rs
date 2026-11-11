@@ -13,6 +13,7 @@ mod engine_handshake_proof;
 mod engine_incoming_retry;
 mod engine_invite_owner;
 mod engine_local_sibling_sends;
+mod engine_message_authors;
 mod engine_pending_retirement;
 mod engine_persistence;
 mod engine_remote_sends;

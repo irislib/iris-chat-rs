@@ -11,37 +11,28 @@ use super::*;
 /// Authors in one message subscription on a message server. The tightest
 /// relays in common use take 131,072-byte frames (about 1,950 hex authors per
 /// request) and 2,047 items per filter.
-pub(in crate::core) const RELAY_MESSAGE_AUTHOR_CHUNK_SIZE: usize = 1_000;
+pub(in crate::core) const RELAY_MESSAGE_AUTHOR_CHUNK_SIZE: usize =
+    nostr_double_ratchet::MESSAGE_AUTHOR_FILTER_CHUNK_SIZE;
 /// A FIPS mesh frame carries at most 65,525 bytes: about 975 hex authors.
 pub(in crate::core) const MESH_MESSAGE_AUTHOR_CHUNK_SIZE: usize = 500;
 
 const MESSAGE_AUTHOR_SUBSCRIPTION_PREFIX: &str = "ndr-protocol-messages-";
 
-/// Split message authors into filters that each fit one request.
-///
-/// This is the only place that decides the layout. It is a plain key-ordered
-/// split until the pinned `nostr-double-ratchet` has
-/// `build_message_author_subscription_filters`, which also keeps an author in
-/// the chunk its key selects (so one ratchet step changes one chunk) and caps
-/// the total, dropping the least important authors. Pass authors most
-/// important first; that order decides what the library helper drops.
+/// Split message authors, most important first, into filters that each fit
+/// one request. The layout is the protocol library's: an author stays in the
+/// chunk its key selects, so one ratchet step changes one chunk, and past
+/// `MESSAGE_AUTHOR_SUBSCRIPTION_LIMIT` the least important authors (keys that
+/// only have missed messages from older ratchet periods) are left out.
 pub(in crate::core) fn message_author_subscription_filters(
     authors: impl IntoIterator<Item = PublicKey>,
     chunk_size: usize,
 ) -> Vec<Filter> {
-    let authors = authors
-        .into_iter()
-        .collect::<std::collections::BTreeSet<_>>()
-        .into_iter()
-        .collect::<Vec<_>>();
-    authors
-        .chunks(chunk_size.max(1))
-        .map(|chunk| {
-            Filter::new()
-                .kind(Kind::from(MESSAGE_EVENT_KIND as u16))
-                .authors(chunk.iter().copied())
-        })
-        .collect()
+    nostr_double_ratchet::build_message_author_subscription_filters(
+        authors,
+        chunk_size,
+        nostr_double_ratchet::MESSAGE_AUTHOR_SUBSCRIPTION_LIMIT,
+    )
+    .filters
 }
 
 fn is_message_author_filter(filter: &Filter) -> bool {

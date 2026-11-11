@@ -420,3 +420,56 @@ fn recipient_tagged_ready_publications_from_an_older_version_are_retired() {
                 || pending.publish.event.kind.as_u16() as u32 != MESSAGE_EVENT_KIND
         ));
 }
+
+#[test]
+fn message_authors_are_ranked_live_keys_first_and_missed_message_keys_last() {
+    let mut f = remote_send_fixture();
+    let peer = f.peer_owner.public_key();
+    f.sender
+        .send_direct_text(peer, &peer.to_hex(), "seed", None, UnixSeconds(10))
+        .unwrap();
+    let (device, mut state) = f
+        .sender
+        .session_manager
+        .snapshot()
+        .users
+        .into_iter()
+        .flat_map(|user| user.devices)
+        .find_map(|device| Some((device.device_pubkey, device.active_session?)))
+        .expect("the first delivery established a session");
+    // A key that only still has missed messages from an older ratchet period.
+    let missed = Keys::generate().public_key();
+    state.skipped_keys.insert(
+        ndr_device(missed),
+        nostr_double_ratchet::SkippedKeysEntry {
+            message_keys: [(0, [7; 32])].into_iter().collect(),
+            header_keys: Vec::new(),
+        },
+    );
+    f.sender.session_manager.import_session_state(
+        ndr_owner(peer),
+        device,
+        state,
+        NdrUnixSeconds(10),
+    );
+    f.sender.invalidate_known_message_author_cache();
+
+    let ranked = f.sender.message_author_pubkeys_by_priority(|_| true);
+    let unordered = f.sender.message_author_pubkeys_filtered(|_| true);
+    assert!(ranked.len() > 1);
+    assert_eq!(
+        ranked.iter().copied().collect::<BTreeSet<_>>(),
+        unordered.iter().copied().collect::<BTreeSet<_>>(),
+        "ranking must not add or lose a subscribed author"
+    );
+    assert_eq!(
+        ranked.last(),
+        Some(&missed),
+        "a relay limit must drop missed-message keys before live ratchet keys"
+    );
+    assert!(f
+        .sender
+        .message_author_pubkeys_by_priority(|owner| owner != peer)
+        .iter()
+        .all(|author| *author != missed));
+}

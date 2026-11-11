@@ -910,7 +910,7 @@ impl ProtocolEngine {
         self.has_verified_device_owner_claim(ndr_owner(owner_pubkey), ndr_device(device_pubkey))
     }
 
-    fn owner_device_binding_is_verified_in_roster(
+    pub(super) fn owner_device_binding_is_verified_in_roster(
         &self,
         owner: NdrOwnerPubkey,
         device: NdrDevicePubkey,

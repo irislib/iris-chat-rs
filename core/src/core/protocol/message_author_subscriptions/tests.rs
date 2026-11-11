@@ -82,6 +82,17 @@ fn thousands_of_message_authors_become_several_requests_within_relay_limits() {
             .is_some_and(|kinds| kinds.contains(&Kind::from(MESSAGE_EVENT_KIND as u16)))));
         assert!(serde_json::to_string(&shared).unwrap().len() < 1_024);
     }
+    // Past the limit the least important authors, given last, are left out.
+    let limit = nostr_double_ratchet::MESSAGE_AUTHOR_SUBSCRIPTION_LIMIT;
+    let many = (0..limit + 300)
+        .map(|_| Keys::generate().public_key())
+        .collect::<Vec<_>>();
+    let kept =
+        message_author_subscription_filters(many.iter().copied(), RELAY_MESSAGE_AUTHOR_CHUNK_SIZE)
+            .iter()
+            .flat_map(chunk_authors)
+            .collect::<HashSet<_>>();
+    assert_eq!(kept, many[..limit].iter().copied().collect::<HashSet<_>>());
     // A small author set stays in one subscription.
     let small = plan_with_message_authors(&authors[..40]);
     let (_, chunks) = split_message_author_filters(build_protocol_subscription_filters(&small));
@@ -175,11 +186,9 @@ fn adding_a_message_author_requests_only_its_own_chunk_again() {
     core.core_sender = sender.clone();
     core.priority_sender = sender;
 
-    // Today's layout is key-ordered, so only an author that sorts last is
-    // sure to touch a single chunk. With the library's key-selected layout
-    // this holds for any author; see the ignored test below.
     let mut authors = sorted_authors(2_501);
-    let late = authors.pop().unwrap();
+    // Any author: the layout keeps it in the chunk its key selects.
+    let late = authors.remove(authors.len() / 2);
     let before = plan_with_message_authors(&authors);
     reconcile_and_settle(&mut core, &messages, &before);
 
@@ -264,13 +273,9 @@ fn adding_a_message_author_requests_only_its_own_chunk_again() {
     );
 }
 
-/// The owner's rule: an author lands in the chunk its key selects, so one
-/// ratchet step replaces one subscription. That layout lives in
-/// `nostr_double_ratchet::build_message_author_subscription_filters`, which is
-/// not in the pinned 0.0.177. Enable when the pin moves and
-/// `message_author_subscription_filters` calls it.
+/// An author lands in the chunk its key selects, so one ratchet step
+/// replaces one subscription wherever the key falls.
 #[test]
-#[ignore = "needs build_message_author_subscription_filters from nostr-double-ratchet > 0.0.177"]
 fn adding_any_message_author_changes_exactly_one_chunk() {
     let mut authors = sorted_authors(3_501);
     // Not the last key: an author anywhere in key order.

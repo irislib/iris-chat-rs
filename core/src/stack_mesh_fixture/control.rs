@@ -1,6 +1,6 @@
 //! Numeric, process-wide diagnostics for synthetic stack-fixture binaries only.
 //! No writer, formatter, payload, identity, filter or error string is retained.
-//! Metadata selectors below are qualified against nvpn-fips-core 0.4.121.
+//! Metadata selectors below are qualified against nvpn-fips-core 0.4.122.
 use std::fmt;
 use std::sync::{Arc, Mutex, OnceLock};
 

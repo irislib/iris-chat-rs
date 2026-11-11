@@ -1175,7 +1175,8 @@ impl AppCore {
             .map(|pubkey| pubkey.to_hex())
             .collect::<HashSet<_>>();
         let invite_authors = sorted_hexes(invite_authors);
-        let message_authors = sorted_hexes(self.subscribable_message_author_hexes());
+        // Most important first: past the subscription limit the tail is left out.
+        let message_authors = self.subscribable_message_authors_by_priority();
         // Group channels and roster identifiers must stay inside pairwise sessions.
         let group_sender_key_authors = Vec::new();
         let group_roster_group_ids = Vec::new();
@@ -1667,6 +1668,30 @@ impl AppCore {
     /// blocked owner's device-ephemeral event authors). The result
     /// feeds the mobile-push subscription body.
     pub(super) fn subscribable_message_author_hexes(&self) -> HashSet<String> {
+        let accepts = self.message_author_owner_filter();
+        self.protocol_engine
+            .as_ref()
+            .map(|engine| engine.message_author_pubkeys_filtered(accepts))
+            .unwrap_or_default()
+            .into_iter()
+            .map(|pubkey| pubkey.to_hex())
+            .collect()
+    }
+
+    /// The same authors, most important first. The order decides which ones
+    /// a subscription keeps when there are more than relays accept.
+    pub(super) fn subscribable_message_authors_by_priority(&self) -> Vec<String> {
+        let accepts = self.message_author_owner_filter();
+        self.protocol_engine
+            .as_ref()
+            .map(|engine| engine.message_author_pubkeys_by_priority(accepts))
+            .unwrap_or_default()
+            .into_iter()
+            .map(|pubkey| pubkey.to_hex())
+            .collect()
+    }
+
+    fn message_author_owner_filter(&self) -> impl Fn(PublicKey) -> bool + '_ {
         // Group sender-key updates use pairwise transport. Accepting that
         // group permits its transport without whitelisting each member's DM.
         let group_peers: HashSet<String> = self
@@ -1681,28 +1706,21 @@ impl AppCore {
             })
             .flat_map(|group| group.members.iter().map(ToString::to_string))
             .collect();
-        let Some(engine) = self.protocol_engine.as_ref() else {
-            return HashSet::new();
-        };
-        engine
-            .message_author_pubkeys_filtered(|owner| {
-                if self
-                    .logged_in
-                    .as_ref()
-                    .is_some_and(|local| local.owner_pubkey == owner)
-                {
-                    return true;
-                }
-                let hex = owner.to_hex();
-                if self.is_owner_blocked(&hex) {
-                    return false;
-                }
-                self.direct_request_access(&hex) != message_requests::RequestAccess::Denied
-                    || group_peers.contains(&hex)
-            })
-            .into_iter()
-            .map(|pubkey| pubkey.to_hex())
-            .collect()
+        move |owner| {
+            if self
+                .logged_in
+                .as_ref()
+                .is_some_and(|local| local.owner_pubkey == owner)
+            {
+                return true;
+            }
+            let hex = owner.to_hex();
+            if self.is_owner_blocked(&hex) {
+                return false;
+            }
+            self.direct_request_access(&hex) != message_requests::RequestAccess::Denied
+                || group_peers.contains(&hex)
+        }
     }
 
     pub(super) fn has_seen_event(&self, event_id: &str) -> bool {
