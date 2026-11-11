@@ -1,6 +1,6 @@
 //! Numeric, process-wide diagnostics for synthetic stack-fixture binaries only.
 //! No writer, formatter, payload, identity, filter or error string is retained.
-//! Metadata selectors below are qualified against nvpn-fips-core 0.4.119.
+//! Metadata selectors below are qualified against nvpn-fips-core 0.4.121.
 use std::fmt;
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -102,7 +102,7 @@ fn classify(metadata: &Metadata<'_>) -> Option<Kind> {
         "src/node/handlers/session/node_handshake.rs",
     ) && *metadata.level() == Level::DEBUG
     {
-        if metadata.line() == Some(521) && shape(metadata, &["message", "src"]) {
+        if metadata.line() == Some(527) && shape(metadata, &["message", "src"]) {
             return Some(Kind::Retry(9));
         }
         // This shape is unique in the pinned handshake source.

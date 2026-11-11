@@ -163,6 +163,38 @@ fn nearby_private_transcript_targets_only_the_intended_live_device_after_restart
         .await
         .unwrap();
     });
+    // A fresh session carries only path-MTU-sized datagrams until both ends
+    // have negotiated the direct carrier. The app replays its nearby outbox
+    // from the device-sync loop, which this test does not run, so wait until
+    // the session to the intended peer delivers a transcript-sized datagram.
+    const PROBE_PORT: u16 = FIPS_NEARBY_PORT + 1;
+    let probe_receiver = core
+        .runtime
+        .block_on(peer.register_service_receiver(PROBE_PORT))
+        .unwrap();
+    core.runtime.block_on(async {
+        let target = fips_core::PeerIdentity::from_npub(&peer.npub()).unwrap();
+        tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                source
+                    .send_datagram(target, PROBE_PORT, PROBE_PORT, vec![0; 4096])
+                    .await
+                    .unwrap();
+                let mut batch = Vec::new();
+                if tokio::time::timeout(
+                    Duration::from_millis(250),
+                    probe_receiver.recv_batch_into(&mut batch, 1),
+                )
+                .await
+                .is_ok()
+                {
+                    break;
+                }
+            }
+        })
+        .await
+        .unwrap();
+    });
     let (tcp, _) = crate::core::device_sync_tcp::DeviceSyncTcpSender::test_channel(1, 1024);
     core.install_device_sync_sender_for_test(source.clone(), tcp, vec![]);
     core.preferences.nearby_enabled = true;

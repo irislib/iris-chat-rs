@@ -12,10 +12,10 @@ EXPECTED = {
     "hashtree-blossom": "0.3.0",
     "hashtree-resolver": "0.3.0",
     "hashtree-updater": "0.3.0",
-    "nvpn-fips-core": "0.4.119",
-    "nvpn-fips-endpoint": "0.4.119",
+    "nvpn-fips-core": "0.4.121",
+    "nvpn-fips-endpoint": "0.4.121",
     "nvpn-fips-tcp": "0.2.6",
-    "nvpn-fips-tcp-endpoint": "0.2.54",
+    "nvpn-fips-tcp-endpoint": "0.2.55",
     "hashtree-config": "0.2.83",
     "hashtree-core": "0.3.0",
     "hashtree-index": "0.3.0",
@@ -23,11 +23,11 @@ EXPECTED = {
     "hashtree-fips-transport": "0.5.0",
     "hashtree-network": "0.3.0",
     "nostr-pubsub": "0.1.20",
-    "nostr-pubsub-fips": "0.6.1",
+    "nostr-pubsub-fips": "0.6.2",
     "nostr-pubsub-relay": "0.1.16",
-    "nostr-pubsub-social-graph": "0.3.0",
+    "nostr-pubsub-social-graph": "0.3.1",
     "nostr-social-graph": "0.2.1",
-    "nostr-social-memory": "0.2.0",
+    "nostr-social-memory": "0.2.1",
 }
 
 
@@ -149,17 +149,17 @@ class DependencyLockConsistencyTests(unittest.TestCase):
 
     def test_core_manifest_pins_gated_fips_stack_exactly(self):
         manifest = (ROOT / "core" / "Cargo.toml").read_text(encoding="utf-8")
-        self.assertRegex(manifest, r'(?m)^nvpn-fips-core = \{ version = "=0\.4\.119",', "fips-core must stay on the gated release")
-        self.assertRegex(manifest, r'(?m)^nvpn-fips-endpoint = \{ version = "=0\.4\.119" \}$', "fips-endpoint must stay on the gated release")
+        self.assertRegex(manifest, r'(?m)^nvpn-fips-core = \{ version = "=0\.4\.121",', "fips-core must stay on the gated release")
+        self.assertRegex(manifest, r'(?m)^nvpn-fips-endpoint = \{ version = "=0\.4\.121" \}$', "fips-endpoint must stay on the gated release")
         self.assertRegex(manifest, r'(?m)^nvpn-fips-tcp = \{ version = "=0\.2\.6" \}$', "fips-tcp must stay on the gated release")
-        self.assertRegex(manifest, r'(?m)^nvpn-fips-tcp-endpoint = \{ version = "=0\.2\.54" \}$', "fips-tcp-endpoint must stay on the gated release")
+        self.assertRegex(manifest, r'(?m)^nvpn-fips-tcp-endpoint = \{ version = "=0\.2\.55" \}$', "fips-tcp-endpoint must stay on the gated release")
         self.assertRegex(manifest, r'(?m)^hashtree-config = "=0\.2\.83"$', "Hashtree config must stay on the gated release")
         self.assertRegex(manifest, r'(?m)^hashtree-core = "=0\.3\.0"$', "Hashtree core must stay on the gated release")
         self.assertRegex(manifest, r'(?m)^hashtree-fips-transport = "=0\.5\.0"$', "Hashtree/FIPS transport must stay on the gated release")
         self.assertRegex(manifest, r'(?m)^hashtree-network = "=0\.3\.0"$', "Hashtree network must stay on the gated release")
         self.assertRegex(manifest, r'(?m)^nostr-identity = "=0\.6\.0"$', "nostr-identity must stay on the gated release")
         self.assertRegex(manifest, r'(?m)^nostr-pubsub = "=0\.1\.20"$', "nostr-pubsub must stay on the gated release")
-        self.assertRegex(manifest, r'(?m)^nostr-pubsub-fips = "=0\.6\.1"$', "nostr-pubsub-fips must stay on the gated release")
+        self.assertRegex(manifest, r'(?m)^nostr-pubsub-fips = "=0\.6\.2"$', "nostr-pubsub-fips must stay on the gated release")
         self.assertRegex(manifest, r'(?m)^nostr-pubsub-relay = "=0\.1\.16"$', "nostr-pubsub-relay must stay on the gated release")
         self.assertRegex(manifest, r'(?m)^nostr-social-graph = "=0\.2\.1"$', "Direct graph consumer needs revision-aware lists")
         # Direct and pubsub/memory consumers share the reviewed revision-aware graph.
@@ -172,9 +172,9 @@ class DependencyLockConsistencyTests(unittest.TestCase):
 
     def test_revision_aware_provider_archives_are_the_accepted_tuple(self):
         checksums = {
-            "nostr-pubsub-fips": "23568533712a3635e45e86ed79895e42f87a11dfcd43ba9bcf02a5e9b90db90f",
-            "nostr-pubsub-social-graph": "e9dd2d0a1cdacf1ea254ea05d7f63dd6624ff4ee6dae62c4c4000dd4db8b9666",
-            "nostr-social-memory": "39fb16cde2e5bb0e6eeed1c5c8740b01a3c90daa277c30c397715e84aa7a89c9",
+            "nostr-pubsub-fips": "67909d167ae13d5ab4a17af9a10149fa52c53bb2b02b68aa01e6cc878073842c",
+            "nostr-pubsub-social-graph": "6f7f5d8b5ae252baf6bba6f1fafcd4d0df80a2a9b31eaccc3786016e35f25abd",
+            "nostr-social-memory": "4b28fbf489df058c877fba6d660d041883683d40272b5dbb8cf56679f1c105a1",
         }
         for lock_path in PLATFORM_LOCKS:
             for name, checksum in checksums.items():
