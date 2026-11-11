@@ -33,11 +33,13 @@ async fn incomplete_negentropy_preserves_cached_head_and_rank(unsupported: bool)
     } else {
         fixture.omitted.lock().unwrap().insert(new.id);
     }
-    let mut cache = UserDiscoveryCache::default();
-    cache.owner_pubkey_hex = Some(owner.public_key().to_hex());
-    cache.follow_event_id = Some(root.id.to_hex());
-    cache.follow_event_json = Some(serde_json::to_string(&root).unwrap());
-    cache.follow_created_at_secs = 100;
+    let mut cache = UserDiscoveryCache {
+        owner_pubkey_hex: Some(owner.public_key().to_hex()),
+        follow_event_id: Some(root.id.to_hex()),
+        follow_event_json: Some(serde_json::to_string(&root).unwrap()),
+        follow_created_at_secs: 100,
+        ..Default::default()
+    };
     cache.users.insert(
         friend.public_key().to_hex(),
         DiscoveredUserRecord {

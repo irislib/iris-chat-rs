@@ -345,7 +345,7 @@ mod tests {
             root.public_key(),
             Some(&root_head),
             &[friend.public_key()],
-            &[friend_head.clone()],
+            std::slice::from_ref(&friend_head),
             Vec::new(),
             None,
             100,
