@@ -1,0 +1,113 @@
+{
+  "format": "iris-schema46-synthetic-expectations-v1",
+  "schema_version": 46,
+  "producer_tag": "v2026.11.3",
+  "producer_commit": "d052e6d3105c54d72209799542470894c8611796",
+  "public_keys": {
+    "root": "ba7963b97d72b6ad9c0629517e4f7d3a36b823aadd0ec32462e88f31bf13b12b",
+    "friend_one": "515819ca81e3323822cff57e4896006dd3cc256baed6fbc2a5c2c6c8d1e8f833",
+    "friend_two": "b95beafe763fab17a4cfdf7908f5556f3ff40297c57b801d342d7ae2be967225",
+    "target": "094710338801ab7b52d32ff1e5d95f8a658db25a2127a236bf8d263d6fadd39a",
+    "muted": "12a0f3028afdec26720a7890560c2f9c5063d9820edd6826b91ef03b88aeb3b7"
+  },
+  "root_follow": {
+    "kind": 3,
+    "created_at": 1793836800,
+    "tags": [
+      [
+        "p",
+        "515819ca81e3323822cff57e4896006dd3cc256baed6fbc2a5c2c6c8d1e8f833",
+        "",
+        "Fixture one"
+      ],
+      [
+        "p",
+        "b95beafe763fab17a4cfdf7908f5556f3ff40297c57b801d342d7ae2be967225",
+        "",
+        "Fixture two"
+      ]
+    ],
+    "content": "",
+    "pubkey": "ba7963b97d72b6ad9c0629517e4f7d3a36b823aadd0ec32462e88f31bf13b12b",
+    "id": "bb2593122ec05fa391733161a414d7e6c58bf4aee3b21cfb8115dcae5b7c112d",
+    "sig": "92a6c4f036f4bc9d492f2bf6ffcdc1818bd23bf7ca79a34f4e6e4be239d19907237d2eb42ae0212731f1e671f7a16135fc4aa6ed1859ea0040ef75d88f17a455"
+  },
+  "users": [
+    [
+      "515819ca81e3323822cff57e4896006dd3cc256baed6fbc2a5c2c6c8d1e8f833",
+      0,
+      "Fixture one"
+    ],
+    [
+      "b95beafe763fab17a4cfdf7908f5556f3ff40297c57b801d342d7ae2be967225",
+      1,
+      "Fixture two"
+    ]
+  ],
+  "support": [
+    [
+      "ba7963b97d72b6ad9c0629517e4f7d3a36b823aadd0ec32462e88f31bf13b12b",
+      "094710338801ab7b52d32ff1e5d95f8a658db25a2127a236bf8d263d6fadd39a",
+      2
+    ]
+  ],
+  "graph_heads": {
+    "root_follow": {
+      "author": "ba7963b97d72b6ad9c0629517e4f7d3a36b823aadd0ec32462e88f31bf13b12b",
+      "kind": 3,
+      "id": "bb2593122ec05fa391733161a414d7e6c58bf4aee3b21cfb8115dcae5b7c112d",
+      "created_at": 1793836800,
+      "targets": [
+        "515819ca81e3323822cff57e4896006dd3cc256baed6fbc2a5c2c6c8d1e8f833",
+        "b95beafe763fab17a4cfdf7908f5556f3ff40297c57b801d342d7ae2be967225"
+      ]
+    },
+    "root_mute": {
+      "author": "ba7963b97d72b6ad9c0629517e4f7d3a36b823aadd0ec32462e88f31bf13b12b",
+      "kind": 10000,
+      "id": "1f62b259f95b1a7c715238efe6b7e8e392fd6fa3c50d5e77aa4087119821535b",
+      "created_at": 1793836801,
+      "targets": [
+        "12a0f3028afdec26720a7890560c2f9c5063d9820edd6826b91ef03b88aeb3b7"
+      ]
+    },
+    "friend_one_follow": {
+      "author": "515819ca81e3323822cff57e4896006dd3cc256baed6fbc2a5c2c6c8d1e8f833",
+      "kind": 3,
+      "id": "4a0353befedbda9ff98ea8e408a6105cd27fee94b46d77a18b08f39a581302f5",
+      "created_at": 1793836802,
+      "targets": [
+        "094710338801ab7b52d32ff1e5d95f8a658db25a2127a236bf8d263d6fadd39a"
+      ]
+    },
+    "friend_two_follow": {
+      "author": "b95beafe763fab17a4cfdf7908f5556f3ff40297c57b801d342d7ae2be967225",
+      "kind": 3,
+      "id": "95d843a5a7d058903e102693c8377300b8aee9f6c63b694049676d3096337329",
+      "created_at": 1793836803,
+      "targets": [
+        "094710338801ab7b52d32ff1e5d95f8a658db25a2127a236bf8d263d6fadd39a"
+      ]
+    },
+    "friend_one_mute": {
+      "author": "515819ca81e3323822cff57e4896006dd3cc256baed6fbc2a5c2c6c8d1e8f833",
+      "kind": 10000,
+      "id": "b4a43e2919bac65234ba22e8499ffa09063c7b2ec2c44e1f749277c37fe058ed",
+      "created_at": 1793836804,
+      "targets": [
+        "12a0f3028afdec26720a7890560c2f9c5063d9820edd6826b91ef03b88aeb3b7"
+      ]
+    }
+  },
+  "excluded_from_public_fixture": [
+    "root-secret.hex",
+    "cli-account.json",
+    "ndr_kv",
+    "non-discovery table rows"
+  ],
+  "limitations": [
+    "Bundled public graph is retained by the released implementation.",
+    "Schema46 does not retain signed peer-opinion event bodies.",
+    "Pending delivery migration is outside this public-cache-only fixture."
+  ]
+}

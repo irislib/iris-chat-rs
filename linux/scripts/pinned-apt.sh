@@ -50,12 +50,17 @@ main() (
     -o "Dir::Cache::pkgcache=$state/pkgcache.bin" -o "Dir::Cache::srcpkgcache=$state/srcpkgcache.bin"
     -o Dir::Etc::preferences=- -o Dir::Etc::preferencesparts=- -o APT::Default-Release=
     -o Acquire::Languages=none -o APT::Update::Error-Mode=any
+    -o Acquire::Retries=5 -o Acquire::Retries::Delay=true
+    -o Acquire::Retries::Delay::Maximum=30 -o Acquire::Retries::HandleRetryAfter=true
+    -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30
+    -o APT::Get::Fix-Missing=false
     -o Acquire::AllowInsecureRepositories=false -o Acquire::AllowDowngradeToInsecureRepositories=false
     -o APT::Get::AllowUnauthenticated=false -o APT::Get::allow-downgrades=false
   )
   # APT must verify signatures, then these fixed InRelease hashes bind Packages
   # and .deb hashes, including on the Debian snapshot's HTTP transport.
-  apt-get "${options[@]}" update
+  # Transport timeouts limit inactivity, not total acquisition time.
+  timeout --signal=TERM --kill-after=15s 10m apt-get "${options[@]}" update
   verify_lists "$distribution" "$state/lists"
   local -a selected=()
   for package in "$@"; do
@@ -80,8 +85,13 @@ main() (
   done
   # Reinstall requested roots even at the same version, so their executable
   # bytes come from the verified package chain, not an ambient modification.
+  # Bound network acquisition before package configuration. Never interrupt
+  # dpkg with the acquisition deadline or fetch missing packages during install.
+  DEBIAN_FRONTEND=noninteractive timeout --signal=TERM --kill-after=15s 10m \
+    apt-get "${options[@]}" install -y --no-install-recommends \
+    --no-remove --reinstall --download-only -- "${selected[@]}"
   DEBIAN_FRONTEND=noninteractive apt-get "${options[@]}" install -y --no-install-recommends \
-    --no-remove --reinstall -- "${selected[@]}"
+    --no-remove --reinstall --no-download -- "${selected[@]}"
   for selection in "${selected[@]}"; do
     package="${selection%%=*}"; version="${selection#*=}"
     installed="$(dpkg-query -W -f='${Status}\t${Version}' "$package")"

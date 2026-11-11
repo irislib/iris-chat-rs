@@ -37,7 +37,7 @@ required-features = ["stack-fixture"]
 
 [features]
 local-relay-bin = []
-stack-fixture = []
+stack-fixture = ["dep:tracing"]
 desktop-media = ["dep:cpal", "dep:nokhwa", "dep:openh264", "dep:image", "dep:sonora", "dep:openh264-sys2"]
 
 [dependencies]
@@ -49,6 +49,8 @@ openh264-sys2 = { version = "=0.9.9", optional = true }
 openh264 = { version = "=0.9.9", optional = true }
 image = { version = "0.25", default-features = false, optional = true }
 async-trait = "0.1"
+# Existing SDK transport message types; keep the resolved SDK version.
+async-wsocket = "=0.13.2"
 base64 = "0.22"
 ciborium = "=0.2.2"
 lightning-invoice = { version = "=0.34.1", features = ["std"] }
@@ -74,9 +76,10 @@ nostr = { version = "0.44.7", default-features = false, features = ["std", "nip4
 nostr-sdk = { version = "0.44.1", default-features = false, features = ["nip44"] }
 nostr-pubsub = "=0.1.20"
 nostr-pubsub-reconcile = "=0.1.1"
-nostr-pubsub-fips = "=0.5.51"
+nostr-pubsub-fips = "=0.6.1"
 nostr-pubsub-relay = "=0.1.16"
-nostr-social-graph = "=0.2.0"
+nostr-social-graph = "=0.2.1"
+negentropy = "=0.5.2"
 nostr-identity = "=0.6.0"
 nostr-double-ratchet = "0.0.176"
 nostr-double-ratchet-pairwise-codec = "0.0.168"
@@ -94,6 +97,7 @@ tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
 opus = "=0.4.0"
 opusic-sys = "=0.7.5"
 tokio-util = { version = "0.7", features = ["compat"] }
+tracing = { version = "=0.1.44", optional = true }
 uniffi = "0.29.4"
 url = "2"
 urlencoding = "2"
@@ -102,8 +106,6 @@ webpki-roots = "0.26"
 interprocess = { version = "2.4.4", default-features = false }
 
 [dev-dependencies]
-# Existing SDK transport types, used only by the real TLS discovery fixture.
-async-wsocket = "=0.13.2"
 tempfile = "3"
 tokio-rustls = { version = "0.26", default-features = false }
 

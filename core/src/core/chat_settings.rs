@@ -475,6 +475,7 @@ impl AppCore {
             return;
         }
 
+        self.cancel_user_discovery_fetch();
         self.preferences.nostr_relay_urls = normalized;
         let next_relay_urls = relay_urls_from_strings(&self.preferences.nostr_relay_urls);
         let should_refresh = if let Some(logged_in) = self.logged_in.as_mut() {

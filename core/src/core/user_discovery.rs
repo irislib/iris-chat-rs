@@ -1,3 +1,4 @@
+use super::protocol::public_discovery::{DiscoveryRelays, GraphScope};
 use super::user_discovery_social::{
     apply_follow_order, build_verified_social_ranking, MAX_SOCIAL_OPINION_AUTHORS,
 };
@@ -27,17 +28,11 @@ struct FollowSeed {
 
 impl AppCore {
     pub(super) fn request_user_discovery_refresh(&mut self, force: bool) {
-        let Some((client, relay_urls, local_owner)) = self
+        let Some((relay_urls, local_owner)) = self
             .logged_in
             .as_ref()
             .filter(|session| !session.relay_urls.is_empty())
-            .map(|session| {
-                (
-                    session.client.clone(),
-                    session.relay_urls.clone(),
-                    session.owner_pubkey,
-                )
-            })
+            .map(|session| (session.relay_urls.clone(), session.owner_pubkey))
         else {
             return;
         };
@@ -67,12 +62,26 @@ impl AppCore {
 
         let previous = self.user_discovery.clone();
         let tx = self.core_sender.clone();
-        self.runtime.spawn(async move {
-            let result = fetch_user_discovery(client, relay_urls, local_owner, previous).await;
+        let discovery = self.discovery_relays.clone();
+        let task = self.runtime.spawn(async move {
+            let result = fetch_user_discovery(discovery, relay_urls, local_owner, previous).await;
             let _ = tx.send(CoreMsg::Internal(Box::new(
                 InternalEvent::UserDiscoveryFetchFinished { token, result },
             )));
         });
+        self.user_discovery_runtime.fetch_abort = Some(task.abort_handle());
+    }
+
+    pub(super) fn cancel_user_discovery_fetch(&mut self) {
+        if let Some(task) = self.user_discovery_runtime.fetch_abort.take() {
+            task.abort();
+        }
+        self.user_discovery_runtime.token =
+            self.user_discovery_runtime.token.wrapping_add(1).max(1);
+        self.user_discovery_runtime.in_flight = false;
+        self.user_discovery_runtime.refresh_pending = false;
+        self.user_discovery_runtime.last_started_at = None;
+        self.refresh_people_syncing();
     }
 
     pub(super) fn handle_user_discovery_fetch_finished(
@@ -84,6 +93,7 @@ impl AppCore {
             return;
         }
         self.user_discovery_runtime.in_flight = false;
+        self.user_discovery_runtime.fetch_abort = None;
         self.refresh_people_syncing();
 
         let mut metadata_changed = false;
@@ -150,6 +160,9 @@ impl AppCore {
     }
 
     pub(super) fn reset_user_discovery_runtime(&mut self) {
+        if let Some(task) = self.user_discovery_runtime.fetch_abort.take() {
+            task.abort();
+        }
         if let Some(task) = self.profile_search_runtime.fetch_task.take() {
             task.abort();
         }
@@ -171,8 +184,8 @@ impl AppCore {
     }
 }
 
-async fn fetch_user_discovery(
-    client: Client,
+pub(super) async fn fetch_user_discovery(
+    discovery: Arc<DiscoveryRelays>,
     relay_urls: Vec<RelayUrl>,
     local_owner: PublicKey,
     previous: UserDiscoveryCache,
@@ -183,31 +196,41 @@ async fn fetch_user_discovery(
     } else {
         UserDiscoveryCache::default()
     };
-    ensure_session_relays_configured(&client, &relay_urls).await;
-    connect_client_with_timeout(&client, DISCOVERY_REQUEST_TIMEOUT).await;
-
-    let follow_events = match client
-        .fetch_events(
-            Filter::new()
+    let graph = match discovery.graph_scope(&relay_urls).await {
+        Ok(scope) => scope,
+        Err(error) => {
+            return UserDiscoveryFetchResult {
+                cache: previous,
+                metadata_events: Vec::new(),
+                detail: format!("graph_scope_error={error}"),
+            }
+        }
+    };
+    let follow_events = match graph
+        .fetch(
+            vec![Filter::new()
                 .kinds([Kind::ContactList, Kind::from(10_000)])
-                .author(local_owner),
+                .author(local_owner)],
             DISCOVERY_REQUEST_TIMEOUT,
         )
         .await
     {
-        Ok(events) => events.iter().cloned().collect::<Vec<_>>(),
+        Ok(events) => events,
         Err(error) => {
             return UserDiscoveryFetchResult {
                 cache: previous,
                 metadata_events: Vec::new(),
                 detail: format!("follow_list_error={error}"),
-            };
+            }
         }
     };
     let root_now_secs = unix_now().get();
     let root_mutes = follow_events
         .iter()
-        .filter(|event| event.kind == Kind::from(10_000))
+        .filter(|event| {
+            event.kind == Kind::from(10_000)
+                && discovery_event_time_is_acceptable(event.created_at.as_secs(), root_now_secs)
+        })
         .cloned()
         .collect::<Vec<_>>();
     let follow_events = follow_events
@@ -284,24 +307,17 @@ async fn fetch_user_discovery(
         .copied()
         .collect::<Vec<_>>();
     let cached_opinions = decode_opinion_cache(&previous.social_opinion_events);
-    let graph_download_budget = std::sync::atomic::AtomicUsize::new(MAX_OPINION_CACHE_BYTES);
-    // Public graph catch-up has no account signer or private subscription state.
-    let graph_client = Client::builder().build();
-    ensure_session_relays_configured(&graph_client, &relay_urls).await;
-    connect_client_with_timeout(&graph_client, DISCOVERY_REQUEST_TIMEOUT).await;
     let (peer_follow_chunks, mute_chunks, metadata_chunks) = tokio::join!(
         fetch_graph_opinion_chunks(
-            &graph_client,
+            &graph,
             &cached_opinions,
-            &graph_download_budget,
             Kind::ContactList,
             opinion_authors.clone(),
             Some(MAX_PEER_FOLLOW_EVENTS_PER_CHUNK),
         ),
         fetch_graph_opinion_chunks(
-            &graph_client,
+            &graph,
             &cached_opinions,
-            &graph_download_budget,
             Kind::from(10_000),
             opinion_authors
                 .iter()
@@ -310,22 +326,24 @@ async fn fetch_user_discovery(
                 .collect(),
             Some(MAX_PEER_FOLLOW_EVENTS_PER_CHUNK),
         ),
-        fetch_author_chunks(&client, Kind::Metadata, followed_owners.clone(), None)
+        fetch_author_chunks(&graph, Kind::Metadata, followed_owners.clone(), None)
     );
-    graph_client.shutdown().await;
     let now_secs = unix_now().get();
 
     let mut social_failed_chunks = 0usize;
     let mut peer_follow_events = Vec::new();
     for (_, result) in peer_follow_chunks {
         match result {
-            Ok(events) => peer_follow_events.extend(events),
+            Ok((events, complete)) => {
+                social_failed_chunks += usize::from(!complete);
+                peer_follow_events.extend(events);
+            }
             Err(_) => social_failed_chunks += 1,
         }
     }
     let mut mute_events = root_mutes;
     for (_, result) in mute_chunks {
-        if let Ok(events) = result {
+        if let Ok((events, _)) = result {
             mute_events.extend(events);
         }
     }
@@ -452,7 +470,13 @@ fn encode_opinion_cache(
     authors: &HashSet<PublicKey>,
 ) -> Vec<String> {
     let mut heads = BTreeMap::new();
-    for event in events.filter(|event| authors.contains(&event.pubkey)) {
+    let now_secs = unix_now().get();
+    for event in events.filter(|event| {
+        authors.contains(&event.pubkey)
+            && matches!(event.kind.as_u16(), 3 | 10000)
+            && discovery_event_time_is_acceptable(event.created_at.as_secs(), now_secs)
+            && event.verify().is_ok()
+    }) {
         let key = (event.pubkey, event.kind.as_u16());
         let wins = heads.get(&key).is_none_or(|old: &Event| {
             event.created_at > old.created_at
@@ -478,128 +502,60 @@ fn encode_opinion_cache(
         .collect()
 }
 
-/// NIP-77 is optional: unsupported relays retain the ordinary bounded REQ path.
+/// Failed NIP-77 reconciliation preserves cached opinions without a history fallback.
 /// Only complete verified cached events are claimed present; graph projections
 /// cannot stand in for the signed lists needed by the verified social ranker.
 async fn fetch_graph_opinion_chunks(
-    client: &Client,
+    graph: &GraphScope,
     cached: &[Event],
-    budget: &std::sync::atomic::AtomicUsize,
     kind: Kind,
     authors: Vec<PublicKey>,
     max_events: Option<usize>,
-) -> Vec<(Vec<PublicKey>, Result<Vec<Event>, String>)> {
+) -> Vec<(Vec<PublicKey>, Result<(Vec<Event>, bool), String>)> {
     let chunks = authors
         .chunks(DISCOVERY_AUTHOR_CHUNK)
         .map(<[PublicKey]>::to_vec)
         .collect::<Vec<_>>();
     stream::iter(chunks)
         .map(|owners| async move {
-            let known: Vec<Event> = cached
+            let known = cached
                 .iter()
                 .filter(|event| event.kind == kind && owners.contains(&event.pubkey))
                 .cloned()
-                .collect();
-            let filter = Filter::new().kind(kind).authors(owners.clone());
-            let items = known
-                .iter()
-                .map(|event| (event.id, event.created_at))
                 .collect::<Vec<_>>();
-            let opts = nostr_sdk::SyncOptions::new()
-                .dry_run()
-                .initial_timeout(Duration::from_secs(1));
-            let mut missing = HashSet::new();
-            let mut supported = false;
-            let mut fallback = false;
-            for relay in client.relays().await.into_values().take(2) {
-                match tokio::time::timeout(
-                    DISCOVERY_REQUEST_TIMEOUT,
-                    relay.sync_with_items(filter.clone(), items.clone(), &opts),
-                )
-                .await
-                {
-                    Ok(Ok(result)) => {
-                        supported = true;
-                        missing.extend(result.remote);
-                    }
-                    _ => fallback = true,
-                }
-            }
             let limit = max_events
                 .unwrap_or(MAX_PEER_FOLLOW_EVENTS_PER_CHUNK)
                 .min(owners.len().saturating_mul(2).max(1));
-            if missing.len() > limit {
-                return (
-                    owners,
-                    Err("graph reconciliation event limit exceeded".to_string()),
-                );
-            }
-            let query = if !supported || fallback {
-                Some(filter.limit(limit + 1))
-            } else if missing.is_empty() {
-                None
-            } else {
-                Some(Filter::new().ids(missing).limit(limit + 1))
-            };
-            let result = if let Some(query) = query {
-                async {
-                    if budget.load(std::sync::atomic::Ordering::Relaxed) == 0 {
-                        return Err("graph download byte budget exhausted".to_owned());
-                    }
-                    let mut stream = client
-                        .stream_events(query, DISCOVERY_REQUEST_TIMEOUT)
-                        .await
-                        .map_err(|error| error.to_string())?;
-                    let mut events = Vec::new();
-                    while let Some(event) = stream.next().await {
-                        let bytes = serde_json::to_vec(&event)
-                            .map_err(|error| error.to_string())?
-                            .len();
-                        if bytes > MAX_OPINION_EVENT_BYTES
-                            || events.len() >= limit
-                            || !take_download_budget(budget, bytes)
-                        {
-                            return Err("graph download byte or event budget exhausted".to_owned());
-                        }
-                        events.push(event);
-                    }
-                    Ok(events)
-                }
+            let result = graph
+                .opinions(kind, &owners, &known, limit)
                 .await
-            } else {
-                Ok(Vec::new())
-            };
-            let result = result.and_then(|events| {
-                if events.len() > limit {
-                    return Err("graph event limit exceeded".to_string());
-                }
-                let mut retained = known;
-                for event in events {
-                    if event.kind != kind
-                        || !owners.contains(&event.pubkey)
-                        || event.verify().is_err()
-                    {
-                        continue;
-                    }
-                    if !discovery_event_time_is_acceptable(
-                        event.created_at.as_secs(),
-                        unix_now().get(),
-                    ) || serde_json::to_vec(&event)
-                        .map_or(true, |bytes| bytes.len() > MAX_OPINION_EVENT_BYTES)
-                    {
-                        // A rejected signed head is not evidence of an empty list.
-                        // Existing verified cache may still preserve this author's opinion.
-                        if retained.iter().any(|old| old.pubkey == event.pubkey) {
+                .and_then(|result| {
+                    let mut retained = known;
+                    for event in result.events {
+                        if event.kind != kind
+                            || !owners.contains(&event.pubkey)
+                            || event.verify().is_err()
+                        {
                             continue;
                         }
-                        return Err(
-                            "unsupported signed graph head without cached revision".to_string()
-                        );
+                        if !discovery_event_time_is_acceptable(
+                            event.created_at.as_secs(),
+                            unix_now().get(),
+                        ) {
+                            if retained.iter().any(|old| old.pubkey == event.pubkey) {
+                                continue;
+                            }
+                            return Err(
+                                "unsupported signed graph head without cached revision".into()
+                            );
+                        }
+                        retained.push(event);
                     }
-                    retained.push(event);
-                }
-                Ok(newest_verified_events_by_author(retained, kind))
-            });
+                    Ok((
+                        newest_verified_events_by_author(retained, kind),
+                        result.complete,
+                    ))
+                });
             (owners, result)
         })
         .buffer_unordered(DISCOVERY_CONCURRENT_REQUESTS)
@@ -608,7 +564,7 @@ async fn fetch_graph_opinion_chunks(
 }
 
 async fn fetch_author_chunks(
-    client: &Client,
+    graph: &GraphScope,
     kind: Kind,
     authors: Vec<PublicKey>,
     max_events_per_chunk: Option<usize>,
@@ -618,26 +574,21 @@ async fn fetch_author_chunks(
         .map(<[PublicKey]>::to_vec)
         .collect::<Vec<_>>();
     stream::iter(chunks)
-        .map(|owners| {
-            let client = client.clone();
-            async move {
-                let mut filter = Filter::new().kind(kind).authors(owners.clone());
-                if let Some(max_events) = max_events_per_chunk {
-                    filter = filter.limit(max_events.saturating_add(1));
-                }
-                let result = client
-                    .fetch_events(filter, DISCOVERY_REQUEST_TIMEOUT)
-                    .await
-                    .map(|events| events.iter().cloned().collect::<Vec<_>>())
-                    .map_err(|error| error.to_string())
-                    .and_then(|events| match max_events_per_chunk {
-                        Some(max_events) if events.len() > max_events => {
-                            Err("event limit exceeded".to_string())
-                        }
-                        _ => Ok(events),
-                    });
-                (owners, result)
+        .map(|owners| async move {
+            let mut filter = Filter::new().kind(kind).authors(owners.clone());
+            if let Some(max_events) = max_events_per_chunk {
+                filter = filter.limit(max_events.saturating_add(1));
             }
+            let result = graph
+                .fetch(vec![filter], DISCOVERY_REQUEST_TIMEOUT)
+                .await
+                .and_then(|events| match max_events_per_chunk {
+                    Some(max_events) if events.len() > max_events => {
+                        Err("event limit exceeded".to_string())
+                    }
+                    _ => Ok(events),
+                });
+            (owners, result)
         })
         .buffer_unordered(DISCOVERY_CONCURRENT_REQUESTS)
         .collect()
@@ -649,17 +600,6 @@ fn newest_verified_event(events: Vec<Event>, kind: Kind, author: PublicKey) -> O
         .into_iter()
         .filter(|event| event.kind == kind && event.pubkey == author && event.verify().is_ok())
         .min_by(compare_replaceable_heads)
-}
-
-/// Reserve `bytes` from the shared download budget, or report it exhausted.
-// Newer toolchains rename `fetch_update` to `try_update`; the oldest toolchain
-// this crate still builds with only has the former.
-#[allow(deprecated)]
-fn take_download_budget(budget: &std::sync::atomic::AtomicUsize, bytes: usize) -> bool {
-    use std::sync::atomic::Ordering::Relaxed;
-    budget
-        .fetch_update(Relaxed, Relaxed, |remaining| remaining.checked_sub(bytes))
-        .is_ok()
 }
 
 pub(super) fn newest_verified_events_by_author(events: Vec<Event>, kind: Kind) -> Vec<Event> {

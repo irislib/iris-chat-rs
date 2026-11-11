@@ -23,12 +23,11 @@ EXPECTED = {
     "hashtree-fips-transport": "0.5.0",
     "hashtree-network": "0.3.0",
     "nostr-pubsub": "0.1.20",
-    "nostr-pubsub-fips": "0.5.51",
+    "nostr-pubsub-fips": "0.6.1",
     "nostr-pubsub-relay": "0.1.16",
-    "nostr-pubsub-social-graph": "0.2.4",
-    # The pubsub transport still builds on 0.1.4. Chat's own revision-aware
-    # people graph uses 0.2.0 directly; the two do not exchange graph types.
-    "nostr-social-graph": {"0.1.4", "0.2.0"},
+    "nostr-pubsub-social-graph": "0.3.0",
+    "nostr-social-graph": "0.2.1",
+    "nostr-social-memory": "0.2.0",
 }
 
 
@@ -129,8 +128,11 @@ class DependencyLockConsistencyTests(unittest.TestCase):
             with self.subTest(lock=lock_path.relative_to(ROOT)):
                 versions = package_versions(lock_path)
                 for package, expected in EXPECTED.items():
-                    accepted = expected if isinstance(expected, set) else {expected}
-                    self.assertEqual(versions.get(package), accepted, f"{package} in {lock_path}")
+                    self.assertEqual(
+                        versions.get(package),
+                        {expected} if isinstance(expected, str) else expected,
+                        f"{package} in {lock_path}",
+                    )
                 self.assertIn(
                     "0.6.0",
                     versions.get("nostr-identity", set()),
@@ -157,8 +159,39 @@ class DependencyLockConsistencyTests(unittest.TestCase):
         self.assertRegex(manifest, r'(?m)^hashtree-network = "=0\.3\.0"$', "Hashtree network must stay on the gated release")
         self.assertRegex(manifest, r'(?m)^nostr-identity = "=0\.6\.0"$', "nostr-identity must stay on the gated release")
         self.assertRegex(manifest, r'(?m)^nostr-pubsub = "=0\.1\.20"$', "nostr-pubsub must stay on the gated release")
-        self.assertRegex(manifest, r'(?m)^nostr-pubsub-fips = "=0\.5\.51"$', "nostr-pubsub-fips must stay on the gated release")
+        self.assertRegex(manifest, r'(?m)^nostr-pubsub-fips = "=0\.6\.1"$', "nostr-pubsub-fips must stay on the gated release")
         self.assertRegex(manifest, r'(?m)^nostr-pubsub-relay = "=0\.1\.16"$', "nostr-pubsub-relay must stay on the gated release")
+        self.assertRegex(manifest, r'(?m)^nostr-social-graph = "=0\.2\.1"$', "Direct graph consumer needs revision-aware lists")
+        # Direct and pubsub/memory consumers share the reviewed revision-aware graph.
+        for lock_path in PLATFORM_LOCKS:
+            entries = [block for block in lock_path.read_text().split("[[package]]")
+                       if re.search(r'(?m)^name = "nostr-social-graph"$', block)
+                       and re.search(r'(?m)^version = "0.2.1"$', block)]
+            self.assertEqual(len(entries), 1)
+            self.assertIn('checksum = "c791a910d0dfe97088bb9ebac2b0551e21102ae4f272ad2a8b20cec27e188402"', entries[0])
+
+    def test_revision_aware_provider_archives_are_the_accepted_tuple(self):
+        checksums = {
+            "nostr-pubsub-fips": "23568533712a3635e45e86ed79895e42f87a11dfcd43ba9bcf02a5e9b90db90f",
+            "nostr-pubsub-social-graph": "e9dd2d0a1cdacf1ea254ea05d7f63dd6624ff4ee6dae62c4c4000dd4db8b9666",
+            "nostr-social-memory": "39fb16cde2e5bb0e6eeed1c5c8740b01a3c90daa277c30c397715e84aa7a89c9",
+        }
+        for lock_path in PLATFORM_LOCKS:
+            for name, checksum in checksums.items():
+                with self.subTest(lock=lock_path.name, package=name):
+                    entries = [block for block in lock_path.read_text().split("[[package]]")
+                               if re.search(rf'(?m)^name = "{re.escape(name)}"$', block)]
+                    self.assertEqual(len(entries), 1)
+                    self.assertIn(f'checksum = "{checksum}"', entries[0])
+                    self.assertIn('source = "registry+https://github.com/rust-lang/crates.io-index"', entries[0])
+
+    def test_tracing_is_optional_and_only_exposed_by_stack_fixture(self):
+        manifest = (ROOT / "core" / "Cargo.toml").read_text(encoding="utf-8")
+        self.assertRegex(manifest, r'(?m)^tracing = \{ version = "=0\.1\.44", optional = true \}$')
+        features = re.search(r'(?ms)^\[features\]\n(.*?)(?=^\[|\Z)', manifest).group(1)
+        self.assertRegex(features, r'(?m)^stack-fixture = \["dep:tracing"\]$')
+        self.assertEqual(features.count('dep:tracing'), 1)
+        self.assertNotRegex(features, r'(?m)^default\s*=')
 
     def test_linux_build_inherits_the_pinned_core_manifest(self):
         manifest = (ROOT / "linux" / "Cargo.toml").read_text(encoding="utf-8")

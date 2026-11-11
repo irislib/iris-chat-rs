@@ -154,10 +154,13 @@ def parse_args(argv=None):
     parser.add_argument("--max-growth-gib", type=float)
     parser.add_argument("--online", action="store_true", help="allow Cargo dependency downloads; local default is offline")
     parser.add_argument("--release", action="store_true")
+    parser.add_argument("--feature", action="append", default=[], help="explicit Cargo feature; repeat to enable more than one")
     parser.add_argument("--include-ignored", action="store_true", help="deliberately execute selected ignored tests")
     parser.add_argument("--dry-run", action="store_true", help="print commands without invoking Cargo or creating outputs")
     args = parser.parse_args(argv)
     args.tests = args.test + args.tests.split()
+    if len(set(args.feature)) != len(args.feature) or any(not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_-]*", name) for name in args.feature):
+        parser.error("features must be distinct Cargo feature names")
     if not args.tests or len(set(args.tests)) != len(args.tests):
         parser.error("provide one or more distinct exact test names")
     if any(not re.fullmatch(r"[A-Za-z0-9_]+(?:::[A-Za-z0-9_]+)*", name) for name in args.tests):
@@ -183,10 +186,12 @@ def main(argv=None):
         command.append("--offline")
     if args.release:
         command.append("--release")
+    if args.feature:
+        command.extend(["--features", ",".join(args.feature)])
     test_args = [[name, "--exact", "--nocapture", "--test-threads=1"] + (["--include-ignored"] if args.include_ignored else []) for name in args.tests]
     plan = {"crate": args.crate, "target_dir": str(args.target_dir), "format_command": format_command, "build_command": command,
             "test_arguments": test_args, "offline": not args.online, "timeout_seconds": args.timeout,
-            "min_free_gib": args.min_free_gib, "max_growth_gib": args.max_growth_gib}
+            "min_free_gib": args.min_free_gib, "max_growth_gib": args.max_growth_gib, "features": args.feature}
     if args.dry_run:
         print(json.dumps(plan, indent=2))
         return 0

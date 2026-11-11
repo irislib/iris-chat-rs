@@ -13,13 +13,18 @@ pub(super) fn update_people_graph(
     now_secs: u64,
 ) -> Option<Vec<u8>> {
     let owner_hex = owner.to_hex();
-    let mut graph = previous
-        .and_then(|bytes| SocialGraph::from_binary(&owner_hex, bytes).ok())
-        .or_else(|| {
+    let mut graph = match previous {
+        Some(bytes) => match SocialGraph::from_binary(&owner_hex, bytes) {
+            Ok(graph) => graph,
+            // A rejected personal snapshot may be recoverable with a later import
+            // policy. Refresh callers persist this result, so retain its exact bytes.
+            Err(_) => return Some(bytes.to_vec()),
+        },
+        None => {
             SocialGraph::from_binary(&owner_hex, include_bytes!("../../assets/socialGraph.bin"))
-                .ok()
-        })
-        .unwrap_or_else(|| SocialGraph::new(&owner_hex));
+                .unwrap_or_else(|_| SocialGraph::new(&owner_hex))
+        }
+    };
     let allowed = opinion_authors
         .iter()
         .copied()
@@ -34,6 +39,15 @@ pub(super) fn update_people_graph(
         (Kind::ContactList, events),
         (Kind::from(10_000), mute_events),
     ] {
+        let events = events
+            .into_iter()
+            .filter(|event| {
+                super::user_discovery::discovery_event_time_is_acceptable(
+                    event.created_at.as_secs(),
+                    now_secs,
+                )
+            })
+            .collect();
         for event in super::user_discovery::newest_verified_events_by_author(events, kind) {
             if !allowed.contains(&event.pubkey)
                 || !super::user_discovery::discovery_event_time_is_acceptable(
@@ -110,6 +124,157 @@ mod tests {
     }
 
     #[test]
+    fn bundled_graph_keeps_list_ids_and_partial_heads_on_first_refresh() {
+        let owner = Keys::generate();
+        let owner_hex = owner.public_key().to_hex();
+        let seed =
+            SocialGraph::from_binary(&owner_hex, include_bytes!("../../assets/socialGraph.bin"))
+                .unwrap();
+        let revisions = |graph: &SocialGraph| {
+            graph
+                .get_list_revisions()
+                .into_iter()
+                .map(|(author, kind, revision)| ((author, kind), revision))
+                .collect::<std::collections::BTreeMap<_, _>>()
+        };
+        let expected = revisions(&seed);
+        for kind in [3, 10_000] {
+            let heads = expected
+                .iter()
+                .filter(|((_, list_kind), _)| *list_kind == kind)
+                .map(|(_, revision)| revision)
+                .collect::<Vec<_>>();
+            assert!(
+                !heads.is_empty(),
+                "the bootstrap must retain list event IDs"
+            );
+            assert!(heads
+                .iter()
+                .all(|head| { nostr_social_graph::valid_event_id(&head.id) }));
+            assert!(heads.iter().any(|head| head.complete));
+            assert!(heads.iter().any(|head| !head.complete));
+        }
+
+        let refreshed =
+            update_people_graph(owner.public_key(), None, &[], &[], Vec::new(), None, 0).unwrap();
+        let reloaded = SocialGraph::from_binary(&owner_hex, &refreshed).unwrap();
+        assert_eq!(revisions(&reloaded), expected);
+    }
+
+    #[test]
+    fn rejected_personal_graph_preserves_original_bytes_during_refresh() {
+        let root = Keys::generate();
+        let friend = Keys::generate();
+        let follows = event(&root, Kind::ContactList, 10, &[friend.public_key()]);
+        let original = b"\x00rejected-personal-graph\xff";
+        assert!(SocialGraph::from_binary(&root.public_key().to_hex(), original).is_err());
+
+        let refreshed = update_people_graph(
+            root.public_key(),
+            Some(&follows),
+            &[],
+            &[],
+            Vec::new(),
+            Some(original),
+            100,
+        );
+        assert!(
+            refreshed.as_deref() == Some(original.as_slice()),
+            "a rejected personal graph must remain byte-identical instead of becoming a seed graph"
+        );
+    }
+
+    fn legacy_alias_graph(
+        root: PublicKey,
+        friend: PublicKey,
+        first: PublicKey,
+        second: PublicKey,
+        conflicting: bool,
+    ) -> Vec<u8> {
+        // Legacy v2 has raw public keys followed by numeric IDs. All fixture
+        // counts, IDs and timestamps fit in a single-byte unsigned varint.
+        let mut bytes = vec![2, 5];
+        for (id, key) in [(0, root), (1, friend), (2, first), (8, friend), (3, second)] {
+            bytes.extend_from_slice(&key.to_bytes());
+            bytes.push(id);
+        }
+        if conflicting {
+            // Both aliases have equally recent, different follow lists without
+            // signed revision IDs; the importer must reject this ambiguity.
+            bytes.extend_from_slice(&[3, 0, 1, 1, 8, 1, 10, 1, 2, 8, 10, 1, 3]);
+        } else {
+            // The root's incoming edge names the noncanonical alias ID.
+            bytes.extend_from_slice(&[2, 0, 1, 1, 8, 1, 10, 1, 2]);
+        }
+        bytes.push(0); // No mute lists.
+        bytes
+    }
+
+    #[test]
+    fn conflicting_legacy_aliases_preserve_personal_snapshot_bytes() {
+        let root = Keys::generate();
+        let friend = Keys::generate();
+        let first = Keys::generate();
+        let second = Keys::generate();
+        let original = legacy_alias_graph(
+            root.public_key(),
+            friend.public_key(),
+            first.public_key(),
+            second.public_key(),
+            true,
+        );
+        assert!(matches!(
+            SocialGraph::from_binary(&root.public_key().to_hex(), &original),
+            Err(nostr_social_graph::SocialGraphError::ConflictingFollowLists(_))
+        ));
+        let follows = event(&root, Kind::ContactList, 20, &[second.public_key()]);
+        let refreshed = update_people_graph(
+            root.public_key(),
+            Some(&follows),
+            &[],
+            &[],
+            Vec::new(),
+            Some(&original),
+            100,
+        );
+        assert!(refreshed.as_deref() == Some(original.as_slice()));
+    }
+
+    #[test]
+    fn accepted_legacy_aliases_keep_incoming_edges_during_refresh() {
+        let root = Keys::generate();
+        let friend = Keys::generate();
+        let first = Keys::generate();
+        let second = Keys::generate();
+        let original = legacy_alias_graph(
+            root.public_key(),
+            friend.public_key(),
+            first.public_key(),
+            second.public_key(),
+            false,
+        );
+        let muted = event(&root, Kind::from(10_000), 20, &[second.public_key()]);
+        let refreshed = update_people_graph(
+            root.public_key(),
+            None,
+            &[],
+            &[],
+            vec![muted],
+            Some(&original),
+            100,
+        )
+        .unwrap();
+        let graph = SocialGraph::from_binary(&root.public_key().to_hex(), &refreshed).unwrap();
+        assert!(graph.is_following(&root.public_key().to_hex(), &friend.public_key().to_hex()));
+        assert_eq!(graph.get_follow_distance(&friend.public_key().to_hex()), 1);
+        assert!(graph.is_following(&friend.public_key().to_hex(), &first.public_key().to_hex()));
+        assert!(graph
+            .get_muted_by_user(&root.public_key().to_hex())
+            .contains(&second.public_key().to_hex()));
+        assert_eq!(graph.export_state().unique_ids.len(), 4);
+    }
+
+    #[test]
     fn signed_mute_heads_survive_restart_and_reject_stale_forged_and_unrequested_updates() {
         let root = Keys::generate();
         let friend = Keys::generate();
@@ -180,7 +345,7 @@ mod tests {
             root.public_key(),
             Some(&root_head),
             &[friend.public_key()],
-            std::slice::from_ref(&friend_head),
+            &[friend_head.clone()],
             Vec::new(),
             None,
             100,
@@ -273,5 +438,33 @@ mod tests {
                 assert_eq!(retained.len(), saved.tags.len());
             }
         }
+    }
+    #[test]
+    fn future_mute_does_not_hide_valid_head_in_the_same_reply() {
+        let root = Keys::generate();
+        let target = Keys::generate().public_key();
+        let valid = event(&root, Kind::MuteList, 10, &[target]);
+        let future = event(&root, Kind::MuteList, 10_000, &[]);
+        let bytes = update_people_graph(
+            root.public_key(),
+            None,
+            &[],
+            &[],
+            vec![valid.clone(), future],
+            None,
+            100,
+        )
+        .unwrap();
+        let graph = SocialGraph::from_binary(&root.public_key().to_hex(), &bytes).unwrap();
+        assert_eq!(
+            graph
+                .get_list_revision(&root.public_key().to_hex(), 10000)
+                .unwrap()
+                .id,
+            valid.id.to_hex()
+        );
+        assert!(graph
+            .get_muted_by_user(&root.public_key().to_hex())
+            .contains(&target.to_hex()));
     }
 }

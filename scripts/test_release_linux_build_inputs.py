@@ -50,9 +50,21 @@ else:
                                        hashlib.sha256(raw.encode()).hexdigest(), "main")))
         (self.pins / "apt-snapshots.tsv").write_text("\n".join(rows) + "\n")
         (self.root / "metadata.json").write_text(json.dumps(metadata))
+        self.stub("timeout", """
+import subprocess
+args = sys.argv[1:]
+assert args[:3] == ['--signal=TERM', '--kill-after=15s', '10m']
+assert args[3] == 'apt-get'
+phase = 'update' if 'update' in args else 'download'
+with (root / 'deadlines.jsonl').open('a') as log:
+    log.write(json.dumps({'phase': phase, 'args': args}) + '\\n')
+if os.environ['INPUT_TEST_MODE'] == phase + '-timeout':
+    sys.exit(124)
+sys.exit(subprocess.call(args[3:]))
+""")
         self.stub("apt-get", """
 args = sys.argv[1:]
-command = 'update' if 'update' in args else 'install'
+command = 'update' if 'update' in args else ('download' if '--download-only' in args else 'install')
 with (root / 'calls.jsonl').open('a') as log:
     log.write(json.dumps({'command': command, 'args': args}) + '\\n')
 if command == 'update':
@@ -75,6 +87,17 @@ if command == 'update':
 else:
     selected = args[args.index('--') + 1:]
     versions = dict(item.split('=', 1) for item in selected if '=' in item)
+    if command == 'download':
+        assert '--no-download' not in args
+        if os.environ['INPUT_TEST_MODE'] == 'download-failure':
+            sys.exit(100)
+        if os.environ['INPUT_TEST_MODE'] != 'missing-downloaded':
+            (root / 'downloaded.json').write_text(json.dumps(versions))
+        sys.exit(0)
+    assert '--no-download' in args and '--download-only' not in args
+    downloaded = root / 'downloaded.json'
+    if not downloaded.exists() or json.loads(downloaded.read_text()) != versions:
+        sys.exit(100)
     if os.environ['INPUT_TEST_MODE'] == 'stale-installed':
         versions = {name: '9.0' for name in versions}
     (root / 'installed.json').write_text(json.dumps(versions))
@@ -125,16 +148,27 @@ sys.exit(0 if parts(sys.argv[2]) > parts(sys.argv[4]) else 1)
                 result = self.run_helper("pinned-apt.sh", profile, "example-package")
                 self.assertEqual(result.returncode, 0, result.stderr)
                 calls = self.recorded()
-                self.assertEqual([row["command"] for row in calls], ["update", "install"])
+                self.assertEqual([row["command"] for row in calls], ["update", "download", "install"])
                 for row in calls:
                     for flag in ("Dir::Etc::sourceparts=-", "APT::Update::Error-Mode=any",
                                  "Acquire::AllowInsecureRepositories=false",
                                  "Acquire::AllowDowngradeToInsecureRepositories=false",
-                                 "APT::Get::AllowUnauthenticated=false", "APT::Get::allow-downgrades=false"):
+                                 "APT::Get::AllowUnauthenticated=false", "APT::Get::allow-downgrades=false",
+                                 "APT::Get::Fix-Missing=false", "Acquire::Retries=5",
+                                 "Acquire::Retries::Delay=true", "Acquire::Retries::Delay::Maximum=30",
+                                 "Acquire::Retries::HandleRetryAfter=true",
+                                 "Acquire::http::Timeout=30", "Acquire::https::Timeout=30"):
                         self.assertIn(flag, row["args"])
                     self.assertTrue(any(arg.startswith("Dir::State::lists=/") for arg in row["args"]))
                 self.assertEqual(calls[-1]["args"][-2:], ["--", "example-package=1.2.3"])
                 self.assertIn("--reinstall", calls[-1]["args"])
+                self.assertIn("--download-only", calls[1]["args"])
+                self.assertIn("--no-download", calls[2]["args"])
+                self.assertEqual(calls[1]["args"][-2:], calls[2]["args"][-2:])
+                deadlines = [json.loads(row) for row in
+                             (self.root / 'deadlines.jsonl').read_text().splitlines()]
+                self.assertEqual([row['phase'] for row in deadlines], ['update', 'download'])
+                (self.root / 'deadlines.jsonl').unlink()
 
     def test_changed_missing_extra_or_unsigned_metadata_never_installs(self):
         for profile in ("ubuntu", "ubuntu-noble", "debian"):
@@ -145,6 +179,27 @@ sys.exit(0 if parts(sys.argv[2]) > parts(sys.argv[4]) else 1)
                     result = self.run_helper("pinned-apt.sh", profile, "example-package")
                     self.assertNotEqual(result.returncode, 0)
                     self.assertEqual([row["command"] for row in self.recorded()], ["update"])
+
+    def test_acquisition_deadlines_and_download_failures_never_install(self):
+        for mode, expected in (("update-timeout", []), ("download-timeout", ["update"]),
+                               ("download-failure", ["update", "download"])):
+            with self.subTest(mode=mode):
+                self.calls.unlink(missing_ok=True)
+                self.env["INPUT_TEST_MODE"] = mode
+                result = self.run_helper("pinned-apt.sh", "ubuntu-noble", "example-package")
+                self.assertEqual(result.returncode, 100 if mode == "download-failure" else 124)
+                self.assertEqual([row["command"] for row in self.recorded()], expected)
+                self.assertFalse((self.root / 'installed.json').exists())
+
+    def test_missing_downloaded_package_cannot_trigger_online_install(self):
+        self.env["INPUT_TEST_MODE"] = "missing-downloaded"
+        result = self.run_helper("pinned-apt.sh", "ubuntu-noble", "example-package")
+        self.assertEqual(result.returncode, 100)
+        calls = self.recorded()
+        self.assertEqual([row["command"] for row in calls], ["update", "download", "install"])
+        self.assertIn("--no-download", calls[-1]["args"])
+        self.assertIn("APT::Get::Fix-Missing=false", calls[-1]["args"])
+        self.assertFalse((self.root / 'installed.json').exists())
 
     def test_unsupported_profile_cannot_reach_apt(self):
         result = self.run_helper("pinned-apt.sh", "mutable", "example-package")
@@ -167,7 +222,7 @@ sys.exit(0 if parts(sys.argv[2]) > parts(sys.argv[4]) else 1)
         self.env["INPUT_TEST_MODE"] = "stale-installed"
         result = self.run_helper("pinned-apt.sh", "ubuntu-noble", "example-package")
         self.assertNotEqual(result.returncode, 0)
-        self.assertEqual([row["command"] for row in self.recorded()], ["update", "install"])
+        self.assertEqual([row["command"] for row in self.recorded()], ["update", "download", "install"])
 
     def test_same_or_older_installed_package_is_reinstalled_from_snapshot(self):
         for mode in ("same-installed", "older-installed"):

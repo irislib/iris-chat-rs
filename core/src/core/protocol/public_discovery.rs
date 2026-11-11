@@ -6,12 +6,16 @@ use nostr_pubsub_relay::RelayEventBus;
 use std::collections::BTreeSet;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+mod graph;
 mod query;
+mod transport;
+pub(in crate::core) use graph::GraphScope;
 use query::{client_options, QueryFailure};
 
 #[derive(Debug)]
 pub(in crate::core) struct DiscoveryRelays {
     client: Client,
+    wire: Arc<transport::WireCounters>,
     users: tokio::sync::Mutex<BTreeMap<RelayUrl, usize>>,
     stopped: AtomicBool,
     queries: tokio::sync::Semaphore,
@@ -19,21 +23,28 @@ pub(in crate::core) struct DiscoveryRelays {
 
 impl Default for DiscoveryRelays {
     fn default() -> Self {
+        Self::with_transport(transport::DiscoveryTransport::default())
+    }
+}
+
+impl DiscoveryRelays {
+    fn with_transport(transport: transport::DiscoveryTransport) -> Self {
+        let wire = transport.counters.clone();
         Self {
-            // This generated key is only for public-discovery AUTH. It is never
-            // an account, device, session or publication key.
+            // Only public-discovery AUTH uses this generated key. It never
+            // identifies an account, device, session or publication.
             client: Client::builder()
                 .signer(Keys::generate())
                 .opts(client_options())
+                .websocket_transport(transport)
                 .build(),
+            wire,
             users: Default::default(),
             stopped: AtomicBool::new(false),
             queries: tokio::sync::Semaphore::new(1),
         }
     }
-}
 
-impl DiscoveryRelays {
     async fn open(self: &Arc<Self>, urls: &[RelayUrl]) -> Result<RelayLease, String> {
         if self.stopped.load(Ordering::Acquire) {
             return Err("public discovery stopped".into());

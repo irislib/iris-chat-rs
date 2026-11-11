@@ -1,13 +1,35 @@
 //! Test-only access to the application's live shared FIPS client.
-//! No endpoint, transport or protocol is constructed by this adapter.
+//! Uses the application builder; creates no additional endpoint or transport.
 
 use std::sync::{Arc, OnceLock, RwLock, Weak};
 
-use fips_core::FipsEndpoint;
+use fips_core::{FipsEndpoint, FipsEndpointBuilder};
 use nostr::{EventBuilder, Keys, Kind};
 use nostr_pubsub::{EventBus, EventSource, Filter, VerifiedEvent};
 use nostr_pubsub_fips::{FipsPubsubClient, FipsPubsubSubscription};
 use serde_json::{json, Value};
+
+pub mod control;
+mod traffic;
+
+pub(crate) struct FixtureEndpointBuilder(FipsEndpointBuilder);
+
+pub(crate) fn with_traffic_diagnostics(builder: FipsEndpointBuilder) -> FixtureEndpointBuilder {
+    FixtureEndpointBuilder(builder)
+}
+
+impl FixtureEndpointBuilder {
+    pub(crate) async fn bind(self) -> anyhow::Result<FipsEndpoint> {
+        let endpoint = self.0.bind().await?;
+        if control::is_installed() {
+            if let Err(error) = traffic::enable_services(&endpoint) {
+                let _ = endpoint.shutdown().await;
+                return Err(error);
+            }
+        }
+        Ok(endpoint)
+    }
+}
 
 struct RegisteredMesh {
     endpoint: Weak<FipsEndpoint>,
@@ -83,10 +105,16 @@ impl StackMeshFixture {
             "pubkey": event.pubkey.to_hex(), "kind": kind, "content": event.content}))
     }
 
+    /// Enable/read fixed counters only when the process fixture opts in.
+    pub fn traffic_snapshot(&self) -> anyhow::Result<Value> {
+        traffic::snapshot(&self.endpoint, &self.client)
+    }
+
     pub async fn status(&self) -> anyhow::Result<Value> {
         let peers = self.endpoint.peers().await?;
         Ok(json!({
             "event": "status", "npub": self.endpoint.npub(),
+            "traffic": self.traffic_snapshot()?,
             "direct_peers": peers.into_iter().map(|peer| json!({
                 "npub": peer.npub, "connected": peer.connected,
                 "transport_addr": peer.transport_addr, "transport_type": peer.transport_type,

@@ -1,0 +1,20 @@
+{
+  "format": "iris-released-discovery-fixture-v1",
+  "producer_tag": "v2026.11.3",
+  "producer_commit": "d052e6d3105c54d72209799542470894c8611796",
+  "producer_target": "x86_64-unknown-linux-gnu",
+  "producer_repository": "https://github.com/irislib/iris-chat-rs",
+  "producer_release_workflow": 41649554614,
+  "producer_attempt": 1,
+  "producer_archive_sha256": "e77b6bd2f935b5d0860782867fe370bcb998162ba330c488b2053481d0cd830f",
+  "producer_executable_sha256": "44503804366726262c4570ce5a3f208278f9007b1fa7e31f8363f0297e6b077f",
+  "schema_version": 46,
+  "fixture_sha256": "962fc422425bfdeb857552115f194457734e5dfe300aa6717e0bbc231dcaeb51",
+  "fixture_bytes": 1433600,
+  "events_sha256": "9e9b397be9d895d56aa886a8da1d69cd47ade729ae8f6531e585c6893387d6eb",
+  "expected_sha256": "2b1bbbc25d231ec34d3029b023e53166577ba9e240d4e8e0b00f611d7e3e2d97",
+  "generation": "Released CLI with a fresh synthetic account and seven signed synthetic events, served by a loopback-only message server in an isolated network namespace. No real account or message data.",
+  "sanitization": "Copied released database after production writes; deleted non-discovery user rows with secure_delete and VACUUM. Released schema and all public discovery rows and graph bytes preserved. Secret encodings absent.",
+  "legacy_graph": "nostr-social-graph 0.1.4 binary format 3 stores graph edges and timestamps. It does not store signed head IDs or completeness. Input IDs are an external oracle, not evidence of legacy stored revisions.",
+  "scope": "Public discovery cache migration, graph adoption and close/reopen only; does not cover pending message delivery or physical upgrade acceptance."
+}
