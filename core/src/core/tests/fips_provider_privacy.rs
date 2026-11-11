@@ -173,7 +173,7 @@ fn nearby_private_transcript_targets_only_the_intended_live_device_after_restart
         .block_on(peer.register_service_receiver(PROBE_PORT))
         .unwrap();
     core.runtime.block_on(async {
-        let target = fips_core::PeerIdentity::from_npub(&peer.npub()).unwrap();
+        let target = fips_core::PeerIdentity::from_npub(peer.npub()).unwrap();
         tokio::time::timeout(Duration::from_secs(10), async {
             loop {
                 source
