@@ -112,9 +112,31 @@ impl StackMeshFixture {
 
     pub async fn status(&self) -> anyhow::Result<Value> {
         let peers = self.endpoint.peers().await?;
+        let negotiation = json!({
+            "version": 1,
+            "observed_unix_ms": std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)?.as_millis(),
+            "peers": peers.iter().map(|peer| json!({
+                "npub": peer.npub,
+                "connected": peer.connected,
+                "rekey_in_progress": peer.rekey_in_progress,
+                "rekey_draining": peer.rekey_draining,
+                "direct_probe_pending": peer.direct_probe_pending,
+                "direct_probe_after_ms": peer.direct_probe_after_ms,
+                "direct_probe_retry_count": peer.direct_probe_retry_count,
+                "nostr_traversal_consecutive_failures": peer.nostr_traversal_consecutive_failures,
+                "nostr_traversal_in_cooldown": peer.nostr_traversal_in_cooldown,
+                "nostr_traversal_cooldown_until_ms": peer.nostr_traversal_cooldown_until_ms,
+            })).collect::<Vec<_>>(),
+        });
+        anyhow::ensure!(
+            serde_json::to_vec(&negotiation)?.len() <= 8192,
+            "fixture negotiation snapshot exceeds cap"
+        );
         Ok(json!({
             "event": "status", "npub": self.endpoint.npub(),
             "traffic": self.traffic_snapshot()?,
+            "negotiation": negotiation,
             "direct_peers": peers.into_iter().map(|peer| json!({
                 "npub": peer.npub, "connected": peer.connected,
                 "transport_addr": peer.transport_addr, "transport_type": peer.transport_type,
