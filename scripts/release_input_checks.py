@@ -323,7 +323,7 @@ class ReleaseInputPinTests(unittest.TestCase):
         checkout = release.split("      - name: Checkout pinned public-source verifier\n", 1)[1]
         checkout = checkout.split("\n      - name:", 1)[0]
         self.assertIn("repository: mmalmi/haps", checkout)
-        self.assertIn("ref: 6e40d362c96cb536c9dc69554134c4d98305e909", checkout)
+        self.assertIn("ref: 9a3753f78525aa36ec5086cff6f70d32edbffe52", checkout)
         self.assertIn("path: .release-source-verifier", checkout)
         self.assertIn("persist-credentials: false", checkout)
         gate = release.split("      - name: Require complete public Hashtree source history\n", 1)[1]

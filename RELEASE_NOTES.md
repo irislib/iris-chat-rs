@@ -2,7 +2,7 @@
 
 Each release has channel-specific notes. The release tag must match the `##` heading exactly.
 
-## v2026.11.12
+## v2026.11.12.1
 
 ### GitHub
 
@@ -30,6 +30,7 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 - Keep private device connections out of public routing announcements, including when connecting to older peers.
 - Read versioned Hashtree keys in native attachments and invites.
 - Update the FIPS transport to 0.4.122 and the message provider to 0.6.4. A device that cannot use direct connection offers now declines them, which stops repeated offers and lowers idle traffic. Keep anonymous file readers separate from device connections and apply peer restrictions across transports.
+- Check the public source history before publication with Hashtree 0.4.5 tools, which read the source repository's current format.
 
 ### Apple
 

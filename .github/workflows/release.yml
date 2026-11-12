@@ -250,7 +250,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: mmalmi/haps
-          ref: 6e40d362c96cb536c9dc69554134c4d98305e909
+          ref: 9a3753f78525aa36ec5086cff6f70d32edbffe52
           path: .release-source-verifier
           persist-credentials: false
 
