@@ -22,6 +22,18 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class ReleaseWorkflowTests(unittest.TestCase):
+    def test_optimized_ios_validation_stays_unsigned_development(self) -> None:
+        workflow = (ROOT / ".github/workflows/apple-validation-products.yml").read_text()
+        self.assertEqual(workflow.count("      ios_rust_profile:"), 2)
+        self.assertIn('case "$IOS_RUST_PROFILE" in debug|release)', workflow)
+        self.assertIn('[[ "$IOS_RUST_PROFILE" == debug || "$PLATFORM" == ios ]]', workflow)
+        self.assertIn('IRIS_IOS_RUST_PROFILE="$IOS_RUST_PROFILE" IRIS_IOS_RUST_TARGETS=aarch64-apple-ios', workflow)
+        self.assertIn("'rustProfile': os.environ['IOS_RUST_PROFILE'] if os.environ['PLATFORM'] == 'ios' else 'debug'", workflow)
+        self.assertIn('-destination "$destination" -configuration Debug', workflow)
+        self.assertIn("CODE_SIGNING_ALLOWED=NO build-for-testing", workflow)
+        self.assertIn("'releasePackage': False", workflow)
+        self.assertNotIn("-exportArchive", workflow)
+
     def test_protocol_scope_keeps_default_and_tagged_gates_complete(self) -> None:
         workflow = (ROOT / ".github/workflows/ci.yml").read_text()
         rust = workflow.split("\n  rust:\n", 1)[1].split("\n  android:\n", 1)[0]

@@ -50,18 +50,22 @@ class ReleaseInputPinTests(unittest.TestCase):
                 path.write_text(content)
                 path.chmod(0o755)
             for platform in ("ios", "macos", "ios-ui", "macos-ui"):
-                for source, checkout, code in ((commit, commit, 0), ("main", commit, 0),
-                                               (commit, "b" * 40, 0), (commit, commit, 17)):
-                    with self.subTest(platform=platform, source=source, checkout=checkout, installer_exit=code):
+                cases = [("debug", commit, commit, 0), ("debug", "main", commit, 0),
+                         ("debug", commit, "b" * 40, 0), ("debug", commit, commit, 17),
+                         ("release", commit, commit, 0), ("invalid", commit, commit, 0)]
+                for profile, source, checkout, code in cases:
+                    with self.subTest(platform=platform, profile=profile, source=source,
+                                      checkout=checkout, installer_exit=code):
                         calls = root / "calls"
                         calls.unlink(missing_ok=True)
                         env = dict(os.environ, PATH=f"{root}:{os.environ['PATH']}",
                                    SOURCE_COMMIT=source, CHECKOUT_COMMIT=checkout,
-                                   PLATFORM=platform, RUNNER_TEMP=str(root),
+                                   PLATFORM=platform, IOS_RUST_PROFILE=profile, RUNNER_TEMP=str(root),
                                    INSTALL_CALLS=str(calls), INSTALL_EXIT=str(code))
                         result = subprocess.run(["bash", "-c", script], cwd=root, env=env,
                                                 capture_output=True, text=True, timeout=5)
-                        if source != commit or checkout != commit:
+                        if (source != commit or checkout != commit or profile == "invalid"
+                                or (profile == "release" and platform != "ios")):
                             self.assertNotEqual(result.returncode, 0)
                             self.assertFalse(calls.exists())
                             continue

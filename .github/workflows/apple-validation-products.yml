@@ -12,6 +12,11 @@ on:
         required: false
         default: both
         type: string
+      ios_rust_profile:
+        description: Rust optimization for unsigned iOS development test products
+        required: false
+        default: debug
+        type: string
   workflow_dispatch:
     inputs:
       commit:
@@ -23,6 +28,12 @@ on:
         required: false
         default: both
         type: string
+      ios_rust_profile:
+        description: Rust optimization for unsigned iOS development test products
+        required: false
+        default: debug
+        type: choice
+        options: [debug, release]
 
 permissions:
   contents: read
@@ -43,6 +54,7 @@ jobs:
     env:
       SOURCE_COMMIT: ${{ inputs.commit }}
       PLATFORM: ${{ matrix.platform }}
+      IOS_RUST_PROFILE: ${{ inputs.ios_rust_profile || 'debug' }}
       CARGO_TARGET_DIR: ${{ github.workspace }}/cargo-target
       CARGO_BUILD_JOBS: 2
     defaults:
@@ -58,6 +70,8 @@ jobs:
           set -Eeuo pipefail
           [[ "$SOURCE_COMMIT" =~ ^[0-9a-f]{40}$ ]]
           test "$(git rev-parse HEAD)" = "$SOURCE_COMMIT"
+          case "$IOS_RUST_PROFILE" in debug|release) ;; *) echo "Unsupported iOS Rust profile" >&2; exit 1 ;; esac
+          [[ "$IOS_RUST_PROFILE" == debug || "$PLATFORM" == ios ]] || { echo "Optimized development products require platform=ios" >&2; exit 1; }
           tools="${PLATFORM%-ui}"
           args=(--install --work "$RUNNER_TEMP/iris-validation-tools" --tools "$tools")
           if [[ "$PLATFORM" = ios ]]; then args+=(--target aarch64-apple-ios); fi
@@ -117,7 +131,7 @@ jobs:
             exit 0
           fi
           if [[ "$PLATFORM" = ios ]]; then
-            IRIS_IOS_RUST_TARGETS=aarch64-apple-ios ./scripts/ios-build ios-xcframework
+            IRIS_IOS_RUST_PROFILE="$IOS_RUST_PROFILE" IRIS_IOS_RUST_TARGETS=aarch64-apple-ios ./scripts/ios-build ios-xcframework
             ./scripts/ios-build ios-xcodeproj
             project=ios/IrisChat.xcodeproj
             scheme=IrisChatPhysical
@@ -154,6 +168,7 @@ jobs:
               'tree': subprocess.check_output(['git', 'rev-parse', 'HEAD^{tree}'], text=True).strip(),
               'platform': os.environ['PLATFORM'], 'architecture': 'arm64',
               'configuration': 'Debug', 'signed': False, 'testsExecuted': False,
+              'rustProfile': os.environ['IOS_RUST_PROFILE'] if os.environ['PLATFORM'] == 'ios' else 'debug',
               'releasePackage': False, 'archive': archive.name,
               'archiveBytes': archive.stat().st_size,
               'archiveSHA256': digest.hexdigest(),

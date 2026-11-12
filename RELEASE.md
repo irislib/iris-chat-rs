@@ -465,6 +465,14 @@ trace; restore the original network settings afterward. Keep the device logs
 and test result locally with the tested commit. A simulator pass is not a
 physical Bluetooth result.
 
+For iPhone performance measurements, the **Apple validation products** workflow
+can prepare unsigned development products with `platform=ios` and
+`ios_rust_profile=release`. This optimizes the existing Rust core while keeping
+Swift Debug and development test instrumentation. The receipt records the Rust
+profile separately; these products are never release packages or distribution
+inputs. Preserve failed measurements and compare each new result against the
+same resource limits. The default validation profile remains `debug`.
+
 Device-linking or history-transfer changes also require the web repository's
 `pnpm test:public-device-link` against the intended native development build and
 web candidate. Set `IRIS_CHAT_RS_DIR` and the explicitly selected physical
