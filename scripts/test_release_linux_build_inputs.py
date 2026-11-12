@@ -65,8 +65,12 @@ sys.exit(subprocess.call(args[3:]))
         self.stub("apt-get", """
 args = sys.argv[1:]
 command = 'update' if 'update' in args else ('download' if '--download-only' in args else 'install')
+options = dict(arg.split('=', 1) for arg in args if '=' in arg)
+sources = Path(options['Dir::Etc::sourcelist']).read_text().splitlines()
+mirrors = [Path(line.split('mirror+file:')[1].split()[0]).read_text()
+           for line in sources if 'mirror+file:' in line]
 with (root / 'calls.jsonl').open('a') as log:
-    log.write(json.dumps({'command': command, 'args': args}) + '\\n')
+    log.write(json.dumps({'command': command, 'args': args, 'mirrors': mirrors}) + '\\n')
 if command == 'update':
     if os.environ['INPUT_TEST_MODE'] == 'signature-failure':
         sys.exit(42)
@@ -122,6 +126,12 @@ if sys.argv[-1] not in versions:
 print('install ok installed\\t' + versions[sys.argv[-1]], end='')
 """)
         self.stub("dpkg", """
+if sys.argv[1] == '--print-architecture':
+    print(os.environ.get('INPUT_APT_ARCH', 'amd64'))
+    sys.exit(0)
+if sys.argv[1] == '--print-foreign-architectures':
+    print(os.environ.get('INPUT_APT_FOREIGN', ''))
+    sys.exit(0)
 assert sys.argv[1] == '--compare-versions' and sys.argv[3] == 'gt'
 parts = lambda value: tuple(int(part) for part in value.split('.'))
 sys.exit(0 if parts(sys.argv[2]) > parts(sys.argv[4]) else 1)
@@ -179,6 +189,32 @@ sys.exit(0 if parts(sys.argv[2]) > parts(sys.argv[4]) else 1)
                     result = self.run_helper("pinned-apt.sh", profile, "example-package")
                     self.assertNotEqual(result.returncode, 0)
                     self.assertEqual([row["command"] for row in self.recorded()], ["update"])
+
+    def test_ubuntu_package_mirror_uses_only_verified_snapshot_selection(self):
+        for profile in ("ubuntu", "ubuntu-noble"):
+            with self.subTest(profile=profile):
+                self.calls.unlink(missing_ok=True)
+                result = self.run_helper("pinned-apt.sh", profile, "example-package")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                update, download, install = self.recorded()
+                self.assertEqual(update["mirrors"], ["http://snapshot.example/fixed/\n"] * 3)
+                expected = ("https://archive.ubuntu.com/ubuntu/\tpriority:1 type:deb\n"
+                            "http://snapshot.example/fixed/\tpriority:2\n")
+                self.assertEqual(download["mirrors"], [expected] * 3)
+                self.assertEqual(install["mirrors"], download["mirrors"])
+                self.assertEqual(download["args"][-1], "example-package=1.2.3")
+                self.assertIn("--no-download", install["args"])
+
+    def test_package_mirror_does_not_change_other_architectures_or_debian(self):
+        for profile, architecture, foreign in (("ubuntu", "arm64", ""),
+                                               ("ubuntu-noble", "amd64", "arm64"),
+                                               ("debian", "amd64", "")):
+            with self.subTest(profile=profile, architecture=architecture, foreign=foreign):
+                self.calls.unlink(missing_ok=True)
+                self.env.update(INPUT_APT_ARCH=architecture, INPUT_APT_FOREIGN=foreign)
+                result = self.run_helper("pinned-apt.sh", profile, "example-package")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertTrue(all(row["mirrors"] == [] for row in self.recorded()))
 
     def test_acquisition_deadlines_and_download_failures_never_install(self):
         for mode, expected in (("update-timeout", []), ("download-timeout", ["update"]),

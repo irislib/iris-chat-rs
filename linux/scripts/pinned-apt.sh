@@ -24,7 +24,7 @@ verify_lists() {
 
 main() (
   local distribution="${1:-}" keyring profile suite uri expected components count=0 state
-  local package version installed selection
+  local package version installed selection source_uri package_mirrors=false
   [[ $# -ge 2 ]] || { echo 'usage: pinned-apt.sh ubuntu|ubuntu-noble|debian package ...' >&2; exit 2; }
   shift
   case "$distribution" in
@@ -32,6 +32,9 @@ main() (
     debian) keyring=/usr/share/keyrings/debian-archive-keyring.gpg ;;
     *) echo 'Unsupported snapshot distribution' >&2; exit 2 ;;
   esac
+  if [[ "$distribution" != debian && "$(dpkg --print-architecture)" == amd64 && -z "$(dpkg --print-foreign-architectures)" ]]; then
+    package_mirrors=true
+  fi
   state="$(mktemp -d)"
   trap 'rm -rf "$state"' EXIT
   mkdir -p "$state/lists/partial" "$state/archives/partial"
@@ -39,8 +42,15 @@ main() (
   while IFS=$'\t' read -r profile suite uri expected components; do
     [[ "$profile" == "$distribution" ]] || continue
     [[ "$expected" =~ ^[0-9a-f]{64}$ && "$suite" =~ ^[a-z-]+$ ]] || exit 1
+    source_uri="$uri"
+    if [[ "$package_mirrors" == true ]]; then
+      # Until the signed roots are verified, the snapshot is the only source.
+      printf '%s/\n' "${uri%/}" > "$state/$suite.mirrors"
+      chmod 644 "$state/$suite.mirrors"
+      source_uri="mirror+file:$state/$suite.mirrors"
+    fi
     printf 'deb [signed-by=%s check-valid-until=no] %s %s %s\n' \
-      "$keyring" "$uri" "$suite" "$components" >> "$state/sources.list"
+      "$keyring" "$source_uri" "$suite" "$components" >> "$state/sources.list"
     count=$((count + 1))
   done < "$PIN_FILE"
   [[ "$count" == 3 ]] || { echo 'Incomplete snapshot pins' >&2; exit 1; }
@@ -62,6 +72,16 @@ main() (
   # Transport timeouts limit inactivity, not total acquisition time.
   timeout --signal=TERM --kill-after=15s 10m apt-get "${options[@]}" update
   verify_lists "$distribution" "$state/lists"
+  if [[ "$package_mirrors" == true ]]; then
+    # Only package bytes may come from the ordinary archive. Selection and
+    # hashes still come from the verified snapshot; missing old packages fall
+    # back to that snapshot within the same acquisition deadline.
+    while IFS=$'\t' read -r profile suite uri expected components; do
+      [[ "$profile" == "$distribution" ]] || continue
+      printf 'https://archive.ubuntu.com/ubuntu/\tpriority:1 type:deb\n%s/\tpriority:2\n' \
+        "${uri%/}" > "$state/$suite.mirrors"
+    done < "$PIN_FILE"
+  fi
   local -a selected=()
   for package in "$@"; do
     [[ "$package" =~ ^[a-z0-9][a-z0-9+.-]*(:[a-z0-9-]+)?$ ]] || {
