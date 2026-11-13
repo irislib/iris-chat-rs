@@ -130,6 +130,61 @@ fn chat_read_sync_clears_sibling_unread_without_peer_receipts() {
 }
 
 #[test]
+fn own_group_reply_clears_only_older_notices_on_each_device() {
+    let mut pair = chat_read_sync_pair("own-group-reply");
+    let chat = group_chat_id("crew");
+    let peer = Keys::generate();
+    for core in [&mut pair.a, &mut pair.b] {
+        core.push_system_notice(&chat, "Member added".into(), 101);
+        core.apply_runtime_text_message(
+            peer.public_key(),
+            Some(chat.clone()),
+            "Still unread".into(),
+            102,
+            None,
+            Some("peer-message".into()),
+            None,
+        );
+        core.push_system_notice(&chat, "Member left".into(), 104);
+        assert_eq!(core.threads[&chat].unread_count, 3);
+        core.persist_app_state().unwrap();
+        // An inactive chat restored after restart only holds its latest preview.
+        core.threads.get_mut(&chat).unwrap().messages.drain(..2);
+    }
+    pair.a.push_outgoing_message_with_id(
+        "reply".into(),
+        &chat,
+        "My reply".into(),
+        103,
+        None,
+        DeliveryState::Sent,
+    );
+    sync_chat_reads(&pair.a, &mut pair.b, &pair.a_device, true);
+    sync_chat_reads(&pair.a, &mut pair.b, &pair.a_device, true);
+
+    for core in [&mut pair.a, &mut pair.b] {
+        core.persist_app_state().unwrap();
+        let thread = core.app_store.load_thread(&chat, 10).unwrap().unwrap();
+        assert_eq!(thread.unread_count, 2);
+        assert_eq!(core.threads[&chat].unread_count, 2);
+        assert_eq!(thread.messages.len(), 4);
+        assert!(matches!(
+            thread.messages[0].delivery,
+            PersistedDeliveryState::Seen
+        ));
+        assert!(matches!(
+            thread.messages[1].delivery,
+            PersistedDeliveryState::Received
+        ));
+        assert!(thread.messages[2].is_outgoing);
+        assert!(matches!(
+            thread.messages[3].delivery,
+            PersistedDeliveryState::Received
+        ));
+    }
+}
+
+#[test]
 fn chat_read_sync_clears_group_unread_without_peer_receipts() {
     let mut pair = chat_read_sync_pair("read-sync-group");
     let peer = Keys::generate();

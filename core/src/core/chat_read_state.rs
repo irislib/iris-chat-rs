@@ -228,6 +228,29 @@ impl AppCore {
         }
     }
 
+    pub(super) fn acknowledge_group_notices_before_reply(&mut self, chat_id: &str, through: u64) {
+        if !is_group_chat_id(chat_id) {
+            return;
+        }
+        let Some(thread) = self.threads.get_mut(chat_id).filter(|t| t.unread_count > 0) else {
+            return;
+        };
+        match self.app_store.acknowledge_group_notices(thread, through) {
+            Ok(remaining) => {
+                thread.unread_count = remaining;
+                for message in &mut thread.messages {
+                    if message.kind == ChatMessageKind::System
+                        && !message.is_outgoing
+                        && message.created_at_secs <= through
+                    {
+                        message.delivery = DeliveryState::Seen;
+                    }
+                }
+            }
+            Err(error) => self.push_debug_log("storage.group_notice_read.error", error.to_string()),
+        }
+    }
+
     pub(super) fn apply_own_read_state_tag(&mut self, chat_id: &str, tags: &[nostr::Tag]) {
         let Some(encoded) = first_tag_value(tags.iter(), "iris-read-state") else {
             return;

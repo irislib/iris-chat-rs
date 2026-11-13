@@ -3,6 +3,55 @@ use nostr::Keys;
 use nostr_double_ratchet::DeviceEntry;
 
 #[test]
+fn migrates_group_notice_badges_behind_own_replies() {
+    let mut conn = Connection::open_in_memory().unwrap();
+    ensure_schema(&mut conn).unwrap();
+    conn.execute_batch(
+        "PRAGMA user_version = 49;
+         INSERT INTO threads(chat_id, unread_count) VALUES
+            ('group:only', 1), ('group:mixed', 1), ('group:manual', 1), ('group:later', 1);
+         INSERT INTO messages(chat_id, id, kind, author, body, is_outgoing, created_at_secs, delivery)
+         VALUES
+            ('group:only', 'notice', 'system', 'Iris', '', 0, 1, 'received'),
+            ('group:only', 'reply', 'user', 'me', '', 1, 3, 'received'),
+            ('group:mixed', 'notice', 'system', 'Iris', '', 0, 1, 'received'),
+            ('group:mixed', 'peer', 'user', 'peer', '', 0, 2, 'received'),
+            ('group:mixed', 'reply', 'user', 'me', '', 1, 3, 'sent'),
+            ('group:manual', 'reply', 'user', 'me', '', 1, 3, 'seen'),
+            ('group:later', 'reply', 'user', 'me', '', 1, 3, 'sent'),
+            ('group:later', 'notice', 'system', 'Iris', '', 0, 4, 'received');"
+    ).unwrap();
+    ensure_schema(&mut conn).unwrap();
+    let mut query = conn
+        .prepare("SELECT chat_id, unread_count FROM threads ORDER BY chat_id")
+        .unwrap();
+    let badges = query
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+        })
+        .unwrap()
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .unwrap();
+    assert_eq!(
+        badges,
+        vec![
+            ("group:later".into(), 1),
+            ("group:manual".into(), 1),
+            ("group:mixed".into(), 1),
+            ("group:only".into(), 0),
+        ]
+    );
+    let seen_notices: i64 = conn
+        .query_row(
+            "SELECT count(*) FROM messages WHERE kind = 'system' AND delivery = 'seen'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(seen_notices, 2);
+}
+
+#[test]
 fn migrates_v46_discovery_cache_and_preserves_signed_heads_after_close_reopen() {
     use crate::core::storage::AppStore;
     use std::sync::{Arc, Mutex};

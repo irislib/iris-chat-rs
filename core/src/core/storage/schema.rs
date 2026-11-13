@@ -7,7 +7,7 @@ use rusqlite::{params, Connection, Transaction};
 // Bump when a non-additive change to the schema lands and migrate
 // inside `ensure_schema` below. Greenfield: version 1 is the initial
 // shape and there is no previous JSON layout to migrate from.
-const SCHEMA_VERSION: u32 = 49;
+const SCHEMA_VERSION: u32 = 50;
 
 const INITIAL_SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS direct_file_transfers (
@@ -165,6 +165,9 @@ CREATE TABLE IF NOT EXISTS messages (
 
 CREATE INDEX IF NOT EXISTS messages_exact_read_idx ON messages(chat_id, id)
     WHERE is_outgoing = 0 AND delivery = 'seen' AND kind = 'user';
+
+CREATE INDEX IF NOT EXISTS messages_unread_notice_idx ON messages(chat_id, created_at_secs)
+    WHERE kind = 'system' AND is_outgoing = 0 AND delivery != 'seen';
 
 -- Only original signed group ciphertext admitted by the core is retained here.
 -- Never populate this from message bodies, unsigned events, or protocol KV.
@@ -726,6 +729,9 @@ pub(super) fn ensure_schema(conn: &mut Connection) -> anyhow::Result<()> {
         tx.execute_batch(
             "ALTER TABLE pending_relay_publishes ADD COLUMN pairwise_device_hex TEXT;",
         )?;
+    }
+    if (1..50).contains(&current) && column_exists(&tx, "threads", "unread_count")? {
+        super::group_notice_reads::migrate(&tx)?;
     }
     tx.pragma_update(None, "user_version", SCHEMA_VERSION as i64)?;
     tx.commit()?;

@@ -6,6 +6,7 @@
 
 mod account;
 mod connection;
+mod group_notice_reads;
 pub(in crate::core) mod mesh_group_envelopes;
 mod schema;
 mod store;

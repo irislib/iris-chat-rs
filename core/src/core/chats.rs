@@ -911,6 +911,7 @@ impl AppCore {
         if let Some(thread) = self.threads.get_mut(chat_id) {
             thread.updated_at_secs = thread.updated_at_secs.max(created_at_secs);
         }
+        self.acknowledge_group_notices_before_reply(chat_id, created_at_secs);
         // Local sends and authenticated sibling replies share one durable
         // acceptance record, independent of whether message history survives.
         if let Some(author) = &message.author_owner_pubkey_hex {

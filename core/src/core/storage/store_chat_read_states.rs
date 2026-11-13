@@ -1,9 +1,43 @@
+use super::super::group_notice_reads;
 use super::*;
 use crate::core::{unix_now, MessageReadState};
 
 const READ_STATE_PREFIX: &str = "chat_read_state:";
 
 impl AppStore {
+    pub(crate) fn acknowledge_group_notices(
+        &mut self,
+        thread: &ThreadRecord,
+        through: u64,
+    ) -> anyhow::Result<u64> {
+        let chat_id = &thread.chat_id;
+        let mut conn = self
+            .conn
+            .lock()
+            .map_err(|_| anyhow::anyhow!("storage connection mutex poisoned"))?;
+        let tx = conn.transaction()?;
+        if !thread.messages.iter().any(|message| {
+            message.kind == ChatMessageKind::System
+                && !message.is_outgoing
+                && message.delivery != DeliveryState::Seen
+                && message.created_at_secs <= through
+        }) && !group_notice_reads::has_unread_notice(&tx, chat_id, through as i64)?
+        {
+            return Ok(thread.unread_count);
+        }
+        // Include pending incoming rows before locating the counted unread window.
+        upsert_thread_rows(&tx, chat_id, thread)?;
+        let remaining = group_notice_reads::acknowledge(
+            &tx,
+            chat_id,
+            through as i64,
+            thread.unread_count as i64,
+        )?;
+        tx.commit()?;
+        self.cache.threads.remove(chat_id);
+        Ok(remaining as u64)
+    }
+
     pub(crate) fn load_chat_read_states(&self) -> anyhow::Result<BTreeMap<String, ChatReadState>> {
         let conn = self
             .conn

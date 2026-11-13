@@ -340,6 +340,9 @@ impl AppCore {
                 delivery_trace: MessageDeliveryTraceSnapshot::default(),
                 source_event_id: None,
             });
+            if is_outgoing {
+                self.acknowledge_group_notices_before_reply(&chat_id, message.created_at);
+            }
             self.apply_legacy_sync_reactions(&chat_id, &message_id, legacy_reactions);
             self.restore_device_sync_reactions(&chat_id, &message_id);
             self.bump_typing_floor(&chat_id, message.created_at);
