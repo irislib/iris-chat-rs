@@ -91,7 +91,7 @@ fn private_group_ready_publications_are_due_after_restart_until_outbox_ack() {
 }
 
 #[test]
-fn private_group_wake_and_broadcast_share_one_rollback_safe_checkpoint() {
+fn group_data_broadcast_uses_one_rollback_safe_checkpoint() {
     let mut fixture = remote_send_fixture();
     let group_id = fixture
         .sender
@@ -148,7 +148,7 @@ fn private_group_wake_and_broadcast_share_one_rollback_safe_checkpoint() {
     assert_eq!(
         storage.writes.lock().unwrap().len(),
         1,
-        "broadcast and private notification work must share a single checkpoint"
+        "the ciphertext and durable publication must share a single checkpoint"
     );
     let authors = fixture
         .sender
@@ -173,7 +173,7 @@ fn private_group_wake_and_broadcast_share_one_rollback_safe_checkpoint() {
             );
         }
     }
-    assert_eq!((broadcast, wakes), (0, 1));
+    assert_eq!((broadcast, wakes), (1, 0));
     let is_wake = |pending: &ProtocolPendingGroupFanout| match pending.fanout.as_ref() {
         GroupPendingFanout::Remote { payload, .. }
         | GroupPendingFanout::LocalSiblings { payload } => {
@@ -182,15 +182,8 @@ fn private_group_wake_and_broadcast_share_one_rollback_safe_checkpoint() {
         }
     };
     assert!(
-        fixture
-            .sender
-            .pending_group_fanouts
-            .iter()
-            .any(|pending| is_wake(pending)
-                && pending.remaining_devices.as_ref().is_some_and(
-                    |devices| devices.contains(&ndr_device(fixture.late_device.public_key()))
-                )),
-        "the unavailable device's private wake remains durable"
+        !fixture.sender.pending_group_fanouts.iter().any(is_wake),
+        "one publication covers offline devices without queued private data copies"
     );
     let mut restored = ProtocolEngine::load_or_create_for_local_device(
         fixture.store,
@@ -238,103 +231,6 @@ fn private_group_wake_and_broadcast_share_one_rollback_safe_checkpoint() {
     restored.ack_group_publish_effects(&sent.effects).unwrap();
     assert!(restored.pending_group_publish_effects().is_empty());
     // Install the late device's invite without consuming the pending fanout.
-    let pending = std::mem::take(&mut restored.pending_group_fanouts);
-    assert!(observe_sibling_invite(&mut restored, &fixture.late, &fixture.late_device).is_empty());
-    restored.pending_group_fanouts = pending;
-    for pending in &mut restored.pending_group_fanouts {
-        pending.next_retry_at_secs = 0;
-    }
-    restored.persist().unwrap();
-    let fanouts_before = restored.pending_group_fanouts.clone();
-    let sessions_before = serde_json::to_value(restored.session_manager.snapshot()).unwrap();
-    let groups_before = serde_json::to_value(restored.group_manager.snapshot()).unwrap();
-    let deliveries_before = restored.pending_decrypted_deliveries.clone();
-    // A ready wake uses an immediate atomic save even inside an already-dirty
-    // app batch. Failing it must restore the session and original target order.
-    restored.enter_batch();
-    restored.batch_persist_dirty.set(true);
-    ack_storage
-        .fail_next
-        .store(true, std::sync::atomic::Ordering::Relaxed);
-    assert!(restored
-        .retry_pending_group_fanouts(NdrUnixSeconds(unix_now().get()))
-        .is_err());
-    assert_eq!(restored.pending_group_fanouts, fanouts_before);
-    assert!(
-        restored.pending_inbound == deferred,
-        "failed fanout save changed deferred packets"
-    );
-    assert_eq!(restored.pending_decrypted_deliveries, deliveries_before);
-    assert_eq!(
-        serde_json::to_value(restored.session_manager.snapshot()).unwrap(),
-        sessions_before
-    );
-    assert_eq!(
-        serde_json::to_value(restored.group_manager.snapshot()).unwrap(),
-        groups_before
-    );
-    assert!(restored.pending_group_publish_effects().is_empty());
-    assert!(restored.batch_persist_dirty.get());
-    assert_eq!(restored.batch_depth.get(), 1);
-    restored.exit_batch().unwrap();
-    let mut restored = ProtocolEngine::load_or_create_for_local_device(
-        ack_storage,
-        fixture.owner.public_key(),
-        &fixture.device,
-    )
-    .unwrap();
-    assert_eq!(restored.pending_group_fanouts, fanouts_before);
-    assert!(
-        restored.pending_inbound == deferred,
-        "fanout restart changed deferred packets"
-    );
-    let resumed = restored
-        .retry_pending_protocol(NdrUnixSeconds(unix_now().get()))
-        .unwrap();
-    let effects = resumed
-        .group_result
-        .effects
-        .into_iter()
-        .chain(resumed.effects)
-        .collect::<Vec<_>>();
-    for effect in &effects {
-        let ProtocolEffect::Publish(publish) = effect;
-        let wire = serde_json::to_string(&publish.event).unwrap();
-        for identity in [
-            &fixture.owner,
-            &fixture.device,
-            &fixture.peer_owner,
-            &fixture.ready_device,
-        ] {
-            assert!(
-                !wire.contains(&identity.public_key().to_hex()),
-                "late retry must not expose either account or the sending device"
-            );
-        }
-        assert_ne!(publish.event.pubkey, fixture.late_device.public_key());
-        publish.event.verify().unwrap();
-        assert!(
-            publish.event.kind.as_u16() as u32 != MESSAGE_EVENT_KIND
-                || publish.event.tags.public_keys().next().is_none()
-        );
-        assert_ne!(
-            publish.carrier.pairwise_device(),
-            Some(fixture.ready_device.public_key()),
-            "restart must not resend the wake to an already prepared device"
-        );
-    }
-    let received = decrypt_own_sync_effects(&mut fixture.late, effects);
-    assert_eq!(
-        received
-            .iter()
-            .filter(
-                |message| serde_json::from_str::<serde_json::Value>(&message.content)
-                    .is_ok_and(|value| value["kind"] == 21_113)
-            )
-            .count(),
-        1,
-        "the newly reachable device receives its queued wake after restart"
-    );
 }
 
 #[test]
@@ -395,8 +291,12 @@ fn private_group_wake_ready_queue_is_bounded_and_respects_block_and_leave() {
         "blocking also retires unavailable-device wake intents"
     );
     assert!(
-        fixture.sender.pending_group_publish_effects().is_empty(),
-        "blocking the only recipient must not leave a shared-channel fallback"
+        fixture
+            .sender
+            .pending_group_publish_effects()
+            .iter()
+            .any(|ProtocolEffect::Publish(p)| p.carrier == ProtocolCarrier::SharedGroup),
+        "a DM block does not revoke group membership"
     );
 
     fixture

@@ -88,14 +88,19 @@ impl AppCore {
                 return Some(false);
             }
         }
+        Some(self.receive_group_data(&event))
+    }
+
+    pub(super) fn receive_group_data(&mut self, event: &Event) -> bool {
+        let source_id = event.id.to_hex();
         let Some(engine) = self.protocol_engine.as_mut() else {
-            return Some(false);
+            return false;
         };
-        let result = match engine.process_group_outer_event(&event) {
+        let result = match engine.process_group_outer_event(event) {
             Ok(result) => result,
             Err(error) => {
                 self.push_debug_log("group.private_wake.receive", error.to_string());
-                return Some(!error.is::<StorageError>());
+                return !error.is::<StorageError>();
             }
         };
         let mut applied = true;
@@ -106,7 +111,7 @@ impl AppCore {
         }
         self.process_protocol_engine_effects(result.effects);
         self.request_protocol_subscription_refresh();
-        Some(applied)
+        applied
     }
 
     fn save_group_wake_preview_alias(&self, wake: &str, source: &str) -> anyhow::Result<()> {

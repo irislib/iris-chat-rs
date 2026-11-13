@@ -866,8 +866,8 @@ fn appcore_sender_key_four_member_matrix_delivers_one_outer_per_sender() {
                 &sent.effects,
                 &sent.event_ids
             ),
-            0,
-            "shared group ciphertext must never be a transport publication"
+            1,
+            "one sender-key event reaches every authorized recipient"
         );
 
         let outer_events = vec![private_group_cipher_from_sender_for_test(

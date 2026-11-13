@@ -547,6 +547,22 @@ impl ProtocolEngine {
             let message_id = inner_event_id.clone();
             let mut output = engine.protocol_group_send_from_prepared(&prepared, inner_event_id)?;
             output.snapshot = engine.group_manager.group(group_id);
+            if output.snapshot.as_ref().is_some_and(|group| {
+                group.members == [engine.local_owner]
+                    && engine
+                        .session_manager
+                        .roster(engine.local_owner)
+                        .is_some_and(|roster| {
+                            roster
+                                .devices()
+                                .iter()
+                                .all(|device| device.device_pubkey == engine.local_device)
+                        })
+            }) {
+                // Notes to self with no linked devices stay in local history.
+                output.effects.clear();
+                output.event_ids.clear();
+            }
             output.has_pending_deliveries = engine.pending_group_fanouts.iter().any(|pending| {
                 pending.group_id == group_id && pending.inner_event_id == message_id
             });

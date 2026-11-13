@@ -25,7 +25,6 @@ fn private_group_recipient_delivery_survives_sender_restart_while_member_offline
     farm.devices[2].online = false;
     let body = "attachment message while C is offline";
     let (message_id, _) = farm.send(0, &chat_id, body);
-    let c_key = farm.devices[2].keys.public_key();
     let pending = farm.devices[0]
         .core
         .pending_relay_publishes
@@ -35,33 +34,24 @@ fn private_group_recipient_delivery_survives_sender_restart_while_member_offline
         .collect::<Vec<_>>();
     assert_eq!(
         pending.len(),
-        2,
-        "each other member has its own private carrier"
+        1,
+        "offline and online members read the same signed event"
     );
-    let carrier = pending
-        .iter()
-        .find(|event| queued_for_device(&farm.devices[0].core, event, c_key))
-        .expect("C's private ratchet carrier")
-        .clone();
-    let sender = &farm.devices[0].core;
-    assert!(pending.iter().all(|event| !sender
+    let carrier = pending[0].clone();
+    assert!(farm.devices[0]
+        .core
         .protocol_engine
         .as_ref()
         .unwrap()
-        .is_known_group_sender_event_author(event.pubkey)));
+        .is_known_group_sender_event_author(carrier.pubkey));
     let wire = serde_json::to_string(&carrier).unwrap();
+    for device in &farm.devices {
+        assert!(!wire.contains(&device.keys.public_key().to_hex()));
+    }
+    for owner in &farm.owners {
+        assert!(!wire.contains(&owner.public_key().to_hex()));
+    }
     assert!(!wire.contains(&group_id));
-    assert!(!wire.contains(&farm.owners[0].public_key().to_hex()));
-    assert!(!wire.contains(&farm.devices[0].keys.public_key().to_hex()));
-    let preview = mobile_push::preview_direct_messages(
-        &farm.devices[2]._dir.path().to_string_lossy(),
-        farm.owners[2].public_key(),
-        &farm.devices[2].keys,
-        std::slice::from_ref(&carrier),
-    )
-    .expect("inspect C's carrier without advancing the live ratchet");
-    let rumor = parse_runtime_rumor(&preview.content).unwrap();
-    let nested = crate::core::private_group_wake::decode(&rumor.content).unwrap();
     assert!(!farm.devices[2].core.threads[&chat_id]
         .messages
         .iter()
@@ -121,7 +111,7 @@ fn private_group_recipient_delivery_survives_sender_restart_while_member_offline
     assert_eq!(received[0].body, body);
     assert_eq!(
         received[0].source_event_id.as_deref(),
-        Some(nested.id.to_hex().as_str())
+        Some(carrier.id.to_hex().as_str())
     );
     assert_eq!(
         received[0].author_owner_pubkey_hex.as_deref(),

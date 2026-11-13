@@ -57,7 +57,29 @@ impl AppCore {
     /// group ciphertext has the same wire shape as a pairwise envelope, so
     /// only the engine's own record of what it produced tells them apart.
     pub(in crate::core) fn protocol_publication_allowed(&self, publish: &ProtocolPublish) -> bool {
-        publish.is_publishable() && self.private_publication_allowed(&publish.event)
+        publish.is_publishable()
+            && self.private_publication_allowed(&publish.event)
+            && (publish.carrier != ProtocolCarrier::SharedGroup
+                || self.local_group_data_publication(
+                    &publish.event,
+                    GROUP_DATA_PUBLISH_LABEL,
+                    Some(&publish.chat_id),
+                ))
+    }
+
+    pub(super) fn local_group_data_publication(
+        &self,
+        event: &Event,
+        label: &str,
+        chat: Option<&str>,
+    ) -> bool {
+        label == GROUP_DATA_PUBLISH_LABEL
+            && event.kind.as_u16() as u32 == MESSAGE_EVENT_KIND
+            && self
+                .protocol_engine
+                .as_ref()
+                .zip(chat)
+                .is_some_and(|(engine, chat)| engine.owns_group_data_stream(chat, event.pubkey))
     }
 
     /// Whether a saved outbox row may still be replayed on any carrier.
@@ -68,7 +90,12 @@ impl AppCore {
     ) -> bool {
         self.private_publication_allowed(event)
             && (event.kind.as_u16() as u32 != MESSAGE_EVENT_KIND
-                || pending_pairwise_device(pending).is_some())
+                || pending_pairwise_device(pending).is_some()
+                || self.local_group_data_publication(
+                    event,
+                    &pending.label,
+                    pending.chat_id.as_deref(),
+                ))
     }
 
     /// The device a queued message event is for, from local delivery

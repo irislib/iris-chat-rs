@@ -1220,25 +1220,25 @@ fn private_group_payload_publish_ack_marks_sent_after_recipient_carrier_success(
     let group_id = farm.devices[0].core.groups.keys().next().unwrap().clone();
     let chat_id = group_chat_id(&group_id);
     let (message_id, _) = farm.send(0, &chat_id, "private group visible message");
-    let recipient = farm.devices[1].keys.public_key();
     let core = &mut farm.devices[0].core;
     let pending = core
         .pending_relay_publishes
         .values()
+        .filter(|pending| pending.label == GROUP_DATA_PUBLISH_LABEL)
         .filter(|pending| {
             pending.chat_id.as_deref() == Some(chat_id.as_str())
                 && pending.inner_event_id.as_deref() == Some(message_id.as_str())
         })
         .collect::<Vec<_>>();
-    assert_eq!(pending.len(), 1, "one recipient gets one private carrier");
+    assert_eq!(
+        pending.len(),
+        1,
+        "one shared data event drives the send acknowledgement"
+    );
     let event: Event = serde_json::from_str(&pending[0].event_json).unwrap();
     assert!(event.tags.public_keys().next().is_none());
-    assert_eq!(
-        pending[0].pairwise_device_hex.as_deref(),
-        Some(recipient.to_hex().as_str()),
-        "the recipient device is local delivery metadata, never a tag"
-    );
-    assert!(!core
+    assert!(pending[0].pairwise_device_hex.is_none());
+    assert!(core
         .protocol_engine
         .as_ref()
         .unwrap()
@@ -1259,6 +1259,15 @@ fn private_group_payload_publish_ack_marks_sent_after_recipient_carrier_success(
         vec!["wss://relay.example".into()],
         "private group recipient carrier ack".into(),
     );
+    let remaining: Vec<_> = core
+        .pending_relay_publishes
+        .values()
+        .filter(|p| p.inner_event_id.as_deref() == Some(message_id.as_str()))
+        .map(|p| p.event_id.clone())
+        .collect();
+    for id in remaining {
+        core.handle_relay_publish_finished(id, true, vec![], "stored".into());
+    }
     assert_eq!(
         core.threads[&chat_id]
             .messages
@@ -1982,7 +1991,7 @@ fn mobile_push_preview_resolves_from_sqlite_when_decrypt_fails() {
 fn appcore_persists_pending_group_sender_key_outer_when_no_group_message_emits() {
     let (mut farm, group_id, chat_id) = private_group_wake_farm();
     farm.send(0, &chat_id, "waiting for group key recovery");
-    let (nested, carriers) = private_group_wake_events(&farm, &group_id);
+    let (nested, carriers) = private_group_wake_events(&mut farm, &group_id);
     let sender = farm.owners[0].public_key();
     let owner = farm.owners[1].clone();
     let device = farm.devices[1].keys.clone();

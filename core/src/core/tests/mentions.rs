@@ -36,20 +36,14 @@ fn mentions_group_push_and_foreground_use_identity_and_respect_mute_choice() {
             .as_ref()
             .unwrap()
             .known_group_sender_event_pubkeys();
-        let events = sorted_pending_events_for_test(&farm.devices[0].core);
+        // Current clients receive the shared event while awake. Exercise the
+        // notification policy with a real carrier from a pre-upgrade sender.
+        let event = private_group_wake_events(&mut farm, &group_id)
+            .1
+            .into_iter()
+            .next()
+            .unwrap();
         let receiver = &farm.devices[1];
-        let event = events
-            .iter()
-            .find(|event| {
-                queued_for_device(&farm.devices[0].core, event, receiver.keys.public_key())
-                    && farm.devices[0]
-                        .core
-                        .pending_relay_publishes
-                        .get(&event.id.to_hex())
-                        .is_some_and(|pending| pending.chat_id.as_deref() == Some(chat.as_str()))
-            })
-            .expect("recipient-specific private group wake")
-            .clone();
         let push = receiver.core.build_mobile_push_sync_snapshot();
         assert!(
             !authors
@@ -126,21 +120,10 @@ fn mentions_group_push_and_foreground_use_identity_and_respect_mute_choice() {
     farm.devices[0]
         .core
         .send_message(&chat, &format!("Blocked {mention}"), None);
-    let authors = farm.devices[0]
-        .core
-        .protocol_engine
-        .as_ref()
-        .unwrap()
-        .known_group_sender_event_pubkeys();
-    let event = sorted_pending_events_for_test(&farm.devices[0].core)
+    let event = private_group_wake_events(&mut farm, &group_id)
+        .1
         .into_iter()
-        .find(|event| {
-            queued_for_device(
-                &farm.devices[0].core,
-                event,
-                farm.devices[1].keys.public_key(),
-            ) && !authors.contains(&event.pubkey)
-        })
+        .next()
         .unwrap();
     let receiver = &farm.devices[1];
     assert!(

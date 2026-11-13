@@ -1177,8 +1177,18 @@ impl AppCore {
         let invite_authors = sorted_hexes(invite_authors);
         // Most important first: past the subscription limit the tail is left out.
         let message_authors = self.subscribable_message_authors_by_priority();
-        // Group channels and roster identifiers must stay inside pairwise sessions.
-        let group_sender_key_authors = Vec::new();
+        // These keys reach only the separate anonymous group reader.
+        let group_sender_key_authors: Vec<String> = self
+            .protocol_engine
+            .as_ref()
+            .map(|engine| {
+                engine
+                    .subscribable_group_sender_event_pubkeys()
+                    .into_iter()
+                    .map(|author| author.to_hex())
+                    .collect()
+            })
+            .unwrap_or_default();
         let group_roster_group_ids = Vec::new();
         let group_roster_authors = Vec::new();
         let invite_response_recipient = self
@@ -1504,7 +1514,18 @@ impl AppCore {
             .unwrap_or_default();
         let filter_count = filters.len() as u64;
         let (filters, discovery_filters) = self.split_private_discovery_filters(filters);
-        let discovery_scopes = self.private_discovery_subscriptions(discovery_filters);
+        let group_authors = desired_plan
+            .as_ref()
+            .map(|plan| plan.group_sender_key_authors.as_slice())
+            .unwrap_or(&[]);
+        let discovery_scopes =
+            self.private_discovery_subscriptions(discovery_filters)
+                .map(|mut scopes| {
+                    if let Some(group_scope) = self.group_data_subscription(group_authors) {
+                        scopes.push(group_scope);
+                    }
+                    scopes
+                });
         self.protocol_subscription_runtime.refresh_in_flight = true;
         self.protocol_subscription_runtime.refresh_dirty = false;
         self.protocol_subscription_runtime.force_reconnect_dirty = false;

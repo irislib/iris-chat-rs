@@ -30,6 +30,7 @@ pub(super) fn queued_group_history(count: usize) -> (ProtocolEngine, Keys, Keys)
             latest_key_id: Some(1),
             states: vec![initial.clone()],
             distribution_history: vec![],
+            delivery_state: None,
             distributed_to: vec![],
             repair_snapshots: vec![],
         }],

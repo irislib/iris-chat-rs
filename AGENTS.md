@@ -32,10 +32,12 @@ are read, never written or republished. Keep caller
 and contact authorization on device, after authenticated decryption. FIPS remains
 available for live traffic. Delivery and cold-start fixes must not weaken this
 boundary; do not retain an identity-leaking compatibility fallback.
-Shared group ciphertext and signed rosters are local intermediates, never public
-network records. Every group message, membership update, retry and recovery
-delivery must travel inside recipient-specific ratchet envelopes. Never open
-shared group-author or group-roster subscriptions on any network carrier.
+Ordinary group messages use one anonymous group sender event signed by the
+sending device's private per-group sender key. Read those authors only after
+private key distribution and current membership checks, using an isolated
+anonymous read connection. Keep group authors out of identified push, nearby
+discovery and device-authenticated filters. Signed rosters, key distribution
+and group repair travel inside recipient-specific ratchets.
 Changes to these paths require wire-level tests that inspect serialized events
 and subscription requests for identity leakage, including first contact,
 restarts, retries, calls, and group key distribution. Successful encryption and

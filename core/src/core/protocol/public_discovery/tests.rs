@@ -84,6 +84,92 @@ fn merges_only_compatible_author_selectors_without_weakening_limits_or_tags() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn group_data_uses_separate_anonymous_auth_and_one_request_per_author_chunk() {
+    let owner = Keys::generate();
+    let group_keys = [Keys::generate(), Keys::generate()];
+    let metadata = metadata(&owner, "test owner");
+    let messages = group_keys
+        .iter()
+        .map(|key| {
+            EventBuilder::new(Kind::from(1060), "ciphertext")
+                .sign_with_keys(key)
+                .unwrap()
+        })
+        .collect::<Vec<_>>();
+    let relay = relay(std::iter::once(metadata).chain(messages.clone()).collect()).await;
+    let (send, _metadata_queue) = flume::unbounded();
+    let discovery = PublicDiscovery::new(&tokio::runtime::Handle::current(), send, pool());
+    discovery
+        .configure(
+            std::slice::from_ref(&relay.url),
+            vec![Filter::new()
+                .kind(Kind::Metadata)
+                .author(owner.public_key())],
+        )
+        .unwrap();
+    let (send, received) = flume::unbounded();
+    let group = PublicDiscovery::new(&tokio::runtime::Handle::current(), send, pool());
+    group
+        .configure(
+            std::slice::from_ref(&relay.url),
+            group_keys
+                .iter()
+                .map(|key| {
+                    Filter::new()
+                        .kind(Kind::from(1060))
+                        .author(key.public_key())
+                })
+                .collect(),
+        )
+        .unwrap();
+    for _ in &messages {
+        assert!(messages.contains(&receive(&received).await));
+    }
+    until(|| {
+        relay
+            .wire
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(_, row)| row[0] == "AUTH")
+            .count()
+            == 2
+    })
+    .await;
+    let rows = relay.wire.lock().unwrap().clone();
+    let mut group_connections = HashSet::new();
+    let mut owner_connections = HashSet::new();
+    let mut auth_keys = HashSet::new();
+    for (conn, row) in rows {
+        if row[0] == "AUTH" {
+            let event: Event = serde_json::from_value(row[1].clone()).unwrap();
+            assert_ne!(event.pubkey, owner.public_key());
+            assert!(group_keys
+                .iter()
+                .all(|key| key.public_key() != event.pubkey));
+            auth_keys.insert(event.pubkey);
+        } else if row[0] == "REQ" && row.to_string().contains(&owner.public_key().to_hex()) {
+            owner_connections.insert(conn);
+        } else if row[0] == "REQ"
+            && group_keys
+                .iter()
+                .any(|key| row.to_string().contains(&key.public_key().to_hex()))
+        {
+            assert_eq!(row.as_array().unwrap().len(), 3);
+            assert_eq!(row[2]["authors"].as_array().unwrap().len(), 1);
+            assert_eq!(row[2]["kinds"], serde_json::json!([1060]));
+            group_connections.insert(conn);
+        }
+    }
+    assert_eq!(auth_keys.len(), 2);
+    assert_eq!(group_connections.len(), 1);
+    assert_eq!(owner_connections.len(), 1);
+    assert!(group_connections.is_disjoint(&owner_connections));
+    group.cancel();
+    discovery.cancel();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn populated_live_and_cold_public_discovery_share_one_connection_and_auth_identity() {
     let keys = (0..512).map(|_| Keys::generate()).collect::<Vec<_>>();
     let events = keys

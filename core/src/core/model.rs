@@ -293,6 +293,7 @@ pub(crate) struct ProtocolSubscriptionPlan {
 #[derive(Clone, Debug, Default)]
 pub(super) struct ProtocolSubscriptionRuntime {
     pub(super) discovery: Option<Arc<protocol::public_discovery::PublicDiscovery>>,
+    pub(super) group_data: Option<Arc<protocol::public_discovery::PublicDiscovery>>,
     pub(super) desired_plan: Option<ProtocolSubscriptionPlan>,
     pub(super) applying_plan: Option<ProtocolSubscriptionPlan>,
     pub(super) applied_plan: Option<ProtocolSubscriptionPlan>,

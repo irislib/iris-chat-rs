@@ -111,14 +111,32 @@ impl AppCore {
                 .protocol_engine
                 .as_ref()
                 .is_some_and(|engine| engine.is_known_group_sender_event_author(event.pubkey));
-        // Shared group ciphertext and signed rosters are local intermediates.
-        // Only authenticated recipient-specific ratchet payloads (or trusted
-        // sibling authorization records) may introduce them to group state.
+        // Accept group data only from previously authorized private distribution.
+        // Roster facts are never direct relay input.
         if nostr_double_ratchet::is_group_roster_fact_event(&event)
-            || (kind == MESSAGE_EVENT_KIND
-                && (!message_has_header || is_known_group_sender_key_event))
+            || (kind == MESSAGE_EVENT_KIND && !message_has_header)
         {
             self.remember_event(event_id);
+            return;
+        }
+        if is_known_group_sender_key_event {
+            if self.has_seen_event(&event_id) {
+                return;
+            }
+            let eligible = self.protocol_engine.as_ref().is_some_and(|engine| {
+                engine
+                    .subscribable_group_sender_event_pubkeys()
+                    .contains(&event.pubkey)
+            });
+            if eligible
+                && publishing::message_event_names_nobody(&event)
+                && self.receive_group_data(&event)
+            {
+                self.remember_event(event_id);
+                self.persist_best_effort();
+                self.rebuild_state();
+                self.emit_state();
+            }
             return;
         }
         let already_seen = self.has_seen_event(&event_id);

@@ -23,45 +23,59 @@ pub(super) fn private_group_wake_farm() -> (GroupScaleFarm, String, String) {
     (farm, group_id, chat_id)
 }
 
+pub(super) fn legacy_group_wake(
+    farm: &mut GroupScaleFarm,
+    group_id: &str,
+    group_data: &Event,
+    recipient_index: usize,
+) -> Event {
+    let owner = farm.owners[farm.devices[recipient_index].owner].public_key();
+    let recipient = farm.devices[recipient_index].keys.public_key();
+    let rumor = UnsignedEvent::new(
+        farm.owners[0].public_key(),
+        group_data.created_at,
+        Kind::Custom(crate::core::private_group_wake::GROUP_WAKE_KIND as u16),
+        [],
+        serde_json::json!({"v":1,"type":"group-wake","event":group_data}).to_string(),
+    );
+    let sender = &mut farm.devices[0].core;
+    let result = sender
+        .protocol_engine
+        .as_mut()
+        .unwrap()
+        .send_direct_unsigned_event_to_peer_only(owner, &group_chat_id(group_id), rumor, unix_now())
+        .unwrap();
+    let wake = pairwise_event_for_device(&result.effects, recipient)
+        .unwrap()
+        .clone();
+    for ProtocolEffect::Publish(publish) in result.effects {
+        sender.publish_protocol_event(publish);
+    }
+    wake
+}
+
 pub(super) fn private_group_wake_events(
-    farm: &GroupScaleFarm,
+    farm: &mut GroupScaleFarm,
     group_id: &str,
 ) -> (Event, Vec<Event>) {
-    let sender = &farm.devices[0].core;
-    let authors = sender
-        .protocol_engine
-        .as_ref()
-        .unwrap()
-        .group_sender_event_pubkeys_for_group(group_id);
-    let pending = sorted_pending_events_for_test(sender);
-    let wakes = pending
+    // Receive-only compatibility fixture: reproduce old clients' pairwise
+    // envelopes using the same signed group data the current sender publishes.
+    let sender = &mut farm.devices[0].core;
+    let broadcast = sorted_pending_events_for_test(sender)
         .into_iter()
-        .filter(|event| {
-            event.kind.as_u16() as u32 == MESSAGE_EVENT_KIND && !authors.contains(&event.pubkey)
+        .find(|event| {
+            sender
+                .pending_relay_publishes
+                .get(&event.id.to_hex())
+                .is_some_and(|p| {
+                    p.label == GROUP_DATA_PUBLISH_LABEL
+                        && p.chat_id.as_deref() == Some(&group_chat_id(group_id))
+                })
         })
-        .collect::<Vec<_>>();
-    assert_eq!(
-        wakes.len(),
-        2,
-        "each other account gets its own private wake"
-    );
-    let wake = wakes.first().expect("private group carrier");
-    let receiver = farm
-        .devices
-        .iter()
-        .find(|device| queued_for_device(sender, wake, device.keys.public_key()))
         .unwrap();
-    let owner = farm.owners[receiver.owner].public_key();
-    let message = mobile_push::preview_direct_messages(
-        &receiver._dir.path().to_string_lossy(),
-        owner,
-        &receiver.keys,
-        std::slice::from_ref(wake),
-    )
-    .expect("decrypt private group carrier without consuming the live ratchet");
-    let rumor = parse_runtime_rumor(&message.content).unwrap();
-    let broadcast =
-        crate::core::private_group_wake::decode(&rumor.content).expect("nested signed group event");
+    let wakes = (1..farm.devices.len())
+        .map(|index| legacy_group_wake(farm, group_id, &broadcast, index))
+        .collect();
     (broadcast, wakes)
 }
 
@@ -78,7 +92,7 @@ fn mobile_push_rejects_raw_group_encodings_without_preview_or_group_work() {
         &chat_id,
         "raw shared ciphertext must not produce a preview",
     );
-    let (header_event, _) = private_group_wake_events(&farm, &group_id);
+    let (header_event, _) = private_group_wake_events(&mut farm, &group_id);
     assert!(parse_group_sender_key_message_event_unchecked(&header_event).is_ok());
     let legacy_author = Keys::generate();
     let mut legacy_bytes = 7_u32.to_be_bytes().to_vec();
@@ -147,7 +161,7 @@ fn mobile_push_cached_group_previews_require_authenticated_carrier_ids() {
     let (mut farm, group_id, chat_id) = private_group_wake_farm();
     let body = "cached private group notification";
     farm.send(0, &chat_id, body);
-    let (nested, wakes) = private_group_wake_events(&farm, &group_id);
+    let (nested, wakes) = private_group_wake_events(&mut farm, &group_id);
     let owner = farm.owners[1].public_key();
     let receiver_key = farm.devices[1].keys.public_key();
     let wake = wakes
@@ -222,7 +236,7 @@ fn mobile_push_group_wake_binds_outer_rumor_and_nested_sender() {
     let (mut farm, group_id, chat_id) = private_group_wake_farm();
     let body = "authenticated nested group preview";
     farm.send(0, &chat_id, body);
-    let (broadcast, _) = private_group_wake_events(&farm, &group_id);
+    let (broadcast, _) = private_group_wake_events(&mut farm, &group_id);
     let receiver_owner = farm.owners[1].public_key();
     let receiver_device = farm.devices[1].keys.public_key();
     // The first case has a valid carrier and nested sender, but a forged rumor
@@ -288,9 +302,15 @@ fn mobile_push_group_wake_rejects_nested_rumor_author_mismatch() {
             .send_group_payload(&group_id, rumor.into_bytes(), Some(id))
             .unwrap();
         let owner = farm.owners[1].public_key();
+        let shared = result
+            .effects
+            .iter()
+            .find_map(|ProtocolEffect::Publish(p)| {
+                (p.carrier == ProtocolCarrier::SharedGroup).then_some(&p.event)
+            })
+            .unwrap();
+        let wake = legacy_group_wake(&mut farm, &group_id, shared, 1);
         let receiver = &mut farm.devices[1];
-        let wake = pairwise_event_for_device(&result.effects, receiver.keys.public_key())
-            .expect("recipient-specific ratchet envelope");
         let preview = decrypt_mobile_push_notification(
             receiver._dir.path().to_string_lossy().into_owned(),
             owner.to_hex(),
@@ -328,10 +348,15 @@ fn mobile_push_group_wake_control_preview_survives_foreground_decryption() {
         .send_group_payload(&group_id, rumor.into_bytes(), Some(id))
         .unwrap();
     let owner = farm.owners[1].public_key();
+    let shared = result
+        .effects
+        .iter()
+        .find_map(|ProtocolEffect::Publish(p)| {
+            (p.carrier == ProtocolCarrier::SharedGroup).then_some(&p.event)
+        })
+        .unwrap();
+    let wake = legacy_group_wake(&mut farm, &group_id, shared, 1);
     let receiver = &mut farm.devices[1];
-    let wake = pairwise_event_for_device(&result.effects, receiver.keys.public_key())
-        .expect("recipient-specific ratchet envelope")
-        .clone();
     let direct = mobile_push::preview_direct_messages(
         &receiver._dir.path().to_string_lossy(),
         owner,
@@ -532,7 +557,7 @@ fn private_group_wake_cold_preview_and_foreground_orders_preserve_exactly_one_me
     let (mut farm, group_id, chat_id) = private_group_wake_farm();
     let body = "private group notification";
     farm.send(0, &chat_id, body);
-    let (broadcast, wakes) = private_group_wake_events(&farm, &group_id);
+    let (broadcast, wakes) = private_group_wake_events(&mut farm, &group_id);
     let shared_author = broadcast.pubkey;
     for index in 1..3 {
         let recipient = farm.devices[index].keys.public_key();
@@ -621,7 +646,7 @@ fn private_group_wake_rejects_another_members_signature_and_malformed_inner_even
     let (mut farm, group_id, chat_id) = private_group_wake_farm();
     let body = "must not be injected by another member";
     farm.send(0, &chat_id, body);
-    let (broadcast, _) = private_group_wake_events(&farm, &group_id);
+    let (broadcast, _) = private_group_wake_events(&mut farm, &group_id);
     // Only the third account's authenticated DR delivery reaches the recipient.
     // The legitimate sender's original and private copies remain offline.
     farm.devices[0].online = false;
@@ -692,10 +717,14 @@ fn private_group_wake_outbox_failure_and_crash_before_ack_recover_the_complete_b
             })
             .collect::<HashSet<_>>();
         assert_eq!(
-            ids.len(),
-            2,
-            "only two recipient-specific private deliveries"
+            result
+                .effects
+                .iter()
+                .filter(|ProtocolEffect::Publish(p)| p.carrier == ProtocolCarrier::SharedGroup)
+                .count(),
+            1
         );
+        // Newly initialized devices can also need private key distribution.
         let owner = farm.owners[0].clone();
         let device = farm.devices[0].keys.clone();
         let core = &mut farm.devices[0].core;
@@ -711,7 +740,7 @@ fn private_group_wake_outbox_failure_and_crash_before_ack_recover_the_complete_b
                         PendingRelayPublish {
                             owner_pubkey_hex: owner.public_key().to_hex(),
                             event_id: publish.event.id.to_hex(),
-                            label: APPCORE_PROTOCOL_LABEL.into(),
+                            label: GROUP_DATA_PUBLISH_LABEL.into(),
                             event_json: serde_json::to_string(&publish.event).unwrap(),
                             inner_event_id: publish.inner_event_id.clone(),
                             chat_id: Some(chat_id.clone()),
@@ -735,7 +764,7 @@ fn private_group_wake_outbox_failure_and_crash_before_ack_recover_the_complete_b
             shared.lock().unwrap().execute_batch(
                 "CREATE TEMP TRIGGER reject_private_wake BEFORE INSERT ON pending_relay_publishes
                  WHEN json_extract(NEW.event_json, '$.kind') = 1060
-                  AND NEW.pairwise_device_hex IS NOT NULL
+                  AND NEW.label = 'group-data-v1'
                  BEGIN SELECT RAISE(ABORT, 'injected private wake failure'); END"
             ).unwrap();
             core.process_protocol_engine_effects(result.effects.clone());
@@ -764,7 +793,7 @@ fn private_group_wake_outbox_failure_and_crash_before_ack_recover_the_complete_b
                 .unwrap()
                 .pending_group_publish_effects()
                 .len(),
-            2
+            ids.len()
         );
         core.persist_best_effort();
 
@@ -814,7 +843,7 @@ fn private_group_wake_outbox_failure_and_crash_before_ack_recover_the_complete_b
 }
 
 #[test]
-fn private_groups_never_publish_or_subscribe_shared_channels_or_rosters() {
+fn group_data_uses_only_signed_anonymous_subscriptions_and_no_public_rosters() {
     let (mut farm, group_id, chat_id) = private_group_wake_farm();
     farm.send(0, &chat_id, "private transport only");
     for entry in &farm.devices {
@@ -840,13 +869,35 @@ fn private_groups_never_publish_or_subscribe_shared_channels_or_rosters() {
                 );
             }
         }
+        for filter in AppCore::group_data_filters(&plan.group_sender_key_authors) {
+            let wire = serde_json::to_string(&filter).unwrap();
+            assert!(!wire.contains(&group_id));
+            for owner in &farm.owners {
+                assert!(!wire.contains(&owner.public_key().to_hex()));
+            }
+            for device in &farm.devices {
+                assert!(!wire.contains(&device.keys.public_key().to_hex()));
+            }
+            assert!(filter
+                .authors
+                .as_ref()
+                .unwrap()
+                .iter()
+                .all(|a| authors.contains(a)));
+        }
         for pending in entry.core.pending_relay_publishes.values() {
             let event: Event = serde_json::from_str(&pending.event_json).unwrap();
             assert!(!nostr_double_ratchet::is_group_roster_fact_event(&event));
-            assert!(!authors.contains(&event.pubkey));
             if event.kind.as_u16() as u32 == MESSAGE_EVENT_KIND {
                 assert_eq!(event.tags.public_keys().count(), 0);
-                assert!(pending.pairwise_device_hex.is_some());
+                assert_eq!(
+                    authors.contains(&event.pubkey),
+                    pending.label == GROUP_DATA_PUBLISH_LABEL
+                );
+                assert_eq!(
+                    pending.pairwise_device_hex.is_some(),
+                    pending.label != GROUP_DATA_PUBLISH_LABEL
+                );
             }
         }
     }

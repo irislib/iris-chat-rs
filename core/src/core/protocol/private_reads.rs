@@ -7,6 +7,9 @@ pub(in crate::core) type PrivateDiscoverySubscription =
 
 impl AppCore {
     pub(in crate::core) fn reset_public_discovery(&mut self) {
+        if let Some(worker) = self.protocol_subscription_runtime.group_data.take() {
+            worker.cancel();
+        }
         self.discovery_relays.stop(self.runtime.handle());
         self.discovery_relays = Arc::default();
         if let Some(mesh) = &mut self.device_sync {
@@ -86,6 +89,39 @@ impl AppCore {
         if let Some(worker) = &self.protocol_subscription_runtime.discovery {
             worker.refresh(None);
         }
+    }
+
+    pub(in crate::core) fn group_data_filters(authors: &[String]) -> Vec<Filter> {
+        super::message_author_subscriptions::message_author_subscription_filters(
+            pubkeys_from_hexes(authors),
+            RELAY_MESSAGE_AUTHOR_CHUNK_SIZE,
+        )
+    }
+
+    /// Group authors are read on their own anonymous pool. In particular the
+    /// device-authenticated receiver and public owner discovery never see this filter.
+    pub(super) fn group_data_subscription(
+        &mut self,
+        authors: &[String],
+    ) -> Option<PrivateDiscoverySubscription> {
+        if authors.is_empty() {
+            if let Some(worker) = self.protocol_subscription_runtime.group_data.take() {
+                worker.cancel();
+            }
+            return None;
+        }
+        let filters = Self::group_data_filters(authors);
+        let worker = self
+            .protocol_subscription_runtime
+            .group_data
+            .get_or_insert_with(|| {
+                Arc::new(PublicDiscovery::new(
+                    self.runtime.handle(),
+                    self.core_sender.clone(),
+                    Arc::default(),
+                ))
+            });
+        Some((Arc::downgrade(worker), filters))
     }
 
     pub(in crate::core) fn private_discovery_subscriptions(

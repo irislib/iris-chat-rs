@@ -24,21 +24,10 @@ fn nhash_previews_hide_valid_references_in_encrypted_push_cached_push_and_chat_l
     ] {
         let before = farm.devices[1].core.state.chat_list.clone();
         farm.devices[0].core.send_message(&chat, &body, None);
-        let authors = farm.devices[0]
-            .core
-            .protocol_engine
-            .as_ref()
-            .unwrap()
-            .known_group_sender_event_pubkeys();
-        let event = sorted_pending_events_for_test(&farm.devices[0].core)
+        let event = private_group_wake_events(&mut farm, &group_id)
+            .1
             .into_iter()
-            .find(|event| {
-                queued_for_device(
-                    &farm.devices[0].core,
-                    event,
-                    farm.devices[1].keys.public_key(),
-                ) && !authors.contains(&event.pubkey)
-            })
+            .next()
             .unwrap();
         let payload = serde_json::json!({"event":event}).to_string();
         let resolve = |receiver: &GroupScaleDevice| {

@@ -113,10 +113,17 @@ impl DiscoveryRelays {
 
 // RelayEventBus aborts its forwarder on Drop; CLOSE also needs to remove its
 // retained SDK subscription when the other discovery worker keeps the pool alive.
-struct LiveSubscription(Option<Box<dyn NostrEventSubscription>>);
-impl Drop for LiveSubscription {
+struct LiveSubscriptions(Vec<Box<dyn NostrEventSubscription>>);
+impl LiveSubscriptions {
+    async fn close(&mut self) {
+        for sub in self.0.drain(..) {
+            let _ = sub.close().await;
+        }
+    }
+}
+impl Drop for LiveSubscriptions {
     fn drop(&mut self) {
-        if let Some(subscription) = self.0.take() {
+        for subscription in self.0.drain(..) {
             tokio::spawn(async move {
                 let _ = subscription.close().await;
             });
@@ -277,7 +284,12 @@ impl PublicDiscovery {
                 .collect::<BTreeSet<_>>()
                 .into_iter()
                 .collect(),
-            filters: merge_filters(filters),
+            // Bounded group-author filters already have their final on-wire layout.
+            filters: if filters.iter().all(group_data_filter) {
+                filters
+            } else {
+                merge_filters(filters)
+            },
         };
         if self.config.borrow().as_ref() != Some(&next) {
             self.config
@@ -318,6 +330,13 @@ impl PublicDiscovery {
 /// Combine author sets only when every other selector is identical. Keep tag,
 /// kind and time constraints intact; never turn a private recipient filter into
 /// public discovery or broaden an unrequested author.
+fn group_data_filter(filter: &Filter) -> bool {
+    filter.authors.is_some()
+        && filter.kinds.as_ref().is_some_and(|kinds| {
+            kinds.len() == 1 && kinds.contains(&Kind::from(MESSAGE_EVENT_KIND as u16))
+        })
+}
+
 fn merge_filters(filters: Vec<Filter>) -> Vec<Filter> {
     let mut merged: Vec<Filter> = Vec::new();
     for filter in filters {
@@ -394,7 +413,7 @@ async fn run(
     let (send, mut events) = tokio::sync::mpsc::channel::<Event>(256);
     let mut lease: Option<RelayLease> = None;
     let mut bus: Option<RelayEventBus> = None;
-    let mut subscription = LiveSubscription(None);
+    let mut subscriptions = LiveSubscriptions(Vec::new());
     let mut applied: Option<Config> = None;
     let mut retry = Duration::from_secs(1);
     let mut retry_at = None;
@@ -406,9 +425,7 @@ async fn run(
         }
         let current = updates.borrow_and_update().clone();
         if current != applied || retry_at.is_some_and(|at| Instant::now() >= at) {
-            if let Some(old) = subscription.0.take() {
-                let _ = old.close().await;
-            }
+            subscriptions.close().await;
             query = None;
             if let Some(config) = &current {
                 if applied.as_ref().map(|old| &old.relays) != Some(&config.relays) {
@@ -428,14 +445,16 @@ async fn run(
                         }
                     }
                     if let Some(bus) = &bus {
-                        subscription.0 = Some(
-                            bus.subscribe_with_admission(
-                                config.filters.clone(),
-                                live_admission(send.clone()),
-                            )
-                            .await
-                            .map_err(|e| e.to_string())?,
-                        );
+                        let group_data = config.filters.iter().all(group_data_filter);
+                        let per_request = if group_data { 1 } else { config.filters.len() };
+                        let admission = live_admission(send.clone());
+                        for filters in config.filters.chunks(per_request) {
+                            subscriptions.0.push(
+                                bus.subscribe_with_admission(filters.to_vec(), admission.clone())
+                                    .await
+                                    .map_err(|e| e.to_string())?,
+                            );
+                        }
                     }
                     Ok::<_, String>(())
                 }
@@ -513,9 +532,7 @@ async fn run(
         }
     }
     drop(query);
-    if let Some(subscription) = subscription.0.take() {
-        let _ = subscription.close().await;
-    }
+    subscriptions.close().await;
 }
 
 #[cfg(test)]

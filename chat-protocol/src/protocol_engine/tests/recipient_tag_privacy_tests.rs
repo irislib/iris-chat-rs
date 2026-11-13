@@ -90,10 +90,11 @@ impl Transcript {
                             self.pairwise_targets.insert(device);
                             self.messages += 1;
                         }
-                        ProtocolCarrier::SharedGroup => assert!(
-                            !publish.is_publishable(),
-                            "{label}: shared group ciphertext offered to a carrier"
-                        ),
+                        ProtocolCarrier::SharedGroup => {
+                            assert!(publish.is_publishable(), "{label}");
+                            assert!(publish.chat_id.starts_with("group:"));
+                            self.messages += 1;
+                        }
                         ProtocolCarrier::Unmarked => {
                             panic!("{label}: message event without provenance")
                         }
@@ -244,7 +245,7 @@ fn message_events_never_name_a_recipient_on_any_send_path() {
         sent.effects
             .iter()
             .all(|ProtocolEffect::Publish(publish)| publish.is_publishable()),
-        "shared group ciphertext must stay out of the publication batch"
+        "every serialized data publication must be anonymous"
     );
     transcript.inspect("group replay", &f.sender.pending_group_publish_effects());
 }
@@ -382,17 +383,18 @@ fn recipient_tagged_ready_publications_from_an_older_version_are_retired() {
         let _older_version = LegacyRecipientTags::sender();
         fixture
             .sender
-            .send_group_payload(
-                &group_id,
-                b"sealed before upgrade".to_vec(),
-                Some("old".into()),
-            )
+            .update_group_name(&group_id, "queued legacy group control".into())
             .unwrap()
     };
     assert!(sent.effects.iter().any(|ProtocolEffect::Publish(publish)| {
         publish.event.kind.as_u16() as u32 == MESSAGE_EVENT_KIND
             && publish.event.tags.public_keys().next().is_some()
     }));
+    fixture
+        .sender
+        .retain_group_publications(&sent.effects, None)
+        .unwrap();
+    fixture.sender.persist().unwrap();
     let mut restored = ProtocolEngine::load_or_create_for_local_device(
         fixture.store,
         fixture.owner.public_key(),

@@ -333,6 +333,7 @@ fn checkpoint_real_group_queue_append_and_retry_retirement_are_bounded() {
             latest_key_id: Some(1),
             states: vec![initial.clone()],
             distribution_history: vec![],
+            delivery_state: None,
             distributed_to: vec![],
             repair_snapshots: vec![],
         }],

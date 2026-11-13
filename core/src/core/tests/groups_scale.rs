@@ -144,7 +144,11 @@ impl GroupScaleFarm {
                 let filters = device
                     .core
                     .compute_protocol_subscription_plan()
-                    .map(|plan| build_protocol_subscription_filters(&plan))
+                    .map(|plan| {
+                        let mut filters = build_protocol_subscription_filters(&plan);
+                        filters.extend(AppCore::group_data_filters(&plan.group_sender_key_authors));
+                        filters
+                    })
                     .unwrap_or_default();
                 self.subscription_time += subscription_start.elapsed();
                 let transport_start = std::time::Instant::now();
@@ -572,46 +576,27 @@ fn appcore_group_multi_device_sender_uses_private_sibling_delivery() {
         .unwrap();
     assert_eq!(
         sender_key_outer_count(&sender, &sent.effects, &sent.event_ids),
-        0,
-        "shared group ciphertext must never be a transport publication"
+        1
     );
-    let private = protocol_publish_events(&sent.effects)
-        .into_iter()
-        .filter(|event| event.kind.as_u16() as u32 == MESSAGE_EVENT_KIND)
-        .collect::<Vec<_>>();
-    assert_eq!(
-        private.len(),
-        3,
-        "the sibling receives a private key distribution, roster, and group delivery"
-    );
-    for event in &private {
+    for ProtocolEffect::Publish(p) in &sent.effects {
+        let event = &p.event;
+        if event.kind.as_u16() as u32 != MESSAGE_EVENT_KIND {
+            continue;
+        }
         assert!(event.tags.public_keys().next().is_none());
-        assert_eq!(
-            effect_pairwise_device(&sent.effects, event),
-            Some(sibling.public_key())
-        );
+        if p.carrier != ProtocolCarrier::SharedGroup {
+            assert_eq!(p.carrier.pairwise_device(), Some(sibling.public_key()));
+        }
         let wire = serde_json::to_string(event).unwrap();
-        assert!(!wire.contains(&owner.public_key().to_hex()));
-        assert!(!wire.contains(&device.public_key().to_hex()));
+        for identity in [
+            owner.public_key(),
+            device.public_key(),
+            sibling.public_key(),
+        ] {
+            assert!(!wire.contains(&identity.to_hex()));
+        }
         assert!(!wire.contains(&group_id));
     }
-    let mut probe = receiver.fork_for_test().unwrap();
-    let mut kinds = private
-        .iter()
-        .map(|event| {
-            let decrypted = probe.process_direct_message_event(event).unwrap().unwrap();
-            parse_runtime_rumor(&decrypted.content).unwrap().kind
-        })
-        .collect::<Vec<_>>();
-    kinds.sort_unstable();
-    assert_eq!(
-        kinds,
-        vec![
-            nostr_double_ratchet::group_wire::GROUP_SENDER_KEY_DISTRIBUTION_KIND,
-            crate::core::private_group_wake::GROUP_WAKE_KIND,
-            nostr_double_ratchet::GROUP_ROSTER_FACT_KIND,
-        ]
-    );
     let received = deliver_protocol_effects_without_feedback(&mut receiver, &sent.effects);
     assert_eq!(received.iter().filter(|event| matches!(event, GroupIncomingEvent::Message(message) if message.body == b"one shared message")).count(), 1);
 }

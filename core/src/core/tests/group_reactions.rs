@@ -13,8 +13,22 @@ pub(super) fn deliver_group_reaction_test_events(cores: &mut [AppCore; 2]) {
             events.sort_by_key(|event| (event.created_at, event.id));
             for event in events {
                 if delivered.insert((sender, event.id)) {
-                    cores[1 - sender].handle_relay_event(event);
-                    progressed = true;
+                    let receiver = &mut cores[1 - sender];
+                    let Some(plan) = receiver.compute_protocol_subscription_plan() else {
+                        delivered.remove(&(sender, event.id));
+                        continue;
+                    };
+                    let mut filters = build_protocol_subscription_filters(&plan);
+                    filters.extend(AppCore::group_data_filters(&plan.group_sender_key_authors));
+                    if filters
+                        .iter()
+                        .any(|f| f.match_event(&event, nostr::filter::MatchEventOptions::default()))
+                    {
+                        receiver.handle_relay_event(event);
+                        progressed = true;
+                    } else {
+                        delivered.remove(&(sender, event.id));
+                    }
                 }
             }
         }

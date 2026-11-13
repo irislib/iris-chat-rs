@@ -24,9 +24,14 @@ impl AppCore {
         }
         self.publish_call_push_for_protocol(&publish);
         let pairwise_device = publish.carrier.pairwise_device();
+        let label = if publish.carrier == ProtocolCarrier::SharedGroup {
+            GROUP_DATA_PUBLISH_LABEL
+        } else {
+            APPCORE_PROTOCOL_LABEL
+        };
         self.publish_runtime_event_with_metadata(
             publish.event,
-            APPCORE_PROTOCOL_LABEL,
+            label,
             Some(publish.chat_id),
             publish.inner_event_id,
             publish.authored_at_secs,
@@ -69,7 +74,12 @@ impl AppCore {
                     PendingRelayPublish {
                         owner_pubkey_hex: owner.to_hex(),
                         event_id: publish.event.id.to_hex(),
-                        label: APPCORE_PROTOCOL_LABEL.to_string(),
+                        label: if publish.carrier == ProtocolCarrier::SharedGroup {
+                            GROUP_DATA_PUBLISH_LABEL
+                        } else {
+                            APPCORE_PROTOCOL_LABEL
+                        }
+                        .to_string(),
                         event_json: publish.event.as_json(),
                         inner_event_id: publish.inner_event_id.clone(),
                         chat_id: Some(publish.chat_id.clone()),
@@ -121,7 +131,9 @@ impl AppCore {
         // The outbox feeds every carrier. A message event enters it only as
         // a pairwise envelope with a known target, never on its shape alone.
         if !self.private_publication_allowed(event)
-            || (event.kind.as_u16() as u32 == MESSAGE_EVENT_KIND && pairwise_device.is_none())
+            || (event.kind.as_u16() as u32 == MESSAGE_EVENT_KIND
+                && pairwise_device.is_none()
+                && !self.local_group_data_publication(event, label, chat_id.as_deref()))
         {
             return None;
         }

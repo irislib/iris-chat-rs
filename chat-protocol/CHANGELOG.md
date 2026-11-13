@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.3.18
+
+- A regular group send returns one signed sender-key publication. Queue it by
+  its original event ID and use an anonymous relay connection to subscribe to
+  `subscribable_group_sender_event_pubkeys()`. Private sessions still carry
+  roster updates, sender-key distributions and repair. Existing queued private
+  deliveries remain readable.
+- Group members must upgrade their clients to receive the new data path.
+  A relay can correlate subscriptions to the same sender key. Keep these
+  authors off device-identified notification and account-authenticated filters.
+
 ## 0.3.17
 
 - Stop naming the recipient device on message events. Kind 1060 envelopes now

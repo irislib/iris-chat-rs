@@ -2,6 +2,24 @@
 
 Each release has channel-specific notes. The release tag must match the `##` heading exactly.
 
+## v2026.11.13.1
+
+### GitHub
+
+- Publish one sender-key event per group message. Members retrieve it from a separate anonymous relay connection using signing keys distributed through their private sessions. Relays can correlate subscriptions to the same sender. Membership updates and key repair continue through private sessions.
+- Update every device participating in a group. Earlier versions cannot receive new group messages. Updated clients keep existing history and can read older private group deliveries.
+- New group messages arrive when the client is connected and catch up when it reconnects. Device-associated push subscriptions exclude group signing keys, so the new messages do not wake a suspended client. Direct-message and call notifications retain their existing behavior.
+
+### Apple
+
+- Group messages use less upload bandwidth. Update all devices in your group to keep receiving messages.
+- Open Iris Chat to catch up on group conversations. Direct-message and call notifications continue as before.
+
+### Zapstore
+
+- Send group messages once and catch up when you reopen Iris Chat. Update all devices in your group to keep receiving messages.
+- New group messages do not trigger background notifications.
+
 ## v2026.11.13
 
 ### GitHub

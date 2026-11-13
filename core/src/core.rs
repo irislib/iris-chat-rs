@@ -159,6 +159,7 @@ mod user_discovery;
 mod user_discovery_graph;
 mod user_discovery_social;
 
+pub(super) const GROUP_DATA_PUBLISH_LABEL: &str = "group-data-v1";
 pub(super) const APPCORE_PROTOCOL_LABEL: &str = "appcore-protocol";
 pub(super) const LOCAL_INVITE_PUBLISH_LABEL: &str = "invite";
 pub(super) const PENDING_RELAY_CONTROL_PUBLISH_MAX_ROWS: usize = 2_048;

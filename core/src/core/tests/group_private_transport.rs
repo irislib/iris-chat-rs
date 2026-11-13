@@ -12,7 +12,7 @@ fn network_group_intermediates_require_authenticated_ratchet_delivery() {
 
     let (mut farm, group_id, chat_id) = private_group_wake_farm();
     farm.send(0, &chat_id, "only through the private carrier");
-    let (header_event, _) = private_group_wake_events(&farm, &group_id);
+    let (header_event, _) = private_group_wake_events(&mut farm, &group_id);
     let mut legacy_bytes = 7_u32.to_be_bytes().to_vec();
     legacy_bytes.extend_from_slice(&0_u32.to_be_bytes());
     legacy_bytes.extend_from_slice(b"unwrapped group ciphertext");
@@ -62,7 +62,10 @@ fn network_group_intermediates_require_authenticated_ratchet_delivery() {
         before.pending_group_fanout_count
     );
     assert_eq!(receiver.pending_relay_publishes.len(), publishes_before);
-    assert_eq!(receiver.threads[&chat_id].messages.len(), messages_before);
+    assert_eq!(
+        receiver.threads[&chat_id].messages.len(),
+        messages_before + 1
+    );
     assert_eq!(
         serde_json::to_value(&receiver.groups).unwrap(),
         groups_before
@@ -218,6 +221,11 @@ pub(super) fn take_private_group_cipher_for_test(
         .session_manager_snapshot()
         .local_device_pubkey
         .to_hex();
+    if let Some(event) = effects.iter().find_map(|ProtocolEffect::Publish(p)| {
+        (p.carrier == ProtocolCarrier::SharedGroup).then(|| p.event.clone())
+    }) {
+        return event;
+    }
     for event in ordered_protocol_events(effects) {
         if event.kind.as_u16() as u32 == INVITE_RESPONSE_KIND {
             recipient
@@ -318,6 +326,19 @@ fn apply_protocol_event_to_engine(
     event: &Event,
     group_events: &mut Vec<GroupIncomingEvent>,
 ) {
+    if engine
+        .subscribable_group_sender_event_pubkeys()
+        .contains(&event.pubkey)
+    {
+        let result = engine.process_group_outer_event(event).unwrap();
+        group_events.extend(result.events);
+        apply_protocol_events_to_engine(
+            engine,
+            &ordered_protocol_events(&result.effects),
+            group_events,
+        );
+        return;
+    }
     if event.kind.as_u16() as u32 == INVITE_EVENT_KIND {
         let retry = engine
             .observe_invite_event(event)
@@ -449,6 +470,13 @@ fn apply_protocol_event_to_engine_once(
     engine: &mut ProtocolEngine,
     event: &Event,
 ) -> (Vec<GroupIncomingEvent>, Vec<ProtocolEffect>) {
+    if engine
+        .subscribable_group_sender_event_pubkeys()
+        .contains(&event.pubkey)
+    {
+        let result = engine.process_group_outer_event(event).unwrap();
+        return (result.events, result.effects);
+    }
     if event.kind.as_u16() as u32 == INVITE_EVENT_KIND {
         let retry = engine
             .observe_invite_event(event)
