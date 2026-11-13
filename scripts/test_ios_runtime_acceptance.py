@@ -80,6 +80,19 @@ def receipt(channel="testflight"):
     return result
 
 
+def exception_receipt():
+    value = receipt(acceptance.ADHOC_CHANNEL)
+    target = dict(acceptance.EXCEPTION_CANDIDATE)
+    value['release'] = target
+    value['installation'].update(previous_build='2026111304', installed_build=target['apple_build'])
+    value['installation']['production_adhoc'].update(ipa_sha256=target['ipa_sha256'],
+        normal_launch_sha256=acceptance.EXCEPTION_MANIFEST_SHA256)
+    for quality in value['quality'].values():
+        quality['build'] = target['apple_build']
+    value['checks']['early_background'] = copy.deepcopy(acceptance.EXCEPTION_PHASE)
+    return value
+
+
 def run_metadata():
     return {"status": "completed", "conclusion": "success", "event": "workflow_dispatch",
             "head_sha": CANDIDATE["source_commit"], "head_repository": {"full_name": "owner/project"},
@@ -89,6 +102,38 @@ def run_metadata():
 class RuntimeAcceptanceTests(unittest.TestCase):
     def validate(self, value):
         return acceptance.validate_receipt(value, **CANDIDATE)
+
+    def test_exception_is_exactly_one_approved_candidate_and_documented_outcome(self):
+        value = exception_receipt()
+        self.assertEqual(acceptance.validate_receipt(value, **value['release']), value)
+        phase = value['checks']['early_background']
+        self.assertIs(phase['restore_in_flight'], False)
+        for key in phase:
+            changed = copy.deepcopy(value)
+            changed['checks']['early_background'][key] = None
+            with self.subTest(field=key), self.assertRaises(acceptance.ValidationError):
+                acceptance.validate_receipt(changed, **changed['release'])
+        for key in value['release']:
+            changed = copy.deepcopy(value)
+            changed['release'][key] = CANDIDATE[key]
+            with self.subTest(field=key), self.assertRaises(acceptance.ValidationError):
+                acceptance.validate_receipt(changed, **changed['release'])
+        for key in phase['exception']:
+            changed = copy.deepcopy(value)
+            changed['checks']['early_background']['exception'][key] = '0' * 64
+            with self.subTest(proof=key), self.assertRaises(acceptance.ValidationError):
+                acceptance.validate_receipt(changed, **changed['release'])
+        for target in ('channel', 'manifest', 'crash'):
+            changed = copy.deepcopy(value)
+            if target == 'channel':
+                changed['installation']['channel'] = 'testflight'
+                del changed['installation']['production_adhoc']
+            elif target == 'manifest':
+                changed['installation']['production_adhoc']['normal_launch_sha256'] = '0' * 64
+            else:
+                changed['crash_check']['unexpected_exits'] = 1
+            with self.subTest(target=target), self.assertRaises(acceptance.ValidationError):
+                acceptance.validate_receipt(changed, **changed['release'])
 
     def test_exact_candidate_normalizes_without_expiry_or_mutating_input(self):
         value = receipt()

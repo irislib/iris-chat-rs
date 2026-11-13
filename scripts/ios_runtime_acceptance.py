@@ -36,6 +36,30 @@ ADHOC_POLICY = {"authorization": "explicit-user-direct-install",
                 "state_policy": "in-place-no-reset-or-restore"}
 
 
+# One reviewed App Store decision for an immutable, already tested binary.
+# Hashes refer to private records. No identifiers from those captures are public.
+EXCEPTION_CANDIDATE = {
+    "tag": "v2026.11.13.6", "apple_version": "2026.11.1306", "apple_build": "2026111306",
+    "source_commit": "fa7ba3c68c4a6f108bcd9c8b450a4240bdcb2650",
+    "ipa_sha256": "4bda70025574a89c63c1c442d5cb926a3e6ca20f8e1cd664ce103ede20027c90",
+    "manifest_sha256": "977ccae66ec4739949007164eca9a5239d2a090b274f8c9560c09aa762b118a8",
+}
+EXCEPTION_MANIFEST_SHA256 = "a30004b79c996239e833b617abde5a29ff1c2eb50ce12358abb53441466a59ba"
+EXCEPTION_PHASE = {
+    "status": "accepted-with-documented-exception", "restore_in_flight": False,
+    "process_state": "background-suspended", "process_samples": 86, "unexpected_exits": 0,
+    "process_replacements": 0, "observed_seconds": 138.77378787496127,
+    "evidence_sha256": EXCEPTION_MANIFEST_SHA256,
+    "exception": {
+        "scope": "app-store-submission-only", "overlap": "unverified-restored-before-background",
+        "authorization_sha256": "d09b06809f7a04be7291909a210b95f4c0ae7ddb5ea240bfc41e5559d74f488e",
+        "settings_sha256": "a22f1088a1d82cd38cd584005901689e6e8d25df6c34432cf1412a661a7b4049",
+        "home_sha256": "20a9e903aca0bb564675303d93c076e865509b556ff5c2ccc91d84ddb2eb2320",
+        "core_regression_sha256": "9bcca1f4051b8bb103b2ee4d7b78945a57fdfa48610347a1f2dad7f1b01de232",
+    },
+}
+
+
 class ValidationError(ValueError):
     pass
 
@@ -191,15 +215,21 @@ def validate_receipt(receipt, **candidate):
     exact_object(receipt["checks"], PHASES)
     for name, (minimum, state) in PHASES.items():
         phase = receipt["checks"][name]
-        exact_object(phase, PHASE_KEYS | STARTUP_PHASE_KEYS.get(name, set()))
+        approved_exception = name == "early_background" and isinstance(phase, dict) and "exception" in phase
+        if approved_exception:
+            require(candidate == EXCEPTION_CANDIDATE and installation["channel"] == ADHOC_CHANNEL)
+            require(phase == EXCEPTION_PHASE and phase["restore_in_flight"] is False)
+            require(installation["production_adhoc"]["normal_launch_sha256"] == EXCEPTION_MANIFEST_SHA256)
+        else:
+            exact_object(phase, PHASE_KEYS | STARTUP_PHASE_KEYS.get(name, set()))
         if name == "affected_flow" and phase["process_state"] == "background-suspended":
             minimum, state = 135, "background-suspended"
         if name == "cold_background_launch":
             require(phase["entry_state"] == "background")
             count(phase["foreground_activations"], exact=0)
-        elif name == "early_background":
+        elif name == "early_background" and not approved_exception:
             require(phase["restore_in_flight"] is True)
-        require(phase["status"] == "passed" and phase["process_state"] == state)
+        require((approved_exception or phase["status"] == "passed") and phase["process_state"] == state)
         duration(phase["observed_seconds"], minimum)
         count(phase["process_samples"], minimum=2)
         count(phase["unexpected_exits"], exact=0)

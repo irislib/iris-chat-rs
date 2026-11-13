@@ -802,6 +802,22 @@ Use the startup lifecycle evidence and focused regression to establish these
 conditions; a successful warm-background check is insufficient. A background
 `affected_flow` must likewise survive at least 135 seconds suspended.
 
+For App Store submission of `v2026.11.13.6` (build `2026111306`), the
+project owner accepted a documented exception for this single overlap check.
+The foreground Settings switch and Home press both occurred while restoration
+was pending. The app finished restoring before it entered the background on
+both attempts (316 ms and 275 ms to restore, respectively). Both attempts
+exceeded 138 seconds of uninterrupted suspension and resumed the same process.
+The release-source regression run exercised SQLite interruption and rollback,
+foreground retry with preserved identity and queue, suspend acknowledgement
+after storage drains, and shutdown on rollback failure. [Focused regressions](https://github.com/irislib/iris-chat-rs/actions/runs/43491291776)
+
+The receipt records `accepted-with-documented-exception` and
+`restore_in_flight: false`. The policy binds the exact tag, source, marketing
+version, Apple build, IPA, manifest, authorization and reviewed evidence.
+All other checks still apply. The standard overlap rule applies to every other
+candidate and to public TestFlight promotion.
+
 Preserve the first failure and diagnostics; an automatic relaunch or retry is not a pass.
 A missing device, unverified installed build, or unavailable crash reproduction
 remains an explicit outstanding gate. Do not promote to public TestFlight or

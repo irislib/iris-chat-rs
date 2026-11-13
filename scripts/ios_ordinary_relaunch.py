@@ -379,7 +379,12 @@ class OrdinaryForegroundRelaunch:
 
 
 def evaluate_runtime(distribution_binding, candidate, attempt, resume, capture):
-    """Re-evaluate raw launch/resume/capture evidence, not recorded pass flags."""
+    """Re-evaluate raw launch, resume and actual overlap for the standard release gate."""
+    return _evaluate_runtime(distribution_binding, candidate, attempt, resume, capture,
+                             lifecycle.evaluate_early_background)
+
+
+def _evaluate_runtime(distribution_binding, candidate, attempt, resume, capture, lifecycle_check):
     distribution = validate_distribution(distribution_binding, candidate)
     require(attempt.get('schema') == 'iris-ordinary-foreground-relaunch-v1'
             and type(attempt.get('launch_count')) is int and attempt['launch_count'] == 1
@@ -417,7 +422,7 @@ def evaluate_runtime(distribution_binding, candidate, attempt, resume, capture):
             'Closure does not bind the exact live measurement cutoff')
     require(capture['process_name'] == urlsplit(proof['executable']).path.rsplit('/', 1)[-1],
             'Capture process name differs from launched executable')
-    evidence = lifecycle.evaluate_early_background(**{k: v for k, v in capture.items() if k != 'closure_binding'}, bundle_id=distribution['bundle_id'],
+    evidence = lifecycle_check(**{k: v for k, v in capture.items() if k != 'closure_binding'}, bundle_id=distribution['bundle_id'],
         pid=proof['pid'], executable=proof['executable'], device=distribution['device'],
         initial_prefixes=attempt['initial_prefixes'], old_pid=proof['previous_pid'])
     require(finite(attempt['started_monotonic']) <= finite(attempt['returned_monotonic'])
@@ -436,6 +441,53 @@ def evaluate_runtime(distribution_binding, candidate, attempt, resume, capture):
             'physical_release_acceptance': False}
 
 
+def replay_approved_exception(distribution_binding, candidate, manifest_binding):
+    """Replay both recorded switches for the one immutable owner-approved build."""
+    require(candidate == contract.EXCEPTION_CANDIDATE
+            and manifest_binding.get('sha256') == contract.EXCEPTION_MANIFEST_SHA256,
+            'Unapproved exception candidate or evidence')
+    manifest = read_bound(manifest_binding)
+    exact(manifest, {'schema', 'authorization', 'settings', 'home', 'core_regression'})
+    require(manifest['schema'] == 'iris-ios-2026111306-owner-exception-v1', 'Wrong exception evidence format')
+    phase = contract.EXCEPTION_PHASE
+    for key in ('authorization', 'settings', 'home', 'core_regression'):
+        require(manifest[key]['sha256'] == phase['exception'][key + '_sha256'], 'Unreviewed exception input')
+    auth = read_bound(manifest['authorization'])
+    require(auth['tag'] == candidate['tag'] and auth['build'] == candidate['apple_build']
+            and auth['source_commit'] == candidate['source_commit'] and auth['ipa_sha256'] == candidate['ipa_sha256']
+            and auth['decision'] == 'Yes, submit .6 with the documented exception'
+            and auth['all_other_physical_gates_required'] is True and auth['other_releases_covered'] is False,
+            'Incorrect scope for the owner approval')
+    regression = read_bound(manifest['core_regression'])
+    require(regression['passed'] is True and regression['source']['commit'] == candidate['source_commit']
+            and len(regression['plan']['test_arguments']) == 4,
+            'Missing the reviewed rollback, restoration and suspend regressions')
+
+    for method, window_name in (('settings', 'window-admitted.json'), ('home', 'window-venv.json')):
+        diagnostic = read_bound(manifest[method])
+        require(diagnostic['candidate'] == candidate and diagnostic['runtime_acceptance'] is False
+                and diagnostic['release_acceptance'] is False, 'Cannot relabel an overlap observation')
+        for bound in diagnostic['bindings'].values():
+            verify_binding(bound)
+        verify_binding(diagnostic['observer_source'])
+        if method == 'home':
+            verify_binding(diagnostic['hid_transcript'])
+        inputs = diagnostic['bindings']
+        window = read_bound(inputs[window_name])
+        require(window['candidate'] == candidate and window['distribution_binding'] == distribution_binding,
+                'Observation is not from this installed build')
+        attempt = read_bound(inputs['attempt.json'])
+        full = read_bound(inputs['complete-observation.json'], limit=20 * 1024 * 1024)
+        result = _evaluate_runtime(distribution_binding, candidate, attempt, full['resume'], full['capture'],
+                                   lifecycle.diagnose_completed_restore)['lifecycle']
+        require(result['restore_in_flight'] is False and diagnostic['physical']
+                == {key: result[key] for key in diagnostic['physical']}, 'Physical diagnostic differs on replay')
+        if method == 'settings':
+            require(phase['observed_seconds'] == result['suspended_seconds']
+                    and phase['process_samples'] == result['process_samples'], 'Safe summary differs from observation')
+    return {**phase, 'exception': dict(phase['exception'])}
+
+
 def compose_adhoc_proof(distribution_binding, candidate, *, normal_launch_binding, qualification_binding):
     """Only compose after fresh source qualification and real launch validation.
 
@@ -444,9 +496,12 @@ def compose_adhoc_proof(distribution_binding, candidate, *, normal_launch_bindin
     """
     distribution = validate_distribution(distribution_binding, candidate)
     launch = read_bound(normal_launch_binding, limit=20 * 1024 * 1024)
-    exact(launch, {'schema', 'attempt', 'resume', 'capture'})
-    require(launch['schema'] == 'iris-ordinary-relaunch-capture-v1', 'Missing original launch/capture evidence')
-    evaluate_runtime(distribution_binding, candidate, launch['attempt'], launch['resume'], launch['capture'])
+    if launch.get('schema') == 'iris-ios-2026111306-owner-exception-v1':
+        replay_approved_exception(distribution_binding, candidate, normal_launch_binding)
+    else:
+        exact(launch, {'schema', 'attempt', 'resume', 'capture'})
+        require(launch['schema'] == 'iris-ordinary-relaunch-capture-v1', 'Missing original launch/capture evidence')
+        evaluate_runtime(distribution_binding, candidate, launch['attempt'], launch['resume'], launch['capture'])
     qualification = read_bound(qualification_binding)
     require(qualification.get('schema') == 'iris-ordinary-relaunch-qualification-v1'
             and qualification.get('synthetic_only') is True and qualification.get('exit_code') == 0

@@ -346,6 +346,15 @@ class RelaunchTests(unittest.TestCase):
         resume['snapshot']['observed_utc'] = 11.25
         with self.assertRaises(relaunch.EvidenceError): self.evaluate(record, resume, capture)
 
+    def test_exception_replay_refuses_substituted_manifest_or_candidate(self):
+        raw = self.fixture.write('fake-exception', {'schema': 'iris-ios-2026111306-owner-exception-v1'})
+        for candidate in (self.fixture.candidate, contract.EXCEPTION_CANDIDATE):
+            with self.subTest(tag=candidate['tag']), self.assertRaises(relaunch.EvidenceError):
+                relaunch.replay_approved_exception(self.fixture.config_binding, candidate, raw)
+        with self.assertRaises(relaunch.EvidenceError):
+            relaunch.compose_adhoc_proof(self.fixture.config_binding, self.fixture.candidate,
+                                        normal_launch_binding=raw, qualification_binding=raw)
+
     def test_composition_replays_raw_evidence_and_requires_fresh_helper_qualification(self):
         from qualify_ios_ordinary_relaunch import SOURCES, TESTS
         record, resume, capture = self.runtime_fixture()
