@@ -190,9 +190,21 @@ def measurement_captures(*, startup_text, lifecycle_text, device, samples, measu
     return raw, measured
 
 
-def evaluate_early_background(*, startup_text, lifecycle_text, bundle_id, process_name,
-                              pid, executable, device, initial_prefixes, samples, measurement_cutoff, old_pid=None):
-    """Require real native-restoration overlap, 135s suspended and 15s resumed.
+def evaluate_early_background(**capture):
+    """Qualify actual native restoration at physical background entry."""
+    return _evaluate_startup_transition(**capture, allow_fast=False)
+
+
+def diagnose_completed_restore(**capture):
+    """Describe a completed restore; this is ineligible for in-flight qualification."""
+    evidence = _evaluate_startup_transition(**capture, allow_fast=True)
+    require(evidence["restore_in_flight"] is False, "Use the physical overlap evaluator for a real overlap")
+    return evidence
+
+
+def _evaluate_startup_transition(*, startup_text, lifecycle_text, bundle_id, process_name,
+                              pid, executable, device, initial_prefixes, samples, measurement_cutoff, allow_fast, old_pid=None):
+    """Measure startup order, 135s suspended and 15s resumed in the same process.
 
     Initial prefixes are captured immediately before launch. Every later sample
     binds byte lengths/hashes of both growing logs, live-loggers/empty-stderr
@@ -240,23 +252,40 @@ def evaluate_early_background(*, startup_text, lifecycle_text, bundle_id, proces
 
     startup = _records(captures["startup"], initial["startup"], parse_startup)
     states = _records(captures["lifecycle"], initial["lifecycle"], parse_state)
-    require([row["phase"] for row in startup] ==
-            ["restore_enqueued", "backgrounded", "restore_result_observed"],
-            "Need exactly one ordered enqueue, background entry and successful restoration result")
-    enqueue, entry, result = startup
-    require(enqueue["pending"], "Restoration enqueue is not pending")
-    require(entry["pending"] and entry["native"] and entry["backgrounded"], "No actual native restoration at background entry")
-    require(not result["pending"], "Restoration is still pending")
-    require(enqueue["stamp"] < entry["stamp"] < result["stamp"], "Restoration timestamps are not ordered")
+    phases = [row["phase"] for row in startup]
+    if phases == ["restore_enqueued", "backgrounded", "restore_result_observed"]:
+        enqueue, entry, result = startup
+        require(entry["pending"] and entry["native"] and entry["backgrounded"], "No actual native restoration at background entry")
+        require(enqueue["stamp"] < entry["stamp"] < result["stamp"], "Restoration timestamps are not ordered")
+        in_flight = True
+    else:
+        require(allow_fast and phases == ["restore_enqueued", "restore_result_observed", "backgrounded"],
+                "Need exactly one ordered enqueue, background entry and successful restoration result")
+        enqueue, result, entry = startup
+        require(not result["native"] and not result["backgrounded"] and entry["backgrounded"]
+                and not entry["native"] and not entry["pending"], "Missing completed foreground restoration before background entry")
+        require(0 < result["stamp"] - enqueue["stamp"] <= 1
+                and result["stamp"] < entry["stamp"] <= enqueue["stamp"] + 5,
+                "Restoration or background entry exceeded the fast observation window")
+        in_flight = False
+    require(enqueue["pending"] and not result["pending"], "Missing pending enqueue or settled restoration result")
 
     target_states, activated = [], False
+    previous_visible, previous_departed = False, False
     for row in states:
         if row["pid"] != pid:
-            require(row["pid"] == old_pid and not activated and row["state"] in {"not-running", "terminated", "exited", "none-NotVisible"},
-                    "Another instance changed target lifecycle state")
+            require(row["pid"] == old_pid and not activated, "Another instance changed target lifecycle state")
+            if row["state"] == ACTIVE:
+                require(not previous_departed, "Previous foreground process reappeared after termination")
+                previous_visible = True
+            else:
+                require(row["state"] in {"not-running", "terminated", "exited", "none-NotVisible"},
+                        "Unexpected previous process state")
+                previous_departed = True
             continue
         require(row["state"] in {ACTIVE, SUSPENDED, "running-active-NotVisible"}, "Unexpected new-process lifecycle state")
         if not activated:
+            require(not previous_visible or previous_departed, "Previous foreground process never departed")
             require(row["state"] == ACTIVE, "New process did not enter the foreground")
             activated = True
         target_states.append(row)
@@ -266,6 +295,9 @@ def evaluate_early_background(*, startup_text, lifecycle_text, bundle_id, proces
     before_enqueue = [row for row in target_states if row["stamp"] <= enqueue["stamp"]]
     require(before_enqueue and all(row["state"] == ACTIVE for row in before_enqueue),
             "Restoration did not enqueue during actual OS foreground")
+    if not in_flight:
+        require(all(row["state"] == ACTIVE for row in target_states if row["stamp"] <= result["stamp"]),
+                "Restore did not finish in continuous OS foreground")
     suspended = [row for row in target_states if row["state"] == SUSPENDED]
     require(suspended and entry["stamp"] <= suspended[0]["stamp"], "No OS suspension after restoration overlap")
     transition = next((row for row in target_states[target_states.index(suspended[0]) + 1:]
@@ -331,7 +363,9 @@ def evaluate_early_background(*, startup_text, lifecycle_text, bundle_id, proces
         require(previous_sizes[name] == len(data), "Final sample does not bind the complete capture")
     require(stage == "resumed" and resumed_last is not None and resumed_last - resumed_start >= 15,
             "Missing 15 observed seconds in the same resumed process")
-    return {"restore_in_flight": True, "suspended_seconds": suspended_seconds,
+    timing = {} if in_flight else {"restore_seconds": result["stamp"] - enqueue["stamp"],
+                                   "background_after_enqueue_seconds": entry["stamp"] - enqueue["stamp"]}
+    return {"restore_in_flight": in_flight, **timing, "suspended_seconds": suspended_seconds,
             "resumed_seconds": resumed_last - resumed_start, "process_samples": len(samples),
             "suspended_started_monotonic": suspended_start, "suspended_last_monotonic": suspended_last,
             "resume_transition_monotonic": resume_transition,

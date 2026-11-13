@@ -113,6 +113,24 @@ class LifecycleTests(unittest.TestCase):
                          [1, 136, 137, 152])
         self.assertFalse(evidence["runtime_acceptance"])
 
+    def test_fast_restore_is_separate_and_requires_complete_ordered_evidence(self):
+        value = fixture()
+        before = startup("backgrounded", .5, pending=True, native=True, background=True) + startup("restore_result_observed", .7, background=True)
+        after = startup("restore_result_observed", .3) + startup("backgrounded", .7, background=True)
+        replace_capture(value, "startup", before, after)
+        self.reject(value)
+        physical = lifecycle.diagnose_completed_restore(**value)
+        self.assertIs(physical["restore_in_flight"], False)
+        self.assertAlmostEqual(physical["restore_seconds"], .2)
+        for replacement in (after.replace("restore_result_observed", "restore_cancelled"),
+                            after.replace("pending_result=false", "pending_result=true", 1),
+                            startup("restore_result_observed", 1.3) + startup("backgrounded", 1.5, background=True),
+                            startup("restore_result_observed", .3) + startup("backgrounded", 6, background=True)):
+            wrong = copy.deepcopy(value)
+            replace_capture(wrong, "startup", after, replacement)
+            with self.assertRaises(lifecycle.LifecycleError):
+                lifecycle.diagnose_completed_restore(**wrong)
+
     def test_ready_prefix_helper_rejects_partial_disconnected_or_wrong_streams(self):
         self.assertEqual(lifecycle.capture_prefixes(startup_text=HEADER, lifecycle_text=HEADER, device=DEVICE),
                          fixture()["initial_prefixes"])
@@ -162,6 +180,19 @@ class LifecycleTests(unittest.TestCase):
             replacement=(state(old_state,when,pid=old_pid)+state(lifecycle.ACTIVE,0) if when<0 else
                          state(lifecycle.ACTIVE,0)+state(old_state,when,pid=old_pid))
             replace_capture(value, "lifecycle", state(lifecycle.ACTIVE,0),replacement)
+            self.reject(value)
+
+    def test_previous_foreground_refresh_must_terminate_before_replacement(self):
+        refresh = state(lifecycle.ACTIVE, -.3, pid=101)
+        departed = state("none-NotVisible", -.2, pid=101)
+        new = state(lifecycle.ACTIVE, 0)
+        value = fixture()
+        replace_capture(value, "lifecycle", new, refresh + departed + new)
+        self.assertTrue(lifecycle.evaluate_early_background(**value)["restore_in_flight"])
+        for rows in (refresh + new, departed + state(lifecycle.ACTIVE, -.1, pid=101) + new,
+                     refresh + state("none-NotVisible", -.2, pid=999) + new):
+            value = fixture()
+            replace_capture(value, "lifecycle", new, rows)
             self.reject(value)
 
     def test_resign_active_is_not_background_entry(self):
