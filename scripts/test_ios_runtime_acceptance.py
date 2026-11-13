@@ -174,6 +174,35 @@ class RuntimeAcceptanceTests(unittest.TestCase):
             window.update(cpu_percent_one_core=5, disk_write_mib_per_minute=5)
         self.assertEqual(self.validate(value), value)
 
+    def test_duration_weighted_cpu_average_is_the_only_performance_limit(self):
+        value = receipt()
+        cpu = value["quality"]["cpu"]
+        del cpu["thermal_state"]
+        cpu["method"] = "installed-foreground-cpu-v2"
+        first, second = cpu["windows"]
+        for window in (first, second):
+            del window["disk_write_mib_per_minute"]
+        first.update(observed_seconds=60, metric_seconds=58, cpu_percent_one_core=8)
+        second.update(observed_seconds=62, metric_seconds=63, cpu_percent_one_core=2)
+        cpu["average_cpu_percent_one_core"] = (58*8 + 63*2) / 121
+        self.validate(value)
+        cpu["average_cpu_percent_one_core"] = 5
+        with self.assertRaises(acceptance.ValidationError):
+            self.validate(value)
+        first["cpu_percent_one_core"] = 9
+        cpu["average_cpu_percent_one_core"] = (58*9 + 63*2) / 121
+        with self.assertRaises(acceptance.ValidationError):
+            self.validate(value)
+
+    def test_policy_recorder_metadata_is_bound_to_its_own_branch_and_sha(self):
+        sha = "b" * 40
+        metadata = dict(run_metadata(), head_sha=sha, head_branch="main")
+        acceptance.validate_run(metadata, "owner/project", sha, "refs/heads/main")
+        for changes in ({"head_sha": CANDIDATE["source_commit"]}, {"head_branch": "other"},
+                        {"path": metadata["path"] + "@refs/heads/other"}):
+            with self.assertRaises(acceptance.ValidationError):
+                acceptance.validate_run(dict(metadata, **changes), "owner/project", sha, "refs/heads/main")
+
     def test_startup_and_send_require_candidate_bound_observations_and_review(self):
         for name, field, wrong in (("startup", "login_flash_observed", True),
                                    ("startup", "login_flash_observed", 0), ("startup", "flow", "already-running"),

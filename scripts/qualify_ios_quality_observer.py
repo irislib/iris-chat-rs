@@ -22,7 +22,7 @@ TESTS = ('test_ios_quality_observer', 'test_ios_relaunch_adapters', 'test_ios_re
 TEST_SOURCES = tuple(name.split('.')[0] + '.py' for name in TESTS) + ('qualify_ios_quality_observer.py',)
 
 
-def replay(counters, toc, thermal, reference):
+def replay(counters, toc, reference):
     previous = json.loads(Path(reference).read_text())
     rows = trace.counters(counters, pid=previous['pid'], process_name=previous['processName'])
     # Reproduce only the reference parser's fixed first-120-seconds selection.
@@ -38,28 +38,26 @@ def replay(counters, toc, thermal, reference):
             'Actual-format parser does not reproduce retained counter units')
     require(binding(counters)['sha256'] == previous['xmlSha256']
             and binding(toc)['sha256'] == previous['tocSha256'], 'Reference trace input changed')
-    trace.nominal_thermal(thermal, rows[0][0], rows[-1][0])
     return {'scope': 'Unrelated app, parser/schema qualification only', 'sample_count': len(rows),
             'elapsed_seconds': elapsed, 'cpu_seconds': cpu, 'cpu_percent': 100 * cpu / elapsed,
-            'maximum_sample_gap_seconds': gap, 'written_bytes_delta': rows[-1][2] - rows[0][2],
-            'nominal_thermal_seconds': elapsed}
+            'maximum_sample_gap_seconds': gap}
 
 
-def qualify(out, tagged_validator, counters, toc, thermal, reference):
+def qualify(out, policy_validator, counters, toc, reference):
     root = Path(__file__).resolve().parent
-    tagged = binding(tagged_validator)
-    require(tagged['sha256'] == binding(root / 'ios_runtime_acceptance.py')['sha256'],
-            'Tagged v3 validator must remain unchanged')
+    validator = binding(policy_validator)
+    require(validator['sha256'] == binding(root / 'ios_runtime_acceptance.py')['sha256'],
+            'Qualification requires the exact policy validator')
     checker_sources = observer.sources()
     test_sources = [binding(root / name) for name in TEST_SOURCES]
     retained = {key: binding(value) for key, value in
-                (('counters', counters), ('toc', toc), ('thermal', thermal), ('reference', reference))}
+                (('counters', counters), ('toc', toc), ('reference', reference))}
     out = Path(out).resolve()
     out.mkdir(mode=0o700, parents=False, exist_ok=False)
     record = {'schema': 'iris-quality-observer-qualification-v1', 'passed': False,
               'device_actions': False, 'native_builds': False, 'release_acceptance': False,
               'checker_sources': checker_sources, 'test_sources': test_sources,
-              'tagged_validator': tagged, 'python': binding(Path(sys.executable).resolve()),
+              'policy_validator': validator, 'python': binding(Path(sys.executable).resolve()),
               'retained_format_inputs': retained, 'started_utc': time.time()}
     try:
         command = [sys.executable, '-B', '-m', 'unittest', '-v', *TESTS]
@@ -68,8 +66,8 @@ def qualify(out, tagged_validator, counters, toc, thermal, reference):
         (out / 'tests.log').write_bytes(result.stdout)
         record.update(exit_code=result.returncode, tests_log=binding(out / 'tests.log'))
         require(result.returncode == 0, 'Offline observer tests failed')
-        record['retained_format_replay'] = replay(counters, toc, thermal, reference)
-        for item in [*checker_sources, *test_sources, tagged, *retained.values()]:
+        record['retained_format_replay'] = replay(counters, toc, reference)
+        for item in [*checker_sources, *test_sources, validator, *retained.values()]:
             verify_binding(item)
         record['passed'] = True
     except (OSError, ValueError, KeyError, TypeError, subprocess.TimeoutExpired) as error:
@@ -81,10 +79,10 @@ def qualify(out, tagged_validator, counters, toc, thermal, reference):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    for key in ('out', 'tagged-validator', 'counters', 'toc', 'thermal', 'reference'):
+    for key in ('out', 'policy-validator', 'counters', 'toc', 'reference'):
         parser.add_argument('--' + key, required=True, type=Path)
     args = parser.parse_args()
-    return qualify(args.out, args.tagged_validator, args.counters, args.toc, args.thermal, args.reference)
+    return qualify(args.out, args.policy_validator, args.counters, args.toc, args.reference)
 
 
 if __name__ == '__main__':

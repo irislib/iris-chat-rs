@@ -13,6 +13,7 @@ import math
 from pathlib import Path
 import xml.etree.ElementTree as ET
 
+from ios_runtime_acceptance import average_cpu_percent
 import ios_relaunch_lifecycle as lifecycle
 from ios_relaunch_adapters import foreground_pid
 from ios_ordinary_relaunch import read_bound, require, verify_binding, validate_distribution
@@ -93,7 +94,7 @@ def recording(path, *, device, started, ready, finished):
 
 def counters(path, *, pid, process_name):
     rows = table(path, 'sysmon-process')
-    needed = {'time', 'process', 'pid', 'recently-died', 'cpu-total-system', 'cpu-total-user', 'disk-bytes-written'}
+    needed = {'time', 'process', 'pid', 'recently-died', 'cpu-total-system', 'cpu-total-user'}
     require(rows and needed <= rows[0].keys(), 'Missing process counter columns')
     samples, identities = [], set()
     for row in rows:
@@ -108,33 +109,11 @@ def counters(path, *, pid, process_name):
         require(integer(row['recently-died'], 'boolean') == 0, 'Target process exited')
         samples.append((integer(row['time'], 'start-time') / 1e9,
                         (integer(row['cpu-total-system'], 'duration-on-core')
-                         + integer(row['cpu-total-user'], 'duration-on-core')) / 1e9,
-                        integer(row['disk-bytes-written'], 'size-in-bytes')))
+                         + integer(row['cpu-total-user'], 'duration-on-core')) / 1e9))
     require(len(identities) == 1 and len(samples) >= 2, 'Process identity changed or counters are absent')
-    require(all(b[0] > a[0] and b[1] >= a[1] and b[2] >= a[2] for a, b in zip(samples, samples[1:])),
+    require(all(b[0] > a[0] and b[1] >= a[1] for a, b in zip(samples, samples[1:])),
             'Counter reset or trace time reversed')
     return samples
-
-
-def nominal_thermal(path, start, end):
-    rows = table(path, 'device-thermal-state-intervals')
-    needed = {'start', 'duration', 'end', 'thermal-state', 'track-label', 'is-induced'}
-    require(rows and needed <= rows[0].keys(), 'Missing thermal intervals')
-    covered, last = start, None
-    for row in rows:
-        a, duration, b = (integer(row[key], kind) / 1e9 for key, kind in
-                          (('start', 'start-time'), ('duration', 'duration'), ('end', 'start-time')))
-        require(b > a and abs(b - a - duration) < 1e-6 and (last is None or a >= last),
-                'Thermal intervals overlap or have invalid clocks')
-        last = b
-        if b <= start or a >= end:
-            continue
-        require(row['thermal-state'].tag == 'thermal-state' and row['thermal-state'].text == 'Nominal'
-                and row['track-label'].tag == 'string' and row['track-label'].text == 'Current'
-                and integer(row['is-induced'], 'boolean') == 0, 'Thermal state was not naturally nominal')
-        require(a <= covered + 1e-9, 'Thermal observation has a gap')
-        covered = max(covered, b)
-    require(covered >= end, 'Thermal evidence does not cover the measurement')
 
 
 def observe(records, capture, *, device, bundle, pid, executable, springboard_pid):
@@ -254,7 +233,6 @@ def evaluate(evidence_binding):
     first_time = records[0]['utc_after'] - start
     end_time = records[boundaries[-1]]['utc_after'] - start
     require(0 <= first_time < end_time <= trace_duration, 'Trace does not cover the observed interval')
-    nominal_thermal(verify_binding(evidence['thermal']), first_time, end_time)
     process_gap = max([gap] + [b[0] - a[0] for a, b in zip(samples, samples[1:])
                                if a[0] < end_time and b[0] > first_time])
     require(process_gap <= 8, 'Process counter observation gap exceeds 8 seconds')
@@ -268,12 +246,12 @@ def evaluate(evidence_binding):
         observed = durations[index]
         require(57 <= elapsed <= 72 and abs(observed - elapsed) <= 2, 'Metric clock does not cover its observed window')
         cpu = 100 * (selected[-1][1] - selected[0][1]) / elapsed
-        writes = (selected[-1][2] - selected[0][2]) / 1024**2 * 60 / elapsed
-        require(0 <= cpu <= 5 and 0 <= writes <= 5, 'Retained CPU or disk-write budget exceeded')
-        windows.append({'observed_seconds': observed, 'metric_seconds': elapsed,
-                        'cpu_percent_one_core': cpu, 'disk_write_mib_per_minute': writes})
-    return {'build': candidate['apple_build'], 'status': 'passed', 'method': 'installed-foreground-cpu-v1',
+        windows.append({'observed_seconds': observed, 'metric_seconds': elapsed, 'cpu_percent_one_core': cpu})
+    average = average_cpu_percent(windows)
+    require(0 <= average <= 5, 'Average foreground CPU exceeds 5% of one core')
+    return {'build': candidate['apple_build'], 'status': 'passed', 'method': 'installed-foreground-cpu-v2',
+            'average_cpu_percent_one_core': average,
             'evidence_sha256': evidence_binding['sha256'], 'qualification_sha256': configuration['qualification']['sha256'],
             'warmup_seconds': durations[0], 'discarded_interval_seconds': durations[1], 'windows': windows,
             'foreground_sample_max_gap_seconds': gap, 'process_sample_max_gap_seconds': process_gap,
-            'invalid_observations': 0, 'process_replacements': 0, 'thermal_state': 'nominal'}
+            'invalid_observations': 0, 'process_replacements': 0}

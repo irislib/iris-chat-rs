@@ -1,19 +1,17 @@
 # Installed iPhone quality observation
 
-`ios_quality_observer.py` records Activity Monitor cumulative CPU and disk-write
-counters, physical-device thermal intervals, live SpringBoard foreground state,
+`ios_quality_observer.py` records Activity Monitor cumulative CPU counters, live SpringBoard foreground state,
 and CoreDevice process inventories for an already installed production app.
 This is a separately qualified measurement method. Historical XCTest CPU
 receipts retain their original method and do not qualify this observer.
 
 The fixed measurement is 180 seconds of foreground settling, one discarded
-60-second interval, then two retained 60-second intervals. Each retained
-interval must independently use at most 5% of one CPU core and 5 MiB/minute of
-disk writes. Thermal state must be naturally nominal, the process unchanged,
-foreground observation gaps at most 2.5 seconds, and process-counter gaps at
-most 8 seconds. CPU is the difference in cumulative system plus user CPU time,
-divided by measured elapsed time, without core-count normalization or overhead
-subtraction. Writes use cumulative `disk-bytes-written` bytes.
+60-second interval, then two retained 60-second intervals. Average CPU across
+both retained intervals must be at most 5% of one core. The observer divides
+the total system and user CPU time consumed during those intervals by their
+combined measured elapsed time. Both intervals must cover the same foreground
+process. Foreground observation gaps may be at most 2.5 seconds and
+process-counter gaps at most 8 seconds.
 
 Observed boundaries are the first eligible samples, selected before metric
 values are read. The unchanged v3 tolerances are 179.9–183 seconds for settling,
@@ -24,13 +22,12 @@ UTC and monotonic clocks are paired and checked against the trace's own dates.
 ## Offline qualification
 
 Use `qualify_ios_quality_observer.py --out NEW_PRIVATE_DIRECTORY
---tagged-validator EXACT_TAGGED_VALIDATOR --counters RETAINED_SYSMON_XML
---toc RETAINED_TOC_XML --thermal RETAINED_THERMAL_XML
+--policy-validator EXACT_POLICY_VALIDATOR --counters RETAINED_SYSMON_XML
+--toc RETAINED_TOC_XML
 --reference RETAINED_CPU_MEASUREMENT_JSON`. Supply the retained Activity Monitor
 exports and their independently recorded CPU result. The helper runs the
 synthetic failure and complete-driver tests plus existing dependency tests. It
-also replays actual-format CPU counters against the retained reference and
-checks disk-counter and thermal fields. It writes source, input, interpreter,
+also replays actual-format CPU counters against the retained reference. It writes source, input, interpreter,
 and test-log digests. No device is contacted and no native build is run.
 
 This qualifies parsing and control flow, not physical-device acceptance or

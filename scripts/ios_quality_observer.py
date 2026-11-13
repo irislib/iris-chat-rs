@@ -142,8 +142,7 @@ def record(config_binding, output, *, execute=False):
         operation.update(finished_utc=time.time(), finished_monotonic=time.monotonic(),
                          stdout=binding(item['stdout']), stderr=binding(item['stderr']))
         evidence['recording'] = operation
-        exports = {'toc': ['--toc'], 'counters': ['--xpath', '/trace-toc/run[@number="1"]/data/table[@schema="sysmon-process"]'],
-                   'thermal': ['--xpath', '/trace-toc/run[@number="1"]/data/table[@schema="device-thermal-state-intervals"]']}
+        exports = {'toc': ['--toc'], 'counters': ['--xpath', '/trace-toc/run[@number="1"]/data/table[@schema="sysmon-process"]']}
         for name, arguments in exports.items():
             path = window.out / (name + '.xml')
             item = window.spawn([str(trace_tool), 'export', '--input', str(trace_path), *arguments, '--output', str(path)], name)

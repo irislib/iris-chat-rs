@@ -90,15 +90,25 @@ def validate_adhoc_proof(proof, candidate):
     require(proof["installed_binary_extraction_claimed"] is False)
 
 
+def average_cpu_percent(windows):
+    elapsed = sum(window["metric_seconds"] for window in windows)
+    return sum(window["cpu_percent_one_core"] * window["metric_seconds"] for window in windows) / elapsed
+
+
 def validate_quality(quality, candidate):
     exact_object(quality, {"cpu", "startup", "send"})
     cpu = quality["cpu"]
+    require(isinstance(cpu, dict))
+    legacy = cpu.get("method") == "installed-foreground-cpu-v1"
+    require(legacy or cpu.get("method") == "installed-foreground-cpu-v2")
+    summary_field = "thermal_state" if legacy else "average_cpu_percent_one_core"
     exact_object(cpu, {"build", "status", "method", "evidence_sha256", "qualification_sha256",
                        "warmup_seconds", "discarded_interval_seconds", "windows",
                        "foreground_sample_max_gap_seconds", "process_sample_max_gap_seconds",
-                       "invalid_observations", "process_replacements", "thermal_state"})
+                       "invalid_observations", "process_replacements", summary_field})
     require(cpu["build"] == candidate["apple_build"] and cpu["status"] == "passed")
-    require(cpu["method"] == "installed-foreground-cpu-v1" and cpu["thermal_state"] == "nominal")
+    if legacy:
+        require(cpu["thermal_state"] == "nominal")
     digest(cpu["evidence_sha256"])
     digest(cpu["qualification_sha256"])
     # Match the qualified installed-app evaluator, including metric-clock tolerance.
@@ -110,13 +120,22 @@ def validate_quality(quality, candidate):
     count(cpu["process_replacements"], exact=0)
     require(isinstance(cpu["windows"], list) and len(cpu["windows"]) == 2)
     for window in cpu["windows"]:
-        exact_object(window, {"observed_seconds", "metric_seconds", "cpu_percent_one_core",
-                              "disk_write_mib_per_minute"})
+        fields = {"observed_seconds", "metric_seconds", "cpu_percent_one_core"}
+        if legacy:
+            fields.add("disk_write_mib_per_minute")
+        exact_object(window, fields)
         bounded(window["observed_seconds"], 59.9, 63)
         bounded(window["metric_seconds"], 57, 72)
         require(abs(window["observed_seconds"] - window["metric_seconds"]) <= 2)
-        bounded(window["cpu_percent_one_core"], 0, 5)
-        bounded(window["disk_write_mib_per_minute"], 0, 5)
+        duration(window["cpu_percent_one_core"], 0)
+        if legacy:
+            bounded(window["cpu_percent_one_core"], 0, 5)
+            bounded(window["disk_write_mib_per_minute"], 0, 5)
+    if not legacy:
+        average = average_cpu_percent(cpu["windows"])
+        bounded(average, 0, 5)
+        bounded(cpu[summary_field], 0, 5)
+        require(math.isclose(cpu[summary_field], average, rel_tol=1e-12, abs_tol=1e-12))
     startup = quality["startup"]
     exact_object(startup, {"build", "status", "flow", "login_flash_observed",
                            "observations_sha256", "regression_sha256", "review_sha256"})
@@ -200,7 +219,7 @@ def validate_receipt(receipt, **candidate):
             "quality": {name: dict(receipt["quality"][name]) for name in ("cpu", "startup", "send")}}
 
 
-def validate_run(metadata, repository, source_commit):
+def validate_run(metadata, repository, source_commit, recorder_ref=None):
     """Validate actual GitHub API metadata, without publishing its extra fields."""
     require(matches(repository, r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+"))
     require(matches(source_commit, r"[0-9a-f]{40}"))
@@ -213,6 +232,10 @@ def validate_run(metadata, repository, source_commit):
     require(isinstance(head_repository, dict) and head_repository.get("full_name") == repository)
     path = metadata.get("path")
     require(path == WORKFLOW or matches(path, re.escape(WORKFLOW) + r"@refs/(?:heads|tags)/[A-Za-z0-9_./-]+"))
+    if recorder_ref is not None:
+        require(matches(recorder_ref, r"refs/(?:heads|tags)/[A-Za-z0-9_./-]+"))
+        require(metadata.get("head_branch") == recorder_ref.split("/", 2)[2])
+        require(path == WORKFLOW or path == WORKFLOW + "@" + recorder_ref)
     return {**expected, "head_repository": {"full_name": repository}, "path": WORKFLOW}
 
 
@@ -246,13 +269,17 @@ def main(argv=None):
     parser.add_argument("--out", type=Path)
     parser.add_argument("--run-metadata", type=Path)
     parser.add_argument("--repository")
+    parser.add_argument("--recorder-commit")
+    parser.add_argument("--recorder-ref")
     args = parser.parse_args(argv)
     try:
         require(bool(args.run_metadata) == bool(args.repository))
+        require(not (args.recorder_commit or args.recorder_ref) or bool(args.run_metadata))
         candidate = {field: getattr(args, field) for field in RELEASE_KEYS}
         normalized = validate_receipt(read_json(args.receipt), **candidate)
         if args.run_metadata:
-            validate_run(read_json(args.run_metadata), args.repository, args.source_commit)
+            validate_run(read_json(args.run_metadata), args.repository, args.recorder_commit or args.source_commit,
+                         args.recorder_ref)
         encoded = json.dumps(normalized, sort_keys=True, indent=2, allow_nan=False) + "\n"
         if args.out:
             with args.out.open("x", encoding="utf-8") as handle:

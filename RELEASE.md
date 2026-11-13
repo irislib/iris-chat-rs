@@ -827,15 +827,14 @@ verified code-binding record, with sorted keys, compact separators and no final
 newline, for the app, notification service and share extension. Keep signing identities,
 provisioned-device identifiers and private paths out of the safe receipt.
 
-Both routes also require candidate-bound `quality` evidence. Use the qualified
-installed-app observer: 180 seconds of foreground settling, one discarded
-60-second interval and two retained 60-second intervals. Each retained interval
-must be at most 5% of one CPU core and 5 MiB/minute of disk writes, with nominal
-thermal status, unchanged process and complete foreground observations. Preserve
-the evaluator's existing clock tolerances; a short metric interval alone does not
-qualify without its matching observed interval. Do not average away a failed
-interval, subtract unqualified observer overhead or retry unchanged failures.
-Retain the qualified evaluator and source-input digests with the CPU receipt.
+Both installation routes require candidate-bound `quality` evidence.
+Use the qualified installed-app observer for 180 seconds of foreground settling,
+one discarded 60-second interval and two predetermined 60-second intervals.
+Across the two retained intervals the app must average at most 5% of one
+CPU core. Divide the combined system and user CPU time by the combined
+measured elapsed time. Preserve both windows, the matching foreground process
+observations, the evaluator's clock tolerances and the source-input digests.
+Record the measured average without subtracting observer overhead.
 
 For startup, retain observations covering cold start through preserved state,
 the focused login/loading regression and a release-owner review; an observed

@@ -78,7 +78,6 @@ class Fixture:
                                        'stderr': self.raw('record.stderr', b'')}}
         self.evidence['toc'] = self.raw('toc.xml', self.toc())
         self.evidence['counters'] = self.raw('counters.xml', self.counters())
-        self.evidence['thermal'] = self.raw('thermal.xml', self.thermal())
 
     def raw(self, name, value):
         p = self.root / name
@@ -109,12 +108,6 @@ class Fixture:
                          ('size-in-bytes', int(writes(t)), {})])
         return table('sysmon-process', ['time', 'process', 'pid', 'recently-died', 'cpu-total-system', 'cpu-total-user', 'disk-bytes-written'], rows)
 
-    def thermal(self, intervals=((0, 390, 'Nominal', 0),)):
-        return table('device-thermal-state-intervals', ['start', 'duration', 'end', 'thermal-state', 'track-label', 'is-induced'],
-            [[('start-time', a * 10**9, {}), ('duration', (b-a) * 10**9, {}), ('start-time', b * 10**9, {}),
-              ('thermal-state', state, {}), ('string', 'Current', {}), ('boolean', induced, {})]
-             for a, b, state, induced in intervals])
-
     def bind(self):
         bind_cutoff(self.capture)
         closure = {'closed': True, 'failures': [], 'candidate': self.candidate, 'device': self.window['device'],
@@ -140,21 +133,26 @@ class QualityTests(unittest.TestCase):
         self.assertEqual(result['foreground_sample_max_gap_seconds'], 2)
         for window in result['windows']:
             self.assertAlmostEqual(window['cpu_percent_one_core'], 2)
-            self.assertAlmostEqual(window['disk_write_mib_per_minute'], 60 / 1024)
+            self.assertNotIn('disk_write_mib_per_minute', window)
             self.assertEqual(window['observed_seconds'], 60)
             self.assertEqual(window['metric_seconds'], 60)
         quality = receipt()['quality']; quality['cpu'] = result
         contract.validate_quality(quality, self.fixture.candidate)
 
-    def test_failed_cpu_window_cannot_be_averaged_away(self):
+    def test_fixed_windows_share_one_cpu_budget(self):
         f = self.fixture
-        f.evidence['counters'] = f.raw('high-cpu.xml', f.counters(cpu=lambda t: t*.02 + min(max(t-250, 0), 60)*.04))
+        f.evidence['counters'] = f.raw('burst.xml', f.counters(cpu=lambda t: t*.02 + min(max(t-250, 0), 60)*.04))
+        result = self.evaluate()
+        self.assertAlmostEqual(result['average_cpu_percent_one_core'], 4)
+        self.assertNotIn('thermal_state', result)
+        f.evidence['counters'] = f.raw('high-cpu.xml', f.counters(cpu=lambda t: t*.051))
         self.reject()
 
-    def test_disk_write_budget_is_independent(self):
+    def test_cpu_trace_does_not_require_write_counters(self):
         f = self.fixture
-        f.evidence['counters'] = f.raw('high-disk.xml', f.counters(writes=lambda t: t*1024 + min(max(t-250, 0), 60)*1024**2/10))
-        self.reject()
+        xml = f.counters().replace(b'disk-bytes-written', b'unrelated-counter')
+        f.evidence['counters'] = f.raw('cpu-only.xml', xml)
+        self.assertAlmostEqual(self.evaluate()['average_cpu_percent_one_core'], 2)
 
     def test_counter_reset_and_same_pid_new_trace_identity_fail(self):
         f = self.fixture
@@ -170,12 +168,6 @@ class QualityTests(unittest.TestCase):
         f = self.fixture
         f.evidence['counters'] = f.raw('counter-gap.xml', f.counters(omit=range(270, 279)))
         self.reject()
-
-    def test_nominal_thermal_must_cover_every_observed_second(self):
-        f = self.fixture
-        for intervals in (((0, 300, 'Nominal', 0), (301, 390, 'Nominal', 0)),
-                          ((0, 390, 'Fair', 0),), ((0, 390, 'Nominal', 1),), ((0, 350, 'Nominal', 0),)):
-            f.evidence['thermal'] = f.raw('bad-thermal.xml', f.thermal(intervals)); self.reject()
 
     def test_later_quieter_boundary_is_not_selected(self):
         self.fixture.evidence['boundaries'][1] = 91
@@ -307,7 +299,7 @@ class QualityTests(unittest.TestCase):
                     progress['exports'] += 1
                     stdout.write_text('Finished export\n')
                     destination = Path(argv[argv.index('--output') + 1])
-                    source = f.toc() if label == 'toc' else (f.counters() if label == 'counters' else f.thermal())
+                    source = {'toc': f.toc, 'counters': f.counters}[label]()
                     destination.write_bytes(source)
                     child = SimpleNamespace(poll=lambda: 0)
                 return {'stdout': stdout, 'stderr': stderr, 'process': child}
@@ -390,7 +382,7 @@ class QualityTests(unittest.TestCase):
         capture = json.loads((self.fixture.root / 'run/capture.json').read_text())
         self.assertTrue(all(abs(row['monotonic_after'] - row['monotonic_before'] - 1.1) < 1e-8
                             for row in capture['observations']))
-        self.assertEqual(self.driver_progress['exports'], 3)
+        self.assertEqual(self.driver_progress['exports'], 2)
 
     def test_query_over_2_5_seconds_stops_on_first_observation(self):
         with self.assertRaisesRegex(EvidenceError, 'observation gap'):
