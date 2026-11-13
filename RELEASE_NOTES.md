@@ -2,6 +2,84 @@
 
 Each release has channel-specific notes. The release tag must match the `##` heading exactly.
 
+## v2026.11.13
+
+### GitHub
+
+- Retry nearby deliveries in batches that work through the entire queue. Previously, after an outage, repeated retries could skip messages when more than 64 events were waiting.
+- Stop naming the recipient device on message events. Kind 1060 envelopes now carry only the version and header tags, so a message server can no longer link deliveries, or a group fanout burst, to the devices receiving them. The delivery target stays on the sending device and steers nearby delivery and call wakes from there. Shared group ciphertext still never leaves the device on its own.
+- Stop asking message servers for message events by recipient device. Messages are found through sender keys, which are subscribed in chunks of at most 1,000 (500 on the mesh), one request each; only a chunk that changed is requested again. Past 12,000 sender keys, those that only have old missed messages are left out first. A single oversized request used to be refused whole by some message servers, which stopped delivery from them for accounts with many contacts.
+- Compatibility: versions that have not updated reject call wakes and nearby copies from this version until they update. Delivery through message servers works in both directions, and recipient-tagged messages, call wakes and nearby copies from older versions are still read. Messages queued by an older version with a recipient tag are kept on the device and marked failed instead of being sent again.
+- Hold a first message that arrives before its handshake in a call wake or nearby copy, within a fixed limit.
+- Update the protocol library to 0.3.17 with nostr-double-ratchet 0.0.178 and the CLI to 0.1.65. Group messages sent under an older member list are delivered while the sender is still a member, and an earlier copy of a group key that arrives late still opens the earlier messages.
+- Sort incoming direct messages into chats and requests. People you follow are accepted, people in your wider network and unknown senders arrive as requests, and each group has its own setting. Requests are limited per sender and decided on device after decryption, without adding social identities to network filters.
+- Hold an authenticated group message until the group's details arrive, and ask a member for them privately. Retries are bounded and survive restarts.
+- Remove location and device details from photos and videos before upload.
+- Recognise Cashu tokens and Lightning invoices in message text.
+- Suggest chats in the system share sheet with shared avatar rendering and thumbnails.
+- Jump to the original message from a reply quote, and select text across messages on desktop.
+- Use the revision-aware social graph. Sync public follow and mute lists with optional Negentropy and bound each download.
+- Use per-peer tokens for nearby Bluetooth discovery.
+- Avoid loading the outgoing backlog for notification previews.
+- Share screen navigation rules across all five apps from the core, and build the protocol engine and core tests as ordinary modules.
+- Stop repeated routing repairs for private client connections while preserving authenticated recovery.
+- Keep followed and muted profiles current through bounded anonymous discovery, and preserve saved discovery data when upgrading.
+- Preserve typed text and the insertion point on iOS when a chat’s saved draft arrives after typing has begun.
+- Deliver a Note to Self file offer to each ready linked device immediately. Retry the missing copies across restarts.
+- Resume pending history transfer after discovering an authorized linked device, using anonymous device discovery.
+- Fetch attachments from unrelated file providers anonymously and restrict identified private-cache access to verified linked devices.
+- Keep private device connections out of public routing announcements, including when connecting to older peers.
+- Read versioned Hashtree keys in native attachments and invites.
+- Update the FIPS transport to 0.4.122 and the message provider to 0.6.4. A device that cannot use direct connection offers now declines them, which stops repeated offers and lowers idle traffic. Keep anonymous file readers separate from device connections and apply peer restrictions across transports.
+- Check the public source history before publication with Hashtree 0.4.5 tools, which read the source repository's current format.
+
+- Download Linux build packages from verified archive mirrors while keeping the dated package metadata and hashes fixed.
+- Measure idle network use after the test devices finish their observed startup negotiations, preserving the full measurement window and resource limits.
+
+### Apple
+
+- Deliver long queues of waiting messages when nearby devices reconnect.
+- Message servers can no longer see which of your devices a private message is for.
+- Keep receiving messages reliably when you have many contacts.
+- Calls and nearby delivery with people on older versions work again once they update. Messages through message servers work both ways.
+- Messages from people you don't follow now arrive as requests, with settings for who can reach you.
+- Photos and videos are sent without location or device details.
+- Payment links for Cashu and Lightning are recognised in messages.
+- Suggested chats in the share sheet show the right pictures.
+- Tap a quoted reply to jump to the original message. Select text across messages on Mac.
+- Group messages wait for their group details before appearing.
+- Improve finding nearby devices over Bluetooth.
+- Reduce unnecessary network activity while the app is idle.
+- Keep followed and muted profiles up to date.
+- Keep letters in order and the cursor in place when you start typing as a chat opens on iPhone.
+- Send files to yourself on a connected device even when another linked device is offline.
+- Restore message history more reliably when linking a new device.
+- Improve privacy when downloading files and sharing cached files between your devices.
+- Keep private device connections out of public network announcements.
+- Open attachments and invites that use the updated Hashtree format.
+
+### Zapstore
+
+- Deliver long queues of waiting messages when nearby devices reconnect.
+- Message servers can no longer see which of your devices a private message is for.
+- Keep receiving messages reliably when you have many contacts.
+- Calls and nearby delivery with people on older versions work again once they update. Messages through message servers work both ways.
+- Messages from people you don't follow now arrive as requests, with settings for who can reach you.
+- Photos and videos are sent without location or device details.
+- Payment links for Cashu and Lightning are recognised in messages.
+- Suggested chats in the share sheet show the right pictures.
+- Tap a quoted reply to jump to the original message.
+- Group messages wait for their group details before appearing.
+- Improve finding nearby devices over Bluetooth.
+- Reduce unnecessary network activity while the app is idle.
+- Keep followed and muted profiles up to date.
+- Send files to yourself on a connected device even when another linked device is offline.
+- Restore message history more reliably when linking a new device.
+- Improve privacy when downloading files and sharing cached files between your devices.
+- Keep private device connections out of public network announcements.
+- Open attachments and invites that use the updated Hashtree format.
+
+
 ## v2026.11.12.2
 
 ### GitHub

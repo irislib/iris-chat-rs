@@ -324,6 +324,7 @@ pub(super) struct RelayTransportRuntime {
     pub(super) publish_drain_failed_count: usize,
     pub(super) publish_drain_task: Option<RelayPublishDrainTask>,
     pub(super) nearby_replay_started_at: Option<Instant>,
+    pub(super) nearby_replay_cursor: Option<String>,
     pub(super) retry_backoff_attempt: u32,
     pub(super) next_retry_due_at: Option<Instant>,
     pub(super) next_retry_reason: Option<String>,

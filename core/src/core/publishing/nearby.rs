@@ -1,4 +1,5 @@
 use super::*;
+use std::ops::Bound::{Excluded, Unbounded};
 
 impl AppCore {
     pub(in crate::core) fn emit_nearby_published_event(&self, event: &Event) {
@@ -35,21 +36,32 @@ impl AppCore {
         }
         self.relay_transport_runtime.nearby_replay_started_at = Some(now);
         self.replay_mesh_outbox();
-        let nearby_events = self
-            .pending_relay_publishes
-            .values()
-            .rev()
-            .filter(|pending| {
-                !pending
-                    .chat_id
-                    .as_deref()
-                    .is_some_and(|chat| self.blocked_direct_publication(chat))
-            })
-            .take(64)
-            .filter_map(|pending| serde_json::from_str::<Event>(&pending.event_json).ok())
-            .collect::<Vec<_>>();
-        for event in &nearby_events {
-            self.publish_fips_nearby(event);
+        // Continue after the last scanned key, even if its row was removed.
+        // Advance past blocked or malformed rows without exceeding the batch.
+        let pending = &self.pending_relay_publishes;
+        let start = self
+            .relay_transport_runtime
+            .nearby_replay_cursor
+            .as_ref()
+            .map_or(Unbounded, Excluded);
+        let batch = pending
+            .range::<String, _>((start, Unbounded))
+            .chain(pending.iter())
+            .take(64.min(pending.len()));
+        let mut last = None;
+        for (id, row) in batch {
+            last = Some(id);
+            if row
+                .chat_id
+                .as_deref()
+                .is_some_and(|chat| self.blocked_direct_publication(chat))
+            {
+                continue;
+            }
+            if let Ok(event) = serde_json::from_str::<Event>(&row.event_json) {
+                self.publish_fips_nearby(&event);
+            }
         }
+        self.relay_transport_runtime.nearby_replay_cursor = last.cloned();
     }
 }

@@ -396,6 +396,18 @@ fn encrypted_chat_crosses_fips_transit_by_direct_recipient_route_without_message
                     .count()
             });
         if received == burst as usize {
+            let bodies: std::collections::BTreeSet<_> = bob.threads
+                [&alice_owner.public_key().to_hex()]
+                .messages
+                .iter()
+                .filter_map(|m| m.body.strip_prefix("offline mesh message "))
+                .collect();
+            let expected = (0..burst).map(|i| i.to_string()).collect::<Vec<_>>();
+            assert_eq!(
+                bodies,
+                expected.iter().map(String::as_str).collect(),
+                "every queued message must arrive exactly once"
+            );
             eprintln!(
                 "mesh_chat.recovered messages={burst} elapsed_ms={}",
                 recovery_started.elapsed().as_millis()

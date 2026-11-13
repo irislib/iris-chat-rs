@@ -40,6 +40,57 @@ fn fixture() -> (AppCore, tempfile::TempDir) {
 }
 
 #[test]
+fn nearby_retries_cover_the_durable_queue_and_preserve_recipient_only_packets() {
+    let (mut core, _directory) = fixture();
+    let recipient = Keys::generate().public_key();
+    let recipient_npub = recipient.to_bech32().unwrap();
+    let unrelated = Keys::generate().public_key().to_bech32().unwrap();
+    let signer = Keys::generate();
+    let mut expected = BTreeMap::new();
+    for i in 0..140 {
+        let event = EventBuilder::new(
+            Kind::Custom(MESSAGE_EVENT_KIND as u16),
+            format!("opaque {i}"),
+        )
+        .tag(Tag::parse(["v", "2"]).unwrap())
+        .tag(Tag::parse(["header", "test"]).unwrap())
+        .sign_with_keys(&signer)
+        .unwrap();
+        let id = event.id.to_hex();
+        expected.insert(id.clone(), encode_fips_nearby_event(&event).unwrap());
+        core.pending_relay_publishes.insert(
+            id.clone(),
+            PendingRelayPublish {
+                owner_pubkey_hex: String::new(),
+                event_id: id,
+                label: "test".into(),
+                event_json: serde_json::to_string(&event).unwrap(),
+                inner_event_id: None,
+                chat_id: None,
+                created_at_secs: event.created_at.as_secs(),
+                attempt_count: 0,
+                last_error: None,
+                pairwise_device_hex: Some(recipient.to_hex()),
+            },
+        );
+    }
+    let queue = core.device_sync.as_ref().unwrap().nearby_outbox.clone();
+    for covered in [64, 128, 140] {
+        core.relay_transport_runtime.nearby_replay_started_at = None;
+        core.retry_pending_relay_publishes("scheduled_retry");
+        let queue = queue.read().unwrap();
+        let packets = queue.pending_for_link(&recipient_npub, 1);
+        assert_eq!(packets.len(), covered);
+        assert!(queue.pending_for_link(&unrelated, 1).is_empty());
+        for (id, bytes) in packets {
+            assert_eq!(expected.get(&id), Some(&bytes));
+        }
+    }
+    assert_eq!(core.pending_relay_publishes.len(), 140);
+    core.stop_device_sync_now();
+}
+
+#[test]
 fn unrelated_nearby_receipt_preserves_delivery_to_a_late_peer() {
     let (mut core, _directory) = fixture();
     let unrelated = Keys::generate();
