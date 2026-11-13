@@ -324,19 +324,13 @@ fn checkpoint_real_group_queue_append_and_retry_retirement_are_bounded() {
     fixture.sender.group_manager = GroupEventManager::from_snapshot(GroupManagerSnapshot {
         local_owner_pubkey: fixture.sender.local_owner,
         groups: vec![group],
-        sender_keys: vec![nostr_double_ratchet::GroupSenderKeyRecordSnapshot {
-            group_id: "checkpoint-growth-group".into(),
-            sender_owner: ndr_owner(fixture.peer_owner.public_key()),
-            sender_device: ndr_device(fixture.ready_device.public_key()),
-            sender_event_pubkey: author,
-            sender_event_secret_key: None,
-            latest_key_id: Some(1),
-            states: vec![initial.clone()],
-            distribution_history: vec![],
-            delivery_state: None,
-            distributed_to: vec![],
-            repair_snapshots: vec![],
-        }],
+        sender_keys: vec![incoming_sender_key_record(
+            "checkpoint-growth-group",
+            fixture.peer_owner.public_key(),
+            fixture.ready_device.public_key(),
+            author,
+            &initial,
+        )],
     })
     .unwrap();
     // Set up one recoverable front candidate before creating the real database.

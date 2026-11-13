@@ -21,19 +21,13 @@ pub(super) fn queued_group_history(count: usize) -> (ProtocolEngine, Keys, Keys)
     engine.group_manager = GroupEventManager::from_snapshot(GroupManagerSnapshot {
         local_owner_pubkey: engine.local_owner,
         groups: vec![group.clone()],
-        sender_keys: vec![nostr_double_ratchet::GroupSenderKeyRecordSnapshot {
-            group_id: group.group_id.clone(),
-            sender_owner: ndr_owner(sender.public_key()),
-            sender_device: ndr_device(sender_device.public_key()),
-            sender_event_pubkey: author,
-            sender_event_secret_key: None,
-            latest_key_id: Some(1),
-            states: vec![initial.clone()],
-            distribution_history: vec![],
-            delivery_state: None,
-            distributed_to: vec![],
-            repair_snapshots: vec![],
-        }],
+        sender_keys: vec![incoming_sender_key_record(
+            &group.group_id,
+            sender.public_key(),
+            sender_device.public_key(),
+            author,
+            &initial,
+        )],
     })
     .unwrap();
     let mut encryptor = initial;

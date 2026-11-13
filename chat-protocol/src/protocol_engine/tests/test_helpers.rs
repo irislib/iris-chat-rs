@@ -47,3 +47,25 @@ pub(super) fn group_roster_fact_event_for_test(admin: &Keys, snapshot: &GroupSna
         .sign_with_keys(admin)
         .expect("signed group roster fact")
 }
+
+pub(super) fn incoming_sender_key_record(
+    group_id: &str,
+    owner: PublicKey,
+    device: PublicKey,
+    author: NdrDevicePubkey,
+    state: &nostr_double_ratchet::SenderKeyState,
+) -> nostr_double_ratchet::GroupSenderKeyRecordSnapshot {
+    nostr_double_ratchet::GroupSenderKeyRecordSnapshot {
+        group_id: group_id.into(),
+        sender_owner: ndr_owner(owner),
+        sender_device: ndr_device(device),
+        sender_event_pubkey: author,
+        sender_event_secret_key: None,
+        latest_key_id: Some(state.key_id()),
+        states: vec![state.clone()],
+        distribution_history: vec![],
+        delivery_state: None,
+        distributed_to: vec![],
+        repair_snapshots: vec![],
+    }
+}
