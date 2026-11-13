@@ -2,10 +2,11 @@
 
 Each release has channel-specific notes. The release tag must match the `##` heading exactly.
 
-## v2026.11.13.3
+## v2026.11.13.4
 
 ### GitHub
 
+- With chat protocol 0.3.19, forwarding another member’s sender key to a linked device no longer resends the entire group roster. A five-person group with two devices per person used 26% fewer published bytes across five matched simulations, delivering all 9,000 expected message copies.
 - Publish one sender-key event per group message. Members retrieve it from a separate anonymous relay connection using signing keys distributed through their private sessions. Relays can correlate subscriptions to the same sender. Membership updates and key repair continue through private sessions.
 - Update every device participating in a group. Earlier versions cannot receive new group messages. Updated clients keep existing history and can read older private group deliveries.
 - New group messages arrive when the client is connected and catch up when it reconnects. Device-associated push subscriptions exclude group signing keys, so the new messages do not wake a suspended client. Direct-message and call notifications retain their existing behavior.
