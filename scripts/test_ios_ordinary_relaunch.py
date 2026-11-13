@@ -132,6 +132,7 @@ class RelaunchTests(unittest.TestCase):
 
     def test_ordinary_replacement_has_fresh_process(self):
         proof = self.fixture.launch_proof()
+        self.assertEqual(proof['route'], 'accepted-adhoc-normal-launch')
         self.assertEqual(proof['previous_pid'], 101)
         self.assertEqual(proof['pid'], 102)
         self.assertTrue(proof['debugger_free'])
@@ -474,6 +475,19 @@ class TestFlightDistributionTests(unittest.TestCase):
 
     def test_binds_the_distribution_build_store_install_and_preserved_state(self):
         self.assertEqual(self.check()['previous_build'], '10000')
+
+    def test_testflight_ordinary_launch_records_its_validated_channel(self):
+        distribution = self.check()
+        f = DistributionFixture(self.root)
+        # Reuse the ordinary launch fixture's process/clock observations.
+        f.config = distribution
+        f.executable = distribution['installed_url'] + 'IrisChat'
+        installed = {'bundleIdentifier': distribution['bundle_id'], 'bundleVersion': self.candidate['apple_build'],
+                     'url': distribution['installed_url']}
+        proof = relaunch.validate_launch_result(distribution, installed, f.result(),
+            relaunch.launch_command(distribution['bundle_id'], replacement=True), 130, 130.2, 130.3,
+            executable=f.executable, before=f.snapshot(101, 129.9))
+        self.assertEqual(proof['route'], 'accepted-testflight-normal-launch')
 
     def test_rejects_changed_bytes_wrong_channel_and_missing_evidence(self):
         self.config['channel'] = 'authorized-production-adhoc'

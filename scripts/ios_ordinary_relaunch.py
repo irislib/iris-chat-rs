@@ -298,7 +298,9 @@ def validate_launch_result(distribution, installed, result, command, started, re
     else:
         require(pid == resume_of['pid'] and audit == resume_of['audit_token']
                 and executable == resume_of['executable'], 'Resume changed process identity')
-    return {'route': 'accepted-adhoc-normal-launch', 'candidate': distribution['candidate'],
+    route = ('accepted-testflight-normal-launch' if distribution.get('channel') == 'testflight'
+             else 'accepted-adhoc-normal-launch')
+    return {'route': route, 'candidate': distribution['candidate'],
             'pid': pid, 'executable': executable, 'audit_token': audit,
             'replacement': replacement, 'previous_pid': before['processes'][0]['pid'] if replacement else None,
             'command': command, 'launch_options': options, 'started_utc': started,
