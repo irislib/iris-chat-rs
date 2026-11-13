@@ -1,4 +1,5 @@
 use super::*;
+use nostr::JsonUtil;
 
 #[test]
 fn private_group_ready_publications_are_due_after_restart_until_outbox_ack() {
@@ -23,7 +24,34 @@ fn private_group_ready_publications_are_due_after_restart_until_outbox_ack() {
             Some("ready-after-restart".into()),
         )
         .unwrap();
-    assert_eq!(sent.effects.len(), 2);
+    let sent_data = |effects: &[ProtocolEffect]| {
+        effects
+            .iter()
+            .filter_map(|ProtocolEffect::Publish(p)| {
+                (p.carrier == ProtocolCarrier::SharedGroup).then(|| p.event.as_json())
+            })
+            .collect::<Vec<_>>()
+    };
+    let data = sent_data(&sent.effects);
+    assert_eq!(
+        data.len(),
+        1,
+        "one signed ciphertext serves both recipient devices"
+    );
+    let group_event = Event::from_json(&data[0]).unwrap();
+    assert!(group_event.verify().is_ok());
+    assert_eq!(
+        group_event
+            .tags
+            .iter()
+            .map(|t| &t.as_slice()[0])
+            .collect::<Vec<_>>(),
+        ["v", "header"]
+    );
+    assert!(sent
+        .effects
+        .iter()
+        .all(|ProtocolEffect::Publish(p)| p.is_publishable()));
     let mut restored = ProtocolEngine::load_or_create_for_local_device(
         fixture.store,
         fixture.owner.public_key(),

@@ -3,10 +3,34 @@ use super::*;
 pub(super) const MAX_READY_GROUP_PUBLICATIONS: usize = 4_096;
 
 impl ProtocolEngine {
+    pub fn owns_group_data_stream(&self, chat_id: &str, author: PublicKey) -> bool {
+        let Some(group) = chat_id.strip_prefix("group:") else {
+            return false;
+        };
+        self.group_manager.group_has_member(group, self.local_owner) == Some(true)
+            && self.group_manager.is_local_sender_key_stream(
+                group,
+                ndr_device(author),
+                self.local_device,
+            )
+    }
+
+    /// Authors learned from private distributions for groups this device belongs to.
+    pub fn subscribable_group_sender_event_pubkeys(&self) -> Vec<PublicKey> {
+        self.group_manager
+            .subscribable_sender_event_pubkeys()
+            .into_iter()
+            .filter_map(|a| public_device(a).ok())
+            .collect()
+    }
+
     fn ready_group_publication_is_allowed(&self, pending: &ProtocolReadyGroupPublish) -> bool {
         // Envelopes sealed before carriers were recorded still name their
         // recipient device. They are retired here, never offered again.
         pending.publish.is_publishable()
+            && (pending.publish.carrier != ProtocolCarrier::SharedGroup
+                || self
+                    .owns_group_data_stream(&pending.publish.chat_id, pending.publish.event.pubkey))
             && !pending
                 .publish
                 .chat_id
@@ -98,103 +122,5 @@ impl ProtocolEngine {
             }
             engine.persist_now()
         })
-    }
-
-    /// Prepare recipient-specific notification delivery in the same checkpoint
-    /// as the shared group ciphertext. Shared authors never enter push filters.
-    pub(super) fn prepare_private_group_wakes(
-        &mut self,
-        group_id: &str,
-        output: &mut ProtocolGroupSendResult,
-        inner_event_id: Option<String>,
-    ) -> anyhow::Result<()> {
-        let group = self
-            .group_manager
-            .group(group_id)
-            .ok_or_else(|| anyhow::anyhow!("group is unavailable"))?;
-        let own_authors = self.group_sender_event_pubkeys_for_owner(self.owner_pubkey);
-        let broadcasts = output
-            .effects
-            .iter()
-            .filter_map(|effect| {
-                let ProtocolEffect::Publish(publish) = effect;
-                (own_authors.contains(&publish.event.pubkey)
-                    && publish.carrier == ProtocolCarrier::SharedGroup)
-                    .then_some(publish.event.clone())
-            })
-            .collect::<Vec<_>>();
-        let chat_id = group_chat_id(group_id);
-        for event in broadcasts {
-            let content = serde_json::json!({
-                "v": 1, "type": "group-wake", "event": event,
-            })
-            .to_string();
-            let mut rumor = UnsignedEvent::new(
-                self.owner_pubkey,
-                event.created_at,
-                nostr::Kind::Custom(21_113),
-                [],
-                content,
-            );
-            rumor.ensure_id();
-            // A wake without an application message ID is still an individual
-            // delivery, not replaceable group metadata.
-            let delivery_id = inner_event_id
-                .clone()
-                .or_else(|| rumor.id.map(|id| id.to_hex()));
-            let payload = serde_json::to_vec(&rumor)?;
-            let mut rng = OsRng;
-            let mut ctx = ProtocolContext::new(NdrUnixSeconds(unix_now().get()), &mut rng);
-            for recipient_owner in group.members.iter().copied().collect::<BTreeSet<_>>() {
-                if recipient_owner == self.local_owner
-                    || self
-                        .held_direct_chats
-                        .contains(&public_owner(recipient_owner)?.to_hex())
-                {
-                    continue;
-                }
-                let prepared = self.session_manager.prepare_remote_send(
-                    &mut ctx,
-                    recipient_owner,
-                    payload.clone(),
-                )?;
-                let prepared = group_publish_from_prepared_send(
-                    prepared,
-                    GroupPendingFanout::Remote {
-                        recipient_owner,
-                        payload: payload.clone(),
-                    },
-                );
-                self.queue_group_pending_fanouts(group_id, &prepared, delivery_id.clone());
-                let ready = protocol_effects_from_group_prepared_publish(
-                    &prepared,
-                    self,
-                    delivery_id.clone(),
-                    chat_id.clone(),
-                    &mut output.event_ids,
-                )?;
-                self.retain_group_publications(&ready, Some(recipient_owner))?;
-                output.effects.extend(ready);
-            }
-            let payload = local_sibling_payload(self.owner_pubkey, &payload)?;
-            let prepared = self
-                .session_manager
-                .prepare_local_sibling_send_reusing_sessions(&mut ctx, payload.clone())?;
-            let prepared = group_publish_from_prepared_send(
-                prepared,
-                GroupPendingFanout::LocalSiblings { payload },
-            );
-            self.queue_group_pending_fanouts(group_id, &prepared, delivery_id.clone());
-            output
-                .effects
-                .extend(protocol_effects_from_group_prepared_publish(
-                    &prepared,
-                    self,
-                    delivery_id.clone(),
-                    chat_id.clone(),
-                    &mut output.event_ids,
-                )?);
-        }
-        Ok(())
     }
 }

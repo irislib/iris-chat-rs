@@ -107,8 +107,7 @@ pub enum ProtocolCarrier {
     Unmarked,
     /// A recipient-specific ratchet envelope for exactly this device.
     Pairwise { device: PublicKey },
-    /// Shared group sender-key ciphertext: a local intermediate that only ever
-    /// travels inside pairwise envelopes. Never hand it to a network carrier.
+    /// One signed data ciphertext for the authorized group devices.
     SharedGroup,
 }
 
@@ -138,7 +137,7 @@ impl ProtocolPublish {
     /// also retires envelopes sealed by versions that still tagged one.
     pub fn is_publishable(&self) -> bool {
         self.event.kind.as_u16() as u32 != MESSAGE_EVENT_KIND
-            || (self.carrier.pairwise_device().is_some()
+            || (!matches!(self.carrier, ProtocolCarrier::Unmarked)
                 && self.event.tags.public_keys().next().is_none())
     }
 }

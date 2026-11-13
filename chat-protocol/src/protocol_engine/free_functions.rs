@@ -163,24 +163,6 @@ pub(super) fn next_pending_retry_at_secs(created_at_secs: u64, now: NdrUnixSecon
         .saturating_add(pending_retry_delay_secs(created_at_secs, now))
 }
 
-pub(super) fn group_publish_from_prepared_send(
-    prepared: PreparedSend,
-    fanout: GroupPendingFanout,
-) -> GroupPreparedPublish {
-    let pending_fanouts = if prepared.relay_gaps.is_empty() {
-        Vec::new()
-    } else {
-        vec![fanout]
-    };
-    GroupPreparedPublish {
-        deliveries: prepared.deliveries,
-        invite_responses: prepared.invite_responses,
-        sender_key_messages: Vec::new(),
-        relay_gaps: prepared.relay_gaps,
-        pending_fanouts,
-    }
-}
-
 pub(super) fn collect_expected_sender_pubkeys(
     session: &SessionState,
     out: &mut HashSet<PublicKey>,
