@@ -86,7 +86,9 @@ class RuntimeWorkflowTests(unittest.TestCase):
                      "wrong-workflow", "failed-attestation", "missing-artifact", "historic-tag",
                      "wrong-tag-commit", "wrong-branch", "fork", "pull-request", "wrong-run",
                      "different-attempt", "different-signed-run", "tampered-source", "valid-cpu-only",
-                     "documented-exception"):
+                     "documented-exception", "wrong-workflow-id", "wrong-workflow-resource-path",
+                     "wrong-workflow-resource-name", "wrong-run-name", "wrong-display-title",
+                     "canonical-name-with-title"):
             with self.subTest(case=case), tempfile.TemporaryDirectory() as folder:
                 root = Path(folder)
                 (root / "source/scripts").mkdir(parents=True)
@@ -105,11 +107,25 @@ class RuntimeWorkflowTests(unittest.TestCase):
                 if case == "documented-exception":
                     proof = exception_receipt()
                     candidate = proof["release"]
-                metadata.update(id=123, run_attempt=2, head_sha=POLICY_SHA, head_branch="main",
+                workflow = {"id": 391756692, "name": "iOS Runtime Acceptance",
+                            "path": ".github/workflows/ios-runtime-acceptance.yml"}
+                title = "Record iOS runtime acceptance " + candidate["tag"]
+                metadata.update(id=123, run_attempt=2, workflow_id=workflow["id"], name=title,
+                                display_title=title, head_sha=POLICY_SHA, head_branch="main",
                                 repository={"full_name": "owner/project"})
                 if case in ("historic-tag", "wrong-tag-commit"):
                     metadata.update(head_branch=CANDIDATE["tag"], head_sha=CANDIDATE["source_commit"])
                     proof = {"historic-tag-proof": CANDIDATE["source_commit"]}
+                    metadata["name"] = workflow["name"]
+                    del metadata["display_title"]
+                if case == "canonical-name-with-title": metadata["name"] = workflow["name"]
+                if case == "wrong-workflow-id": metadata["workflow_id"] += 1
+                if case == "wrong-workflow-resource-path": workflow["path"] = ".github/workflows/ci.yml"
+                if case == "wrong-workflow-resource-name": workflow["name"] = "iOS Distribution"
+                if case == "wrong-run-name": metadata["name"] = "Record iOS runtime acceptance v2020.1.1"
+                if case == "wrong-display-title":
+                    metadata.update(name=workflow["name"], display_title="Record iOS runtime acceptance v2020.1.1")
+                (root / "workflow.json").write_text(json.dumps(workflow))
                 if case == "valid-cpu-only": proof = cpu_only(proof)
                 if case == "wrong-tag-commit": metadata["head_sha"] = POLICY_SHA
                 if case == "wrong-branch": metadata["head_branch"] = "topic"
@@ -152,8 +168,10 @@ class RuntimeWorkflowTests(unittest.TestCase):
                     root = Path(os.environ['FIXTURE_ROOT'])
                     with (root / 'calls').open('a') as log:
                         log.write(json.dumps(args) + '\\n')
-                    if args[0] == 'api':
+                    if args[:2] == ['api', 'repos/owner/project/actions/runs/123']:
                         print((root / 'metadata.json').read_text())
+                    elif args[:2] == ['api', 'repos/owner/project/actions/workflows/ios-runtime-acceptance.yml']:
+                        print((root / 'workflow.json').read_text())
                     elif args[:2] == ['run', 'download']:
                         destination = Path(args[args.index('--dir') + 1])
                         destination.mkdir()
@@ -180,7 +198,8 @@ class RuntimeWorkflowTests(unittest.TestCase):
                            SOURCE_COMMIT=candidate["source_commit"], IPA_SHA256=candidate["ipa_sha256"],
                            MANIFEST_SHA256=candidate["manifest_sha256"], APPLE_VERSION=candidate["apple_version"],
                            APPLE_BUILD=candidate["apple_build"])
-                valid = case in ("valid", "valid-adhoc", "historic-tag", "valid-cpu-only", "documented-exception")
+                valid = case in ("valid", "valid-adhoc", "historic-tag", "valid-cpu-only",
+                                 "documented-exception", "canonical-name-with-title")
                 for target in (("app-store", "testflight-public") if valid else ("app-store",)):
                     with self.subTest(target=target):
                         # Each invocation gets a fresh hosted runner.

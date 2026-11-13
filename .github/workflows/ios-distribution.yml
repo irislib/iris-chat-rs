@@ -236,10 +236,24 @@ jobs:
           set -Eeuo pipefail
           receipt_dir="$RUNNER_TEMP/ios-runtime-acceptance"
           mkdir -p "$receipt_dir"
+          workflow=".github/workflows/ios-runtime-acceptance.yml"
+          gh api "repos/$GITHUB_REPOSITORY/actions/workflows/${workflow##*/}" \
+            --jq '{id, name, path}' > "$receipt_dir/workflow.json"
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/$ACCEPTANCE_RUN" \
-            --jq '{id, run_attempt, status, conclusion, event, head_sha, head_branch, repository: {full_name: .repository.full_name}, head_repository: {full_name: .head_repository.full_name}, path, name}' \
-            > "$receipt_dir/run.json"
+            --jq '{id, workflow_id, run_attempt, status, conclusion, event, head_sha, head_branch, repository: {full_name: .repository.full_name}, head_repository: {full_name: .head_repository.full_name}, path, name, display_title}' \
+            > "$receipt_dir/api-run.json"
+          # GitHub can use the per-run title as "name". Supply the canonical name
+          # to current and archived validators only after verifying workflow membership.
           metadata="$receipt_dir/run.json"
+          jq -e --slurpfile definition "$receipt_dir/workflow.json" --arg path "$workflow" \
+            --arg title "Record iOS runtime acceptance $RELEASE_TAG" '
+            $definition[0] as $wf |
+            select($wf.path == $path and $wf.name == "iOS Runtime Acceptance" and
+              ($wf.id | type) == "number" and $wf.id > 0 and .workflow_id == $wf.id) |
+            select((.name == $title and .display_title == $title) or
+              (.name == $wf.name and (.display_title == $title or (.display_title // $wf.name) == $wf.name))) |
+            .name = $wf.name
+          ' "$receipt_dir/api-run.json" > "$metadata"
           jq -e --arg run "$ACCEPTANCE_RUN" --arg repo "$GITHUB_REPOSITORY" '
             (.id | tostring) == $run and .repository.full_name == $repo and
             .head_repository.full_name == $repo and .event == "workflow_dispatch" and
@@ -259,7 +273,6 @@ jobs:
             echo "::error::Unexpected runtime acceptance source."
             exit 1
           fi
-          workflow=".github/workflows/ios-runtime-acceptance.yml"
           jq -e --arg path "$workflow" --arg ref "$recorder_ref" \
             '.path == $path or .path == ($path + "@" + $ref)' "$metadata" > /dev/null
           gh run download "$ACCEPTANCE_RUN" --repo "$GITHUB_REPOSITORY" \
