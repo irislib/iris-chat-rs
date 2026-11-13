@@ -251,6 +251,23 @@ class WindowTests(unittest.TestCase):
             window.close()
         self.assertEqual(kill.call_args_list[0].args, (123, adapters.signal.SIGTERM))
 
+    def test_testflight_app_lookup_includes_store_installations_only_on_app_queries(self):
+        window = self.admit()
+        core = adapters.CoreDevice(window)
+        query = ['device', 'info', 'apps', '--filter', "bundleIdentifier == '" + self.config['bundle_id'] + "'"]
+        def respond(command, label):
+            Path(command[command.index('--json-output') + 1]).write_text(json.dumps({'result': {}}))
+            return {}
+        with patch.object(window, 'spawn', side_effect=respond) as start, patch.object(window, 'wait'):
+            core.run(query)
+            self.assertNotIn('--include-default-apps', start.call_args.args[0])
+            window.testflight = True
+            core.run(query)
+            self.assertIn('--include-default-apps', start.call_args.args[0])
+            core.run(['device', 'info', 'processes'])
+            self.assertNotIn('--include-default-apps', start.call_args.args[0])
+        window.close()
+
     def test_coredevice_uses_pinned_tool_exact_device_and_bounded_command(self):
         window = self.admit(); core = adapters.CoreDevice(window)
         def spawn(command, label):

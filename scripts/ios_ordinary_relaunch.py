@@ -11,8 +11,10 @@ import hashlib
 import json
 import math
 from pathlib import Path
+import plistlib
 import time
 from urllib.parse import urlsplit
+import zipfile
 
 import ios_runtime_acceptance as contract
 import ios_relaunch_lifecycle as lifecycle
@@ -101,6 +103,8 @@ def validate_distribution(config_binding, candidate):
     """
     contract.validate_candidate(candidate)
     config = read_bound(config_binding)
+    if config.get('schema') == 'iris-testflight-distribution-v1':
+        return validate_testflight_distribution(config, candidate)
     exact(config, {'schema', 'candidate', 'production_adhoc', 'inputs', 'code_bindings'} | TARGET_KEYS)
     require(config['schema'] == 'iris-ordinary-relaunch-input-v1', 'Wrong private input schema')
     require(config['candidate'] == candidate, 'Wrong candidate')
@@ -157,6 +161,80 @@ def validate_distribution(config_binding, candidate):
             'Provenance has not been reviewed')
     for key in ('candidate', 'target', 'inputs', 'checker_sources', 'code_bindings'):
         require(review[key] == qualification[key], 'Provenance review is stale')
+    return config
+
+
+def validate_testflight_distribution(config, candidate):
+    """Check reviewed TestFlight installation evidence against the actual build and device."""
+    exact(config, TARGET_KEYS | {'schema', 'channel', 'candidate', 'inputs', 'review'})
+    require(config['candidate'] == candidate and config['channel'] == 'testflight', 'Wrong TestFlight channel or candidate')
+    inputs = config['inputs']
+    exact(inputs, {'official_ipa', 'manifest', 'distribution_run', 'asc_build', 'before', 'after',
+                   'testflight_screen', 'account_before', 'account_after', 'history_before', 'history_after',
+                   'draft_before', 'draft_after'})
+    for value in inputs.values():
+        verify_binding(value)
+    manifest = read_bound(inputs['manifest'])
+    ipa = Path(inputs['official_ipa']['path'])
+    name = f"iris-chat-{candidate['tag']}-ios.ipa"
+    require(inputs['official_ipa']['sha256'] == candidate['ipa_sha256'] and ipa.name == name
+            and inputs['manifest']['sha256'] == candidate['manifest_sha256'] and manifest['tag'] == candidate['tag']
+            and manifest['commit'] == candidate['source_commit'], 'Wrong tagged TestFlight artifacts')
+    assets = [row for row in manifest['assets'] if row['name'] == name]
+    require(len(assets) == 1 and assets[0]['sha256'] == candidate['ipa_sha256']
+            and assets[0]['size'] == ipa.stat().st_size, 'IPA missing from release manifest')
+    with zipfile.ZipFile(ipa) as archive:
+        plists = [row for row in archive.infolist() if contract.matches(row.filename, r'Payload/[^/]+\.app/Info\.plist')]
+        require(len(plists) == 1 and plists[0].file_size <= 1024 * 1024, 'Expected one top-level IPA app')
+        info = plistlib.loads(archive.read(plists[0]))
+        require(info['CFBundleIdentifier'] == config['bundle_id'] and info['CFBundleVersion'] == candidate['apple_build']
+                and info['CFBundleShortVersionString'] == candidate['apple_version'], 'Wrong IPA app or version')
+    run = read_bound(inputs['distribution_run'])
+    require(run['repository']['full_name'] == 'irislib/iris-chat-rs' and run['head_sha'] == candidate['source_commit']
+            and run['path'] == '.github/workflows/ios-distribution.yml' and run['event'] == 'workflow_dispatch'
+            and run['head_branch'] == candidate['tag'] and run['display_title'] == 'iOS testflight ' + candidate['tag']
+            and run['status'] == 'completed' and run['conclusion'] == 'success',
+            'Wrong internal distribution workflow')
+    response = read_bound(inputs['asc_build'])
+    builds = response['data']
+    require(isinstance(builds, list) and len(builds) == 1, 'Expected one App Store Connect build')
+    build = builds[0]
+    require(build['type'] == 'builds' and build['id'] and build['attributes']['version'] == candidate['apple_build']
+            and build['attributes']['processingState'] == 'VALID' and build['attributes']['expired'] is False,
+            'Wrong or unavailable App Store Connect build')
+    def related(name, kind):
+        link = build['relationships'][name]['data']
+        matches = [r for r in response['included'] if r['type'] == kind and r['id'] == link['id']]
+        require(link['type'] == kind and len(matches) == 1, 'Missing App Store Connect build relationship')
+        return matches[0]['attributes']
+    release = related('preReleaseVersion', 'preReleaseVersions')
+    require(release['platform'] == 'IOS' and release['version'] == candidate['apple_version']
+            and related('app', 'apps')['bundleId'] == config['bundle_id'], 'Wrong TestFlight app or version')
+    for phase, number in [('before', config['previous_build']), ('after', candidate['apple_build'])]:
+        inventory = read_bound(inputs[phase])
+        info, result = inventory['info'], inventory['result']
+        args = info['arguments']
+        require(info['commandType'] == 'devicectl.device.info.apps' and info['outcome'] == 'success'
+                and args.count('--device') == 1 and args[args.index('--device') + 1] == config['device']
+                and result['deviceIdentifier'] == config['coredevice_id'] and len(result['apps']) == 1,
+                'Wrong physical inventory')
+        app = result['apps'][0]
+        require(app['bundleIdentifier'] == config['bundle_id'] and app['bundleVersion'] == number,
+                'Installed build mismatch')
+        if phase == 'after':
+            url = urlsplit(app['url'])
+            require(app['version'] == candidate['apple_version'] and app['url'] == config['installed_url']
+                    and url.scheme == 'file' and not url.netloc and not url.query and not url.fragment
+                    and url.path.endswith('.app/') and app['builtByDeveloper'] is False and app['appClip'] is False,
+                    'Unexpected store installation')
+    require(0 < int(config['previous_build']) < int(candidate['apple_build'])
+            and finite(config['installation_finished_utc']) > 0, 'TestFlight must upgrade in place')
+    review = read_bound(config['review'])
+    expected = {'schema': 'iris-testflight-install-review-v1', 'decision': 'accepted', 'channel': 'testflight',
+                'candidate': candidate, 'asc_build_id': build['id'], 'inputs': inputs,
+                'target': {k: config[k] for k in TARGET_KEYS},
+                'checks': {k: True for k in ('internal_build_offered', 'in_place_upgrade', 'account', 'history', 'draft')}}
+    require(review == expected, 'Missing or stale TestFlight installation review')
     return config
 
 

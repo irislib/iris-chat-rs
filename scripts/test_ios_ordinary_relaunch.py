@@ -3,8 +3,10 @@
 import copy
 import json
 from pathlib import Path
+import plistlib
 import tempfile
 import unittest
+import zipfile
 
 import ios_ordinary_relaunch as relaunch
 import ios_runtime_acceptance as contract
@@ -415,4 +417,94 @@ class CommandBoundaryTests(unittest.TestCase):
             relaunch.evaluate_runtime(f.config_binding,f.candidate,attempt,resume,capture)
 
 
-if __name__ == '__main__': unittest.main()
+
+
+class TestFlightDistributionTests(unittest.TestCase):
+    """Real-shaped App Store Connect and CoreDevice records, all synthetic."""
+    def setUp(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.root = Path(temp.name)
+        self.candidate = dict(CANDIDATE)
+        inp = {}
+        ipa = self.root / f"iris-chat-{self.candidate['tag']}-ios.ipa"
+        with zipfile.ZipFile(ipa, 'w') as archive:
+            archive.writestr('Payload/IrisChat.app/Info.plist', plistlib.dumps({
+                'CFBundleIdentifier': 'fi.siriusbusiness.irischat', 'CFBundleVersion': self.candidate['apple_build'],
+                'CFBundleShortVersionString': self.candidate['apple_version']}))
+        inp['official_ipa'] = relaunch.binding(ipa)
+        self.candidate['ipa_sha256'] = inp['official_ipa']['sha256']
+        inp['manifest'] = self.save('manifest', {'tag': self.candidate['tag'], 'commit': self.candidate['source_commit'],
+            'assets': [{'name': ipa.name, 'size': ipa.stat().st_size, 'sha256': self.candidate['ipa_sha256']}]})
+        self.candidate['manifest_sha256'] = inp['manifest']['sha256']
+        self.config = {'schema': 'iris-testflight-distribution-v1', 'channel': 'testflight', 'candidate': self.candidate,
+            'device': 'test-device', 'coredevice_id': 'test-core-device', 'bundle_id': 'fi.siriusbusiness.irischat',
+            'previous_build': '10000', 'installed_url': 'file:///private/new/IrisChat.app/', 'installation_finished_utc': 123,
+            'inputs': inp}
+        inp['distribution_run'] = self.save('run', {'repository': {'full_name': 'irislib/iris-chat-rs'},
+            'head_sha': self.candidate['source_commit'], 'head_branch': self.candidate['tag'], 'event': 'workflow_dispatch',
+            'path': '.github/workflows/ios-distribution.yml', 'display_title':'iOS testflight '+self.candidate['tag'],
+            'status': 'completed', 'conclusion': 'success'})
+        inp['asc_build'] = self.save('asc', {'data': [{'type': 'builds', 'id': 'asc-id',
+            'attributes': {'version': self.candidate['apple_build'], 'processingState': 'VALID', 'expired': False},
+            'relationships': {'app': {'data': {'type': 'apps', 'id': 'app'}},
+                              'preReleaseVersion': {'data': {'type': 'preReleaseVersions', 'id': 'v'}}}}],
+            'included': [{'type': 'apps', 'id': 'app', 'attributes': {'bundleId': self.config['bundle_id']}},
+                         {'type': 'preReleaseVersions','id': 'v','attributes': {'platform':'IOS','version': self.candidate['apple_version']}}]})
+        for phase in ('before', 'after'):
+            inp[phase] = self.save(phase, {'info': {'arguments': ['devicectl','device','info','apps','--device','test-device'],
+                'commandType': 'devicectl.device.info.apps', 'outcome': 'success'}, 'result': {'deviceIdentifier': 'test-core-device',
+                'apps': [{'bundleIdentifier': self.config['bundle_id'], 'bundleVersion': self.candidate['apple_build'] if phase == 'after' else '10000',
+                'version': self.candidate['apple_version'] if phase == 'after' else '0.1.0', 'url': self.config['installed_url'],
+                'builtByDeveloper': phase == 'before', 'appClip': False}]}})
+        for k in ('testflight_screen','account_before','account_after','history_before','history_after','draft_before','draft_after'):
+            inp[k] = self.save(k, {'synthetic': k})
+        self.review()
+
+    def save(self, name, obj):
+        p = self.root / (name + '.json'); p.write_text(json.dumps(obj)); return relaunch.binding(p)
+
+    def review(self):
+        self.config['review'] = self.save('review', {'schema':'iris-testflight-install-review-v1','decision':'accepted',
+            'channel':'testflight','candidate':self.candidate,'asc_build_id':'asc-id','inputs':self.config['inputs'],
+            'target':{k:self.config[k] for k in relaunch.TARGET_KEYS},'checks':{k:True for k in ('internal_build_offered','in_place_upgrade','account','history','draft')}})
+
+    def check(self):
+        return relaunch.validate_distribution(self.save('input', self.config), self.candidate)
+
+    def test_binds_the_distribution_build_store_install_and_preserved_state(self):
+        self.assertEqual(self.check()['previous_build'], '10000')
+
+    def test_rejects_changed_bytes_wrong_channel_and_missing_evidence(self):
+        self.config['channel'] = 'authorized-production-adhoc'
+        with self.assertRaises(relaunch.EvidenceError): self.check()
+        self.config['channel'] = 'testflight'
+        Path(self.config['inputs']['account_after']['path']).write_bytes(b'substituted')
+        with self.assertRaises(relaunch.EvidenceError): self.check()
+
+    def test_rejects_wrong_build_device_app_release_and_stale_review(self):
+        for part, path, value in [
+            ('after',['result','apps',0,'builtByDeveloper'], True),
+            ('before',['result','deviceIdentifier'], 'other phone'),
+            ('after',['result','apps',0,'bundleVersion'], 'wrong'),
+            ('asc_build',['data',0,'attributes','expired'], True),
+            ('asc_build',['included',0,'attributes','bundleId'], 'other.app'),
+            ('asc_build',['included',1,'attributes','version'], '1.0'),
+            ('distribution_run',['head_sha'], 'b'*40),
+            ('distribution_run',['display_title'], 'iOS app-store '+self.candidate['tag']),
+        ]:
+            with self.subTest(part=part, path=path):
+                old=self.config['inputs'][part]; obj=relaunch.read_bound(old); leaf=obj
+                for key in path[:-1]: leaf=leaf[key]
+                leaf[path[-1]]=value
+                self.config['inputs'][part]=self.save('changed-'+part,obj)
+                self.review()
+                with self.assertRaises(relaunch.EvidenceError): self.check()
+                self.config['inputs'][part]=old
+        self.review()
+        self.config['inputs']['history_after']=self.save('different-history',{'synthetic':'other'})
+        with self.assertRaises(relaunch.EvidenceError): self.check()
+
+
+if __name__ == '__main__':
+    unittest.main()

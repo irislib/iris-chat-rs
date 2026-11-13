@@ -76,6 +76,7 @@ class OwnedWindow:
             require(c['mode'] == mode, 'Missing explicit observation-only admission')
         require(c['schema'] == 'iris-relaunch-adapters-v1' and c['enabled'] is True, 'Runtime is not admitted')
         distribution = validate_distribution(c['distribution_binding'], c['candidate'])
+        self.testflight = distribution.get('channel') == 'testflight'
         require(all(c[key] == distribution[key] for key in ('device', 'coredevice_id', 'bundle_id'))
                 and c['build'] == distribution['candidate']['apple_build']
                 and c['executable'] == distribution['installed_url'] + c['process_name'],
@@ -226,6 +227,8 @@ class CoreDevice:
         output = self.window.out / f'coredevice-{self.window.serial + 1:03d}.json'
         args = [str(self.window.tools['coredevice']), *command[:3], '--device', self.window.config['device'],
                 '--timeout', '6', '--json-output', str(output), *command[3:]]
+        if self.window.testflight and command[:3] == ['device', 'info', 'apps']:
+            args.append('--include-default-apps')
         child = self.window.spawn(args, 'coredevice')
         self.window.wait(child, 7)
         require(output.stat().st_size <= 4 * 1024 * 1024, 'Oversized CoreDevice response')
