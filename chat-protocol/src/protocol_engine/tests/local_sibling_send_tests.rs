@@ -473,3 +473,78 @@ fn direct_send_does_not_copy_history_to_later_siblings_after_restart() {
         .effects
         .is_empty());
 }
+
+#[test]
+fn receiving_sender_keys_for_an_existing_group_forwards_only_the_key_to_linked_devices() {
+    let mut f = remote_send_fixture();
+    // The sender knows both receiver devices, but only the first has an invite.
+    // The second relies on its sibling's private sync, just as after an offline join.
+    observe_sibling_invite(&mut f.ready, &f.late, &f.late_device);
+    let created = f
+        .sender
+        .create_group(
+            "linked".into(),
+            vec![f.peer_owner.public_key()],
+            UnixSeconds(12),
+        )
+        .unwrap();
+    let group_id = created.snapshot.unwrap().group_id;
+    let controls = decrypt_own_sync_effects(&mut f.ready, created.effects);
+    let mut metadata_seen = false;
+    let mut keys_seen = false;
+    for m in controls {
+        let payload = m.content.as_bytes();
+        let Some(command) = JsonGroupPayloadCodecV1
+            .decode_pairwise_command(payload)
+            .unwrap()
+        else {
+            continue;
+        };
+        let outcome = f
+            .ready
+            .process_group_pairwise_payload(payload, m.sender, m.sender_device)
+            .unwrap();
+        let forwarded = decrypt_own_sync_effects(&mut f.late, outcome.effects);
+        match command {
+            GroupPairwiseCommand::MetadataSnapshot { .. } => {
+                assert_eq!(forwarded.len(), 1);
+                metadata_seen = true;
+            }
+            GroupPairwiseCommand::SenderKeyDistribution { .. } => {
+                assert!(metadata_seen);
+                assert_eq!(
+                    forwarded.len(),
+                    1,
+                    "learning a chain must not resend the roster"
+                );
+                keys_seen = true;
+                let replay = f
+                    .ready
+                    .process_group_pairwise_payload(payload, m.sender, m.sender_device)
+                    .unwrap();
+                assert!(replay.effects.is_empty());
+            }
+            _ => continue,
+        }
+        for copy in forwarded {
+            let applied = f
+                .late
+                .process_local_sibling_group_pairwise_payload(
+                    copy.content.as_bytes(),
+                    copy.sender,
+                    copy.sender_device,
+                )
+                .unwrap();
+            assert!(applied.effects.is_empty());
+        }
+    }
+    assert!(keys_seen);
+    assert_eq!(
+        f.late.group_snapshot(&group_id),
+        f.ready.group_snapshot(&group_id)
+    );
+    assert_eq!(
+        f.late.subscribable_group_sender_event_pubkeys(),
+        f.ready.subscribable_group_sender_event_pubkeys()
+    );
+}

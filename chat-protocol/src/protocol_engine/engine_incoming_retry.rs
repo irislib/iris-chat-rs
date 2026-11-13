@@ -381,10 +381,8 @@ impl ProtocolEngine {
                     }
                 }
                 if group_changed && forward_to_local_siblings && sender_owner != self.local_owner {
-                    if let GroupIncomingEvent::MetadataUpdated(group) = &event {
-                        let sync_effects = self.sync_group_to_local_siblings(group)?;
-                        effects.extend(sync_effects);
-                    }
+                    // Learning a sender chain also returns MetadataUpdated, although the
+                    // roster itself did not change. Forward only the control that changed.
                     if let (Some(group_id), Some(sender_device)) =
                         (&remote_sender_key_distribution_group_id, sender_device)
                     {
@@ -396,6 +394,8 @@ impl ProtocolEngine {
                                 payload,
                             )?,
                         );
+                    } else if let GroupIncomingEvent::MetadataUpdated(group) = &event {
+                        effects.extend(self.sync_group_to_local_siblings(group)?);
                     }
                 }
                 let mut events = vec![event];
