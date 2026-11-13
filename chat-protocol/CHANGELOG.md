@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.3.19
+
+- Forward a newly received group sender key to linked devices in one private delivery. The receiving device previously also sent the full membership roster on each new key. Membership changes still propagate to linked devices, and key replay adds no deliveries.
+
 ## 0.3.18
 
 - A regular group send returns one signed sender-key publication. Queue it by
