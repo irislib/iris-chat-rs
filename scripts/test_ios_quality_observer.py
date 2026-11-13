@@ -139,6 +139,15 @@ class QualityTests(unittest.TestCase):
         quality = receipt()['quality']; quality['cpu'] = result
         contract.validate_quality(quality, self.fixture.candidate)
 
+    def test_offline_replay_requires_the_qualified_cpu_policy_sources(self):
+        f = self.fixture
+        other = [f.raw('other-source.py', b'# earlier policy')]
+        qualification = {'schema': 'iris-quality-observer-qualification-v1', 'passed': True,
+                         'checker_sources': other}
+        f.config['qualification'] = f.write('other-qualification', qualification)
+        f.evidence.update(checker_sources=other, configuration=f.write('other-configuration', f.config))
+        self.reject()
+
     def test_fixed_windows_share_one_cpu_budget(self):
         f = self.fixture
         f.evidence['counters'] = f.raw('burst.xml', f.counters(cpu=lambda t: t*.02 + min(max(t-250, 0), 60)*.04))

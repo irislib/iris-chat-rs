@@ -16,10 +16,18 @@ import xml.etree.ElementTree as ET
 from ios_runtime_acceptance import average_cpu_percent
 import ios_relaunch_lifecycle as lifecycle
 from ios_relaunch_adapters import foreground_pid
-from ios_ordinary_relaunch import read_bound, require, verify_binding, validate_distribution
+from ios_ordinary_relaunch import binding, read_bound, require, verify_binding, validate_distribution
 
 
 MAX_XML_BYTES = 256 * 1024**2
+
+
+SOURCE_NAMES = ('ios_quality_observer.py', 'ios_quality_trace.py', 'ios_relaunch_adapters.py',
+                'ios_relaunch_lifecycle.py', 'ios_ordinary_relaunch.py', 'ios_runtime_acceptance.py', 'native_lab.py')
+
+
+def sources():
+    return [binding(Path(__file__).with_name(name)) for name in SOURCE_NAMES]
 
 
 def finite(value):
@@ -180,9 +188,7 @@ def evaluate(evidence_binding):
     qualification = read_bound(configuration['qualification'])
     require(qualification.get('schema') == 'iris-quality-observer-qualification-v1'
             and qualification.get('passed') is True
-            and qualification.get('checker_sources') == evidence['checker_sources'], 'Unqualified quality checker')
-    for source in evidence['checker_sources']:
-        verify_binding(source)
+            and qualification.get('checker_sources') == evidence['checker_sources'] == sources(), 'Unqualified quality checker')
     window = read_bound(configuration['window'])
     candidate = window['candidate']
     validate_distribution(window['distribution_binding'], candidate)

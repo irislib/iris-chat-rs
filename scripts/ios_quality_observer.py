@@ -13,20 +13,13 @@ from pathlib import Path
 import time
 
 import ios_quality_trace as evaluator
+from ios_quality_trace import sources
 from ios_ordinary_relaunch import binding, exact, read_bound, require, verify_binding
 from ios_relaunch_adapters import Capture, CoreDevice, OwnedWindow, foreground_pid
 
 
 RECORD_SECONDS = 390
 SAMPLE_INTERVAL_SECONDS = 1.0
-SOURCE_NAMES = ('ios_quality_observer.py', 'ios_quality_trace.py', 'ios_relaunch_adapters.py',
-                'ios_relaunch_lifecycle.py', 'ios_ordinary_relaunch.py', 'ios_runtime_acceptance.py', 'native_lab.py')
-
-
-def sources():
-    return [binding(Path(__file__).with_name(name)) for name in SOURCE_NAMES]
-
-
 def save(path, value):
     with Path(path).open('x') as output:
         json.dump(value, output, indent=2, allow_nan=False)
