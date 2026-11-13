@@ -11,7 +11,7 @@ import tempfile
 import textwrap
 import unittest
 
-from test_ios_runtime_acceptance import CANDIDATE, receipt, run_metadata
+from test_ios_runtime_acceptance import CANDIDATE, exception_receipt, receipt, run_metadata
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -85,7 +85,8 @@ class RuntimeWorkflowTests(unittest.TestCase):
                      "startup-flash", "unreviewed-send",
                      "wrong-workflow", "failed-attestation", "missing-artifact", "historic-tag",
                      "wrong-tag-commit", "wrong-branch", "fork", "pull-request", "wrong-run",
-                     "different-attempt", "different-signed-run", "tampered-source", "valid-cpu-only"):
+                     "different-attempt", "different-signed-run", "tampered-source", "valid-cpu-only",
+                     "documented-exception"):
             with self.subTest(case=case), tempfile.TemporaryDirectory() as folder:
                 root = Path(folder)
                 (root / "source/scripts").mkdir(parents=True)
@@ -100,6 +101,10 @@ class RuntimeWorkflowTests(unittest.TestCase):
                     "proof = json.loads(Path(a[a.index('--receipt') + 1]).read_text())\n"
                     "assert proof == {'historic-tag-proof': a[a.index('--source-commit') + 1]}\n")
                 proof, metadata = receipt(), run_metadata()
+                candidate = CANDIDATE
+                if case == "documented-exception":
+                    proof = exception_receipt()
+                    candidate = proof["release"]
                 metadata.update(id=123, run_attempt=2, head_sha=POLICY_SHA, head_branch="main",
                                 repository={"full_name": "owner/project"})
                 if case in ("historic-tag", "wrong-tag-commit"):
@@ -171,24 +176,33 @@ class RuntimeWorkflowTests(unittest.TestCase):
                            FIXTURE_ROOT=str(root), CASE=case, GH_TOKEN="fixture", DEFAULT_BRANCH="main",
                            GITHUB_SERVER_URL="https://github.com",
                            RUNNER_TEMP=str(root), GITHUB_REPOSITORY="owner/project",
-                           RELEASE_TAG=CANDIDATE["tag"], ACCEPTANCE_RUN="123",
-                           SOURCE_COMMIT=CANDIDATE["source_commit"],
-                           IPA_SHA256=CANDIDATE["ipa_sha256"], MANIFEST_SHA256=CANDIDATE["manifest_sha256"],
-                           APPLE_VERSION=CANDIDATE["apple_version"], APPLE_BUILD=CANDIDATE["apple_build"])
-                result = subprocess.run(["bash", "-c", script], cwd=root, env=env,
-                                        capture_output=True, text=True, timeout=10)
-                if case in ("valid", "valid-adhoc", "historic-tag", "valid-cpu-only"):
-                    self.assertEqual(result.returncode, 0, result.stderr)
-                    calls = [json.loads(line) for line in (root / "calls").read_text().splitlines()]
-                    verify = next(args for args in calls if args[:2] == ["attestation", "verify"])
-                    self.assertEqual(verify[verify.index("--source-ref") + 1],
-                                     "refs/tags/" + CANDIDATE["tag"] if case == "historic-tag" else "refs/heads/main")
-                    for flag in ("--source-digest", "--signer-digest"):
-                        self.assertEqual(verify[verify.index(flag) + 1], metadata["head_sha"])
-                    self.assertEqual(verify[verify.index("--signer-workflow") + 1],
-                                     "owner/project/.github/workflows/ios-runtime-acceptance.yml")
-                else:
-                    self.assertNotEqual(result.returncode, 0, result.stdout)
+                           RELEASE_TAG=candidate["tag"], ACCEPTANCE_RUN="123",
+                           SOURCE_COMMIT=candidate["source_commit"], IPA_SHA256=candidate["ipa_sha256"],
+                           MANIFEST_SHA256=candidate["manifest_sha256"], APPLE_VERSION=candidate["apple_version"],
+                           APPLE_BUILD=candidate["apple_build"])
+                valid = case in ("valid", "valid-adhoc", "historic-tag", "valid-cpu-only", "documented-exception")
+                for target in (("app-store", "testflight-public") if valid else ("app-store",)):
+                    with self.subTest(target=target):
+                        # Each invocation gets a fresh hosted runner.
+                        shutil.rmtree(root / "ios-runtime-acceptance", ignore_errors=True)
+                        result = subprocess.run(["bash", "-c", script], cwd=root,
+                                                env={**env, "DISTRIBUTION_TARGET": target},
+                                                capture_output=True, text=True, timeout=10)
+                        if case == "documented-exception" and target == "testflight-public":
+                            self.assertNotEqual(result.returncode, 0, result.stdout)
+                            self.assertIn("exception is authorized only for App Store submission", result.stdout)
+                        elif valid:
+                            self.assertEqual(result.returncode, 0, result.stderr)
+                            calls = [json.loads(line) for line in (root / "calls").read_text().splitlines()]
+                            verify = next(args for args in calls if args[:2] == ["attestation", "verify"])
+                            self.assertEqual(verify[verify.index("--source-ref") + 1],
+                                             "refs/tags/" + candidate["tag"] if case == "historic-tag" else "refs/heads/main")
+                            for flag in ("--source-digest", "--signer-digest"):
+                                self.assertEqual(verify[verify.index(flag) + 1], metadata["head_sha"])
+                            self.assertEqual(verify[verify.index("--signer-workflow") + 1],
+                                             "owner/project/.github/workflows/ios-runtime-acceptance.yml")
+                        else:
+                            self.assertNotEqual(result.returncode, 0, result.stdout)
 
     def test_recorder_binds_current_policy_to_the_original_candidate(self):
         script = step("Verify candidate and normalize safe acceptance record", RECORDER)
@@ -261,7 +275,9 @@ class RuntimeWorkflowTests(unittest.TestCase):
         workflow = WORKFLOW.read_text()
         start = workflow.index("      - name: Require exact distributed-build runtime acceptance\n")
         self.assertLess(start, workflow.index("      - name: Configure App Store Connect authentication\n"))
-        self.assertIn("        if: inputs.target != 'testflight'\n", workflow[start:])
+        acceptance_step = workflow[start:workflow.index("      - name: Prepare Apple release notes", start)]
+        self.assertIn("        if: inputs.target != 'testflight'\n", acceptance_step)
+        self.assertIn("DISTRIBUTION_TARGET: ${{ inputs.target }}", acceptance_step)
         producer = (ROOT / ".github/workflows/ios-runtime-acceptance.yml").read_text()
         self.assertIn('"$GITHUB_REF" != "refs/heads/$DEFAULT_BRANCH"', producer)
         self.assertIn('ref: ${{ github.sha }}', producer)

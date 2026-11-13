@@ -224,6 +224,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ steps.release.outputs.tag }}
+          DISTRIBUTION_TARGET: ${{ inputs.target }}
           ACCEPTANCE_RUN: ${{ inputs.runtime_acceptance_run }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           SOURCE_COMMIT: ${{ steps.ipa.outputs.source_commit }}
@@ -280,6 +281,11 @@ jobs:
             --source-commit "$SOURCE_COMMIT" --ipa-sha256 "$IPA_SHA256" \
             --manifest-sha256 "$MANIFEST_SHA256" \
             --apple-version "$APPLE_VERSION" --apple-build "$APPLE_BUILD"
+          if [[ "$DISTRIBUTION_TARGET" != "app-store" ]] && ! jq -e \
+            '.checks.early_background.status != "accepted-with-documented-exception"' "$receipt" > /dev/null; then
+            echo "::error::The documented exception is authorized only for App Store submission."
+            exit 1
+          fi
 
       - name: Prepare Apple release notes
         id: notes
