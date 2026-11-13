@@ -118,7 +118,7 @@ impl AppCore {
 
     pub(super) fn chat_read_state_allowed(&self, chat_id: &str, incoming: &ChatReadState) -> bool {
         let max_time = unix_now().get().saturating_add(300);
-        if incoming.updated_at_ms == 0
+        let invalid = incoming.updated_at_ms == 0
             || incoming.updated_at_ms > max_time.saturating_mul(1000)
             || incoming.seen_through_secs > max_time
             || PublicKey::from_hex(&incoming.device_id).is_err()
@@ -138,11 +138,8 @@ impl AppCore {
             || self
                 .chat_deletions
                 .get(chat_id)
-                .is_some_and(|deleted| incoming.updated_at_ms / 1000 <= *deleted)
-        {
-            return false;
-        }
-        true
+                .is_some_and(|deleted| incoming.updated_at_ms / 1000 <= *deleted);
+        !invalid
     }
 
     pub(super) fn apply_chat_read_state(&mut self, chat_id: &str, incoming: ChatReadState) -> bool {

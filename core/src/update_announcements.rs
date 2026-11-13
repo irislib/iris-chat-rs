@@ -341,7 +341,7 @@ async fn standalone_fips_update_provider(
             Keys::generate()
                 .secret_key()
                 .to_bech32()
-                .map_err(|error| UpdateError::Announcement(error.to_string()))?,
+                .unwrap_or_else(|never| match never {}),
         )
         .discovery_scope("iris-chat-updates")
         .local_rendezvous()
