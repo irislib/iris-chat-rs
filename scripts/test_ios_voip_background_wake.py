@@ -47,6 +47,15 @@ def evaluate(value, initial, resume_index):
 
 
 class LifecycleTests(unittest.TestCase):
+    def test_settings_extension_state_is_separate_from_its_host(self):
+        extension = (f'{logs.stamp(0)} SpringBoard(RunningBoardServices)[1] <Notice>: '
+                     'Received state update for 945 (xpcservice<com.apple.Preferences.SettingsImportExtension'
+                     '([osservice<com.apple.searchd>:248])>, running-active-NotVisible\n')
+        data = (logs.HEADER + extension + logs.state(life.ACTIVE, 1)).encode()
+        rows = cold.state_records(data, len(logs.HEADER.encode()), logs.BUNDLE, 1)
+        self.assertEqual([(row['pid'], row['bundle'], row['state']) for row in rows],
+                         [(102, logs.BUNDLE, life.ACTIVE)])
+
     def test_one_actual_os_bootstrap_is_required_and_never_inferred_from_push(self):
         for old, new in [(' Bootstrap success!', ' No bootstrap!'),
                          (':102] Bootstrap success!', ':103] Bootstrap success!')]:

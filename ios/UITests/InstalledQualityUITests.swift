@@ -245,7 +245,9 @@ final class InstalledQualityUITests: XCTestCase {
         // Retain the bytes before the first edit. An existing run cannot start twice.
         try escrow.record("escrow", in: directory)
         try selectSelfText(input, exact: escrow.saved)
-        input.typeKey(.delete, modifierFlags: [])
+        let delete = app.keys["delete"]
+        try require(delete.exists && delete.isHittable, "Require the visible keyboard delete key")
+        delete.tap()
         try requireEmptyComposer(input, reason: "The exact test draft did not clear")
         try escrow.record("cleared", in: directory)
 
@@ -258,7 +260,7 @@ final class InstalledQualityUITests: XCTestCase {
         reopened.tap()
         try requireSelfChat()
         try requireEmptyComposer(reopened, reason: "Draft changed before typing")
-        reopened.typeText(escrow.body)
+        app.typeText(escrow.body)
         try sendPendingSelfMessage(escrow.body, input: reopened, original: original) {
             try escrow.record("send", in: directory)
         }
@@ -287,14 +289,16 @@ final class InstalledQualityUITests: XCTestCase {
         try tap("chatListProfileButton")
         try tap("settingsProfileRow")
         try tap("myProfileQrButton")
-        let done = app.buttons["profileQrDoneButton"]
-        try require(done.waitForExistence(timeout: 10) && done.isHittable, "Open the account's own code")
+        let done = app.buttons.matching(identifier: "profileQrModal")
+            .matching(NSPredicate(format: "label == %@", "Close"))
+        try require(app.images["myProfileQrCode"].waitForExistence(timeout: 10)
+                    && done.count == 1 && done.firstMatch.isHittable, "Open the account's own code")
         let image = try XCTUnwrap(XCUIScreen.main.screenshot().image.cgImage)
         let codes = VNDetectBarcodesRequest()
         codes.symbologies = [.qr]
         try VNImageRequestHandler(cgImage: image).perform([codes])
         try escrow.checkAccount((codes.results ?? []).map { $0.payloadStringValue ?? "" })
-        try tap("profileQrDoneButton")
+        done.firstMatch.tap()
         try tap("myProfileNoteToSelfButton")
         ownProfileRouteSelected = true
         let input = app.textViews["chatMessageInput"]
@@ -314,7 +318,9 @@ final class InstalledQualityUITests: XCTestCase {
         try check()
         input.tap()
         try check()
-        input.typeKey("a", modifierFlags: .command)
+        // Target the focused keyboard. A text-view key event can tap the field
+        // again and collapse its selection before the next edit.
+        app.typeKey("a", modifierFlags: .command)
         try check()
     }
 
@@ -360,10 +366,10 @@ final class InstalledQualityUITests: XCTestCase {
             try requireSelfChat()
             try requirePlainComposer()
             try requireEmptyComposer(input, reason: "Self draft changed before restoration")
-            input.typeText(String(decoding: escrow.saved, as: UTF8.self))
+            app.typeText(String(decoding: escrow.saved, as: UTF8.self))
         case .freshBody:
             try selectSelfText(input, exact: Data(escrow.body.utf8))
-            input.typeText(String(decoding: escrow.saved, as: UTF8.self))
+            app.typeText(String(decoding: escrow.saved, as: UTF8.self))
         }
         try escrow.checkSaved(input.value as? String)
         if !FileManager.default.fileExists(atPath: escrow.file("restored", in: directory).path) {

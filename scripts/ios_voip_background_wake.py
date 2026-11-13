@@ -315,7 +315,7 @@ def state_records(data, initial, bundle, board_pid):
         + r'\] <[^>]+>: Received state update for (\d+) \(app<('
         + re.escape(bundle) + '|' + re.escape(SETTINGS) + r')(?:\([^>]*\))?>, ([A-Za-z-]+)(?:[ ,].*)?$')
     def parse(line):
-        if 'Received state update for ' not in line or not any(x in line for x in (bundle, SETTINGS)):
+        if not any(lifecycle.target_state_update(line, target) for target in (bundle, SETTINGS)):
             return None
         match = pattern.search(line)
         require(match is not None, 'Unrecognized lifecycle record or changed SpringBoard PID')
