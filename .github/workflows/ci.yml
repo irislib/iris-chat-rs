@@ -996,6 +996,7 @@ jobs:
             -parallel-testing-enabled NO -jobs 2 \
             -only-testing:IrisChatTests/ChatTimelineHistoryDiagnosticsTests \
             -only-testing:IrisChatUITests/ChatPaginationUITests/testMixedHeightHistoryPrependPreservesVisibleMessage \
+            -only-testing:IrisChatUITests/ChatPaginationUITests/testDeepHistoryReturnsToLatestAndSendsFromTheBoundedWindow \
             -resultBundlePath work/clipboard/ios-pagination.xcresult test
 
       - name: Upload iOS test results
