@@ -14,7 +14,7 @@ from unittest.mock import patch
 from android_upgrade_ui import bounds, clickable, matching, Bridge
 from android_upgrade_state import compare, sha256, inspect, PEER
 from android_upgrade_release import pair
-from test_android_release_upgrade import preflight, offline, launch
+from test_android_release_upgrade import preflight, offline, launch, peer_details
 from check_android_upgrade_receipt import validate, CHECKS, reviewed_inputs, database_state
 
 
@@ -152,6 +152,17 @@ class DeviceSafety(unittest.TestCase):
                 root = ET.fromstring('<hierarchy><node package="to.iris.chat" content-desc="Add"/></hierarchy>')
                 if not predicate(root): raise ValueError('Restored conversation was rejected')
         launch(FakeBridge(), FakeUI())
+
+    def test_contact_details_reopens_saved_chat_without_creating_a_new_one(self):
+        from unittest.mock import Mock
+        for name in ('Wild Falcon', 'Upgrade saved nickname'):
+            with self.subTest(name=name):
+                ui = Mock()
+                peer_details(ui, name)
+                ui.chats.assert_called_once_with()
+                self.assertEqual([call.kwargs for call in ui.tap.call_args_list],
+                                 [{'text': name}, {'text': name}])
+                ui.bridge.shell.assert_not_called()
 
     def test_wrong_avd_refused(self):
         class Fake:

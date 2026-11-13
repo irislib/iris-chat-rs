@@ -83,16 +83,19 @@ def open_peer(u):
     u.wait(lambda r: bool(matching(r, text='Wild Falcon')) or bool(matching(r, text='Upgrade saved nickname')))
 
 
-def peer_details(u):
-    open_peer(u)
-    root = u.read()
-    label = 'Upgrade saved nickname' if matching(root, text='Upgrade saved nickname') else 'Wild Falcon'
-    u.tap(text=label)
+def peer_details(u, name):
+    # Creating a chat by user ID explicitly accepts requests from that person.
+    # Open the existing row so this edit leaves the saved preferences intact.
+    u.chats()
+    u.tap(text=name)
+    u.wait(lambda r: bool(matching(r, kind='android.widget.EditText')) and
+           bool(matching(r, text=name)))
+    u.tap(text=name)
     u.wait(lambda r: bool(matching(r, text='Nickname and note')))
 
 
 def edit_contact(u):
-    peer_details(u)
+    peer_details(u, 'Wild Falcon')
     u.tap(text='Nickname and note')
     u.wait(lambda r: len(matching(r, kind='android.widget.EditText')) == 2)
     u.input('Upgrade saved nickname', index=0, expected_count=2)
@@ -143,7 +146,7 @@ def run(args):
         edited = snapshot(b, 'edited-state')
         compare(before['state'], edited['state'], edited=True)
         receipt['checks']['contact_edit_background'] = True
-        launch(b, u); chat_contents(u); peer_details(u)
+        launch(b, u); chat_contents(u); peer_details(u, 'Upgrade saved nickname')
         u.wait(lambda r: bool(matching(r, text='Upgrade saved nickname')))
         u.capture('candidate-restarted-contact')
         reopened = snapshot(b, 'reopened-state')
