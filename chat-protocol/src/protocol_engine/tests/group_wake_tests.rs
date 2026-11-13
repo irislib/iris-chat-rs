@@ -27,9 +27,8 @@ fn private_group_ready_publications_are_due_after_restart_until_outbox_ack() {
     let sent_data = |effects: &[ProtocolEffect]| {
         effects
             .iter()
-            .filter_map(|ProtocolEffect::Publish(p)| {
-                (p.carrier == ProtocolCarrier::SharedGroup).then(|| p.event.as_json())
-            })
+            .filter(|ProtocolEffect::Publish(p)| p.carrier == ProtocolCarrier::SharedGroup)
+            .map(|ProtocolEffect::Publish(p)| p.event.as_json())
             .collect::<Vec<_>>()
     };
     let data = sent_data(&sent.effects);
