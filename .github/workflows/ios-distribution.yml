@@ -40,6 +40,7 @@ on:
 permissions:
   contents: read
   actions: read
+  attestations: read
 
 concurrency:
   group: ios-distribution-${{ inputs.tag }}
@@ -61,13 +62,23 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.tag }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           DISTRIBUTION_TARGET: ${{ inputs.target }}
           RUNTIME_ACCEPTANCE_RUN: ${{ inputs.runtime_acceptance_run }}
         run: |
           set -Eeuo pipefail
           case "$DISTRIBUTION_TARGET" in
-            testflight) ;;
+            testflight)
+              if [[ "$GITHUB_REF" != "refs/tags/$RELEASE_TAG" ]]; then
+                echo "::error::Run internal TestFlight upload from the candidate release tag."
+                exit 2
+              fi
+              ;;
             testflight-public|app-store)
+              if [[ "$GITHUB_REF" != "refs/heads/$DEFAULT_BRANCH" ]]; then
+                echo "::error::Run public promotion from the default branch."
+                exit 2
+              fi
               if [[ ! "$RUNTIME_ACCEPTANCE_RUN" =~ ^[1-9][0-9]*$ ]]; then
                 echo "::error::Public promotion requires an exact-build iOS Runtime Acceptance run."
                 exit 2
@@ -103,10 +114,19 @@ jobs:
             echo "release_url=$(jq -r '.url' <<< "$release_json")"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Check out tagged release metadata
-        uses: actions/checkout@v7
+      - name: Check out promotion policy at the dispatch commit
+        if: inputs.target != 'testflight'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: ${{ steps.release.outputs.tag }}
+          ref: ${{ github.sha }}
+          path: policy
+          persist-credentials: false
+
+      - name: Check out tagged release metadata
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: refs/tags/${{ steps.release.outputs.tag }}
+          persist-credentials: false
           path: source
           fetch-depth: 1
 
@@ -142,8 +162,11 @@ jobs:
           test -f "$ipa_path"
           test -f "$manifest_path"
 
-          gh attestation verify "$ipa_path" --repo "$GITHUB_REPOSITORY"
-          gh attestation verify "$manifest_path" --repo "$GITHUB_REPOSITORY"
+          for file in "$ipa_path" "$manifest_path"; do
+            gh attestation verify "$file" --repo "$GITHUB_REPOSITORY" \
+              --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml" \
+              --source-ref "refs/tags/$RELEASE_TAG" --source-digest "$(git -C source rev-parse HEAD)"
+          done
           gh release verify-asset "$RELEASE_TAG" "$ipa_path" \
             --repo "$GITHUB_REPOSITORY" >/dev/null
           gh release verify-asset "$RELEASE_TAG" "$manifest_path" \
@@ -202,6 +225,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ steps.release.outputs.tag }}
           ACCEPTANCE_RUN: ${{ inputs.runtime_acceptance_run }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           SOURCE_COMMIT: ${{ steps.ipa.outputs.source_commit }}
           IPA_SHA256: ${{ steps.ipa.outputs.sha256 }}
           MANIFEST_SHA256: ${{ steps.ipa.outputs.manifest_sha256 }}
@@ -212,17 +236,45 @@ jobs:
           receipt_dir="$RUNNER_TEMP/ios-runtime-acceptance"
           mkdir -p "$receipt_dir"
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/$ACCEPTANCE_RUN" \
-            --jq '{status, conclusion, event, head_sha, head_repository: {full_name: .head_repository.full_name}, path, name}' \
+            --jq '{id, run_attempt, status, conclusion, event, head_sha, head_branch, repository: {full_name: .repository.full_name}, head_repository: {full_name: .head_repository.full_name}, path, name}' \
             > "$receipt_dir/run.json"
+          metadata="$receipt_dir/run.json"
+          jq -e --arg run "$ACCEPTANCE_RUN" --arg repo "$GITHUB_REPOSITORY" '
+            (.id | tostring) == $run and .repository.full_name == $repo and
+            .head_repository.full_name == $repo and .event == "workflow_dispatch" and
+            .status == "completed" and .conclusion == "success" and
+            (.head_sha | test("^[0-9a-f]{40}$")) and (.run_attempt | tostring | test("^[1-9][0-9]*$"))
+          ' "$metadata" > /dev/null
+          recorder_commit="$(jq -r .head_sha "$metadata")"
+          recorder_branch="$(jq -r .head_branch "$metadata")"
+          if [[ "$recorder_branch" == "$DEFAULT_BRANCH" ]]; then
+            recorder_ref="refs/heads/$DEFAULT_BRANCH"
+            validator=(policy/scripts/ios_runtime_acceptance.py --recorder-commit "$recorder_commit" --recorder-ref "$recorder_ref")
+          elif [[ "$recorder_branch" == "$RELEASE_TAG" && "$recorder_commit" == "$SOURCE_COMMIT" ]]; then
+            # Historical tag receipts retain the validator and contract that produced them.
+            recorder_ref="refs/tags/$RELEASE_TAG"
+            validator=(source/scripts/ios_runtime_acceptance.py)
+          else
+            echo "::error::Unexpected runtime acceptance source."
+            exit 1
+          fi
+          workflow=".github/workflows/ios-runtime-acceptance.yml"
+          jq -e --arg path "$workflow" --arg ref "$recorder_ref" \
+            '.path == $path or .path == ($path + "@" + $ref)' "$metadata" > /dev/null
           gh run download "$ACCEPTANCE_RUN" --repo "$GITHUB_REPOSITORY" \
             --name ios-runtime-acceptance --dir "$receipt_dir/record"
           receipt="$receipt_dir/record/ios-runtime-acceptance.json"
           test -f "$receipt" && test ! -L "$receipt"
           test "$(find "$receipt_dir/record" -type f | wc -l | tr -d ' ')" = 1
+          run_uri="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$ACCEPTANCE_RUN/attempts/$(jq -r .run_attempt "$metadata")"
           gh attestation verify "$receipt" --repo "$GITHUB_REPOSITORY" \
-            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/ios-runtime-acceptance.yml" \
-            --source-ref "refs/tags/$RELEASE_TAG" --source-digest "$SOURCE_COMMIT"
-          python3 source/scripts/ios_runtime_acceptance.py \
+            --signer-workflow "$GITHUB_REPOSITORY/$workflow" --signer-digest "$recorder_commit" \
+            --source-ref "$recorder_ref" --source-digest "$recorder_commit" \
+            --deny-self-hosted-runners --format json > "$receipt_dir/verified.json"
+          jq -e --arg uri "$run_uri" \
+            'any(.[]; .verificationResult.signature.certificate.runInvocationURI == $uri)' \
+            "$receipt_dir/verified.json" > /dev/null
+          python3 "${validator[@]}" \
             --receipt "$receipt" --run-metadata "$receipt_dir/run.json" \
             --repository "$GITHUB_REPOSITORY" --tag "$RELEASE_TAG" \
             --source-commit "$SOURCE_COMMIT" --ipa-sha256 "$IPA_SHA256" \
@@ -277,7 +329,7 @@ jobs:
           } >> "$GITHUB_ENV"
 
       - name: Set up Ruby
-        uses: ruby/setup-ruby@v1
+        uses: ruby/setup-ruby@b3aaceaef7e0ee231b499e7b5f49c03fc1d32199 # v1
         with:
           ruby-version: "3.3"
 

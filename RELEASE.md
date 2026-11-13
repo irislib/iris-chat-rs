@@ -723,7 +723,9 @@ In GitHub, open **Actions → iOS Distribution → Run workflow**.
   `ASC_KEY_ID`, and `ASC_ISSUER_ID`.
 - Set `IRIS_IOS_BUNDLE_ID` when its default is not sufficient. TestFlight
   requires comma-separated internal group names in `IRIS_TESTFLIGHT_GROUPS`.
-- Enter the exact stable tag.
+- Enter the exact stable tag in the `tag` input. In **Use workflow from**, select
+  that tag for internal `testflight`. Select the default branch (`main`) for
+  `testflight-public` or `app-store` so the current promotion policy verifies the IPA.
 - Choose `testflight` to upload or reuse that build and attach it to the
   configured internal TestFlight groups.
 - Choose `testflight-public` to upload or reuse that same build, submit Beta App
@@ -845,15 +847,19 @@ these decisions to the exact candidate and private observations; a status string
 alone does not replace that evidence. Any known unresolved startup or sending
 regression keeps promotion blocked.
 
-Run **iOS Runtime Acceptance** from the exact release tag, supplying that tag and
-the safe receipt JSON. It verifies the immutable release files, validates and
-normalizes the record, attests its provenance, and retains the
-`ios-runtime-acceptance` artifact. The workflow records the release owner's
-physical verification; it does not run the off-machine phone tests itself.
-Supply its successful run ID as `runtime_acceptance_run` when running
-`testflight-public` or `app-store`. Promotion verifies the exact workflow,
-repository, source, attestation, IPA and manifest hashes, Apple version/build,
-and every required runtime result before configuring Apple credentials.
+Run **iOS Runtime Acceptance** from the default branch (`main`), with the exact
+stable release tag in `tag` and the safe physical receipt in `receipt_json`.
+The recorder checks out the policy at the workflow's dispatch commit. It binds
+the receipt to the tagged app commit, IPA and manifest, validates the physical
+results, attests the normalized record and retains the `ios-runtime-acceptance`
+artifact. The release owner performs the physical checks.
+
+When promoting to public TestFlight or the App Store, supply the recorder's
+successful run ID in `runtime_acceptance_run`. Promotion checks the signing
+workflow, repository, ref, commit and run attempt. It revalidates the receipt
+against the candidate hashes and Apple version/build before configuring Apple
+credentials. A historical receipt signed by the recorder on the exact immutable
+release tag uses that tag's validator and its original evidence contract.
 
 Keep the normalized receipt with the private evidence. Valid acceptance has no
 age expiry for unchanged inputs. If a GitHub artifact expires, the same retained

@@ -6,11 +6,11 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Immutable release tag, also selected as this workflow's Git ref."
+        description: "Immutable release tag to qualify. Run this workflow from the default branch."
         required: true
         type: string
       receipt_json:
-        description: "Safe v3 physical release acceptance receipt (TestFlight or authorized production AdHoc); keep raw evidence private."
+        description: "Safe physical release acceptance receipt (TestFlight or authorized production AdHoc); keep raw evidence private."
         required: true
         type: string
 
@@ -30,17 +30,18 @@ jobs:
     timeout-minutes: 10
     environment: ios-app-store-release
     steps:
-      - uses: actions/checkout@v7
-      - name: Verify candidate and normalize safe acceptance record
+      - name: Verify immutable candidate release
+        id: release
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ inputs.tag }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
           set -Eeuo pipefail
           umask 077
           if [[ ! "$RELEASE_TAG" =~ ^v[0-9]{4}\.[1-9][0-9]?\.[1-9][0-9]?(\.[1-9][0-9]?)?$ ]] \
-             || [[ "$GITHUB_REF" != "refs/tags/$RELEASE_TAG" ]]; then
-            echo "::error::Run acceptance from the exact published release tag."
+             || [[ "$GITHUB_REF" != "refs/heads/$DEFAULT_BRANCH" ]]; then
+            echo "::error::Run acceptance from the default branch and supply the exact published release tag."
             exit 2
           fi
           release_json="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
@@ -48,6 +49,26 @@ jobs:
           jq -e '.isDraft == false and .isImmutable == true and .isPrerelease == false' \
             <<< "$release_json" > /dev/null
           gh release verify "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" > /dev/null
+          echo "tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+      - name: Check out acceptance policy at the dispatch commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Check out immutable candidate metadata
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: refs/tags/${{ steps.release.outputs.tag }}
+          path: source
+          persist-credentials: false
+      - name: Verify candidate and normalize safe acceptance record
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          set -Eeuo pipefail
+          umask 077
+          candidate_commit="$(git -C source rev-parse HEAD)"
           artifacts="$RUNNER_TEMP/acceptance-release"
           mkdir -p "$artifacts" acceptance
           ipa_name="iris-chat-${RELEASE_TAG}-ios.ipa"
@@ -58,10 +79,11 @@ jobs:
             gh release verify-asset "$RELEASE_TAG" "$artifacts/$file" \
               --repo "$GITHUB_REPOSITORY" > /dev/null
             gh attestation verify "$artifacts/$file" --repo "$GITHUB_REPOSITORY" \
-              --source-ref "refs/tags/$RELEASE_TAG" --source-digest "$GITHUB_SHA"
+              --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/release.yml" \
+              --source-ref "refs/tags/$RELEASE_TAG" --source-digest "$candidate_commit"
           done
-          python3 scripts/release-manifest.py verify --tag "$RELEASE_TAG" \
-            --commit "$GITHUB_SHA" --manifest "$artifacts/$manifest_name" \
+          python3 source/scripts/release-manifest.py verify --tag "$RELEASE_TAG" \
+            --commit "$candidate_commit" --manifest "$artifacts/$manifest_name" \
             --asset-dir "$artifacts" --require-name "$ipa_name"
           python3 - <<'PY'
           import json, os
@@ -72,21 +94,21 @@ jobs:
               raise SystemExit("Acceptance receipt exceeds its safe input bound.")
           (Path(os.environ["RUNNER_TEMP"]) / "runtime-receipt-input.json").write_text(receipt)
           PY
-          source scripts/build_common.sh
+          source source/scripts/build_common.sh
           python3 scripts/ios_runtime_acceptance.py \
             --receipt "$RUNNER_TEMP/runtime-receipt-input.json" --tag "$RELEASE_TAG" \
-            --source-commit "$GITHUB_SHA" \
+            --source-commit "$candidate_commit" \
             --ipa-sha256 "$(sha256sum "$artifacts/$ipa_name" | awk '{print $1}')" \
             --manifest-sha256 "$(sha256sum "$artifacts/$manifest_name" | awk '{print $1}')" \
             --apple-version "$(apple_marketing_version "${RELEASE_TAG#v}")" \
             --apple-build "$(semantic_version_code "${RELEASE_TAG#v}")" \
             --out acceptance/ios-runtime-acceptance.json
       - name: Attest normalized acceptance provenance
-        uses: actions/attest@v4
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
         with:
           subject-path: acceptance/ios-runtime-acceptance.json
       - name: Retain safe acceptance record
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: ios-runtime-acceptance
           path: acceptance/ios-runtime-acceptance.json
