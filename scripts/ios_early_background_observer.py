@@ -85,7 +85,7 @@ class ObservedRestorationHome:
     query and never invokes Home. Inventory latency therefore does not delay
     observing markers while the controller's normal launch is in progress.
     """
-    def __init__(self, controller, capture, home, *, clock=time.monotonic, utc=time.time):
+    def __init__(self, controller, capture, home, *, clock=time.monotonic, utc=time.time, wait_for_scene_input=False):
         self.controller, self.capture, self.home = controller, capture, home
         self.clock, self.utc = clock, utc
         self.condition = threading.Condition()
@@ -104,6 +104,12 @@ class ObservedRestorationHome:
             + str(capture.os_process['processIdentifier']) + r'\] <[^>]+>: '
             r'Received state update for (\d+) \(app<' + re.escape(c['bundle_id'])
             + r'(?:\([^>]*\))?>, ([A-Za-z-]+)(?:[ ,].*)?$')
+
+        self.scene_input = None
+        if wait_for_scene_input:
+            self.scene_input = (f" SpringBoard[{capture.os_process['processIdentifier']}] <Notice>: "
+                                "deliveryChainDidUpdate: scene:com.apple.frontboard.systemappservices/FBSceneManager:"
+                                f"sceneID%3A{c['bundle_id']}-default in windowScene:SB-main")
 
     def arm(self):
         require(self.thread is None and not self.tails, 'Marker watcher cannot restart')
@@ -131,6 +137,11 @@ class ObservedRestorationHome:
             batch = tail.read()
             observed, utc = self.clock(), self.utc()
             for line, stamp, size, digest in batch:
+                if name == 'lifecycle' and self.scene_input and line.endswith(self.scene_input):
+                    require(stamp is not None, 'Missing scene input timestamp')
+                    rows.append({'stream': 'scene_input', 'device_stamp': stamp, 'observed_monotonic': observed,
+                                 'observed_utc': utc, 'prefix_bytes': size, 'prefix_sha256': digest})
+                    continue
                 pattern = self.startup if name == 'startup' else self.state
                 relevant = ('iris.startup ' in line if name == 'startup'
                             else 'Received state update for ' in line
@@ -170,7 +181,7 @@ class ObservedRestorationHome:
                 self.condition.notify_all()
 
     def _eligible(self, pid):
-        rows = [x for x in self.record['records'] if x['pid'] == pid]
+        rows = [x for x in self.record['records'] if x.get('pid') == pid]
         startup = [x for x in rows if x['stream'] == 'startup']
         if not startup:
             return None
@@ -186,6 +197,16 @@ class ObservedRestorationHome:
         require(all(x['state'] == lifecycle.ACTIVE for x in states), 'New process left foreground before Home')
         if not any(x['state'] == lifecycle.ACTIVE and x['device_stamp'] <= enqueue['device_stamp'] for x in states):
             return None
+        if self.scene_input:
+            # SpringBoard identifies this input target by scene name, not PID.
+            # Bind it to the new, continuously visible PID before scheduling an
+            # action. Only final app+OS evidence can establish restoration overlap.
+            first_visible = states[0]['device_stamp']
+            fresh = next((row for row in self.record['records']
+                          if row['stream'] == 'scene_input' and row['device_stamp'] > first_visible), None)
+            if fresh is None:
+                return None
+            self.record['scene_input'] = dict(fresh)
         return enqueue
 
     def fire(self, armed, proof):

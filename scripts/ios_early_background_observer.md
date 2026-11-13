@@ -8,6 +8,15 @@ pending `restore_enqueued` marker. A completion in the same observed batch,
 already-backgrounded restoration, wrong process, malformed log or logger failure
 stops the attempt. It never retries a Home write.
 
+For an ordinary switch from an interactive scene, pass
+`wait_for_scene_input=True` and the same prearmed one-shot Home or Settings
+adapter. The observer waits for SpringBoard's input delivery chain to name the
+exact main scene after the verified replacement PID first becomes visible.
+Queued restoration must still be pending. SpringBoard's scene record carries no
+application PID, so this scheduling cue is bound by the foreground PID interval
+and the exact SpringBoard process, bundle and scene. A different scene, a stale
+focus record, or completion in the same batch cannot trigger the switch.
+
 The scheduling decision is not lifecycle acceptance. Keep the existing final
 `evaluate_runtime` checks: actual native restoration at background entry,
 135 seconds of continuous suspension, unchanged process/audit token and ordinary

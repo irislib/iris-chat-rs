@@ -73,6 +73,26 @@ class MarkerTests(unittest.TestCase):
         with self.assertRaises(relaunch.EvidenceError):self.w.fire(armed,self.proof)
         self.assertEqual(len(self.calls),1)
 
+    def test_scene_input_trigger_requires_fresh_exact_scene_on_visible_new_pid(self):
+        self.w = observer.ObservedRestorationHome(self.controller, self.capture, self.home, wait_for_scene_input=True)
+        self.addCleanup(self.w.close)
+        def focus(when, bundle, board=1):
+            return (f'{stamp(when)} SpringBoard[{board}] <Notice>: deliveryChainDidUpdate: scene:'
+                    f'com.apple.frontboard.systemappservices/FBSceneManager:sceneID%3A{bundle}-default in windowScene:SB-main\n')
+        bundle = self.f.config['bundle_id']
+        self.feed(self.startup(background=True), focus(-.1, bundle) + self.state()
+                  + focus(.11, bundle + '.extension') + focus(.12, bundle, board=99))
+        self.read_synchronously()
+        self.assertIsNone(self.w._eligible(102))
+        self.feed(state=focus(.13, bundle))
+        self.read_synchronously()
+        self.assertTrue(self.w._eligible(102)['pending'])
+        self.feed(self.startup('restore_result_observed', False, t=.2))
+        self.read_synchronously()
+        with self.assertRaises(relaunch.EvidenceError):
+            self.w._eligible(102)
+        self.assertEqual(self.calls, [])
+
     def test_coalesced_completion_never_fires(self):
         self.feed(self.startup()+self.startup('restore_result_observed',False,t=.2),self.state())
         self.read_synchronously()
