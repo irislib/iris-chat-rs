@@ -183,8 +183,9 @@ fn repair_retry_new_intent_and_removal_survive_save_failure_and_restart() {
 }
 
 #[test]
-fn repair_retry_new_recipient_fanout_is_durable_without_effects() {
-    let (mut engine, request) = repair_retry_fixture();
+fn repair_retry_for_revision_adds_durable_new_recipient_without_effects() {
+    let (mut engine, mut request) = repair_retry_fixture();
+    request.required_revision = Some(1);
     engine
         .sender_key_repair_request_effects(request.clone(), NdrUnixSeconds(100))
         .unwrap();
@@ -218,6 +219,29 @@ fn repair_retry_new_recipient_fanout_is_durable_without_effects() {
         restarted.pending_group_sender_key_repairs,
         engine.pending_group_sender_key_repairs
     );
+}
+
+#[test]
+fn repair_retry_for_known_writer_keeps_only_original_recipient_after_roster_growth() {
+    let (mut engine, request) = repair_retry_fixture();
+    engine
+        .sender_key_repair_request_effects(request.clone(), NdrUnixSeconds(100))
+        .unwrap();
+    let original = engine.pending_group_fanouts.clone();
+    assert_eq!(original.len(), 1);
+    let mut groups = engine.group_manager.snapshot();
+    groups.groups[0]
+        .members
+        .push(ndr_owner(Keys::generate().public_key()));
+    engine.group_manager = GroupEventManager::from_snapshot(groups).unwrap();
+    engine.persist().unwrap();
+
+    assert!(engine
+        .sender_key_repair_request_effects(request, NdrUnixSeconds(1_000))
+        .unwrap()
+        .is_empty());
+    assert_eq!(engine.pending_group_fanouts, original);
+    assert_eq!(repair_retry_reload(&engine).pending_group_fanouts, original);
 }
 
 #[test]

@@ -2,6 +2,21 @@
 
 Each release has channel-specific notes. The release tag must match the `##` heading exactly.
 
+## v2026.11.13.6
+
+### GitHub
+
+- When the author of a missing group sender key is known, ask the device that sent it. That reduces private repair traffic in groups where people use several devices. Requests for an unknown author still use the existing discovery path.
+- Update the chat protocol to 0.3.21, the CLI to 0.1.69 and nostr-double-ratchet to 0.0.180.
+
+### Apple
+
+- Recover missed group messages with less network traffic when members use several devices.
+
+### Zapstore
+
+- Recover missed group messages with less network traffic when members use several devices.
+
 ## v2026.11.13.5
 
 ### GitHub

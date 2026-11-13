@@ -2665,7 +2665,7 @@ checksum = "cf370abdafd54d13e54a620e8c3e1145f28e46cc9d704bc6d94414559df41763"
 
 [[package]]
 name = "iris-chat"
-version = "0.1.68"
+version = "0.1.69"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2738,7 +2738,7 @@ dependencies = [
 
 [[package]]
 name = "iris-chat-protocol"
-version = "0.3.20"
+version = "0.3.21"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
