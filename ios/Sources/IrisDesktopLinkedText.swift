@@ -16,8 +16,9 @@ struct IrisDesktopLinkedText: NSViewRepresentable {
     func makeNSView(context: Context) -> NSTextView {
         let storage = NSTextStorage()
         let layout = NSLayoutManager()
-        let container = NSTextContainer(size: .zero)
+        let container = NSTextContainer(size: CGSize(width: 0, height: CGFloat.greatestFiniteMagnitude))
         storage.addLayoutManager(layout)
+        storage.addLayoutManager(context.coordinator.measuringLayout)
         layout.addTextContainer(container)
         let view = IrisMessageTextView(frame: .zero, textContainer: container)
         view.isEditable = false
@@ -27,7 +28,7 @@ struct IrisDesktopLinkedText: NSViewRepresentable {
         view.textContainer?.lineFragmentPadding = 0
         view.isHorizontallyResizable = false
         view.isVerticallyResizable = true
-        view.textContainer?.widthTracksTextView = false
+        view.textContainer?.widthTracksTextView = true
         view.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         view.delegate = context.coordinator
         return view
@@ -40,8 +41,10 @@ struct IrisDesktopLinkedText: NSViewRepresentable {
             view.textStorage?.setAttributedString(text)
         }
         view.linkTextAttributes = [.cursor: NSCursor.pointingHand]
-        view.textContainer?.maximumNumberOfLines = lineLimit ?? 0
-        view.textContainer?.lineBreakMode = lineLimit == nil ? .byWordWrapping : .byTruncatingTail
+        for container in [view.textContainer, context.coordinator.measuringContainer].compactMap({ $0 }) {
+            container.maximumNumberOfLines = lineLimit ?? 0
+            container.lineBreakMode = lineLimit == nil ? .byWordWrapping : .byTruncatingTail
+        }
         if let view = view as? IrisMessageTextView {
             view.messageSelection = selection
             view.messageID = messageID
@@ -50,7 +53,10 @@ struct IrisDesktopLinkedText: NSViewRepresentable {
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSTextView, context: Context) -> CGSize? {
-        guard let container = nsView.textContainer, let layout = nsView.layoutManager else { return nil }
+        // SwiftUI can probe the minimum width after choosing the bubble's frame.
+        // Measure the same storage separately so probes never reflow the visible text.
+        let container = context.coordinator.measuringContainer
+        let layout = context.coordinator.measuringLayout
         let width = max(1, proposal.width ?? 480)
         container.containerSize = CGSize(width: width, height: .greatestFiniteMagnitude)
         layout.ensureLayout(for: container)
@@ -62,7 +68,15 @@ struct IrisDesktopLinkedText: NSViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator() }
 
     final class Coordinator: NSObject, NSTextViewDelegate {
+        let measuringLayout = NSLayoutManager()
+        let measuringContainer = NSTextContainer(size: .zero)
         var open: ((URL) -> Void)?
+
+        override init() {
+            super.init()
+            measuringContainer.lineFragmentPadding = 0
+            measuringLayout.addTextContainer(measuringContainer)
+        }
 
         func textView(_ textView: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {
             guard let url = link as? URL ?? (link as? String).flatMap(URL.init(string:)) else { return false }

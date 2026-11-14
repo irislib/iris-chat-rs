@@ -110,6 +110,84 @@ final class DesktopMessageSelectionTests: XCTestCase {
         XCTAssertGreaterThan(host.fittingSize.height, 25, "Native message text wraps at the bubble width")
     }
 
+    func testBubbleTextRemainsVisibleAfterLayoutAndResize() throws {
+        let messages = ["Can you read the whole message?", "The morning train leaves at ten.",
+                        "This incoming paragraph wraps to a second line and should still be readable after the chat changes width.",
+                        "Yes, I can read this reply too."]
+        let fixture = VStack(spacing: 5) {
+            ForEach(messages.indices, id: \.self) { index in
+                let outgoing = index == 0
+                let reply = index == 3
+                HStack(alignment: .bottom, spacing: 8) {
+                    if outgoing { Spacer(minLength: 12) }
+                    if outgoing { ChatMessageActionDockSlot(isVisible: false, width: 132) { EmptyView() } }
+                    let layout = reply ? AnyLayout(ReplyBubbleLayout(isOutgoing: outgoing))
+                        : AnyLayout(VStackLayout(alignment: outgoing ? .trailing : .leading, spacing: 4))
+                    layout {
+                        if reply { Text("A quoted message").padding(6) }
+                        IrisDesktopLinkedText(attributed: AttributedString(messages[index]), foreground: .white, lineLimit: nil)
+                            .fixedSize(horizontal: false, vertical: true)
+                        if index >= 2 { Text("12.58").font(.caption2) }
+                    }
+                    .padding(.horizontal, 12).padding(.vertical, 8)
+                    .background(outgoing ? Color.purple : Color(white: 0.18))
+                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .modifier(ChatMessageBubbleWidthLimit(maxWidth: 480))
+                    if !outgoing { ChatMessageActionDockSlot(isVisible: false, width: 132) { EmptyView() } }
+                    if !outgoing { Spacer(minLength: 12) }
+                }
+            }
+        }.padding(12).foregroundStyle(.white).background(Color.black)
+        let host = NSHostingView(rootView: fixture)
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 760, height: 320),
+                              styleMask: .borderless, backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        defer { window.close() }
+        window.contentView = host
+
+        func textViews(in view: NSView) -> [IrisMessageTextView] {
+            if let text = view as? IrisMessageTextView { return [text] }
+            return view.subviews.flatMap(textViews)
+        }
+        var paragraphHeights = [CGFloat]()
+        for width: CGFloat in [760, 420, 760] {
+            window.setContentSize(CGSize(width: width, height: 320))
+            window.layoutIfNeeded()
+            host.layoutSubtreeIfNeeded()
+            window.display()
+            let views = textViews(in: host)
+            XCTAssertEqual(Set(views.map(\.string)), Set(messages))
+            for view in views {
+                let container = try XCTUnwrap(view.textContainer)
+                let layout = try XCTUnwrap(view.layoutManager)
+                layout.ensureLayout(for: container)
+                XCTAssertEqual(container.containerSize.width, view.bounds.width, accuracy: 0.5, view.string)
+                let glyphs = layout.glyphRange(for: container)
+                XCTAssertEqual(NSMaxRange(glyphs), layout.numberOfGlyphs, view.string)
+                let ink = layout.boundingRect(forGlyphRange: glyphs, in: container)
+                XCTAssertLessThanOrEqual(ink.maxY, view.bounds.height + 0.5, view.string)
+                // Check painted glyphs too: TextKit can report valid bounds for
+                // text even when its container clips the entire drawing area.
+                let rect = view.convert(view.bounds, to: host)
+                let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: rect))
+                host.cacheDisplay(in: rect, to: bitmap)
+                let hasVisibleText = (bitmap.pixelsWide / 2..<bitmap.pixelsWide).contains { x in
+                    (0..<bitmap.pixelsHigh).contains { y in
+                        guard let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB) else { return false }
+                        return min(color.redComponent, color.greenComponent, color.blueComponent) > 0.85
+                    }
+                }
+                XCTAssertTrue(hasVisibleText, view.string)
+                if view.string == messages[2] { paragraphHeights.append(view.bounds.height) }
+            }
+        }
+        XCTAssertEqual(paragraphHeights.count, 3)
+        if paragraphHeights.count == 3 {
+            XCTAssertGreaterThan(paragraphHeights[1], paragraphHeights[0])
+            XCTAssertEqual(paragraphHeights[2], paragraphHeights[0])
+        }
+    }
+
     func testMouseGestureCrossesBubblesWithoutActivatingLinks() throws {
         let window = NSWindow(contentRect: NSRect(x: -2000, y: -2000, width: 420, height: 300),
                               styleMask: [.borderless], backing: .buffered, defer: false)

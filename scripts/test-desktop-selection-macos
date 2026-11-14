@@ -11,6 +11,8 @@ xcrun swiftc -D IRIS_SELECTION_STANDALONE \
   -Xlinker -rpath -Xlinker "$DEVELOPER/usr/lib" \
   "$ROOT/ios/Sources/IrisDesktopMessageSelection.swift" \
   "$ROOT/ios/Sources/IrisDesktopLinkedText.swift" \
+  "$ROOT/ios/Sources/ChatMessageActionDockSlot.swift" \
+  "$ROOT/ios/Sources/ReplyBubbleLayout.swift" \
   "$ROOT/ios/Tests/DesktopMessageSelectionTests.swift" \
   "$ROOT/macos/SelectionTests/main.swift" -o "$OUTPUT/macos-selection-tests"
 IRIS_SELECTION_EVIDENCE_DIR="$OUTPUT" "$OUTPUT/macos-selection-tests"
