@@ -133,6 +133,23 @@ fn video_metadata_real_mp4_and_mov_keep_encoded_samples_and_remove_recording_det
 }
 
 #[test]
+fn video_metadata_holds_only_movie_headers_in_memory() {
+    for data in [MP4, MOV] {
+        let source = Source::new(std::io::Cursor::new(data.to_vec()), data.len());
+        let movie = Movie::load(&source).unwrap();
+        let held: usize = movie.regions.iter().map(|(_, bytes)| bytes.len()).sum();
+        let media: usize = atoms(data, 0..data.len())
+            .unwrap()
+            .iter()
+            .filter(|a| &a.kind == b"mdat")
+            .map(|a| a.end - a.body)
+            .sum();
+        assert!(media > 0);
+        assert!(held + media <= data.len());
+    }
+}
+
+#[test]
 fn video_metadata_removes_timed_metadata_tracks_and_zeroes_unclaimed_sample_bytes() {
     let (data, kept) = synthetic();
     let out = clean(&data).unwrap();

@@ -163,15 +163,19 @@ impl AppCore {
             return;
         }
         let filename = attachment_upload::display_filename(filename, &path);
-        let data = match fs::read(&path) {
-            Ok(data) => data,
-            Err(_) => {
-                self.state.toast = Some("Group photo could not be opened.".to_string());
-                self.emit_state();
-                return;
-            }
+        // Sniff the type from a prefix; the upload itself streams the file.
+        let opened = fs::File::open(&path).and_then(|file| {
+            let len = file.metadata()?.len();
+            let mut prefix = Vec::with_capacity(16);
+            std::io::Read::read_to_end(&mut std::io::Read::take(file, 16), &mut prefix)?;
+            Ok((len, prefix))
+        });
+        let Ok((total_bytes, prefix)) = opened else {
+            self.state.toast = Some("Group photo could not be opened.".to_string());
+            self.emit_state();
+            return;
         };
-        if data.is_empty() || !attachment_upload::looks_like_image(&path, &data) {
+        if total_bytes == 0 || !attachment_upload::looks_like_image(&path, &prefix) {
             self.state.toast = Some("Group photo must be an image.".to_string());
             self.emit_state();
             return;
@@ -183,7 +187,6 @@ impl AppCore {
         let secret_hex = upload_keys.secret_key().to_secret_hex();
         let sender = self.core_sender.clone();
         let group_id = group_id.to_string();
-        let total_bytes = data.len() as u64;
         self.push_debug_log(
             "group.picture.upload.start",
             format!("group_id={group_id} filename={filename} bytes={total_bytes}"),

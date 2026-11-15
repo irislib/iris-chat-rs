@@ -22,6 +22,62 @@ fn assert_private_removed(data: &[u8]) {
     }
 }
 
+fn jpeg_segment(out: &mut Vec<u8>, marker: u8, body: &[u8]) {
+    out.extend_from_slice(&[0xff, marker]);
+    out.extend_from_slice(&((body.len() + 2) as u16).to_be_bytes());
+    out.extend_from_slice(body);
+}
+
+// In-memory forms of the streaming writers and cleaners, for fixtures.
+fn literal(write: impl FnOnce(&mut Plan)) -> Vec<u8> {
+    let mut plan = Plan::default();
+    write(&mut plan);
+    super::super::clean_stream::run(&[], |_| Ok::<_, ()>(plan)).unwrap()
+}
+
+fn png_chunk(out: &mut Vec<u8>, kind: &[u8], body: &[u8]) {
+    out.extend(literal(|plan| super::png_chunk(plan, kind, body)));
+}
+
+fn riff_chunk(out: &mut Vec<u8>, kind: &[u8], body: &[u8]) {
+    out.extend(literal(|plan| super::riff_chunk(plan, kind, body)));
+}
+
+fn jpeg(data: &[u8]) -> Result<Vec<u8>> {
+    clean(data, Format::Jpeg)
+}
+
+fn png(data: &[u8]) -> Result<Vec<u8>> {
+    clean(data, Format::Png)
+}
+
+fn webp(data: &[u8]) -> Result<Vec<u8>> {
+    clean(data, Format::Webp)
+}
+
+fn gif(data: &[u8]) -> Result<Vec<u8>> {
+    clean(data, Format::Gif)
+}
+
+#[test]
+fn photo_metadata_streams_large_scans_across_read_windows() {
+    // A 7-byte period puts escaped and restart pairs across every 64 KiB
+    // window edge in turn; a private comment follows the scan.
+    let scan: Vec<u8> = b"\x5a\x5a\x5a\xff\xd3\xff\0"
+        .iter()
+        .cycle()
+        .take(7 * 75_000)
+        .copied()
+        .collect();
+    let mut data = jpeg_fixture();
+    let at = data.windows(6).position(|s| s == b"pixels").unwrap();
+    data.splice(at..at, scan.iter().copied());
+    let out = clean(&data, Format::Jpeg).unwrap();
+    assert_private_removed(&out);
+    assert!(out.windows(scan.len()).any(|s| s == scan));
+    assert_eq!(clean(&out, Format::Jpeg).unwrap(), out);
+}
+
 fn jpeg_fixture() -> Vec<u8> {
     let mut out = b"\xff\xd8".to_vec();
     jpeg_segment(&mut out, 0xe0, b"JFIF\0\x01\x02\0\0\x01\0\x01\0\0");

@@ -6,7 +6,9 @@
 //! unreferenced byte in media-data boxes, including removed timed GPS tracks.
 //! This does not redact information visible/audible in the media or codec data.
 //! Unsupported containers/layouts fail before any bytes enter the upload store.
+//! Only the movie header is held in memory; media data streams from the file.
 
+use super::clean_stream::{Plan, Source};
 use std::ops::Range;
 use std::path::Path;
 
@@ -58,12 +60,146 @@ impl Atom {
     }
 }
 
-fn bytes(data: &[u8], at: usize, count: usize) -> Result<&[u8]> {
-    data.get(at..at.checked_add(count).ok_or(ERROR)?)
+/// Read access to a whole movie, or to a record already read from it.
+pub(super) trait View {
+    fn view(&self, range: Range<usize>) -> Option<&[u8]>;
+    fn size(&self) -> usize;
+}
+
+impl View for [u8] {
+    fn view(&self, range: Range<usize>) -> Option<&[u8]> {
+        self.get(range)
+    }
+    fn size(&self) -> usize {
+        self.len()
+    }
+}
+
+impl View for Vec<u8> {
+    fn view(&self, range: Range<usize>) -> Option<&[u8]> {
+        self.get(range)
+    }
+    fn size(&self) -> usize {
+        self.len()
+    }
+}
+
+/// Top-level box headers plus the full `ftyp` and `moov` boxes. Reads of
+/// media data or discarded boxes fail, so the cleaner cannot depend on them.
+pub(super) struct Movie {
+    len: usize,
+    regions: Vec<(usize, Vec<u8>)>,
+}
+
+impl Movie {
+    fn load(source: &Source) -> Result<Self> {
+        let len = source.len();
+        let mut regions = Vec::new();
+        let mut at = 0;
+        while at < len {
+            if len - at < 8 || regions.len() >= 100_000 {
+                return Err(ERROR);
+            }
+            let head = source.read(at, (len - at).min(16)).ok_or(ERROR)?;
+            let (size, header) = match uint(head.as_slice(), 0, 4)? {
+                0 => (len - at, 8),
+                1 => (uint(head.as_slice(), 8, 8)?, 16),
+                n => (n, 8),
+            };
+            if size < header || size > len - at {
+                return Err(ERROR);
+            }
+            let keep = if matches!(&head[4..8], b"ftyp" | b"moov") {
+                size
+            } else {
+                header
+            };
+            regions.push((at, source.read(at, keep).ok_or(ERROR)?));
+            at += size;
+        }
+        Ok(Self { len, regions })
+    }
+}
+
+impl View for Movie {
+    fn view(&self, range: Range<usize>) -> Option<&[u8]> {
+        let index = self
+            .regions
+            .partition_point(|(start, _)| *start <= range.start)
+            .checked_sub(1)?;
+        let (start, bytes) = self.regions.get(index)?;
+        bytes.get(range.start - start..range.end.checked_sub(*start)?)
+    }
+    fn size(&self) -> usize {
+        self.len
+    }
+}
+
+/// Cleaned header copies plus zeroed ranges outside them.
+pub(super) struct Edits {
+    len: usize,
+    regions: Vec<(usize, Vec<u8>)>,
+    zeros: Vec<Range<usize>>,
+}
+
+impl Edits {
+    fn new(movie: &Movie) -> Self {
+        Self {
+            len: movie.len,
+            regions: movie.regions.clone(),
+            zeros: Vec::new(),
+        }
+    }
+
+    fn region_mut(&mut self, range: Range<usize>) -> Option<&mut [u8]> {
+        let index = self
+            .regions
+            .partition_point(|(start, _)| *start <= range.start)
+            .checked_sub(1)?;
+        let (start, bytes) = self.regions.get_mut(index)?;
+        bytes.get_mut(range.start - *start..range.end.checked_sub(*start)?)
+    }
+
+    fn into_plan(mut self) -> Plan {
+        self.zeros.sort_unstable_by_key(|r| r.start);
+        let mut zeros = self.zeros.into_iter().peekable();
+        let mut plan = Plan::default();
+        let mut at = 0;
+        let mut gap = |plan: &mut Plan, at: &mut usize, end: usize| {
+            while let Some(zero) = zeros.next_if(|z| z.start < end) {
+                let start = zero.start.max(*at);
+                plan.copy(*at, start - *at);
+                plan.zero(zero.end.max(start) - start);
+                *at = zero.end.max(start);
+            }
+            plan.copy(*at, end - *at);
+            *at = end;
+        };
+        for (start, bytes) in self.regions {
+            gap(&mut plan, &mut at, start);
+            plan.push(&bytes);
+            at = start + bytes.len();
+        }
+        gap(&mut plan, &mut at, self.len);
+        plan
+    }
+}
+
+pub(super) fn plan(source: &Source) -> Result<Plan> {
+    Ok(clean_movie(&Movie::load(source)?)?.into_plan())
+}
+
+#[cfg(test)]
+pub(super) fn clean(data: &[u8]) -> Result<Vec<u8>> {
+    super::clean_stream::run(data, plan)
+}
+
+fn bytes<D: View + ?Sized>(data: &D, at: usize, count: usize) -> Result<&[u8]> {
+    data.view(at..at.checked_add(count).ok_or(ERROR)?)
         .ok_or(ERROR)
 }
 
-fn uint(data: &[u8], at: usize, count: usize) -> Result<usize> {
+fn uint<D: View + ?Sized>(data: &D, at: usize, count: usize) -> Result<usize> {
     let mut value = 0u64;
     for b in bytes(data, at, count)? {
         value = (value << 8) | u64::from(*b);
@@ -71,7 +207,7 @@ fn uint(data: &[u8], at: usize, count: usize) -> Result<usize> {
     usize::try_from(value).map_err(|_| ERROR)
 }
 
-fn atoms(data: &[u8], range: Range<usize>) -> Result<Vec<Atom>> {
+fn atoms<D: View + ?Sized>(data: &D, range: Range<usize>) -> Result<Vec<Atom>> {
     let mut at = range.start;
     let mut result = Vec::new();
     while at < range.end {
@@ -108,22 +244,40 @@ fn single(list: &[Atom], kind: &[u8; 4]) -> Result<Atom> {
     Ok(atom)
 }
 
-fn zero(out: &mut [u8], range: Range<usize>) -> Result<()> {
-    out.get_mut(range).ok_or(ERROR)?.fill(0);
+fn zero(out: &mut Edits, range: Range<usize>) -> Result<()> {
+    if range.start > range.end || range.end > out.len {
+        return Err(ERROR);
+    }
+    if range.is_empty() {
+        return Ok(());
+    }
+    if let Some(bytes) = out.region_mut(range.clone()) {
+        bytes.fill(0);
+        return Ok(());
+    }
+    // Outside the loaded headers, a range must not straddle one of them.
+    if out
+        .regions
+        .iter()
+        .any(|(start, bytes)| range.start < start + bytes.len() && *start < range.end)
+    {
+        return Err(ERROR);
+    }
+    out.zeros.push(range);
     Ok(())
 }
 
-fn discard(out: &mut [u8], atom: Atom) -> Result<()> {
-    out.get_mut(atom.start + 4..atom.start + 8)
+fn discard(out: &mut Edits, atom: Atom) -> Result<()> {
+    out.region_mut(atom.start + 4..atom.start + 8)
         .ok_or(ERROR)?
         .copy_from_slice(b"free");
     zero(out, atom.payload())
 }
 
-fn dates(out: &mut [u8], atom: Atom) -> Result<()> {
-    let len = match out.get(atom.body) {
-        Some(0) => 8,
-        Some(1) => 16,
+fn dates(out: &mut Edits, atom: Atom) -> Result<()> {
+    let len = match out.region_mut(atom.body..atom.body + 1) {
+        Some([0]) => 8,
+        Some([1]) => 16,
         _ => return Err(ERROR),
     };
     if atom.end - atom.body < 4 + len {
@@ -132,7 +286,7 @@ fn dates(out: &mut [u8], atom: Atom) -> Result<()> {
     zero(out, atom.body + 4..atom.body + 4 + len)
 }
 
-fn handler(data: &[u8], mdia: Atom) -> Result<[u8; 4]> {
+fn handler<D: View + ?Sized>(data: &D, mdia: Atom) -> Result<[u8; 4]> {
     let hdlr = single(&atoms(data, mdia.payload())?, b"hdlr")?;
     if hdlr.end - hdlr.body < 24 {
         return Err(ERROR);
@@ -140,8 +294,8 @@ fn handler(data: &[u8], mdia: Atom) -> Result<[u8; 4]> {
     bytes(data, hdlr.body + 8, 4)?.try_into().map_err(|_| ERROR)
 }
 
-pub(super) fn clean(data: &[u8]) -> Result<Vec<u8>> {
-    let top = atoms(data, 0..data.len())?;
+fn clean_movie(data: &Movie) -> Result<Edits> {
+    let top = atoms(data, 0..data.size())?;
     let moov = single(&top, b"moov")?;
     let children = atoms(data, moov.payload())?;
     let mut video_track = false;
@@ -152,13 +306,13 @@ pub(super) fn clean(data: &[u8]) -> Result<Vec<u8>> {
     // Detect by content, even for a renamed movie; leave audio-only recordings
     // untouched. Audio privacy is a separate policy from outgoing video cleanup.
     if !video_track {
-        return Ok(data.to_vec());
+        return Ok(Edits::new(data));
     }
     let media: Vec<_> = top.iter().filter(|a| &a.kind == b"mdat").copied().collect();
     if media.is_empty() {
         return Err(ERROR);
     }
-    let mut out = data.to_vec();
+    let mut out = Edits::new(data);
     for atom in &top {
         match &atom.kind {
             b"ftyp" | b"moov" | b"mdat" => {}
@@ -226,7 +380,12 @@ pub(super) fn clean(data: &[u8]) -> Result<Vec<u8>> {
     Ok(out)
 }
 
-fn scrub(out: &mut [u8], input: &[u8], container: Atom, depth: usize) -> Result<()> {
+fn scrub<D: View + ?Sized>(
+    out: &mut Edits,
+    input: &D,
+    container: Atom,
+    depth: usize,
+) -> Result<()> {
     if depth > 8 {
         return Err(ERROR);
     }
@@ -259,7 +418,7 @@ fn scrub(out: &mut [u8], input: &[u8], container: Atom, depth: usize) -> Result<
     Ok(())
 }
 
-fn data_references(out: &mut [u8], input: &[u8], atom: Atom) -> Result<()> {
+fn data_references<D: View + ?Sized>(out: &mut Edits, input: &D, atom: Atom) -> Result<()> {
     let body = bytes(input, atom.body, atom.end - atom.body)?;
     if uint(body, 0, 4)? != 0 || uint(body, 4, 4)? != 1 {
         return Err(ERROR);

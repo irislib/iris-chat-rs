@@ -1,6 +1,10 @@
 use super::*;
 
-pub(super) fn samples(data: &[u8], track: Atom, kind: [u8; 4]) -> Result<Vec<Range<usize>>> {
+pub(super) fn samples<D: View + ?Sized>(
+    data: &D,
+    track: Atom,
+    kind: [u8; 4],
+) -> Result<Vec<Range<usize>>> {
     let mdia = single(&atoms(data, track.payload())?, b"mdia")?;
     let minf = single(&atoms(data, mdia.payload())?, b"minf")?;
     let stbl = single(&atoms(data, minf.payload())?, b"stbl")?;
@@ -18,7 +22,7 @@ pub(super) fn samples(data: &[u8], track: Atom, kind: [u8; 4]) -> Result<Vec<Ran
     }
     let fixed_size = uint(sizes, 4, 4)?;
     let sample_count = uint(sizes, 8, 4)?;
-    if sample_count == 0 || sample_count > data.len() {
+    if sample_count == 0 || sample_count > data.size() {
         return Err(ERROR);
     }
     if sizes.len()
@@ -49,7 +53,7 @@ pub(super) fn samples(data: &[u8], track: Atom, kind: [u8; 4]) -> Result<Vec<Ran
     let mappings = table(data, single(&tables, b"stsc")?, 12)?;
     let mut map = mappings.as_chunks::<12>().0.iter().peekable();
     let mut current = *map.next().ok_or(ERROR)?;
-    if uint(&current, 0, 4)? != 1 {
+    if uint(current.as_slice(), 0, 4)? != 1 {
         return Err(ERROR);
     }
     let mut consumed = 0;
@@ -68,8 +72,8 @@ pub(super) fn samples(data: &[u8], track: Atom, kind: [u8; 4]) -> Result<Vec<Ran
         {
             return Err(ERROR);
         }
-        let count = uint(&current, 4, 4)?;
-        if count == 0 || uint(&current, 8, 4)? != 1 || count > sample_count - consumed {
+        let count = uint(current.as_slice(), 4, 4)?;
+        if count == 0 || uint(current.as_slice(), 8, 4)? != 1 || count > sample_count - consumed {
             return Err(ERROR);
         }
         let mut len: usize = 0;
@@ -94,7 +98,7 @@ pub(super) fn samples(data: &[u8], track: Atom, kind: [u8; 4]) -> Result<Vec<Ran
     Ok(ranges)
 }
 
-fn table(data: &[u8], atom: Atom, width: usize) -> Result<&[u8]> {
+fn table<D: View + ?Sized>(data: &D, atom: Atom, width: usize) -> Result<&[u8]> {
     let body = bytes(data, atom.body, atom.end - atom.body)?;
     if uint(body, 0, 4)? != 0 {
         return Err(ERROR);
@@ -107,7 +111,7 @@ fn table(data: &[u8], atom: Atom, width: usize) -> Result<&[u8]> {
     bytes(body, 8, len)
 }
 
-fn description_entries(data: &[u8], atom: Atom) -> Result<Vec<Atom>> {
+fn description_entries<D: View + ?Sized>(data: &D, atom: Atom) -> Result<Vec<Atom>> {
     let body = bytes(data, atom.body, atom.end - atom.body)?;
     if uint(body, 0, 4)? != 0 || uint(body, 4, 4)? != 1 {
         return Err(ERROR);
@@ -126,7 +130,7 @@ fn is_video(kind: &[u8; 4]) -> bool {
     )
 }
 
-pub(super) fn descriptions(out: &mut [u8], data: &[u8], atom: Atom) -> Result<()> {
+pub(super) fn descriptions<D: View + ?Sized>(out: &mut Edits, data: &D, atom: Atom) -> Result<()> {
     for entry in description_entries(data, atom)? {
         let body = bytes(data, entry.body, entry.end - entry.body)?;
         if uint(body, 6, 2)? != 1 {
@@ -156,7 +160,12 @@ pub(super) fn descriptions(out: &mut [u8], data: &[u8], atom: Atom) -> Result<()
     Ok(())
 }
 
-fn extensions(out: &mut [u8], data: &[u8], range: Range<usize>, depth: usize) -> Result<()> {
+fn extensions<D: View + ?Sized>(
+    out: &mut Edits,
+    data: &D,
+    range: Range<usize>,
+    depth: usize,
+) -> Result<()> {
     if depth > 4 {
         return Err(ERROR);
     }
@@ -167,7 +176,7 @@ fn extensions(out: &mut [u8], data: &[u8], range: Range<usize>, depth: usize) ->
             | b"clli" | b"mdcv" | b"frma" | b"enda" | b"chan" => {}
             b"mp4a" | b"\0\0\0\0"
                 if data
-                    .get(atom.payload())
+                    .view(atom.payload())
                     .is_some_and(|b| b.iter().all(|n| *n == 0)) => {}
             b"wave" => extensions(out, data, atom.payload(), depth + 1)?,
             b"udta" | b"meta" | b"uuid" | b"free" => discard(out, atom)?,

@@ -20,6 +20,7 @@ use tokio::io::{AsyncReadExt, AsyncSeekExt};
 use tokio::sync::RwLock as AsyncRwLock;
 use tokio_util::compat::TokioAsyncReadCompatExt;
 
+mod clean_stream;
 mod local_store;
 mod message_commit;
 mod photo_metadata;
@@ -546,30 +547,44 @@ async fn upload_file_to_store<S: Store + 'static>(
     let format = photo_metadata::detect(&prefix, path).map_err(anyhow::Error::msg)?;
     let is_video =
         format.is_none() && video_metadata::detect(&prefix, path).map_err(anyhow::Error::msg)?;
+    let mut cleaner = None;
     let reader: Box<dyn tokio::io::AsyncRead + Unpin + Send> = if format.is_some() || is_video {
-        let mut data = Vec::new();
-        file.take(MAX_ATTACHMENT_BYTES + 1)
-            .read_to_end(&mut data)
-            .await?;
-        if data.len() as u64 > MAX_ATTACHMENT_BYTES {
-            anyhow::bail!("attachment is too large");
-        }
-        let cleaned = tokio::task::spawn_blocking(move || match format {
-            Some(format) => photo_metadata::clean(&data, format),
-            None => video_metadata::clean(&data),
+        // Parse fully before any bytes reach the store, then stream the cleaned
+        // output. Media data is never buffered whole in memory.
+        let len = usize::try_from(metadata.len())?;
+        let file = file.into_std().await;
+        let (source, plan) = tokio::task::spawn_blocking(move || {
+            let source = clean_stream::Source::new(file, len);
+            let plan = match format {
+                Some(format) => photo_metadata::plan(&source, format),
+                None => video_metadata::plan(&source),
+            }?;
+            Ok::<_, &'static str>((source, plan))
         })
         .await?
         .map_err(anyhow::Error::msg)?;
-        Box::new(std::io::Cursor::new(cleaned))
+        let expected = plan.len() as u64;
+        let (pipe, reader) = tokio::io::duplex(256 * 1024);
+        let runtime = tokio::runtime::Handle::current();
+        let task = tokio::task::spawn_blocking(move || {
+            clean_stream::write_to(source, plan, pipe, runtime)
+        });
+        cleaner = Some((task, expected));
+        Box::new(reader)
     } else {
         Box::new(file)
     };
     // Recheck the opened file and cap the stream in case it grows during upload.
     // Never send a link that the attachment download limit makes unusable.
-    let (cid, size) = tree
+    let put = tree
         .put_stream(reader.take(MAX_ATTACHMENT_BYTES + 1).compat())
-        .await
-        .map_err(|error| anyhow::anyhow!("hashtree upload failed: {error}"))?;
+        .await;
+    let (cid, size) = put.map_err(|error| anyhow::anyhow!("hashtree upload failed: {error}"))?;
+    if let Some((task, expected)) = cleaner {
+        // A file changed after parsing ends the stream early; never link it.
+        task.await??;
+        anyhow::ensure!(size == expected, "attachment changed while uploading");
+    }
     if size > MAX_ATTACHMENT_BYTES {
         anyhow::bail!("attachment is too large");
     }
@@ -585,14 +600,21 @@ pub(super) async fn upload_profile_picture_to_hashtree(
     secret_hex: &str,
     path: &Path,
 ) -> anyhow::Result<String> {
-    let data = tokio::fs::read(path).await?;
-    if data.is_empty() {
+    // Check size and type from metadata and a prefix; the upload streams.
+    let len = tokio::fs::metadata(path).await?.len();
+    if len == 0 {
         anyhow::bail!("profile picture is empty");
     }
-    if data.len() > 10 * 1024 * 1024 {
+    if len > 10 * 1024 * 1024 {
         anyhow::bail!("profile picture is too large");
     }
-    if !looks_like_image(path, &data) {
+    let mut prefix = Vec::with_capacity(16);
+    tokio::fs::File::open(path)
+        .await?
+        .take(16)
+        .read_to_end(&mut prefix)
+        .await?;
+    if !looks_like_image(path, &prefix) {
         anyhow::bail!("profile picture must be an image");
     }
     let nhash = upload_file_to_hashtree(secret_hex, path, None).await?;
