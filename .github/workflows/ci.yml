@@ -674,6 +674,11 @@ jobs:
           config['client'] = [debug]
           (root / 'src/debug/google-services.json').write_text(json.dumps(config))
           PY
+          source scripts/build_common.sh
+          version_name="$(awk '/^## v/ { print substr($2, 2); exit }' RELEASE_NOTES.md)"
+          version_code="$(semantic_version_code "$version_name")"
+          echo "IRIS_APP_VERSION_NAME=$version_name" >> "$GITHUB_ENV"
+          echo "IRIS_APP_VERSION_CODE=$version_code" >> "$GITHUB_ENV"
           echo 'IRIS_DEBUG_APPLICATION_ID_SUFFIX=.blegate' >> "$GITHUB_ENV"
           echo 'IRIS_TEST_APPLICATION_ID=to.iris.chat.blegate.test' >> "$GITHUB_ENV"
 
