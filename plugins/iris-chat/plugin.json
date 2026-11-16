@@ -2,7 +2,7 @@
   "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   "name": "iris-chat",
   "description": "Use the Iris CLI to create a local messaging identity, exchange invites, and send or receive encrypted messages with humans and agents. No provider signup, email, or phone number is required.",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "author": {
     "name": "Sirius Business Ltd",
     "url": "https://irischat.org/"
