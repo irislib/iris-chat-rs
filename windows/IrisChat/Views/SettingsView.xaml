@@ -378,8 +378,8 @@
                                    Margin="0,10,0,0"
                                    AutomationProperties.AutomationId="UpdateStatusText" />
                         <ProgressBar x:Name="UpdateProgress"
-                                     Height="6" MaxWidth="320"
-                                     HorizontalAlignment="Stretch"
+                                     Height="6" Width="320"
+                                     HorizontalAlignment="Left"
                                      Minimum="0" Maximum="1"
                                      Margin="0,8,0,0"
                                      Visibility="Collapsed"
