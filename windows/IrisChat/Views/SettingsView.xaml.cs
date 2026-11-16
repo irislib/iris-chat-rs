@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
@@ -46,7 +47,18 @@ public partial class SettingsView : UserControl
         Unloaded += (_, _) => App.CurrentManager.PropertyChanged -= OnChanged;
     }
 
-    private void OnChanged(object? sender, PropertyChangedEventArgs e) => Refresh();
+    // Progress arrives often; repaint only the update section for it.
+    private void OnChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(AppManager.UpdateView))
+        {
+            RenderUpdate();
+        }
+        else
+        {
+            Refresh();
+        }
+    }
 
     private void Refresh()
     {
@@ -126,9 +138,29 @@ public partial class SettingsView : UserControl
         }
 
         UpdateVersionText.Text = $"Current version {App.CurrentManager.AppVersion()}";
-        UpdateStatusText.Text = App.CurrentManager.UpdateStatus;
-        CheckUpdatesButton.IsEnabled = !App.CurrentManager.UpdateChecking && !App.CurrentManager.UpdateInstalling;
-        InstallUpdateButton.IsEnabled = App.CurrentManager.UpdateInstallEnabled;
+        RenderUpdate();
+    }
+
+    private void RenderUpdate()
+    {
+        var view = App.CurrentManager.UpdateView;
+        UpdateStatusText.Text = view.status;
+        UpdateStatusText.Visibility = string.IsNullOrEmpty(view.status) ? Visibility.Collapsed : Visibility.Visible;
+        UpdateDetailText.Text = view.detail ?? string.Empty;
+        UpdateDetailText.Visibility = view.detail is null ? Visibility.Collapsed : Visibility.Visible;
+        UpdateProgress.Visibility = view.busy ? Visibility.Visible : Visibility.Collapsed;
+        UpdateProgress.IsIndeterminate = view.progress is null;
+        UpdateProgress.Value = view.progress ?? 0;
+        CheckUpdatesButton.IsEnabled = view.canCheck && !view.busy;
+        var action = view.busy ? null : view.actionLabel;
+        InstallUpdateButton.Visibility = action is null ? Visibility.Collapsed : Visibility.Visible;
+        InstallUpdateButtonText.Text = action ?? string.Empty;
+        AutomationProperties.SetName(InstallUpdateButton, action ?? string.Empty);
+        var checkedAt = view.lastCheckedSecs is { } secs && !view.busy
+            ? DateTimeOffset.FromUnixTimeSeconds((long)secs).ToLocalTime()
+            : (DateTimeOffset?)null;
+        UpdateLastCheckedText.Text = checkedAt is { } at ? $"Last checked {at:g}" : string.Empty;
+        UpdateLastCheckedText.Visibility = checkedAt is null ? Visibility.Collapsed : Visibility.Visible;
     }
 
     private void RebuildBlockedPeople()
@@ -386,27 +418,11 @@ public partial class SettingsView : UserControl
         App.CurrentManager.AutoInstallUpdates = AutoInstallUpdatesToggle.IsChecked == true;
     }
 
-    private async void OnCheckUpdates(object sender, RoutedEventArgs e)
-    {
-        await RunUpdateAction(() => App.CurrentManager.CheckForUpdatesAsync());
-    }
+    private void OnCheckUpdates(object sender, RoutedEventArgs e) =>
+        App.CurrentManager.CheckForUpdates();
 
-    private async void OnInstallUpdate(object sender, RoutedEventArgs e)
-    {
-        await RunUpdateAction(() => App.CurrentManager.InstallUpdateAsync());
-    }
-
-    private async Task RunUpdateAction(Func<Task> action)
-    {
-        try
-        {
-            await action();
-        }
-        finally
-        {
-            Refresh();
-        }
-    }
+    private void OnInstallUpdate(object sender, RoutedEventArgs e) =>
+        App.CurrentManager.PerformUpdateAction();
 
     private void OnNoteToSelf(object sender, RoutedEventArgs e)
     {

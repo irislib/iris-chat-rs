@@ -1054,7 +1054,7 @@ final class AppManager: ObservableObject {
 #endif
 #if os(macOS)
         self.currentAppVersion = appVersion
-        self.updates = DesktopUpdateController()
+        self.updates = DesktopUpdateController(stateDir: resolvedDataDir)
 #endif
         self.state = initialState
         self.lastRevApplied = initialState.rev

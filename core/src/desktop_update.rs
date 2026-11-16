@@ -5,13 +5,21 @@ use std::sync::{Mutex, OnceLock};
 
 use anyhow::{anyhow, Context, Result};
 use hashtree_updater::{
-    DownloadOptions, UpdateAsset, UpdateCheck, UpdateManifest, UpdateRef, UpdateTarget,
+    DownloadCallback, DownloadEvent, DownloadOptions, UpdateAsset, UpdateCheck, UpdateManifest,
+    UpdateRef, UpdateTarget,
 };
 use serde::Deserialize;
 
 use crate::update_announcements::{
     build_cached_update_downloader, check_secure_update, secure_update_ref, AvailableUpdateResolver,
 };
+
+mod flow;
+mod install;
+mod store;
+mod view;
+pub use flow::*;
+pub use view::*;
 
 // Keep the signed, content-addressed selection offered to the user. Installing
 // it must not depend on discovering the same release a second time.
@@ -25,6 +33,7 @@ const UPDATE_MANIFEST_TIMEOUT_SECS: &str = "8";
 const UPDATE_DOWNLOAD_TIMEOUT_SECS: &str = "180";
 const UPDATE_USER_AGENT: &str = "iris-chat-updater";
 const SECURE_SOURCE_NAME: &str = "hashtree-nostr-blossom";
+const MANIFEST_URL_ENV: &str = "IRIS_UPDATE_MANIFEST_URL";
 const MANIFEST_SOURCE_NAME: &str = "hashtree-release-json";
 
 #[derive(uniffi::Record, Clone, Debug, PartialEq, Eq)]
@@ -48,6 +57,23 @@ enum UpdateSource {
     Auto,
     Hashtree,
     Manifest,
+}
+
+/// Options the in-app updater passes through one check or download.
+#[derive(Clone, Default)]
+pub(crate) struct UpdateRun {
+    /// Release manifest to use instead of signed discovery (tests, overrides).
+    pub(crate) manifest_url: Option<String>,
+    pub(crate) on_event: Option<DownloadCallback>,
+}
+
+impl UpdateRun {
+    fn manifest_override(&self) -> Option<String> {
+        self.manifest_url
+            .clone()
+            .or_else(|| std::env::var(MANIFEST_URL_ENV).ok())
+            .filter(|value| !value.trim().is_empty())
+    }
 }
 
 #[derive(Debug)]
@@ -104,7 +130,11 @@ pub fn iris_desktop_update_check() -> IrisDesktopUpdateResult {
     crate::ffi_or(
         "iris_desktop_update_check",
         IrisDesktopUpdateResult::error("Update check failed".to_string()),
-        || match run_app_update(UpdateOperation::Check, UpdateSource::Auto) {
+        || match run_app_update(
+            UpdateOperation::Check,
+            UpdateSource::Auto,
+            &UpdateRun::default(),
+        ) {
             Ok(result) => result,
             Err(error) => IrisDesktopUpdateResult::from_error(error),
         },
@@ -125,6 +155,7 @@ pub fn iris_desktop_update_download(download_dir: Option<String>) -> IrisDesktop
             match run_app_update(
                 UpdateOperation::Download { download_dir },
                 UpdateSource::Auto,
+                &UpdateRun::default(),
             ) {
                 Ok(result) => result,
                 Err(error) => IrisDesktopUpdateResult::from_error(error),
@@ -136,17 +167,15 @@ pub fn iris_desktop_update_download(download_dir: Option<String>) -> IrisDesktop
 fn run_app_update(
     operation: UpdateOperation,
     source: UpdateSource,
+    run: &UpdateRun,
 ) -> Result<IrisDesktopUpdateResult> {
-    if should_use_secure_hashtree(source) {
-        run_secure_update(operation)
+    let manifest_override = run.manifest_override();
+    if update_source_uses_secure_hashtree(source, manifest_override.as_deref()) {
+        run_secure_update(operation, run.on_event.clone())
     } else {
-        run_manifest_update(operation)
+        let url = manifest_override.unwrap_or_else(|| HTREE_MANIFEST_URL.to_string());
+        run_manifest_update(operation, &url, run.on_event.as_ref())
     }
-}
-
-fn should_use_secure_hashtree(source: UpdateSource) -> bool {
-    let manifest_override = std::env::var("IRIS_UPDATE_MANIFEST_URL").ok();
-    update_source_uses_secure_hashtree(source, manifest_override.as_deref())
 }
 
 fn update_source_uses_secure_hashtree(
@@ -162,7 +191,10 @@ fn update_source_uses_secure_hashtree(
     }
 }
 
-fn run_secure_update(operation: UpdateOperation) -> Result<IrisDesktopUpdateResult> {
+fn run_secure_update(
+    operation: UpdateOperation,
+    on_event: Option<DownloadCallback>,
+) -> Result<IrisDesktopUpdateResult> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
@@ -171,13 +203,17 @@ fn run_secure_update(operation: UpdateOperation) -> Result<IrisDesktopUpdateResu
     // Construct and poll the FIPS bootstrap future on a Tokio worker; the
     // caller only waits on the small join handle. Boxing keeps the outer
     // future small while the inner future is constructed on the worker.
-    let task = runtime.spawn(async move { Box::pin(run_secure_update_async(operation)).await });
+    let task =
+        runtime.spawn(async move { Box::pin(run_secure_update_async(operation, on_event)).await });
     runtime
         .block_on(task)
         .context("update runtime task failed")?
 }
 
-async fn run_secure_update_async(operation: UpdateOperation) -> Result<IrisDesktopUpdateResult> {
+async fn run_secure_update_async(
+    operation: UpdateOperation,
+    on_event: Option<DownloadCallback>,
+) -> Result<IrisDesktopUpdateResult> {
     let reference = secure_update_ref()?;
     let cached = VERIFIED_APP_UPDATE
         .get_or_init(|| Mutex::new(None))
@@ -230,7 +266,7 @@ async fn run_secure_update_async(operation: UpdateOperation) -> Result<IrisDeskt
             let destination =
                 selected_download_path(download_dir.as_deref(), &asset.name, &temp_dir)?;
             let downloaded = updater
-                .download(&check, DownloadOptions::default(), None)
+                .download(&check, DownloadOptions::default(), on_event)
                 .await
                 .with_context(|| format!("failed to download verified update {}", asset.name))?;
             write_downloaded_asset(&destination, &downloaded.bytes)?;
@@ -247,8 +283,12 @@ async fn run_secure_update_async(operation: UpdateOperation) -> Result<IrisDeskt
     }
 }
 
-fn run_manifest_update(operation: UpdateOperation) -> Result<IrisDesktopUpdateResult> {
-    let selection = manifest_selection()?;
+fn run_manifest_update(
+    operation: UpdateOperation,
+    manifest_url: &str,
+    on_event: Option<&DownloadCallback>,
+) -> Result<IrisDesktopUpdateResult> {
+    let selection = manifest_selection(manifest_url)?;
     match operation {
         UpdateOperation::Check => Ok(update_result(
             selection.update_available,
@@ -263,7 +303,7 @@ fn run_manifest_update(operation: UpdateOperation) -> Result<IrisDesktopUpdateRe
             let temp_dir = create_temp_dir("iris-update")?;
             let destination =
                 selected_download_path(download_dir.as_deref(), &selection.asset.name, &temp_dir)?;
-            download_asset(&selection.asset_url, &destination)?;
+            download_asset(&selection.asset_url, &destination, on_event)?;
             Ok(update_result(
                 selection.update_available,
                 &selection.manifest.tag,
@@ -301,9 +341,8 @@ fn update_result(
     }
 }
 
-fn manifest_selection() -> Result<SelectedManifestAsset> {
-    let manifest_url = manifest_url();
-    let manifest = fetch_manifest(&manifest_url)?;
+fn manifest_selection(manifest_url: &str) -> Result<SelectedManifestAsset> {
+    let manifest = fetch_manifest(manifest_url)?;
     let asset = preferred_app_asset(&manifest.assets).ok_or_else(|| {
         anyhow!(
             "release {} has no app update for {}",
@@ -311,7 +350,7 @@ fn manifest_selection() -> Result<SelectedManifestAsset> {
             current_target()
         )
     })?;
-    let asset_url = manifest_asset_url(&manifest_url, &asset.path);
+    let asset_url = manifest_asset_url(manifest_url, &asset.path);
     let update_available = version_is_newer(&manifest.tag, current_version());
     Ok(SelectedManifestAsset {
         manifest,
@@ -319,13 +358,6 @@ fn manifest_selection() -> Result<SelectedManifestAsset> {
         asset_url,
         update_available,
     })
-}
-
-fn manifest_url() -> String {
-    std::env::var("IRIS_UPDATE_MANIFEST_URL")
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| HTREE_MANIFEST_URL.to_string())
 }
 
 fn fetch_manifest(url: &str) -> Result<ReleaseManifest> {
@@ -436,21 +468,32 @@ fn manifest_asset_url(manifest_url: &str, path: &str) -> String {
     format!("{}/{}", base, path.trim_start_matches('/'))
 }
 
-fn download_asset(url: &str, destination: &Path) -> Result<()> {
+fn download_asset(
+    url: &str,
+    destination: &Path,
+    on_event: Option<&DownloadCallback>,
+) -> Result<()> {
     if let Some(parent) = destination.parent() {
         fs::create_dir_all(parent)
             .with_context(|| format!("failed to create {}", parent.display()))?;
     }
     if let Some(path) = local_file_url_path(url)? {
-        fs::copy(&path, destination).with_context(|| {
+        return copy_with_progress(&path, destination, on_event).with_context(|| {
             format!(
                 "failed to copy update from {} to {}",
                 path.display(),
                 destination.display()
             )
-        })?;
-        return Ok(());
+        });
     }
+    let emit = |event| {
+        if let Some(on_event) = on_event {
+            on_event(event);
+        }
+    };
+    emit(DownloadEvent::Started {
+        content_length: None,
+    });
     let output = curl_command(UPDATE_DOWNLOAD_TIMEOUT_SECS)
         .arg("-o")
         .arg(destination)
@@ -463,6 +506,45 @@ fn download_asset(url: &str, destination: &Path) -> Result<()> {
             command_error("update download failed", &output)
         ));
     }
+    let total = fs::metadata(destination).map_or(0, |meta| meta.len());
+    emit(DownloadEvent::Finished { total });
+    Ok(())
+}
+
+/// Copy a local release file in chunks so the shells can show progress.
+fn copy_with_progress(
+    source: &Path,
+    destination: &Path,
+    on_event: Option<&DownloadCallback>,
+) -> Result<()> {
+    use std::io::{Read, Write};
+    let emit = |event| {
+        if let Some(on_event) = on_event {
+            on_event(event);
+        }
+    };
+    let mut input = fs::File::open(source)?;
+    let length = input.metadata()?.len();
+    emit(DownloadEvent::Started {
+        content_length: (length > 0).then_some(length),
+    });
+    let mut output = fs::File::create(destination)?;
+    let mut buffer = vec![0u8; 256 * 1024];
+    let mut copied = 0u64;
+    loop {
+        let read = input.read(&mut buffer)?;
+        if read == 0 {
+            break;
+        }
+        output.write_all(&buffer[..read])?;
+        copied += read as u64;
+        emit(DownloadEvent::Progress {
+            chunk_len: read as u64,
+            downloaded: copied,
+        });
+    }
+    output.flush()?;
+    emit(DownloadEvent::Finished { total: copied });
     Ok(())
 }
 

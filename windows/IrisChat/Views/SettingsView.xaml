@@ -367,13 +367,30 @@
                             </Button>
                             <Button x:Name="InstallUpdateButton"
                                     Style="{StaticResource SettingsPrimaryButton}"
-                                    Click="OnInstallUpdate" Margin="0,0,0,8">
-                                <TextBlock Text="Install update" />
+                                    Click="OnInstallUpdate" Margin="0,0,0,8"
+                                    AutomationProperties.AutomationId="InstallUpdateButton">
+                                <TextBlock x:Name="InstallUpdateButtonText" Text="Install" />
                             </Button>
                         </WrapPanel>
                         <TextBlock x:Name="UpdateStatusText" TextWrapping="Wrap"
+                                   Foreground="{StaticResource TextPrimary}"
+                                   FontWeight="SemiBold"
+                                   Margin="0,10,0,0"
+                                   AutomationProperties.AutomationId="UpdateStatusText" />
+                        <ProgressBar x:Name="UpdateProgress"
+                                     Height="6" MaxWidth="320"
+                                     HorizontalAlignment="Stretch"
+                                     Minimum="0" Maximum="1"
+                                     Margin="0,8,0,0"
+                                     Visibility="Collapsed"
+                                     AutomationProperties.Name="Update progress" />
+                        <TextBlock x:Name="UpdateDetailText" TextWrapping="Wrap"
                                    Style="{StaticResource MutedText}"
-                                   Margin="0,10,0,0" />
+                                   Margin="0,6,0,0"
+                                   AutomationProperties.AutomationId="UpdateDetailText" />
+                        <TextBlock x:Name="UpdateLastCheckedText" TextWrapping="Wrap"
+                                   Style="{StaticResource MutedText}"
+                                   Margin="0,6,0,0" />
                     </StackPanel>
                 </Border>
 

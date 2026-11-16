@@ -4,174 +4,161 @@ import SwiftUI
 import XCTest
 @testable import IrisChatMac
 
+/// The Rust core owns the update flow and its words (see
+/// core/src/desktop_update/flow_tests.rs for the end-to-end states). These
+/// tests check that the Mac shell shows each view the core sends.
 @MainActor
 final class DesktopUpdateTests: XCTestCase {
-    func testAutomaticFailureIsVisibleAndSuccessfulRetryReplacesIt() async throws {
-        let suite = "DesktopUpdateTests.\(UUID().uuidString)"
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
-        defer { defaults.removePersistentDomain(forName: suite) }
-        var failed = true
-        let checkedAt = Date(timeIntervalSince1970: 1_790_750_000)
-        let diagnostic = longDiscoveryFailure
-        let updates = DesktopUpdateController(defaults: defaults, fetchUpdate: {
-            self.result(error: failed ? diagnostic : nil)
-        }, now: { checkedAt })
+    private var suite = ""
+    private var stateDir: URL!
 
-        await updates.check(manual: false)?.value
-        XCTAssertFalse(updates.checking)
-        XCTAssertEqual(updates.status, "Couldn’t check for updates. Try again.")
-        XCTAssertEqual(defaults.string(forKey: "updates.lastCheckStatus"), updates.status)
-        XCTAssertEqual(updates.diagnostics.last?.detail, diagnostic)
-        XCTAssertEqual(updates.diagnostics.last?.category, "updates.check.failed")
-        XCTAssertEqual(updates.lastCheckedAt, checkedAt)
+    override func setUp() async throws {
+        suite = "DesktopUpdateTests.\(UUID().uuidString)"
+        stateDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("DesktopUpdateTests-\(UUID().uuidString)", isDirectory: true)
+    }
+
+    override func tearDown() async throws {
+        UserDefaults().removePersistentDomain(forName: suite)
+        try? FileManager.default.removeItem(at: stateDir)
+        unsetenv("IRIS_UPDATE_MANIFEST_URL")
+    }
+
+    func testCheckFailureFromTheCoreIsShownWithRetry() async throws {
+        let missing = stateDir.appendingPathComponent("missing-release.json")
+        setenv("IRIS_UPDATE_MANIFEST_URL", missing.absoluteString, 1)
+        let updates = controller()
+
+        updates.check()
+        try await waitFor(updates) { $0.step == .failed }
+        XCTAssertEqual(updates.view.status, "Couldn’t check for updates")
+        XCTAssertEqual(updates.view.detail, "Check your connection and try again.")
+        XCTAssertEqual(updates.view.actionLabel, "Retry")
+        XCTAssertNotNil(updates.view.lastChecked)
+        XCTAssertEqual(updates.diagnostics.last?.category, "updates.failed")
         try captureSettings(updates, name: "desktop-update-check-failed")
 
-        failed = false
-        await updates.check(manual: false)?.value
-        XCTAssertEqual(updates.status, "Up to date")
-        XCTAssertEqual(updates.lastCheckedAt, checkedAt)
-        let restored = DesktopUpdateController(defaults: defaults)
-        XCTAssertEqual(restored.status, updates.status)
-        XCTAssertEqual(restored.lastCheckedAt, checkedAt)
+        // The next launch shows the same result without checking again.
+        let restored = controller()
+        XCTAssertEqual(restored.view.status, updates.view.status)
+        XCTAssertEqual(restored.view.lastCheckedSecs, updates.view.lastCheckedSecs)
     }
 
-    func testSavedRawFailureIsHiddenImmediatelyAndRetainedForSupport() throws {
-        let suite = "DesktopUpdateTests.\(UUID().uuidString)"
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
-        defer { defaults.removePersistentDomain(forName: suite) }
-        let diagnostic = longDiscoveryFailure
-        defaults.set("Couldn’t check for updates: \(diagnostic)", forKey: "updates.lastCheckStatus")
-        let updates = DesktopUpdateController(defaults: defaults)
-
-        XCTAssertEqual(updates.status, "Couldn’t check for updates. Try again.")
-        XCTAssertFalse(updates.checking)
-        XCTAssertEqual(defaults.string(forKey: "updates.lastCheckStatus"), updates.status)
-        XCTAssertEqual(updates.diagnostics.last?.jsonObject["detail"] as? String, diagnostic)
-        try captureSettings(updates, name: "desktop-update-saved-failure")
+    func testEveryInstallStepIsShownInTheStripAndSettings() throws {
+        let tag = "v2026.11.17"
+        let steps: [(String, DesktopUpdateStage)] = [
+            ("available", .available(version: tag)),
+            ("fetching", .fetching(version: tag)),
+            ("downloading", .downloading(version: tag, downloadedBytes: 12_400_000, totalBytes: 36_200_000)),
+            ("verifying", .verifying(version: tag)),
+            ("installing", .installing(version: tag)),
+            ("restarting", .restarting(version: tag, installerPath: nil)),
+        ]
+        for (name, stage) in steps {
+            let updates = preview(stage)
+            XCTAssertTrue(updates.view.showBanner, name)
+            if name == "available" {
+                XCTAssertEqual(updates.view.actionLabel, "Install")
+                XCTAssertFalse(updates.view.busy)
+            } else {
+                XCTAssertTrue(updates.view.busy, name)
+                XCTAssertNil(updates.view.actionLabel, name)
+            }
+            try captureStrip(updates, name: "desktop-update-strip-\(name)")
+            try captureSettings(updates, name: "desktop-update-settings-\(name)")
+        }
+        let downloading = preview(steps[2].1).view
+        XCTAssertEqual(downloading.status, "Downloading update v2026.11.17…")
+        XCTAssertEqual(downloading.detail, "12.4 MB of 36.2 MB")
+        XCTAssertEqual(downloading.progress ?? 0, 0.3425, accuracy: 0.001)
     }
 
-    func testFailedRefreshKeepsPreviouslyVerifiedUpdateAvailable() async throws {
-        let suite = "DesktopUpdateTests.\(UUID().uuidString)"
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
-        defer { defaults.removePersistentDomain(forName: suite) }
-        var failed = false
-        let updates = DesktopUpdateController(defaults: defaults, fetchUpdate: {
-            self.result(available: true, error: failed ? self.longDiscoveryFailure : nil)
-        })
-        await updates.check()?.value
-        XCTAssertTrue(updates.available)
-        let verifiedVersion = updates.version
-
-        failed = true
-        await updates.check()?.value
-        XCTAssertEqual(updates.status, "Couldn’t check for updates. Try again.")
-        XCTAssertTrue(updates.available)
-        XCTAssertTrue(updates.canInstall)
-        XCTAssertEqual(updates.version, verifiedVersion)
-        try captureSettings(updates, name: "desktop-update-available-refresh-failed")
+    func testEveryFailureSaysWhatWentWrongAndOffersRetry() throws {
+        let tag = "v2026.11.17"
+        let failures: [(String, DesktopUpdateFailure, String?, String)] = [
+            ("fetch-timed-out", .fetchTimedOut, nil, "Couldn’t get the update"),
+            ("download-stalled", .downloadStalled, nil, "The download stopped"),
+            ("damaged", .verifyFailed, nil, "The download was damaged"),
+            ("no-permission", .noPermission, "Applications", "Couldn’t replace Iris Chat"),
+            ("did-not-finish", .didNotFinish, "v2026.11.13.6", "The update didn’t finish"),
+        ]
+        for (name, failure, context, status) in failures {
+            let updates = preview(.failed(version: tag, failure: failure, context: context))
+            XCTAssertEqual(updates.view.status, status, name)
+            XCTAssertNotNil(updates.view.detail, name)
+            XCTAssertEqual(updates.view.actionLabel, "Retry", name)
+            XCTAssertTrue(updates.view.showBanner, name)
+            XCTAssertFalse(updates.view.busy, name)
+            try captureStrip(updates, name: "desktop-update-strip-failed-\(name)")
+            try captureSettings(updates, name: "desktop-update-settings-failed-\(name)")
+        }
     }
 
-    func testUpdateBannerAppearsWithoutParentStateChanges() async throws {
-        let suite = "DesktopUpdateTests.\(UUID().uuidString)"
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
-        defer { defaults.removePersistentDomain(forName: suite) }
-        let updates = DesktopUpdateController(defaults: defaults, fetchUpdate: { self.result(available: true) })
+    func testQuitsOnceWhenTheCoreIsReadyToRestart() {
+        var quits = 0
+        let updates = controller(quit: { quits += 1 })
+        let restarting = desktopUpdateView(snapshot: DesktopUpdateSnapshot(
+            stage: .restarting(version: "v2026.11.17", installerPath: nil),
+            lastCheckedSecs: nil,
+            diagnostic: nil
+        ))
+        updates.apply(restarting)
+        updates.apply(restarting)
+        XCTAssertEqual(quits, 1)
+        XCTAssertEqual(updates.view.status, "Restarting Iris Chat…")
+    }
+
+    func testStripStaysHiddenWithoutAnUpdate() throws {
+        let updates = preview(.upToDate(updatedTo: nil))
         let host = NSHostingView(rootView: IrisTheme { DesktopUpdateStripe(updates: updates).frame(width: 720) })
         host.layoutSubtreeIfNeeded()
         XCTAssertEqual(host.fittingSize.height, 0, accuracy: 1)
-
-        await updates.check(manual: false)?.value
-        await Task.yield()
-        host.layoutSubtreeIfNeeded()
-        XCTAssertGreaterThan(host.fittingSize.height, 20)
-        XCTAssertTrue(updates.canInstall)
-        host.setFrameSize(host.fittingSize)
-        try capture(host, name: "desktop-update-available")
     }
 
-    func testUnverifiedAutomaticUpdateShowsFailureAndCannotInstall() async throws {
-        let suite = "DesktopUpdateTests.\(UUID().uuidString)"
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
-        defer { defaults.removePersistentDomain(forName: suite) }
-        let updates = DesktopUpdateController(defaults: defaults, fetchUpdate: {
-            var result = self.result(available: true)
-            result.verified = false
-            return result
-        })
-        await updates.check(manual: false)?.value
-        XCTAssertFalse(updates.available)
-        XCTAssertFalse(updates.canInstall)
-        XCTAssertEqual(updates.status, "Update could not be verified.")
-        XCTAssertNotNil(updates.lastCheckedAt)
+    // MARK: - Helpers
+
+    private func controller(quit: @escaping () -> Void = {}) -> DesktopUpdateController {
+        DesktopUpdateController(
+            defaults: UserDefaults(suiteName: suite)!,
+            stateDir: stateDir,
+            appPath: nil,
+            quit: quit
+        )
     }
 
-    func testInstallFailureIsVisibleAndRetryUsesVerifiedDownload() async throws {
-        let suite = "DesktopUpdateTests.\(UUID().uuidString)"
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
-        defer { defaults.removePersistentDomain(forName: suite) }
-        var failDownload = true
-        var installed: URL?
-        let archive = URL(fileURLWithPath: "/tmp/update.app.tar.gz")
-        let updates = DesktopUpdateController(defaults: defaults, fetchUpdate: {
-            self.result(available: true)
-        }, downloadUpdate: {
-            if failDownload { throw URLError(.networkConnectionLost) }
-            return archive
-        }, applyDownload: { installed = $0 })
-        await updates.check()?.value
-        await updates.install()?.value
-        XCTAssertFalse(updates.installing)
-        XCTAssertTrue(updates.canInstall)
-        XCTAssertEqual(updates.bannerStatus, "Couldn’t install the update. Try again.")
-        XCTAssertEqual(updates.diagnostics.last?.category, "updates.install.failed")
-        await updates.check(manual: false)?.value
-        XCTAssertEqual(updates.bannerStatus, "Couldn’t install the update. Try again.")
+    private func preview(_ stage: DesktopUpdateStage) -> DesktopUpdateController {
+        let updates = controller()
+        updates.apply(desktopUpdateView(snapshot: DesktopUpdateSnapshot(
+            stage: stage,
+            lastCheckedSecs: 1_794_900_000,
+            diagnostic: nil
+        )))
+        return updates
+    }
+
+    private func waitFor(
+        _ updates: DesktopUpdateController,
+        _ condition: (DesktopUpdateView) -> Bool
+    ) async throws {
+        for _ in 0..<200 where !condition(updates.view) {
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        XCTAssertTrue(condition(updates.view), "still showing \(updates.view.status)")
+    }
+
+    private func captureStrip(_ updates: DesktopUpdateController, name: String) throws {
         let host = NSHostingView(rootView: IrisTheme { DesktopUpdateStripe(updates: updates).frame(width: 720) })
+        host.layoutSubtreeIfNeeded()
+        XCTAssertGreaterThan(host.fittingSize.height, 20, name)
         host.setFrameSize(host.fittingSize)
-        try capture(host, name: "desktop-update-install-failed")
-        failDownload = false
-        await updates.install()?.value
-        XCTAssertEqual(installed, archive)
-        XCTAssertNil(updates.installFailure)
-    }
-
-    func testCheckCannotReplaceAnActiveInstall() async throws {
-        let suite = "DesktopUpdateTests.\(UUID().uuidString)"
-        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
-        defer { defaults.removePersistentDomain(forName: suite) }
-        var resume: CheckedContinuation<URL, Error>?
-        let updates = DesktopUpdateController(defaults: defaults, fetchUpdate: {
-            self.result(available: true)
-        }, downloadUpdate: {
-            try await withCheckedThrowingContinuation { resume = $0 }
-        }, applyDownload: { _ in })
-        await updates.check()?.value
-        let installation = updates.install()
-        while resume == nil { await Task.yield() }
-        XCTAssertNil(updates.check())
-        XCTAssertNil(updates.install())
-        XCTAssertEqual(updates.bannerStatus, "Downloading v2026.10.8.2")
-        resume?.resume(returning: URL(fileURLWithPath: "/tmp/update.app.tar.gz"))
-        await installation?.value
-    }
-
-    private var longDiscoveryFailure: String {
-        "failed to resolve signed release: no current peer observation\n" +
-            (1...40).map { "Attempt \($0): signed release lookup failed; peer observation unavailable." }
-                .joined(separator: "\n")
-    }
-
-    private func result(available: Bool = false, error: String? = nil) -> IrisDesktopUpdateResult {
-        IrisDesktopUpdateResult(ok: error == nil, error: error, available: available,
-            currentVersion: "2026.10.7", latestVersion: "2026.10.8.2", tag: "v2026.10.8.2",
-            asset: "iris-chat-v2026.10.8.2-macos-arm64.app.tar.gz", source: "hashtree-nostr-blossom",
-            verified: true, url: nil, path: nil)
+        try capture(host, name: name)
     }
 
     private func captureSettings(_ updates: DesktopUpdateController, name: String) throws {
         let host = NSHostingView(rootView: IrisTheme {
-            DesktopUpdateSettingsSection(buildSummary: "2026.10.7", updates: updates)
+            DesktopUpdateSettingsSection(buildSummary: "2026.11.13.6", updates: updates)
                 .padding(24).frame(width: 620)
+                .background(Color(nsColor: .windowBackgroundColor))
         })
         host.setFrameSize(host.fittingSize)
         try capture(host, name: name)

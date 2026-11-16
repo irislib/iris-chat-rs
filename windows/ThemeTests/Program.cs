@@ -75,6 +75,7 @@ internal static class Program
                 }
                 Console.WriteLine($"PASS: {theme} settings navigation and all 13 pages");
             }
+            UpdateChecks.Run(window, manager, output);
             foreach (var light in new[] { true, false })
             {
                 SetPalette(light); Pump();

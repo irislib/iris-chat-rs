@@ -146,12 +146,30 @@ fn verified_download_survives_discovery_outage() {
             .lock()
             .unwrap() = Some((secure_update_ref().unwrap(), resolver, check));
         let directory = tempfile::tempdir().unwrap();
-        let result = run_secure_update_async(UpdateOperation::Download {
-            download_dir: Some(directory.path().into()),
-        })
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let seen = Arc::clone(&events);
+        let on_event: hashtree_updater::DownloadCallback = Arc::new(move |event| {
+            seen.lock().unwrap().push(event);
+        });
+        let result = run_secure_update_async(
+            UpdateOperation::Download {
+                download_dir: Some(directory.path().into()),
+            },
+            Some(on_event),
+        )
         .await
         .unwrap();
         assert!(result.verified);
+        // The in-app updater shows this progress while it downloads.
+        let events = std::mem::take(&mut *events.lock().unwrap());
+        assert!(matches!(
+            events.first(),
+            Some(hashtree_updater::DownloadEvent::Started { .. })
+        ));
+        assert!(matches!(
+            events.last(),
+            Some(hashtree_updater::DownloadEvent::Finished { total }) if *total == bytes.len() as u64
+        ));
         assert_eq!(fs::read(result.path.unwrap()).unwrap(), bytes);
         // A different authority must never reuse the previous selection.
         let other = nostr::Keys::generate();
@@ -162,9 +180,12 @@ fn verified_download_survives_discovery_outage() {
         );
         std::env::set_var("IRIS_UPDATE_RELAYS", "");
         std::env::set_var("IRIS_FIPS_WEBSOCKET_SEED_URLS", "");
-        let result = run_secure_update_async(UpdateOperation::Download {
-            download_dir: Some(directory.path().into()),
-        })
+        let result = run_secure_update_async(
+            UpdateOperation::Download {
+                download_dir: Some(directory.path().into()),
+            },
+            None,
+        )
         .await;
         assert!(result
             .unwrap_err()

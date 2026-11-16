@@ -122,31 +122,45 @@ struct DesktopUpdateSettingsSection: View {
                 Button {
                     updates.check()
                 } label: {
-                    Label(updates.checking ? "Checking" : "Check for updates", systemImage: "arrow.clockwise")
+                    Label("Check for updates", systemImage: "arrow.clockwise")
                 }
                 .buttonStyle(IrisSecondaryButtonStyle())
-                .disabled(updates.checking || updates.installing)
+                .disabled(!updates.view.canCheck || updates.view.busy)
                 .accessibilityIdentifier("desktopCheckForUpdatesButton")
 
-                if updates.available {
+                if let action = updates.view.actionLabel, !updates.view.busy {
                     Button {
-                        updates.install()
+                        updates.performAction()
                     } label: {
-                        Label(updates.installing ? "Installing" : "Install update", systemImage: "square.and.arrow.down.fill")
+                        Label(action, systemImage: action == "Install" ? "square.and.arrow.down.fill" : "arrow.clockwise")
                     }
                     .buttonStyle(IrisPrimaryButtonStyle())
-                    .disabled(!updates.canInstall)
                     .accessibilityIdentifier("desktopInstallUpdateSettingsButton")
                 }
             }
 
-            if !updates.status.isEmpty {
-                Text(updates.status)
-                    .font(.system(.caption, design: .rounded, weight: .medium))
-                    .foregroundStyle(palette.muted)
-                    .accessibilityIdentifier("desktopUpdateStatusText")
+            if !updates.view.status.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 6) {
+                        DesktopUpdateStepIcon(view: updates.view)
+                        Text(updates.view.status)
+                            .font(.system(.callout, design: .rounded, weight: .semibold))
+                            .foregroundStyle(palette.textPrimary)
+                            .accessibilityIdentifier("desktopUpdateStatusText")
+                    }
+                    if updates.view.busy {
+                        DesktopUpdateProgressBar(view: updates.view)
+                            .frame(maxWidth: 320, alignment: .leading)
+                    }
+                    if let detail = updates.view.detail {
+                        Text(detail)
+                            .font(.system(.caption, design: .rounded, weight: .medium))
+                            .foregroundStyle(palette.muted)
+                            .accessibilityIdentifier("desktopUpdateDetailText")
+                    }
+                }
             }
-            if let checkedAt = updates.lastCheckedAt {
+            if let checkedAt = updates.view.lastChecked, !updates.view.busy {
                 Text("Last checked \(checkedAt.formatted(date: .abbreviated, time: .shortened))")
                     .font(.caption)
                     .foregroundStyle(palette.muted)

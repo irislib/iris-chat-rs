@@ -27,7 +27,6 @@ public sealed partial class AppManager : INotifyPropertyChanged
     private const uint RouteChatSnapshotLimit = 80;
     private static readonly TimeSpan ActiveChatSeenIdleLimit = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan NavigationOverrideTtl = TimeSpan.FromSeconds(10);
-    private static readonly TimeSpan DesktopUpdatePollInterval = LoadDesktopUpdatePollInterval();
 
     private sealed record PendingNavigationOverride(Screen[] Stack, DateTimeOffset ExpiresAt);
     private sealed record ClientDebugLogEntry(long TimestampSecs, string Category, string Detail);
@@ -41,25 +40,14 @@ public sealed partial class AppManager : INotifyPropertyChanged
     private readonly IDesktopNotificationPoster _notifier;
     private readonly DesktopNotificationNavigation _notificationNavigation;
     private readonly HashtreeAttachmentCache _cache;
-    private readonly UpdateService _updateService = new();
     private readonly string _dataDir;
     private readonly FfiDesktopNearby? _nearby;
     private readonly Dispatcher _ui;
     private readonly object _toastLock = new();
     private readonly object _clientDebugLogLock = new();
     private readonly List<ClientDebugLogEntry> _clientDebugLog = new();
-    private DispatcherTimer? _updatePollTimer;
     private string? _activeToast;
-    private bool _updateHasAsset;
-    private bool _startupUpdateCheckDone;
-    private bool _updateChecking;
-    private bool _updateInstalling;
-    private bool _updateAvailable;
-    private bool _autoCheckUpdates = UpdateService.LoadAutoCheckUpdates();
-    private bool _autoInstallUpdates = UpdateService.LoadAutoInstallUpdates();
     private DateTimeOffset _lastUserActivityUtc = DateTimeOffset.UtcNow;
-    private string _updateVersion = "";
-    private string _updateStatus = "";
 
     private AppState _state;
     private DesktopNearbySnapshot _nearbySnapshot;
@@ -91,6 +79,8 @@ public sealed partial class AppManager : INotifyPropertyChanged
         Calls = new CallController(this);
         _lastRevApplied = _state.rev;
         _nearby = CreateNearbySafely();
+        _updater = CreateUpdaterSafely();
+        _updateView = SafeUpdateView();
         _nearbySnapshot = SafeNearbySnapshot();
 
         ListenForUpdatesSafely();
@@ -129,98 +119,6 @@ public sealed partial class AppManager : INotifyPropertyChanged
     public DesktopNearbySnapshot NearbySnapshot => _nearbySnapshot;
 
     public HashtreeAttachmentCache AttachmentCache => _cache;
-    public bool UpdateChecking
-    {
-        get => _updateChecking;
-        private set
-        {
-            if (SetField(ref _updateChecking, value))
-            {
-                Notify(nameof(UpdateInstallEnabled));
-            }
-        }
-    }
-
-    public bool UpdateInstalling
-    {
-        get => _updateInstalling;
-        private set
-        {
-            if (SetField(ref _updateInstalling, value))
-            {
-                Notify(nameof(UpdateInstallEnabled));
-            }
-        }
-    }
-
-    public bool UpdateAvailable
-    {
-        get => _updateAvailable;
-        private set
-        {
-            if (SetField(ref _updateAvailable, value))
-            {
-                Notify(nameof(UpdateInstallEnabled));
-                Notify(nameof(UpdateStripeText));
-            }
-        }
-    }
-
-    public string UpdateVersion
-    {
-        get => _updateVersion;
-        private set
-        {
-            if (SetField(ref _updateVersion, value))
-            {
-                Notify(nameof(UpdateStripeText));
-            }
-        }
-    }
-
-    public string UpdateStatus
-    {
-        get => _updateStatus;
-        private set => SetField(ref _updateStatus, value);
-    }
-
-    public bool AutoCheckUpdates
-    {
-        get => _autoCheckUpdates;
-        set
-        {
-            if (!SetField(ref _autoCheckUpdates, value)) return;
-            UpdateService.SaveAutoCheckUpdates(value);
-            if (value)
-            {
-                StartDesktopUpdateChecks();
-            }
-            else
-            {
-                StopDesktopUpdateChecks();
-            }
-        }
-    }
-
-    public bool AutoInstallUpdates
-    {
-        get => _autoInstallUpdates;
-        set
-        {
-            if (!SetField(ref _autoInstallUpdates, value)) return;
-            UpdateService.SaveAutoInstallUpdates(value);
-            if (value && UpdateInstallEnabled)
-            {
-                _ = InstallUpdateAsync();
-            }
-        }
-    }
-
-    public bool UpdateInstallEnabled => UpdateAvailable && _updateHasAsset && !UpdateChecking && !UpdateInstalling;
-
-    public string UpdateStripeText => string.IsNullOrWhiteSpace(UpdateVersion)
-        ? "Update available"
-        : $"{UpdateVersion} available";
 
     // ───────────────────────────── navigation ─────────────────────────────────
 
@@ -682,112 +580,6 @@ public sealed partial class AppManager : INotifyPropertyChanged
     public void ResetNostrRelays() =>
         DispatchToRust(new AppAction.ResetNostrRelays());
 
-    // ───────────────────────────── updates ───────────────────────────────────
-
-    public void StartDesktopUpdateChecks()
-    {
-        if (!AutoCheckUpdates)
-        {
-            StopDesktopUpdateChecks();
-            return;
-        }
-        if (!_startupUpdateCheckDone)
-        {
-            _startupUpdateCheckDone = true;
-            _ = CheckForUpdatesAsync(manual: false);
-        }
-        if (_updatePollTimer is not null) return;
-
-        _updatePollTimer = new DispatcherTimer { Interval = DesktopUpdatePollInterval };
-        _updatePollTimer.Tick += (_, _) =>
-        {
-            if (!AutoCheckUpdates)
-            {
-                StopDesktopUpdateChecks();
-                return;
-            }
-            _ = CheckForUpdatesAsync(manual: false);
-        };
-        _updatePollTimer.Start();
-    }
-
-    private void StopDesktopUpdateChecks()
-    {
-        _updatePollTimer?.Stop();
-        _updatePollTimer = null;
-    }
-
-    public async Task CheckForUpdatesAsync(bool manual = true)
-    {
-        if (UpdateChecking) return;
-        UpdateChecking = true;
-        if (manual)
-        {
-            UpdateStatus = "Checking for updates";
-        }
-
-        try
-        {
-            var result = await _updateService.CheckAsync().ConfigureAwait(true);
-            _updateHasAsset = result.Available && result.HasAsset;
-            UpdateAvailable = result.Available;
-            UpdateVersion = result.Tag;
-            Notify(nameof(UpdateInstallEnabled));
-
-            if (result.Available)
-            {
-                UpdateStatus = result.Message;
-                if (AutoInstallUpdates && UpdateInstallEnabled)
-                {
-                    await InstallUpdateAsync().ConfigureAwait(true);
-                }
-            }
-            else if (manual)
-            {
-                UpdateStatus = result.Message;
-            }
-            else
-            {
-                UpdateStatus = "";
-            }
-        }
-        catch (Exception error)
-        {
-            if (manual)
-            {
-                UpdateStatus = error.Message;
-            }
-        }
-        finally
-        {
-            UpdateChecking = false;
-        }
-    }
-
-    public async Task InstallUpdateAsync()
-    {
-        if (!_updateHasAsset || UpdateInstalling) return;
-        UpdateInstalling = true;
-        UpdateStatus = $"Downloading {UpdateVersion}";
-        try
-        {
-            var path = await _updateService.DownloadWithEmbeddedUpdaterAsync().ConfigureAwait(true);
-            UpdateStatus = $"Downloaded {Path.GetFileName(path)}";
-            if (!UpdateService.SkipOpen)
-            {
-                _ = Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
-            }
-        }
-        catch (Exception error)
-        {
-            UpdateStatus = error.Message;
-        }
-        finally
-        {
-            UpdateInstalling = false;
-        }
-    }
-
     // ────────────────────── support / build metadata ─────────────────────────
 
     public string SupportBundleJson() => SafeSupportBundleJson();
@@ -796,14 +588,6 @@ public sealed partial class AppManager : INotifyPropertyChanged
     public string RelaySetIdText() => Native.RelaySetId();
     public bool TrustedTestBuildEnabled() => Native.IsTrustedTestBuild();
     public string? ExportOwnerNsec() => _secretStore.Load()?.OwnerNsec;
-
-    private static TimeSpan LoadDesktopUpdatePollInterval()
-    {
-        var raw = Environment.GetEnvironmentVariable("IRIS_UPDATE_POLL_SECONDS");
-        return double.TryParse(raw, out var seconds) && seconds > 0
-            ? TimeSpan.FromSeconds(seconds)
-            : TimeSpan.FromHours(6);
-    }
 
     public void CopyToClipboard(string value)
     {

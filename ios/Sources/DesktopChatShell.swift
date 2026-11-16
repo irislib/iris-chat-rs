@@ -755,40 +755,54 @@ struct DesktopUpdateStripe: View {
     @ObservedObject var updates: DesktopUpdateController
 
     var body: some View {
-        if updates.available {
+        if updates.view.showBanner {
             content
         }
     }
 
     private var content: some View {
-        HStack(spacing: 10) {
-            Image(systemName: "arrow.down.circle.fill")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(palette.muted)
+        let view = updates.view
+        return HStack(spacing: 10) {
+            DesktopUpdateStepIcon(view: view)
 
-            Text(updates.bannerStatus)
-                .font(.system(.subheadline, design: .rounded, weight: .semibold))
-                .foregroundStyle(palette.textPrimary)
-                .lineLimit(1)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(view.status)
+                    .font(.system(.subheadline, design: .rounded, weight: .semibold))
+                    .foregroundStyle(palette.textPrimary)
+                    .lineLimit(1)
+                    .accessibilityIdentifier("desktopUpdateStripeStatus")
+                if let detail = view.detail {
+                    Text(detail)
+                        .font(.system(.caption, design: .rounded))
+                        .foregroundStyle(palette.muted)
+                        .lineLimit(1)
+                        .accessibilityIdentifier("desktopUpdateStripeDetail")
+                }
+            }
 
             Spacer(minLength: 12)
 
-            Toggle("Install automatically", isOn: $updates.autoInstall)
-            .irisHoverPointer()
-                .toggleStyle(.checkbox)
-                .irisControlTint()
-                .font(.system(.caption, design: .rounded, weight: .medium))
-                .foregroundStyle(palette.muted)
-                .accessibilityIdentifier("desktopUpdateAutoInstallToggle")
-
-            Button {
-                updates.install()
-            } label: {
-                Text(updates.installing ? "Installing…" : (updates.installFailure == nil ? "Install" : "Try again"))
+            if view.busy {
+                DesktopUpdateProgressBar(view: view)
+                    .frame(width: 160)
+            } else {
+                if view.step == .available {
+                    Toggle("Install automatically", isOn: $updates.autoInstall)
+                        .irisHoverPointer()
+                        .toggleStyle(.checkbox)
+                        .irisControlTint()
+                        .font(.system(.caption, design: .rounded, weight: .medium))
+                        .foregroundStyle(palette.muted)
+                        .accessibilityIdentifier("desktopUpdateAutoInstallToggle")
+                }
+                if let action = view.actionLabel {
+                    Button(action) {
+                        updates.performAction()
+                    }
+                    .buttonStyle(IrisSecondaryButtonStyle(compact: true))
+                    .accessibilityIdentifier("desktopInstallUpdateButton")
+                }
             }
-            .buttonStyle(IrisSecondaryButtonStyle(compact: true))
-            .disabled(!updates.canInstall)
-            .accessibilityIdentifier("desktopInstallUpdateButton")
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 6)
@@ -798,7 +812,47 @@ struct DesktopUpdateStripe: View {
                 .fill(palette.border)
                 .frame(height: 1)
         }
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("desktopUpdateStripe")
+    }
+}
+
+/// Filled icon for the update's current step.
+struct DesktopUpdateStepIcon: View {
+    @Environment(\.irisPalette) private var palette
+    let view: DesktopUpdateView
+
+    var body: some View {
+        Image(systemName: symbol)
+            .font(.system(size: 13, weight: .semibold))
+            .foregroundStyle(view.step == .failed ? Color.orange : palette.muted)
+    }
+
+    private var symbol: String {
+        switch view.step {
+        case .failed: return "exclamationmark.triangle.fill"
+        case .verifying: return "checkmark.shield.fill"
+        case .installing, .restarting: return "arrow.triangle.2.circlepath.circle.fill"
+        default: return "arrow.down.circle.fill"
+        }
+    }
+}
+
+/// A bar while the size is known, a spinner while it is not.
+struct DesktopUpdateProgressBar: View {
+    let view: DesktopUpdateView
+
+    var body: some View {
+        Group {
+            if let progress = view.progress {
+                ProgressView(value: progress)
+            } else {
+                ProgressView()
+                    .controlSize(.small)
+            }
+        }
+        .irisControlTint()
+        .accessibilityIdentifier("desktopUpdateProgress")
     }
 }
 #endif
