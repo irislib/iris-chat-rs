@@ -175,7 +175,7 @@ fn every_retry_bucket_is_source_bound_and_never_formats_fields() {
         (
             "session",
             "src/node/handlers/session/node_handshake.rs",
-            527,
+            483,
             Level::DEBUG,
             &["message", "src"],
         ),

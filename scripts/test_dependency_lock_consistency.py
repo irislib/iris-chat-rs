@@ -12,21 +12,22 @@ EXPECTED = {
     "hashtree-blossom": "0.3.0",
     "hashtree-resolver": "0.3.0",
     "hashtree-updater": "0.3.0",
-    "nvpn-fips-core": "0.4.122",
-    "nvpn-fips-endpoint": "0.4.122",
+    "nvpn-fips-core": "0.4.123",
+    "nvpn-fips-endpoint": "0.4.123",
     "nvpn-fips-tcp": "0.2.6",
-    "nvpn-fips-tcp-endpoint": "0.2.56",
+    "nvpn-fips-tcp-endpoint": "0.2.57",
     "hashtree-config": "0.2.83",
-    "hashtree-core": "0.3.0",
+    "hashtree-core": "0.3.1",
     "hashtree-index": "0.3.0",
     "hashtree-lmdb": "0.3.0",
     "hashtree-fips-transport": "0.5.0",
     "hashtree-network": "0.3.0",
-    "nostr-pubsub": "0.1.20",
-    "nostr-pubsub-fips": "0.6.4",
+    "nostr-pubsub": "0.1.21",
+    "nostr-pubsub-fips": "0.6.5",
+    "nostr-pubsub-reconcile": "0.1.3",
     "nostr-pubsub-relay": "0.1.16",
     "nostr-pubsub-social-graph": "0.3.1",
-    "nostr-social-graph": "0.2.1",
+    "nostr-social-graph": "0.2.2",
     "nostr-social-memory": "0.2.1",
 }
 
@@ -149,30 +150,31 @@ class DependencyLockConsistencyTests(unittest.TestCase):
 
     def test_core_manifest_pins_gated_fips_stack_exactly(self):
         manifest = (ROOT / "core" / "Cargo.toml").read_text(encoding="utf-8")
-        self.assertRegex(manifest, r'(?m)^nvpn-fips-core = \{ version = "=0\.4\.122",', "fips-core must stay on the gated release")
-        self.assertRegex(manifest, r'(?m)^nvpn-fips-endpoint = \{ version = "=0\.4\.122" \}$', "fips-endpoint must stay on the gated release")
+        self.assertRegex(manifest, r'(?m)^nvpn-fips-core = \{ version = "=0\.4\.123",', "fips-core must stay on the gated release")
+        self.assertRegex(manifest, r'(?m)^nvpn-fips-endpoint = \{ version = "=0\.4\.123" \}$', "fips-endpoint must stay on the gated release")
         self.assertRegex(manifest, r'(?m)^nvpn-fips-tcp = \{ version = "=0\.2\.6" \}$', "fips-tcp must stay on the gated release")
-        self.assertRegex(manifest, r'(?m)^nvpn-fips-tcp-endpoint = \{ version = "=0\.2\.56" \}$', "fips-tcp-endpoint must stay on the gated release")
+        self.assertRegex(manifest, r'(?m)^nvpn-fips-tcp-endpoint = \{ version = "=0\.2\.57" \}$', "fips-tcp-endpoint must stay on the gated release")
         self.assertRegex(manifest, r'(?m)^hashtree-config = "=0\.2\.83"$', "Hashtree config must stay on the gated release")
-        self.assertRegex(manifest, r'(?m)^hashtree-core = "=0\.3\.0"$', "Hashtree core must stay on the gated release")
+        self.assertRegex(manifest, r'(?m)^hashtree-core = "=0\.3\.1"$', "Hashtree core must stay on the gated release")
         self.assertRegex(manifest, r'(?m)^hashtree-fips-transport = "=0\.5\.0"$', "Hashtree/FIPS transport must stay on the gated release")
         self.assertRegex(manifest, r'(?m)^hashtree-network = "=0\.3\.0"$', "Hashtree network must stay on the gated release")
         self.assertRegex(manifest, r'(?m)^nostr-identity = "=0\.6\.0"$', "nostr-identity must stay on the gated release")
-        self.assertRegex(manifest, r'(?m)^nostr-pubsub = "=0\.1\.20"$', "nostr-pubsub must stay on the gated release")
-        self.assertRegex(manifest, r'(?m)^nostr-pubsub-fips = "=0\.6\.4"$', "nostr-pubsub-fips must stay on the gated release")
+        self.assertRegex(manifest, r'(?m)^nostr-pubsub = "=0\.1\.21"$', "nostr-pubsub must stay on the gated release")
+        self.assertRegex(manifest, r'(?m)^nostr-pubsub-fips = "=0\.6\.5"$', "nostr-pubsub-fips must stay on the gated release")
+        self.assertRegex(manifest, r'(?m)^nostr-pubsub-reconcile = "=0\.1\.3"$', "nostr-pubsub-reconcile must stay on the gated release")
         self.assertRegex(manifest, r'(?m)^nostr-pubsub-relay = "=0\.1\.16"$', "nostr-pubsub-relay must stay on the gated release")
-        self.assertRegex(manifest, r'(?m)^nostr-social-graph = "=0\.2\.1"$', "Direct graph consumer needs revision-aware lists")
+        self.assertRegex(manifest, r'(?m)^nostr-social-graph = "=0\.2\.2"$', "Direct graph consumer needs revision-aware lists")
         # Direct and pubsub/memory consumers share the reviewed revision-aware graph.
         for lock_path in PLATFORM_LOCKS:
             entries = [block for block in lock_path.read_text().split("[[package]]")
                        if re.search(r'(?m)^name = "nostr-social-graph"$', block)
-                       and re.search(r'(?m)^version = "0.2.1"$', block)]
+                       and re.search(r'(?m)^version = "0\.2\.2"$', block)]
             self.assertEqual(len(entries), 1)
-            self.assertIn('checksum = "c791a910d0dfe97088bb9ebac2b0551e21102ae4f272ad2a8b20cec27e188402"', entries[0])
+            self.assertIn('checksum = "94ad34129aa71f3cb8344e39d3a690c08c7d84b5a230a42e146efc0aaa3f2d22"', entries[0])
 
     def test_revision_aware_provider_archives_are_the_accepted_tuple(self):
         checksums = {
-            "nostr-pubsub-fips": "d37fc71dd2abca755b85ef3157813d4d833bf06765541e44af4d195d01370606",
+            "nostr-pubsub-fips": "3ed00bcf7627f4b9ab1c4185d72d130637b32a9e9270c11edcc113208eacdea6",
             "nostr-pubsub-social-graph": "6f7f5d8b5ae252baf6bba6f1fafcd4d0df80a2a9b31eaccc3786016e35f25abd",
             "nostr-social-memory": "4b28fbf489df058c877fba6d660d041883683d40272b5dbb8cf56679f1c105a1",
         }

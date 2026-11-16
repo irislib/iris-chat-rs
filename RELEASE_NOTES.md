@@ -2,6 +2,28 @@
 
 Each release has channel-specific notes. The release tag must match the `##` heading exactly.
 
+## v2026.11.16
+
+### GitHub
+
+- Keep incoming message text visible when macOS measures chat bubbles.
+- Let linked devices compare chat history in both directions at the same time. Opening a conversation also requests a history comparison.
+- On iOS, keep Photos shares queued until Iris can send them. Stream photo and video uploads to reduce memory use.
+- Clear older group notice badges when the account replies.
+- Update FIPS transport, pubsub, history reconciliation, Hashtree core and social graph libraries.
+
+### Apple
+
+- Incoming messages are readable again on Mac.
+- Opening a chat helps linked devices recover missing messages.
+- Photos shared to Iris on iPhone stay queued until they can be sent. Photo and video uploads use less memory.
+- Replying to a group clears older notice badges.
+
+### Zapstore
+
+- Opening a chat helps linked devices recover missing messages.
+- Replying to a group clears older notice badges.
+
 ## v2026.11.13.6
 
 ### GitHub

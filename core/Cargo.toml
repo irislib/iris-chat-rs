@@ -57,13 +57,13 @@ lightning-invoice = { version = "=0.34.1", features = ["std"] }
 clap = { version = "4", features = ["derive", "env"] }
 futures-util = "0.3"
 flume = "0.11"
-nvpn-fips-core = { version = "=0.4.122", features = ["webrtc-transport", "host-ble-transport"] }
-nvpn-fips-endpoint = { version = "=0.4.122" }
+nvpn-fips-core = { version = "=0.4.123", features = ["webrtc-transport", "host-ble-transport"] }
+nvpn-fips-endpoint = { version = "=0.4.123" }
 nvpn-fips-tcp = { version = "=0.2.6" }
-nvpn-fips-tcp-endpoint = { version = "=0.2.56" }
+nvpn-fips-tcp-endpoint = { version = "=0.2.57" }
 hashtree-blossom = { version = "=0.3.0", default-features = false, features = ["store"] }
 hashtree-config = "=0.2.83"
-hashtree-core = "=0.3.0"
+hashtree-core = "=0.3.1"
 hashtree-fips-transport = "=0.5.0"
 hashtree-index = "=0.3.0"
 hashtree-lmdb = "=0.3.0"
@@ -74,11 +74,11 @@ hmac = "0.12"
 iris-chat-protocol = { version = "=0.3.21", path = "../chat-protocol" }
 nostr = { version = "0.44.7", default-features = false, features = ["std", "nip44"] }
 nostr-sdk = { version = "0.44.1", default-features = false, features = ["nip44"] }
-nostr-pubsub = "=0.1.20"
-nostr-pubsub-reconcile = "=0.1.1"
-nostr-pubsub-fips = "=0.6.4"
+nostr-pubsub = "=0.1.21"
+nostr-pubsub-reconcile = "=0.1.3"
+nostr-pubsub-fips = "=0.6.5"
 nostr-pubsub-relay = "=0.1.16"
-nostr-social-graph = "=0.2.1"
+nostr-social-graph = "=0.2.2"
 negentropy = "=0.5.2"
 nostr-identity = "=0.6.0"
 nostr-double-ratchet = "0.0.180"
