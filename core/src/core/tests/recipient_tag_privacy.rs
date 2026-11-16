@@ -130,6 +130,7 @@ fn capture_call_wake(core: &mut AppCore) -> std::thread::JoinHandle<Event> {
 fn published_message_events_name_no_recipient_on_any_send_path() {
     // Alice has two linked devices (0 and 1); Bob (2) and Carol (3) have one.
     let mut farm = GroupScaleFarm::new(&[2, 1, 1]);
+    assert_eq!(farm.devices.len(), 4);
     farm.pump();
     let identities = farm_identities(&farm);
     let alice = farm.owners[0].public_key().to_hex();
@@ -186,10 +187,10 @@ fn published_message_events_name_no_recipient_on_any_send_path() {
     // An established session, in the other direction.
     farm.send(2, &alice, "reply");
     farm.pump();
-    for device in 0..2 {
+    for (index, device) in farm.devices.iter().take(2).enumerate() {
         assert!(
-            bodies(&farm.devices[device].core, &bob).contains(&"reply".to_string()),
-            "Alice's device {device} must read the reply"
+            bodies(&device.core, &bob).contains(&"reply".to_string()),
+            "Alice's device {index} must read the reply"
         );
     }
 
@@ -217,10 +218,10 @@ fn published_message_events_name_no_recipient_on_any_send_path() {
         .group_sender_event_pubkeys_for_group(&group_id);
     farm.pump();
     farm.retry();
-    for device in 1..4 {
+    for (index, device) in farm.devices.iter().enumerate().skip(1) {
         assert!(
-            bodies(&farm.devices[device].core, &chat_id).contains(&"group body".to_string()),
-            "device {device} must read the group message"
+            bodies(&device.core, &chat_id).contains(&"group body".to_string()),
+            "device {index} must read the group message"
         );
     }
 
