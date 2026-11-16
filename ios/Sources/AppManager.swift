@@ -1713,17 +1713,19 @@ final class AppManager: ObservableObject {
         let generation = reconciliationGeneration
         pendingShareSendTask = Task { [weak self] in
             do {
-                let copies = try await staging.stageAsync(share.attachments.map { URL(fileURLWithPath: $0.path) })
+                let attachments = try await staging.stageAsync(shared: share.attachments)
                 guard let self, !Task.isCancelled, self.reconciliationGeneration == generation,
                       self.pendingShare?.id == share.id else {
-                    await Task.detached(priority: .utility) { staging.discard(copies) }.value
+                    await Task.detached(priority: .utility) { staging.discard(attachments) }.value
                     return
                 }
-                let attachments = zip(copies, share.attachments).map { copy, original in
-                    let name = original.filename.trimmingCharacters(in: .whitespacesAndNewlines)
-                    return StagedAttachment(path: copy.path, filename: name.isEmpty ? copy.filename : name)
-                }
                 self.pendingShareSendTask = nil
+#if os(iOS)
+                if share.shouldAutoSend && !self.appSceneIsActive {
+                    await Task.detached(priority: .utility) { staging.discard(attachments) }.value
+                    return
+                }
+#endif
                 self.finishSendingPendingShare(share, to: targets, stagedAttachments: attachments)
             } catch {
                 guard let self, !Task.isCancelled, self.reconciliationGeneration == generation,
@@ -1832,6 +1834,11 @@ final class AppManager: ObservableObject {
     }
 
     private func processPendingShareIfReady() {
+#if os(iOS)
+        // The share extension can notify a suspended app. Foregrounding opens
+        // attachment storage before retrying this same inbox entry.
+        guard appSceneIsActive else { return }
+#endif
         guard let share = pendingShare,
               share.shouldAutoSend,
               state.account?.authorizationState == .authorized else {

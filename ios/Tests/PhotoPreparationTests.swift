@@ -9,7 +9,7 @@ import XCTest
 #endif
 
 final class PhotoPreparationTests: XCTestCase {
-    func testHeicPhotoBecomesJpegWithoutPrivateProperties() throws {
+    private func heicWithPrivateProperties() throws -> Data {
         let context = try XCTUnwrap(CGContext(
             data: nil, width: 32, height: 24, bitsPerComponent: 8, bytesPerRow: 128,
             space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue
@@ -26,7 +26,11 @@ final class PhotoPreparationTests: XCTestCase {
             kCGImagePropertyTIFFDictionary: [kCGImagePropertyTIFFArtist: "PrivateAuthor"],
         ] as CFDictionary)
         XCTAssertTrue(CGImageDestinationFinalize(destination))
-        let prepared = try XCTUnwrap(irisPreparePickedPhoto(data: original as Data, filenameExtension: "HEIC"))
+        return original as Data
+    }
+
+    func testHeicPhotoBecomesJpegWithoutPrivateProperties() throws {
+        let prepared = try XCTUnwrap(irisPreparePickedPhoto(data: heicWithPrivateProperties(), filenameExtension: "HEIC"))
         XCTAssertEqual(prepared.filenameExtension, "jpg")
         let source = try XCTUnwrap(CGImageSourceCreateWithData(prepared.data as CFData, nil))
         XCTAssertEqual(CGImageSourceGetType(source) as String?, UTType.jpeg.identifier)
@@ -41,6 +45,24 @@ final class PhotoPreparationTests: XCTestCase {
         let tiff = properties[kCGImagePropertyTIFFDictionary] as? [CFString: Any]
         XCTAssertNil(tiff?[kCGImagePropertyTIFFArtist])
         XCTAssertNotNil(CGImageSourceCreateImageAtIndex(source, 0, nil))
+    }
+
+    func testShareFromPhotosConvertsTheActualFileAndItsDisplayName() async throws {
+        let fm = FileManager.default
+        let folder = fm.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try fm.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: folder) }
+        let file = folder.appendingPathComponent("temporary-image")
+        try heicWithPrivateProperties().write(to: file)
+        let staging = IrisAttachmentStaging(dataDir: folder, fileManager: fm)
+        let results = try await staging.stageAsync(shared: [PendingShareAttachment(path: file.path, filename: "Beach")])
+        let photo = try XCTUnwrap(results.first)
+        XCTAssertEqual(photo.filename, "Beach.jpg")
+        let jpeg = try XCTUnwrap(CGImageSourceCreateWithURL(URL(fileURLWithPath: photo.path) as CFURL, nil))
+        XCTAssertEqual(CGImageSourceGetType(jpeg) as String?, UTType.jpeg.identifier)
+        let properties = try XCTUnwrap(CGImageSourceCopyPropertiesAtIndex(jpeg, 0, nil) as? [CFString: Any])
+        XCTAssertNil(properties[kCGImagePropertyGPSDictionary])
+        XCTAssertEqual(properties[kCGImagePropertyOrientation] as? Int, 6)
     }
 
     func testSupportedContainersAndVideosKeepTheirOriginalEncoding() throws {

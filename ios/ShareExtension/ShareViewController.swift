@@ -29,7 +29,7 @@ final class ShareViewController: UIViewController {
     private let activityIndicator = UIActivityIndicatorView(style: .medium)
     private let chatTable = UITableView(frame: .zero, style: .plain)
     private let sendButton = UIButton(type: .system)
-    private let openAppButton = UIButton(type: .system)
+    private let continueButton = UIButton(type: .system)
     private let cancelButton = UIButton(type: .system)
     private let footerView = UIView()
     private let footerHairline = UIView()
@@ -40,10 +40,10 @@ final class ShareViewController: UIViewController {
     private var suggestions: [ShareSuggestionEntry] = []
     private var searchText = ""
     private var selectedChatIds = Set<String>()
-    private var stagedShareID: String?
     private var stagedPayload: StoredSharePayload?
-    private var didStart = false
-    private var isOpeningApp = false
+    private var draftFiles: URL?
+    private var preparation: Task<Void, Never>?
+    private var didQueue = false
 
     private var filteredSuggestions: [ShareSuggestionEntry] {
         let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -61,9 +61,8 @@ final class ShareViewController: UIViewController {
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
-        guard !didStart else { return }
-        didStart = true
-        Task {
+        guard preparation == nil else { return }
+        preparation = Task {
             await stageShare()
         }
     }
@@ -123,11 +122,11 @@ final class ShareViewController: UIViewController {
         sendButton.translatesAutoresizingMaskIntoConstraints = false
         sendButton.accessibilityLabel = "Send"
 
-        openAppButton.setTitle("Open Iris Chat", for: .normal)
-        openAppButton.titleLabel?.font = .preferredFont(forTextStyle: .body)
-        openAppButton.addTarget(self, action: #selector(openMainApp), for: .touchUpInside)
-        openAppButton.isHidden = true
-        openAppButton.translatesAutoresizingMaskIntoConstraints = false
+        continueButton.setTitle("Continue", for: .normal)
+        continueButton.titleLabel?.font = .preferredFont(forTextStyle: .body)
+        continueButton.addTarget(self, action: #selector(continueInIris), for: .touchUpInside)
+        continueButton.isHidden = true
+        continueButton.translatesAutoresizingMaskIntoConstraints = false
 
         footerView.backgroundColor = ShareColors.footerBackground
         footerView.isHidden = true
@@ -161,7 +160,7 @@ final class ShareViewController: UIViewController {
         view.addSubview(searchBar)
         view.addSubview(activityIndicator)
         view.addSubview(statusLabel)
-        view.addSubview(openAppButton)
+        view.addSubview(continueButton)
         view.addSubview(chatTable)
         view.addSubview(footerView)
         footerView.addSubview(footerHairline)
@@ -195,8 +194,8 @@ final class ShareViewController: UIViewController {
             statusLabel.leadingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.leadingAnchor, constant: 24),
             statusLabel.trailingAnchor.constraint(equalTo: view.safeAreaLayoutGuide.trailingAnchor, constant: -24),
 
-            openAppButton.topAnchor.constraint(equalTo: statusLabel.bottomAnchor, constant: 16),
-            openAppButton.centerXAnchor.constraint(equalTo: view.centerXAnchor),
+            continueButton.topAnchor.constraint(equalTo: statusLabel.bottomAnchor, constant: 16),
+            continueButton.centerXAnchor.constraint(equalTo: view.centerXAnchor),
 
             chatTable.topAnchor.constraint(equalTo: searchBar.bottomAnchor, constant: 8),
             chatTable.leadingAnchor.constraint(equalTo: view.leadingAnchor),
@@ -235,21 +234,21 @@ final class ShareViewController: UIViewController {
             await MainActor.run {
                 activityIndicator.stopAnimating()
                 activityIndicator.isHidden = true
-                titleLabel.text = "Nothing to share"
+                titleLabel.text = "Couldn’t read this share"
                 statusLabel.isHidden = false
                 statusLabel.text = nil
-                openAppButton.isHidden = true
+                continueButton.isHidden = true
             }
             return
         }
-        stagedShareID = payload.id
+        guard !Task.isCancelled else { return }
         stagedPayload = payload
         donateSuggestedInteraction()
 
         if intentChatId != nil {
             // The user picked a specific contact suggestion in iOS's share sheet.
             // Send it straight through.
-            await queueStagedShare(autoSend: true)
+            queueShare(payload)
             return
         }
 
@@ -268,7 +267,7 @@ final class ShareViewController: UIViewController {
                 chatTable.isHidden = true
                 searchBar.isHidden = true
                 footerView.isHidden = true
-                openAppButton.isHidden = false
+                continueButton.isHidden = false
             } else {
                 titleLabel.text = "Choose recipients"
                 statusLabel.text = nil
@@ -276,19 +275,21 @@ final class ShareViewController: UIViewController {
                 searchBar.isHidden = false
                 chatTable.isHidden = false
                 footerView.isHidden = false
-                openAppButton.isHidden = true
+                continueButton.isHidden = true
                 chatTable.reloadData()
             }
             updateActionButtons()
         }
     }
 
-    @objc private func openMainApp() {
-        Task { await openMainApp(autoSend: false) }
+    @objc private func continueInIris() {
+        guard let payload = stagedPayload else { return }
+        queueShare(payload)
     }
 
     @objc private func cancelShare() {
-        deleteStagedPayload()
+        preparation?.cancel()
+        if !didQueue, let draftFiles { try? FileManager.default.removeItem(at: draftFiles) }
         complete()
     }
 
@@ -307,58 +308,74 @@ final class ShareViewController: UIViewController {
             suggestedChatIds: selectedIds,
             autoSend: true
         )
-        stagedPayload = updated
-        rewritePayloadOnDisk(updated)
-        suggestions
-            .filter { selectedChatIds.contains($0.chatId) }
-            .forEach(donateChatInteraction)
-        Task { await queueStagedShare(autoSend: true) }
+        if queueShare(updated) {
+            suggestions
+                .filter { selectedChatIds.contains($0.chatId) }
+                .forEach(donateChatInteraction)
+        }
     }
 
-    private func queueStagedShare(autoSend: Bool) async {
-        updateStagedPayload(autoSend: autoSend)
-        await MainActor.run {
-            isOpeningApp = true
-            activityIndicator.isHidden = false
-            activityIndicator.startAnimating()
-            statusLabel.isHidden = false
-            statusLabel.text = "Sending..."
-            updateActionButtons()
+    // Only a confirmed share belongs in the inbox. The app may scan it at
+    // any time, including while the recipient picker is still on screen.
+    @discardableResult
+    private func queueShare(_ payload: StoredSharePayload) -> Bool {
+        guard !didQueue, let draftFiles else { return false }
+        do {
+            let fm = FileManager.default
+            guard let container = fm.containerURL(forSecurityApplicationGroupIdentifier: appGroupIdentifier) else {
+                throw CocoaError(.fileWriteNoPermission)
+            }
+            let inbox = container.appendingPathComponent("pending-shares", isDirectory: true)
+            try fm.createDirectory(at: inbox, withIntermediateDirectories: true)
+            let files = inbox.appendingPathComponent(draftFiles.lastPathComponent, isDirectory: true)
+            if draftFiles != files {
+                try fm.moveItem(at: draftFiles, to: files)
+                self.draftFiles = files
+            }
+            let ready = StoredSharePayload(
+                id: payload.id, text: payload.text, attachments: payload.attachments.map {
+                    StoredShareAttachment(path: files.appendingPathComponent($0.filename).path, filename: $0.filename)
+                },
+                suggestedChatId: payload.suggestedChatId, suggestedChatIds: payload.suggestedChatIds, autoSend: payload.autoSend
+            )
+            let url = inbox.appendingPathComponent(payload.id).appendingPathExtension("json")
+            try JSONEncoder().encode(ready).write(to: url, options: .atomic)
+        } catch {
+            let alert = UIAlertController(title: "Couldn’t save share", message: nil, preferredStyle: .alert)
+            alert.addAction(UIAlertAction(title: "Retry", style: .default) { [weak self] _ in
+                self?.queueShare(payload)
+            })
+            alert.addAction(UIAlertAction(title: "Cancel", style: .cancel) { [weak self] _ in
+                self?.cancelShare()
+            })
+            present(alert, animated: true)
+            return false
         }
+
+        didQueue = true
         notifyMainAppAboutPendingShare()
-        await MainActor.run {
-            complete()
+        activityIndicator.stopAnimating()
+        activityIndicator.isHidden = true
+        chatTable.isHidden = true
+        searchBar.isHidden = true
+        footerView.isHidden = true
+        cancelButton.isHidden = true
+        titleLabel.text = "Queued for Iris Chat"
+        statusLabel.text = payload.autoSend == true
+            ? "Open Iris Chat to finish sending."
+            : "Open Iris Chat to choose a chat."
+        statusLabel.isHidden = false
+        continueButton.setTitle("Done", for: .normal)
+        continueButton.removeTarget(self, action: #selector(continueInIris), for: .touchUpInside)
+        continueButton.addTarget(self, action: #selector(cancelShare), for: .touchUpInside)
+        continueButton.isEnabled = true
+        continueButton.isHidden = false
+        // Some hosts decline to open the app. Keep the queued share and the
+        // next step visible until the user dismisses the extension.
+        if let url = URL(string: "irischat://share/\(payload.id)") {
+            Task { if await extensionContext?.open(url) == true { complete() } }
         }
-    }
-
-    private func openMainApp(autoSend: Bool) async {
-        updateStagedPayload(autoSend: autoSend)
-        guard let url = shareURL(autoSend: autoSend) else {
-            return
-        }
-        await MainActor.run {
-            isOpeningApp = true
-            activityIndicator.isHidden = false
-            activityIndicator.startAnimating()
-            statusLabel.isHidden = false
-            statusLabel.text = "Opening Iris Chat..."
-            updateActionButtons()
-        }
-        let opened = await openURLFromExtension(url)
-        if opened {
-            await MainActor.run {
-                complete()
-            }
-        } else {
-            await MainActor.run {
-                isOpeningApp = false
-                activityIndicator.stopAnimating()
-                activityIndicator.isHidden = true
-                statusLabel.isHidden = false
-                statusLabel.text = autoSend ? "Open Iris Chat to finish." : "Could not open Iris Chat."
-                updateActionButtons()
-            }
-        }
+        return true
     }
 
     private func toggleChatSelection(_ entry: ShareSuggestionEntry, at indexPath: IndexPath) {
@@ -373,7 +390,7 @@ final class ShareViewController: UIViewController {
 
     private func updateActionButtons() {
         let count = selectedChatIds.count
-        let enabled = !isOpeningApp && count > 0 && stagedPayload != nil
+        let enabled = !didQueue && count > 0 && stagedPayload != nil
         var sendConfig = sendButton.configuration ?? UIButton.Configuration.filled()
         sendConfig.title = nil
         sendConfig.image = UIImage(systemName: "arrow.up")
@@ -395,12 +412,7 @@ final class ShareViewController: UIViewController {
         selectedNamesScrollView.isAccessibilityElement = !names.isEmpty
         selectedNamesScrollView.accessibilityLabel = names
 
-        openAppButton.isEnabled = !isOpeningApp && stagedPayload != nil
-        cancelButton.isEnabled = !isOpeningApp
-    }
-
-    private func openURLFromExtension(_ url: URL) async -> Bool {
-        await extensionContext?.open(url) == true
+        continueButton.isEnabled = !didQueue && stagedPayload != nil
     }
 
     private func notifyMainAppAboutPendingShare() {
@@ -411,63 +423,6 @@ final class ShareViewController: UIViewController {
             nil,
             true
         )
-    }
-
-    private func shareURL(autoSend: Bool) -> URL? {
-        guard let id = stagedShareID else { return nil }
-        var comps = URLComponents()
-        comps.scheme = "irischat"
-        comps.host = "share"
-        comps.path = "/\(id)"
-        if autoSend {
-            comps.queryItems = [URLQueryItem(name: "send", value: "1")]
-        }
-        return comps.url
-    }
-
-    private func rewritePayloadOnDisk(_ payload: StoredSharePayload) {
-        guard let container = FileManager.default.containerURL(
-            forSecurityApplicationGroupIdentifier: appGroupIdentifier
-        ) else {
-            return
-        }
-        let url = container
-            .appendingPathComponent("pending-shares", isDirectory: true)
-            .appendingPathComponent(payload.id)
-            .appendingPathExtension("json")
-        if let data = try? JSONEncoder().encode(payload) {
-            try? data.write(to: url, options: .atomic)
-        }
-    }
-
-    private func updateStagedPayload(autoSend: Bool) {
-        guard let payload = stagedPayload else { return }
-        let updated = StoredSharePayload(
-            id: payload.id,
-            text: payload.text,
-            attachments: payload.attachments,
-            suggestedChatId: payload.suggestedChatId,
-            suggestedChatIds: payload.suggestedChatIds,
-            autoSend: payload.autoSend == true || autoSend
-        )
-        stagedPayload = updated
-        rewritePayloadOnDisk(updated)
-    }
-
-    private func deleteStagedPayload() {
-        guard let payload = stagedPayload else { return }
-        guard let container = FileManager.default.containerURL(
-            forSecurityApplicationGroupIdentifier: appGroupIdentifier
-        ) else {
-            return
-        }
-        let sharesDir = container.appendingPathComponent("pending-shares", isDirectory: true)
-        let payloadURL = sharesDir.appendingPathComponent(payload.id).appendingPathExtension("json")
-        let filesURL = sharesDir.appendingPathComponent("\(payload.id)-files", isDirectory: true)
-        try? FileManager.default.removeItem(at: payloadURL)
-        try? FileManager.default.removeItem(at: filesURL)
-        stagedPayload = nil
-        stagedShareID = nil
     }
 
     private func readSuggestions() -> [ShareSuggestionEntry] {
@@ -485,15 +440,9 @@ final class ShareViewController: UIViewController {
     }
 
     private func stageShareToDisk(suggestedChatId: String?) async -> StoredSharePayload? {
-        guard let container = FileManager.default.containerURL(
-            forSecurityApplicationGroupIdentifier: appGroupIdentifier
-        ) else {
-            return nil
-        }
-
         let shareID = UUID().uuidString
-        let sharesDir = container.appendingPathComponent("pending-shares", isDirectory: true)
-        let filesDir = sharesDir.appendingPathComponent("\(shareID)-files", isDirectory: true)
+        let filesDir = FileManager.default.temporaryDirectory.appendingPathComponent("\(shareID)-files", isDirectory: true)
+        draftFiles = filesDir
 
         do {
             try FileManager.default.createDirectory(at: filesDir, withIntermediateDirectories: true)
@@ -501,37 +450,33 @@ final class ShareViewController: UIViewController {
             return nil
         }
 
-        let collected = await collectSharedItems(filesDir: filesDir)
-        let text = collected.text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty || !collected.attachments.isEmpty else {
+        guard let collected = await collectSharedItems(filesDir: filesDir),
+              !collected.text.isEmpty || !collected.attachments.isEmpty else {
+            try? FileManager.default.removeItem(at: filesDir)
             return nil
         }
-
-        let payload = StoredSharePayload(
+        return StoredSharePayload(
             id: shareID,
-            text: text,
+            text: collected.text,
             attachments: collected.attachments,
             suggestedChatId: suggestedChatId,
             suggestedChatIds: suggestedChatId.map { [$0] },
             autoSend: suggestedChatId != nil
         )
-        do {
-            let data = try JSONEncoder().encode(payload)
-            let payloadURL = sharesDir.appendingPathComponent(shareID).appendingPathExtension("json")
-            try data.write(to: payloadURL, options: .atomic)
-        } catch {
-            return nil
-        }
-        return payload
     }
 
-    private func collectSharedItems(filesDir: URL) async -> (text: String, attachments: [StoredShareAttachment]) {
+    private func collectSharedItems(filesDir: URL) async -> (text: String, attachments: [StoredShareAttachment])? {
         var textParts = [String]()
         var attachments = [StoredShareAttachment]()
 
         let inputItems = extensionContext?.inputItems.compactMap { $0 as? NSExtensionItem } ?? []
         for item in inputItems {
             for provider in item.attachments ?? [] {
+                if let imageType = provider.registeredTypeIdentifiers.first(where: { UTType($0)?.conforms(to: .image) == true }) {
+                    guard let photo = await copyAttachment(from: provider, to: filesDir, type: imageType) else { return nil }
+                    attachments.append(photo)
+                    continue
+                }
                 if let urlText = await loadURLText(from: provider) {
                     textParts.append(urlText)
                     continue
@@ -546,7 +491,7 @@ final class ShareViewController: UIViewController {
             }
         }
 
-        return (textParts.joined(separator: "\n"), attachments)
+        return (textParts.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines), attachments)
     }
 
     private var suggestedChatIdFromIntent: String? {
@@ -643,8 +588,8 @@ final class ShareViewController: UIViewController {
         }
     }
 
-    private func copyAttachment(from provider: NSItemProvider, to filesDir: URL) async -> StoredShareAttachment? {
-        let type = provider.registeredTypeIdentifiers.first {
+    private func copyAttachment(from provider: NSItemProvider, to filesDir: URL, type preferredType: String? = nil) async -> StoredShareAttachment? {
+        let type = preferredType ?? provider.registeredTypeIdentifiers.first {
             $0 != UTType.plainText.identifier &&
                 $0 != UTType.text.identifier
         }
@@ -671,6 +616,20 @@ final class ShareViewController: UIViewController {
         }
         if let copiedFile {
             return copiedFile
+        }
+        if let preferredType, let ext = UTType(preferredType)?.preferredFilenameExtension {
+            let saved: StoredShareAttachment? = await withCheckedContinuation { continuation in
+                provider.loadDataRepresentation(forTypeIdentifier: preferredType) { data, _ in
+                    let name = safeFilename(suggestedName, fallbackExtension: ext)
+                    let destination = uniqueDestination(in: filesDir, filename: name)
+                    guard let data, !data.isEmpty, (try? data.write(to: destination, options: .atomic)) != nil else {
+                        continuation.resume(returning: nil)
+                        return
+                    }
+                    continuation.resume(returning: StoredShareAttachment(path: destination.path, filename: destination.lastPathComponent))
+                }
+            }
+            if let saved { return saved }
         }
         return await withCheckedContinuation { continuation in
             provider.loadItem(forTypeIdentifier: type, options: nil) { item, _ in

@@ -843,6 +843,41 @@ final class IrisChatTests: XCTestCase {
     }
 
     @MainActor
+    func testPhotosShareWaitsForForegroundBeforeSendingAndRemovingFiles() async throws {
+        let dataDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let container = try makeShareContainer()
+        defer {
+            try? FileManager.default.removeItem(at: dataDir)
+            try? FileManager.default.removeItem(at: container)
+        }
+        let rust = MockRustApp(state: makeLargeFixtureState(rev: 1, account: makeAccount()))
+        let manager = AppManager(
+            rust: rust, secretStore: InMemorySecretStore(), dataDir: dataDir,
+            environment: ["IRIS_SHARE_CONTAINER_DIR": container.path]
+        )
+        await manager.appBackgrounded()?.value
+        let source = container.appendingPathComponent("photo.txt")
+        try Data("attachment".utf8).write(to: source)
+        let id = UUID().uuidString
+        let payload = try writePendingShare(id: id, text: "", chatIds: ["owner"], to: container, autoSend: true,
+                                           attachments: [PendingShareAttachment(path: source.path, filename: "photo.txt")])
+        XCTAssertTrue(manager.handleShareURL(try XCTUnwrap(URL(string: "irischat://share/\(id)"))))
+        let waiting = await waitUntil { manager.pendingShare?.id == id }
+        XCTAssertTrue(waiting)
+        XCTAssertFalse(manager.isSendingPendingShare)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: payload.path))
+
+        manager.appForegrounded()
+        let finished = await waitUntil { !FileManager.default.fileExists(atPath: payload.path) }
+        XCTAssertTrue(finished)
+        let sends = rust.dispatchedActions.filter {
+            if case .sendAttachments = $0 { return true }
+            return false
+        }
+        XCTAssertEqual(sends.count, 1)
+    }
+
+    @MainActor
     func testPendingAutoShareCopiesAttachmentsBeforeClearingStagingFiles() async throws {
         let dataDir = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
