@@ -71,6 +71,7 @@ impl AppCore {
         }];
         self.request_direct_chat_capability_check(&chat_id, false);
         self.sync_open_chat_read_state(&chat_id);
+        self.request_device_history_on_chat_open();
         self.republish_local_identity_artifacts();
         self.request_protocol_subscription_refresh();
         self.fetch_recent_protocol_state();
@@ -363,6 +364,7 @@ impl AppCore {
         // our identity. Keep network catch-up coalesced below instead of
         // starting an immediate global fetch ahead of queued user actions.
         self.sync_open_chat_read_state(chat_id);
+        self.request_device_history_on_chat_open();
         self.persist_best_effort();
         self.request_protocol_subscription_refresh();
         self.schedule_tracked_peer_catch_up(Duration::from_secs(RESUBSCRIBE_CATCH_UP_DELAY_SECS));

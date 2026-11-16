@@ -440,6 +440,21 @@ impl AppCore {
                 private_facts,
                 history_since,
             } if v == DEVICE_SYNC_VERSION => {
+                // An older peer can reconnect without the capabilities that protect
+                // an in-flight import. Renegotiate before accepting more records.
+                if page.is_none()
+                    && (record_reconcile != Some(1)
+                        || (private_events != Some(2)
+                            && self.private_events_supported(source_pubkey_hex))
+                        || (read_states != Some(2)
+                            && self.read_states_supported(source_pubkey_hex))
+                        || (name_approvals != Some(2)
+                            && self.name_approvals_supported(source_pubkey_hex))
+                        || (private_facts != Some(2)
+                            && self.private_facts_supported(source_pubkey_hex)))
+                {
+                    self.interrupt_device_history(source_pubkey_hex);
+                }
                 self.negotiate_device_history(
                     source_pubkey_hex,
                     roster_at,

@@ -2,23 +2,46 @@ use super::*;
 
 impl AppCore {
     pub(in crate::core) fn refresh_device_sync_on_foreground(&mut self) {
-        let peers = self.device_sync.as_ref().map_or_else(Vec::new, |runtime| {
-            runtime
-                .siblings
-                .iter()
-                .map(|peer| peer.pubkey().to_string())
-                .collect()
-        });
-        if peers.is_empty() {
+        self.refresh_linked_device_history(true);
+    }
+
+    pub(in crate::core) fn request_device_history_on_chat_open(&mut self) {
+        self.refresh_linked_device_history(false);
+    }
+
+    fn refresh_linked_device_history(&mut self, foreground: bool) {
+        let Some(runtime) = &mut self.device_sync else {
+            return;
+        };
+        if runtime.siblings.is_empty() || runtime.tcp.is_none() {
             return;
         }
-        self.push_debug_log("device_sync.foreground", format!("peers={}", peers.len()));
+        if !foreground
+            && runtime
+                .history
+                .last_chat_refresh
+                .is_some_and(|last| last.elapsed() < Duration::from_secs(60))
+        {
+            return;
+        }
+        runtime.history.last_chat_refresh = Some(std::time::Instant::now());
+        let peers = runtime
+            .siblings
+            .iter()
+            .map(|peer| peer.pubkey().to_string())
+            .filter(|peer| foreground || !runtime.history.pulling_from(peer))
+            .collect::<Vec<_>>();
+        let category = if foreground {
+            "device_sync.foreground"
+        } else {
+            "device_sync.chat_open"
+        };
+        self.push_debug_log(category, format!("peers={}", peers.len()));
         for peer in peers {
-            // A retained connection only requested an inventory when it opened.
-            // Resume from a fresh inventory: a broadcast or an in-flight response
-            // may have been missed while inactive. Close both halves of an old
-            // round so it cannot hold catch-up until the session's expiry.
-            self.interrupt_device_history(&peer);
+            // On resume the previous response may have been lost during suspension.
+            if foreground {
+                self.interrupt_device_history(&peer);
+            }
             self.request_device_sync_snapshot(&peer, None);
         }
     }

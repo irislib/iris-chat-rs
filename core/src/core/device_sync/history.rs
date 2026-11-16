@@ -19,6 +19,7 @@ const TTL: Duration = Duration::from_secs(120);
 pub(super) struct HistoryState {
     #[cfg(test)]
     record_limit: Option<usize>,
+    pub(super) last_chat_refresh: Option<Instant>,
     pub(super) agreed: BTreeMap<String, u64>,
     pub(super) typed: BTreeSet<String>,
     private_events: BTreeSet<String>,
@@ -395,6 +396,11 @@ impl AppCore {
     }
     pub(in crate::core) fn clear_device_history(&mut self, peer: &str) {
         self.interrupt_device_history(peer);
+        self.reset_device_history_offer(peer);
+    }
+
+    fn reset_device_history_offer(&mut self, peer: &str) {
+        self.close_device_history_sessions(peer, false);
         if let Some(runtime) = &mut self.device_sync {
             runtime.history.agreed.remove(peer);
             runtime.history.typed.remove(peer);
@@ -405,31 +411,30 @@ impl AppCore {
         }
     }
 
-    // A local refresh starts a new pull. The sibling can still pull from us
-    // under its own negotiated history window on the same connection.
-    pub(super) fn interrupt_device_history(&mut self, peer: &str) {
-        let cancelled = self.device_sync.as_ref().map_or_else(Vec::new, |runtime| {
-            runtime
-                .history
-                .sessions
-                .keys()
-                .filter(|(source, _)| source == peer)
-                .map(|(_, session)| DeviceSyncPacket::HistoryDone {
+    fn close_device_history_sessions(&mut self, peer: &str, initiator: bool) {
+        let Some(runtime) = &mut self.device_sync else {
+            return;
+        };
+        let mut cancelled = Vec::new();
+        runtime.history.sessions.retain(|(source, session), state| {
+            if source == peer && state.initiator == initiator {
+                cancelled.push(DeviceSyncPacket::HistoryDone {
                     v: 1,
                     session: session.clone(),
-                })
-                .collect::<Vec<_>>()
+                });
+                return false;
+            }
+            true
         });
-        // A metadata refresh can interrupt an advertised inventory. Close its
-        // remote half before the new PageEnd starts replacement reconciliation.
         if !cancelled.is_empty() {
             self.send_history_packets(peer, cancelled);
         }
+    }
+
+    // Replacing our inventory request must leave the peer's pull on the same stream alive.
+    pub(super) fn interrupt_device_history(&mut self, peer: &str) {
+        self.close_device_history_sessions(peer, true);
         if let Some(runtime) = &mut self.device_sync {
-            runtime
-                .history
-                .sessions
-                .retain(|(source, _), _| source != peer);
             runtime.history.state_ready.remove(peer);
             runtime.history.deferred_history.remove(peer);
             runtime
@@ -458,7 +463,7 @@ impl AppCore {
         record_capability: Option<u8>,
     ) {
         if page.is_none() {
-            self.clear_device_history(peer);
+            self.reset_device_history_offer(peer);
         }
         self.negotiate_device_records(peer, record_capability);
         if record_capability != Some(1) {

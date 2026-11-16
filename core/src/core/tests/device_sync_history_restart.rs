@@ -119,20 +119,32 @@ fn foreground_repairs_group_reactions(interrupted: bool) {
 
 #[test]
 fn device_sync_metadata_refresh_restarts_an_inflight_record_request() {
-    sync_metadata_refresh_during_records(true, false);
+    sync_metadata_refresh_during_records(Refresh::Receiver, false);
 }
 
 #[test]
 fn device_sync_record_request_completes_without_refresh() {
-    sync_metadata_refresh_during_records(false, false);
+    sync_metadata_refresh_during_records(Refresh::None, false);
 }
 
 #[test]
 fn device_sync_history_survives_a_direct_carrier_disconnect() {
-    sync_metadata_refresh_during_records(false, true);
+    sync_metadata_refresh_during_records(Refresh::None, true);
 }
 
-fn sync_metadata_refresh_during_records(refresh: bool, carrier_changed: bool) {
+#[test]
+fn linked_device_pulling_its_own_history_does_not_cancel_our_missing_message() {
+    sync_metadata_refresh_during_records(Refresh::Sender, false);
+}
+
+#[derive(Debug)]
+enum Refresh {
+    None,
+    Receiver,
+    Sender,
+}
+
+fn sync_metadata_refresh_during_records(refresh: Refresh, carrier_changed: bool) {
     let owner = Keys::generate();
     let a = Keys::generate();
     let b = Keys::generate();
@@ -203,8 +215,12 @@ fn sync_metadata_refresh_during_records(refresh: bool, carrier_changed: bool) {
     }
     // A metadata refresh can arrive between the inventory response and its
     // record request. The other device must not wait on a silently lost round.
-    if refresh {
-        left.handle_device_sync_packet(&b.public_key().to_hex(), DEVICE_SYNC_PORT, &request);
+    match refresh {
+        Refresh::None => {}
+        Refresh::Receiver => {
+            left.handle_device_sync_packet(&b.public_key().to_hex(), DEVICE_SYNC_PORT, &request)
+        }
+        Refresh::Sender => left.refresh_device_sync_on_foreground(),
     }
     for _ in 0..64 {
         let x = drain_history_wire(&mut right, &b, &mut left, &a, &right_rx, &mut trace);
@@ -215,7 +231,7 @@ fn sync_metadata_refresh_during_records(refresh: bool, carrier_changed: bool) {
     }
     assert!(
         has_device_sync_message(&right, &chat, "target"),
-        "refresh={refresh} stranded pending history: {}",
+        "refresh={refresh:?} stranded pending history: {}",
         serde_json::to_string(&trace).unwrap()
     );
     assert!(trace
@@ -226,4 +242,48 @@ fn sync_metadata_refresh_during_records(refresh: bool, carrier_changed: bool) {
     assert_eq!(right.device_history_session_count_for_test(), 0);
     assert_eq!(left.device_history_session_count_for_test(), 0);
     left.runtime.block_on(endpoint.shutdown()).unwrap();
+}
+
+#[test]
+fn opening_a_chat_recovers_a_missing_direct_message_from_a_linked_device() {
+    let mut pair = chat_read_sync_pair("chat-open-missing-message");
+    let peer = Keys::generate();
+    let chat = peer.public_key().to_hex();
+    for core in [&mut pair.a, &mut pair.b] {
+        core.preferences.accepted_owner_pubkeys.push(chat.clone());
+    }
+    pair.a.push_outgoing_message_with_id(
+        "phone-only".into(),
+        &chat,
+        "sent from the phone".into(),
+        200,
+        None,
+        DeliveryState::Sent,
+    );
+    pair.a.persist_best_effort_inner();
+    pair.a.threads.get_mut(&chat).unwrap().messages.clear();
+    let (phone, mac) = install_receipt_test_link(&mut pair);
+
+    pair.b.open_chat(&chat);
+    pair.b.open_chat_finalize(&chat);
+    let trace = pump_receipt_test_link(&mut pair, &phone, &mac);
+    let request = trace
+        .iter()
+        .find(|packet| packet["type"] == "request")
+        .expect("history request on chat open");
+    assert_eq!(request["recordReconcile"], 1);
+    assert!(!request.to_string().contains(&chat));
+    assert!(trace
+        .iter()
+        .any(|packet| packet["type"] == "historyOpen" && packet["scope"] == "history"));
+    let recovered = pair
+        .b
+        .message_for_mutation(&chat, "phone-only")
+        .expect("phone message on the Mac");
+    assert!(recovered.is_outgoing);
+    assert_eq!(recovered.created_at_secs, 200);
+    assert_eq!(recovered.body, "sent from the phone");
+    pair.b.open_chat_finalize(&chat);
+    let repeat = pump_receipt_test_link(&mut pair, &phone, &mac);
+    assert!(!repeat.iter().any(|packet| packet["type"] == "request"));
 }

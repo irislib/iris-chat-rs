@@ -41,6 +41,14 @@ pub(super) fn valid_prefix(prefix: &str) -> bool {
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
+impl HistoryState {
+    pub(in crate::core::device_sync) fn pulling_from(&self, peer: &str) -> bool {
+        self.sessions.iter().any(|((source, _), state)| {
+            source == peer && state.initiator && state.started.elapsed() < TTL
+        })
+    }
+}
+
 impl AppCore {
     pub(super) fn cancel_device_history_partition(&mut self, peer: &str, scope: RecordScope) {
         let initial = self
