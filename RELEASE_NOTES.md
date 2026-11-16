@@ -10,7 +10,7 @@ Each release has channel-specific notes. The release tag must match the `##` hea
 - Let linked devices compare chat history in both directions at the same time. Opening a conversation also requests a history comparison.
 - On iOS, keep Photos shares queued until Iris can send them. Stream photo and video uploads to reduce memory use.
 - Clear older group notice badges when the account replies.
-- Update FIPS transport, pubsub, history reconciliation, Hashtree core and social graph libraries.
+- Update FIPS transport, pubsub, history reconciliation, Hashtree core and social graph libraries. The CLI source package advances to 0.1.70.
 
 ### Apple
 
