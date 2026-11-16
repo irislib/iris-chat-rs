@@ -53,13 +53,14 @@ impl Source {
         }
         while !buf.is_empty() {
             let offset = at % BLOCK;
-            let copied = self.with_block(at / BLOCK, |block| {
-                let n = buf.len().min(block.len() - offset);
-                buf[..n].copy_from_slice(&block[offset..offset + n]);
-                n
+            let n = buf.len().min(BLOCK - offset);
+            let (dest, rest) = buf.split_at_mut(n);
+            self.with_block(at / BLOCK, |block| {
+                dest.copy_from_slice(block.get(offset..offset + n)?);
+                Some(())
             })?;
-            buf = &mut buf[copied..];
-            at += copied;
+            buf = rest;
+            at += n;
         }
         Some(())
     }
@@ -77,13 +78,13 @@ impl Source {
         if at >= self.len {
             return None;
         }
-        self.with_block(at / BLOCK, |block| block[at % BLOCK])
+        self.with_block(at / BLOCK, |block| block.get(at % BLOCK).copied())
     }
 
-    fn with_block<T>(&self, index: usize, f: impl FnOnce(&[u8]) -> T) -> Option<T> {
+    fn with_block<T>(&self, index: usize, f: impl FnOnce(&[u8]) -> Option<T>) -> Option<T> {
         let mut state = self.state.borrow_mut();
         if let Some((_, block)) = state.cache.iter().find(|(i, _)| *i == index) {
-            return Some(f(block));
+            return f(block);
         }
         let start = index.checked_mul(BLOCK)?;
         let mut block = vec![0; BLOCK.min(self.len.checked_sub(start)?)];
@@ -104,7 +105,7 @@ impl Source {
         }
         let value = f(&block);
         state.cache.push_back((index, block));
-        Some(value)
+        value
     }
 }
 
@@ -226,12 +227,22 @@ impl Read for PlanReader {
                 self.current = None;
                 continue;
             }
+            let (dest, _) = buf.split_at_mut(n);
             match piece {
-                Piece::Bytes(bytes) => buf[..n].copy_from_slice(&bytes[self.done..self.done + n]),
-                Piece::Zero(_) => buf[..n].fill(0),
+                Piece::Bytes(bytes) => {
+                    let chunk = bytes
+                        .get(self.done..self.done + n)
+                        .ok_or_else(|| io::Error::other("invalid attachment literal range"))?;
+                    dest.copy_from_slice(chunk);
+                }
+                Piece::Zero(_) => dest.fill(0),
                 Piece::Copy(at, _) => self
                     .source
-                    .read_into(at + self.done, &mut buf[..n])
+                    .read_into(
+                        at.checked_add(self.done)
+                            .ok_or_else(|| io::Error::other("invalid attachment source range"))?,
+                        dest,
+                    )
                     .ok_or_else(|| io::Error::other("attachment changed while uploading"))?,
             }
             self.done += n;
@@ -255,7 +266,10 @@ pub(super) fn write_to(
         if n == 0 {
             return runtime.block_on(pipe.shutdown());
         }
-        runtime.block_on(pipe.write_all(&buf[..n]))?;
+        let chunk = buf
+            .get(..n)
+            .ok_or_else(|| io::Error::other("invalid attachment read length"))?;
+        runtime.block_on(pipe.write_all(chunk))?;
     }
 }
 

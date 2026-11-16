@@ -109,7 +109,7 @@ impl Movie {
             if size < header || size > len - at {
                 return Err(ERROR);
             }
-            let keep = if matches!(&head[4..8], b"ftyp" | b"moov") {
+            let keep = if matches!(head.get(4..8).ok_or(ERROR)?, b"ftyp" | b"moov") {
                 size
             } else {
                 header

@@ -416,10 +416,13 @@ fn webp(source: &Source) -> Result<Plan> {
         return Err(ERROR);
     }
     if let Some(pos) = header {
-        let flags = out.literal_mut(pos, 1).ok_or(ERROR)?;
-        flags[0] &= !(0x08 | 0x04); // Recompute EXIF and clear XMP feature bits.
+        let flags = out
+            .literal_mut(pos, 1)
+            .and_then(|bytes| bytes.first_mut())
+            .ok_or(ERROR)?;
+        *flags &= !(0x08 | 0x04); // Recompute EXIF and clear XMP feature bits.
         if has_exif {
-            flags[0] |= 0x08;
+            *flags |= 0x08;
         }
     }
     let len = u32::try_from(out.len() - 8).map_err(|_| ERROR)?;
