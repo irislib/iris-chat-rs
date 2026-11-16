@@ -106,7 +106,7 @@ on:
         description: Checks to run; retain exact source-bound coverage for unchanged components
         type: choice
         default: all
-        options: [all, cli, core, protocol, android, windows, windows-keyboard, windows-restore, apple, apple-codec, ios, ios-unit, ios-pagination, macos, linux, apple-products, ios-products, macos-products, ios-ui-runner, macos-ui-runner, rust-focused, rust-package]
+        options: [all, cli, core, protocol, android, android-ble-products, windows, windows-keyboard, windows-restore, apple, apple-codec, ios, ios-unit, ios-pagination, macos, linux, apple-products, ios-products, macos-products, ios-ui-runner, macos-ui-runner, rust-focused, rust-package]
       ios_core_seed_run:
         description: Optional exact successful core build/cache producer for Swift-only unit validation
         type: string
@@ -602,7 +602,7 @@ jobs:
           key: rust-release-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.identity }}-${{ hashFiles('iris-chat-rs/scripts/release-build-inputs.py', 'iris-chat-rs/scripts/release-build-inputs.json', 'iris-chat-rs/linux/scripts/pinned-apt.sh', 'iris-chat-rs/linux/build-inputs/apt-snapshots.tsv') }}-${{ hashFiles('iris-chat-rs/**/Cargo.lock') }}-${{ github.sha }}-${{ job.status == 'success' && 'complete' || 'partial' }}
 
   android:
-    if: ${{ inputs.scope == '' || inputs.scope == 'all' || inputs.scope == 'android' }}
+    if: ${{ inputs.scope == '' || inputs.scope == 'all' || inputs.scope == 'android' || inputs.scope == 'android-ble-products' }}
     name: Android build and unit tests
     runs-on: ubuntu-24.04
     timeout-minutes: 75
@@ -659,17 +659,41 @@ jobs:
       - name: Install cargo-ndk
         run: cargo install cargo-ndk --locked
 
+      - name: Configure the isolated Bluetooth test app
+        if: inputs.scope == 'android-ble-products'
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          root = Path('android/app')
+          config = json.loads((root / 'google-services.json').read_text())
+          debug, = (client for client in config['client']
+                    if client['client_info']['android_client_info']['package_name'] == 'to.iris.chat.debug')
+          debug['client_info']['android_client_info']['package_name'] = 'to.iris.chat.blegate'
+          config['client'] = [debug]
+          (root / 'src/debug/google-services.json').write_text(json.dumps(config))
+          PY
+          echo 'IRIS_DEBUG_APPLICATION_ID_SUFFIX=.blegate' >> "$GITHUB_ENV"
+          echo 'IRIS_TEST_APPLICATION_ID=to.iris.chat.blegate.test' >> "$GITHUB_ENV"
+
       - name: Assemble debug APK
         run: ./scripts/android-build android-assemble
 
       - name: Android unit and compile checks
+        if: inputs.scope != 'android-ble-products'
         run: ./gradlew :app:testDebugUnitTest :app:assembleDebugAndroidTest -Piris.testRunner=to.iris.chat.calls.NativeCallTestRunner
+        working-directory: iris-chat-rs/android
+
+      - name: Build the Bluetooth instrumentation APK with AndroidJUnitRunner
+        if: inputs.scope == 'android-ble-products'
+        run: ./gradlew :app:assembleDebugAndroidTest
         working-directory: iris-chat-rs/android
 
       - name: Upload Android native test packages
         uses: actions/upload-artifact@v4
         with:
-          name: android-native-test-packages
+          name: ${{ inputs.scope == 'android-ble-products' && 'android-ble-test-packages' || 'android-native-test-packages' }}
           path: |
             iris-chat-rs/android/app/build/outputs/apk/debug/*.apk
             iris-chat-rs/android/app/build/outputs/apk/androidTest/debug/*.apk

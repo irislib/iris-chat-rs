@@ -106,6 +106,9 @@ separate test package is used. The Google Services build plugin also needs a
 local debug configuration whose Android client package is `to.iris.chat.blegate`
 (for example, an uncommitted `android/app/src/debug/google-services.json`
 derived from the existing debug client). Do not change the production client.
+The CI workflow's `android-ble-products` scope builds these two isolated
+packages on a hosted runner. Select the candidate ref and use its
+`android-ble-test-packages` artifact.
 The iPhone development build replaces its app
 binary but uses a unique test account directory and file-backed secrets. It
 preserves normal account data and relaunches normally after the test.
