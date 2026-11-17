@@ -246,7 +246,7 @@ fn bluetooth_dropouts_have_a_display_only_grace_period() {
     core.update_fips_connection_links(vec![ble.clone()]);
     core.update_fips_connection_links(vec![]);
     let (rows, bluetooth) = snapshot();
-    assert_eq!(bluetooth, [id.clone()]);
+    assert_eq!(bluetooth.as_slice(), std::slice::from_ref(&id));
     assert_eq!(rows.len(), 1);
     assert!(core.fips_nearby_links.is_empty());
     let first_deadline = core.recent_bluetooth_peers[&id].0;
@@ -284,7 +284,7 @@ fn bluetooth_dropouts_have_a_display_only_grace_period() {
     core.update_fips_connection_links(vec![]);
     assert_eq!(
         snapshot().1,
-        [id.clone()],
+        [id],
         "a brief LAN handover must not erase the Bluetooth sighting"
     );
     core.set_nearby_bluetooth_enabled(false);
