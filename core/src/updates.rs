@@ -221,6 +221,9 @@ pub(crate) enum InternalEvent {
         generation: u64,
         peers: Vec<FipsNearbyLinkSnapshot>,
     },
+    ExpireNearbyPeers {
+        generation: u64,
+    },
     FipsPeerDiscoveryNeeded {
         generation: u64,
         author: nostr::PublicKey,

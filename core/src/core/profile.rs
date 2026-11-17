@@ -347,7 +347,7 @@ impl AppCore {
         self.push_debug_log("relay.metadata", format!("owner={owner_hex}"));
         // Mobile-push snapshot embeds the display label per session.
         self.mark_mobile_push_dirty();
-        if !self.fips_nearby_links.is_empty() {
+        if !self.fips_nearby_links.is_empty() || !self.recent_bluetooth_peers.is_empty() {
             self.emit_fips_nearby_peers();
         }
         true

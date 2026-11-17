@@ -735,6 +735,8 @@ pub struct AppCore {
     host_ble_ownership: Option<HostBleOwnership>,
     host_ble_attached: bool,
     fips_nearby_links: Vec<crate::updates::FipsNearbyLinkSnapshot>,
+    // Presentation only. Live transport and roster decisions use fips_nearby_links.
+    recent_bluetooth_peers: BTreeMap<String, (Instant, u64)>,
     fips_nearby_bootstrap: std::cell::RefCell<Option<fips_nearby::FipsNearbyBootstrapCache>>,
     fips_connection_generation: u64,
     #[cfg(test)]

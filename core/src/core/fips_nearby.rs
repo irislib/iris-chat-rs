@@ -687,6 +687,64 @@ impl AppCore {
         // These are direct transport links. End-to-end history streams can keep
         // using a routed path when one disappears; their requests and revocation
         // checks own reconciliation cancellation.
+        if self.preferences.nearby_enabled && self.preferences.nearby_bluetooth_enabled {
+            let now = Instant::now();
+            let last_seen = unix_now().get();
+            let bluetooth: BTreeSet<_> = links
+                .iter()
+                .filter(|link| link.is_bluetooth())
+                .map(|link| link.device_pubkey_hex.as_str())
+                .collect();
+            self.recent_bluetooth_peers
+                .retain(|id, (expires, _)| *expires > now && !bluetooth.contains(id.as_str()));
+            let deadline = now + Duration::from_secs(60);
+            let mut lost_peers = false;
+            for link in &self.fips_nearby_links {
+                if link.is_bluetooth() && !bluetooth.contains(link.device_pubkey_hex.as_str()) {
+                    self.recent_bluetooth_peers
+                        .insert(link.device_pubkey_hex.clone(), (deadline, last_seen));
+                    lost_peers = true;
+                }
+            }
+            if lost_peers {
+                let sender = self.core_sender.clone();
+                let generation = self.fips_connection_generation;
+                self.runtime.spawn(async move {
+                    sleep_until(deadline).await;
+                    let _ = sender.send(CoreMsg::Internal(Box::new(
+                        InternalEvent::ExpireNearbyPeers { generation },
+                    )));
+                });
+            }
+        }
+        self.set_fips_connection_links(links);
+    }
+
+    pub(super) fn clear_fips_connection_links(&mut self) {
+        if self.fips_nearby_links.is_empty() && self.recent_bluetooth_peers.is_empty() {
+            return;
+        }
+        self.recent_bluetooth_peers.clear();
+        self.set_fips_connection_links(Vec::new());
+    }
+
+    pub(super) fn clear_recent_bluetooth_peers(&mut self) {
+        if !self.recent_bluetooth_peers.is_empty() {
+            self.recent_bluetooth_peers.clear();
+            self.emit_fips_nearby_peers();
+        }
+    }
+
+    pub(super) fn expire_recent_bluetooth_peers(&mut self, now: Instant) {
+        let previous = self.recent_bluetooth_peers.len();
+        self.recent_bluetooth_peers
+            .retain(|_, (expires, _)| *expires > now);
+        if previous != self.recent_bluetooth_peers.len() {
+            self.emit_fips_nearby_peers();
+        }
+    }
+
+    fn set_fips_connection_links(&mut self, links: Vec<crate::updates::FipsNearbyLinkSnapshot>) {
         self.fips_nearby_links = links;
         self.emit_fips_nearby_peers();
         let roster = self.build_device_roster_snapshot();
@@ -708,45 +766,48 @@ impl AppCore {
             .and_then(|login| self.app_keys.get(&login.owner_pubkey.to_hex()));
         let mut bluetooth_peer_ids = Vec::new();
         let mut lan_peer_ids = Vec::new();
-        let peers = self
+        let live = self
             .fips_nearby_links
             .iter()
-            .filter_map(|link| {
+            .filter(|link| link.is_local_nearby())
+            .map(|link| (&link.device_pubkey_hex, link.is_bluetooth(), now));
+        let clock = Instant::now();
+        // Prefer a live local link to a remembered Bluetooth sighting of the same device.
+        let live_ids: BTreeSet<_> = if self.recent_bluetooth_peers.is_empty() {
+            BTreeSet::new()
+        } else {
+            live.clone().map(|(id, _, _)| id).collect()
+        };
+        let recent = self
+            .recent_bluetooth_peers
+            .iter()
+            .filter(|(id, (expires, _))| *expires > clock && !live_ids.contains(id))
+            .map(|(id, (_, seen))| (id, true, *seen));
+        let peers = live
+            .chain(recent)
+            .filter_map(|(id, bluetooth, last_seen_secs)| {
                 if local_device
                     .as_ref()
-                    .is_some_and(|device| device.eq_ignore_ascii_case(&link.device_pubkey_hex))
+                    .is_some_and(|device| device.eq_ignore_ascii_case(id))
                     || own_devices.is_some_and(|keys| {
-                        keys.devices.iter().any(|device| {
-                            device
-                                .identity_pubkey_hex
-                                .eq_ignore_ascii_case(&link.device_pubkey_hex)
-                        })
+                        keys.devices
+                            .iter()
+                            .any(|device| device.identity_pubkey_hex.eq_ignore_ascii_case(id))
                     })
                 {
                     // Keep our device links for sync, but don't present them as other people.
                     return None;
                 }
-                let id = link.device_pubkey_hex.clone();
-                let transport = link.transport_type.to_ascii_lowercase();
-                if transport.contains("ble") || transport.contains("bluetooth") {
+                if bluetooth {
                     bluetooth_peer_ids.push(id.clone());
-                } else if transport.contains("ethernet")
-                    || (transport == "udp" && is_local_udp_address(link.transport_addr.as_deref()))
-                {
-                    lan_peer_ids.push(id.clone());
                 } else {
-                    // Transit connections keep the mesh connected, but are not nearby users.
-                    return None;
+                    lan_peer_ids.push(id.clone());
                 }
                 let owner_pubkey_hex = self.app_keys.iter().find_map(|(owner, app_keys)| {
                     app_keys
                         .devices
                         .iter()
-                        .any(|device| {
-                            device
-                                .identity_pubkey_hex
-                                .eq_ignore_ascii_case(&link.device_pubkey_hex)
-                        })
+                        .any(|device| device.identity_pubkey_hex.eq_ignore_ascii_case(id))
                         .then(|| owner.clone())
                 });
                 let name = owner_pubkey_hex
@@ -757,12 +818,12 @@ impl AppCore {
                     .as_deref()
                     .and_then(|owner| self.owner_picture_url(owner));
                 Some(DesktopNearbyPeerSnapshot {
-                    id,
+                    id: id.clone(),
                     name,
                     owner_pubkey_hex,
                     picture_url,
                     profile_event_id: None,
-                    last_seen_secs: now,
+                    last_seen_secs,
                 })
             })
             .collect::<Vec<_>>();
@@ -777,6 +838,23 @@ impl AppCore {
             bluetooth_peer_ids,
             lan_peer_ids,
         });
+    }
+}
+
+impl crate::updates::FipsNearbyLinkSnapshot {
+    fn is_bluetooth(&self) -> bool {
+        let transport = self.transport_type.to_ascii_lowercase();
+        transport.contains("ble") || transport.contains("bluetooth")
+    }
+
+    fn is_local_nearby(&self) -> bool {
+        self.is_bluetooth()
+            || self
+                .transport_type
+                .to_ascii_lowercase()
+                .contains("ethernet")
+            || (self.transport_type.eq_ignore_ascii_case("udp")
+                && is_local_udp_address(self.transport_addr.as_deref()))
     }
 }
 

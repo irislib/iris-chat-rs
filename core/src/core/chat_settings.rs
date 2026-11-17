@@ -206,6 +206,9 @@ impl AppCore {
         if !changed {
             return;
         }
+        if !enabled {
+            self.clear_recent_bluetooth_peers();
+        }
         self.reconcile_device_sync();
         self.rebuild_persist_and_emit_state();
     }
@@ -231,6 +234,9 @@ impl AppCore {
             return;
         }
         self.preferences.nearby_bluetooth_enabled = enabled;
+        if !enabled {
+            self.clear_recent_bluetooth_peers();
+        }
         self.rebuild_persist_and_emit_state();
     }
 

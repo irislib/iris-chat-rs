@@ -210,3 +210,94 @@ fn nearby_snapshot_does_not_treat_internet_udp_contacts_as_local() {
         .unwrap();
     assert_eq!(ids, vec![format!("{:064x}", 5), format!("{:064x}", 6)]);
 }
+
+#[test]
+fn bluetooth_dropouts_have_a_display_only_grace_period() {
+    let directory = tempfile::TempDir::new().unwrap();
+    let (tx, rx) = flume::unbounded();
+    let mut core = AppCore::new(
+        tx,
+        flume::unbounded().0,
+        directory.path().to_string_lossy().into_owned(),
+        Arc::new(RwLock::new(AppState::empty())),
+    );
+    core.preferences.nearby_enabled = true;
+    core.preferences.nearby_bluetooth_enabled = true;
+    let id = "ab".repeat(32);
+    let ble = crate::updates::FipsNearbyLinkSnapshot {
+        device_pubkey_hex: id.clone(),
+        transport_type: "BLE".to_owned(),
+        transport_addr: None,
+    };
+    let snapshot = || {
+        rx.try_iter()
+            .filter_map(|update| match update {
+                AppUpdate::NearbyPeersChanged {
+                    snapshot,
+                    bluetooth_peer_ids,
+                    ..
+                } => Some((snapshot.peers, bluetooth_peer_ids)),
+                _ => None,
+            })
+            .last()
+            .unwrap()
+    };
+
+    core.update_fips_connection_links(vec![ble.clone()]);
+    core.update_fips_connection_links(vec![]);
+    let (rows, bluetooth) = snapshot();
+    assert_eq!(bluetooth, [id.clone()]);
+    assert_eq!(rows.len(), 1);
+    assert!(core.fips_nearby_links.is_empty());
+    let first_deadline = core.recent_bluetooth_peers[&id].0;
+    core.expire_recent_bluetooth_peers(first_deadline - Duration::from_millis(1));
+    assert!(core.recent_bluetooth_peers.contains_key(&id));
+
+    core.update_fips_connection_links(vec![ble.clone()]);
+    assert_eq!(
+        snapshot().0.len(),
+        1,
+        "reconnecting must not duplicate the row"
+    );
+    assert!(core.recent_bluetooth_peers.is_empty());
+    core.update_fips_connection_links(vec![]);
+    core.expire_recent_bluetooth_peers(first_deadline);
+    assert!(
+        core.recent_bluetooth_peers.contains_key(&id),
+        "an old timer must respect the new deadline"
+    );
+    core.expire_recent_bluetooth_peers(core.recent_bluetooth_peers[&id].0);
+    assert!(snapshot().0.is_empty());
+
+    core.update_fips_connection_links(vec![ble.clone()]);
+    core.update_fips_connection_links(vec![crate::updates::FipsNearbyLinkSnapshot {
+        transport_type: "UDP".to_owned(),
+        transport_addr: Some("192.168.1.2:7370".to_owned()),
+        ..ble.clone()
+    }]);
+    let (rows, bluetooth) = snapshot();
+    assert_eq!(rows.len(), 1);
+    assert!(
+        bluetooth.is_empty(),
+        "live LAN already accounts for this peer"
+    );
+    core.update_fips_connection_links(vec![]);
+    assert_eq!(
+        snapshot().1,
+        [id.clone()],
+        "a brief LAN handover must not erase the Bluetooth sighting"
+    );
+    core.set_nearby_bluetooth_enabled(false);
+    assert!(
+        snapshot().0.is_empty(),
+        "turning Bluetooth off ends the grace period"
+    );
+    core.set_nearby_bluetooth_enabled(true);
+    core.update_fips_connection_links(vec![ble]);
+    core.update_fips_connection_links(vec![]);
+    core.stop_device_sync();
+    assert!(
+        snapshot().0.is_empty(),
+        "stopping the runtime must clear remembered peers"
+    );
+}

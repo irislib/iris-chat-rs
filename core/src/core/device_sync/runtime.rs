@@ -883,7 +883,7 @@ impl AppCore {
         self.interrupt_direct_files();
         self.host_ble_attached = false;
         self.fips_connection_generation = self.fips_connection_generation.wrapping_add(1);
-        self.update_fips_connection_links(Vec::new());
+        self.clear_fips_connection_links();
         let DeviceSyncRuntime {
             endpoint,
             _attachment_blobs: blobs,

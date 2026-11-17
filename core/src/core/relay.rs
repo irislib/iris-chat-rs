@@ -763,7 +763,9 @@ impl AppCore {
         if should_publish_backfilled_owner_app_keys {
             self.retry_protocol_engine_pending_work("owner_registration_backfill");
         }
-        if app_keys_changed && !self.fips_nearby_links.is_empty() {
+        if app_keys_changed
+            && (!self.fips_nearby_links.is_empty() || !self.recent_bluetooth_peers.is_empty())
+        {
             self.emit_fips_nearby_peers();
         }
         Ok(if changed {

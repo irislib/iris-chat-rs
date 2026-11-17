@@ -25,15 +25,12 @@ seconds and enter the same backoff. Closing one L2CAP channel preserves the
 underlying peripheral connection while discovery, another channel, or a new
 open still uses it; stopping discovery releases otherwise idle connections.
 
-On macOS, speculative bootstrap reads from Apple's tentative overflow UUID
-matches wait while a Bluetooth audio device is active. Explicit FIPS service
-advertisements and previously identified peers can still trigger discovery.
-Scanning, advertising, new peer discovery, and established L2CAP connections
-remain available. CoreAudio activity notifications resume deferred
-discovery after five seconds of idle audio, without opening or recording an
-audio stream. Brief pauses and route changes do not restart speculative reads.
-Previously unknown peers advertising only through Apple's background overflow
-area can therefore take longer to appear during Bluetooth playback or calls.
+On macOS, Bluetooth audio activity pauses central scanning and new GATT
+discovery, including retries. It also defers outgoing opens that would need a
+new peripheral connection. The Mac still advertises and accepts incoming
+connections, and established message channels stay open. Discovery resumes after
+five seconds of idle Bluetooth audio. A peer that depends on the Mac initiating
+discovery may first appear when playback stops.
 
 Run the adapter tests with `swift test --package-path ios/FipsBle`. For changes
 to radio behavior, also check Bluetooth audio during app startup and across

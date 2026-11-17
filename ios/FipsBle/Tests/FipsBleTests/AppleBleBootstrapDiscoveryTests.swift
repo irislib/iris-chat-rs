@@ -264,7 +264,7 @@ final class AppleBleBootstrapDiscoveryTests: XCTestCase {
         XCTAssertTrue(discovery.begin(peer, now: 25))
     }
 
-    func testDeferredOverflowPeerDoesNotBlockIdentifiedPeerRetriesDuringAudio() {
+    func testDeferredPeerDoesNotBlockEligiblePeerRetries() {
         var discovery = AppleBleBootstrapDiscovery()
         let ambiguousPeer = UUID()
         XCTAssertFalse(discovery.begin(ambiguousPeer, canRead: false, now: 10))
@@ -276,7 +276,7 @@ final class AppleBleBootstrapDiscoveryTests: XCTestCase {
         XCTAssertEqual(discovery.dueRetries(now: 15, allowing: identified), [peer])
         XCTAssertTrue(discovery.begin(peer, now: 15))
         XCTAssertNil(discovery.nextRetryAt(allowing: identified))
-        // Audio ending makes the otherwise suppressed peer eligible again.
+        // Removing the restriction makes the deferred peer eligible again.
         XCTAssertEqual(discovery.dueRetries(now: 20), [ambiguousPeer])
     }
 }

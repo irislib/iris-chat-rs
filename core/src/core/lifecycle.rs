@@ -153,6 +153,7 @@ impl AppCore {
             host_ble_ownership: None,
             host_ble_attached: false,
             fips_nearby_links: Vec::new(),
+            recent_bluetooth_peers: BTreeMap::new(),
             fips_nearby_bootstrap: Default::default(),
             fips_connection_generation: 0,
             #[cfg(test)]
@@ -226,6 +227,7 @@ impl AppCore {
                 InternalEvent::MeshEvent(_) => "MeshEvent",
                 InternalEvent::FipsNearbyPacket { .. } => "FipsNearbyPacket",
                 InternalEvent::FipsNearbyPeersChanged { .. } => "FipsNearbyPeersChanged",
+                InternalEvent::ExpireNearbyPeers { .. } => "ExpireNearbyPeers",
                 InternalEvent::FipsPeerDiscoveryNeeded { .. } => "FipsPeerDiscoveryNeeded",
                 InternalEvent::FetchCatchUpEvents(_) => "FetchCatchUpEvents",
                 InternalEvent::ProfileMetadataFetchFinished { .. } => {
@@ -584,6 +586,11 @@ impl AppCore {
             InternalEvent::FipsNearbyPeersChanged { generation, peers } => {
                 if generation == self.fips_connection_generation {
                     self.update_fips_connection_links(peers);
+                }
+            }
+            InternalEvent::ExpireNearbyPeers { generation } => {
+                if generation == self.fips_connection_generation {
+                    self.expire_recent_bluetooth_peers(Instant::now());
                 }
             }
             event @ InternalEvent::FipsPeerDiscoveryNeeded { .. } => {
