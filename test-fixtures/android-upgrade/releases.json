@@ -25,6 +25,11 @@
       "commit": "d052e6d3105c54d72209799542470894c8611796",
       "apk_sha256": "1ea924ed54669ff68b6a41c60b94bb9730d6c8e6bbb2e2f2a52e33459236df10",
       "manifest_sha256": "bbb8ba018d79d155e80b972d5379f9f76c7d84699a2c7976aba0c0de09600f0d"
+    },
+    "v2026.11.16": {
+      "commit": "1a99b80467de3e8830d06178b05e1f789ad7bd3e",
+      "apk_sha256": "9aecf343ad6e3d08633bdade5f2d17e17164d8e46dd56a06b8f934cc525148fd",
+      "manifest_sha256": "d76ece89d6ca462fb21d99185f915785eff1035e5ca3c8e8e0dcbfe4acce2c3a"
     }
   }
 }

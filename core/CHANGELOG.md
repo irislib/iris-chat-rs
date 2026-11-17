@@ -8,6 +8,10 @@
   and mDNS behavior, ICE consent, candidate comparison and cleanup, and native
   socket protection, preserving the compatible iOS dependencies.
 
+## 0.1.71
+
+- Reduce unnecessary group key updates between linked devices after membership changes.
+
 ## 0.1.70
 
 - Recover missing messages when linked devices request history at the same time.

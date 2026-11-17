@@ -2,6 +2,24 @@
 
 Each release has channel-specific notes. The release tag must match the `##` heading exactly.
 
+## v2026.11.18
+
+### GitHub
+
+- Skip redundant group key updates between linked devices when an older key arrives again. Devices can still recover earlier messages and receive new keys after membership changes.
+- Keep nearby peers visible through brief Bluetooth interruptions. On Mac, pause Bluetooth scans while Bluetooth audio is active.
+- Update nostr-double-ratchet to 0.0.181, the Iris Chat protocol library to 0.3.22 and the CLI to 0.1.71.
+
+### Apple
+
+- Linked devices use less data when catching up with a group after people join or leave.
+- Nearby devices stay visible through brief Bluetooth interruptions. On Mac, nearby scanning pauses while Bluetooth audio is active.
+
+### Zapstore
+
+- Linked devices use less data when catching up with a group after people join or leave.
+- Nearby devices stay visible through brief Bluetooth interruptions.
+
 ## v2026.11.16
 
 ### GitHub
