@@ -55,7 +55,10 @@ reviewed installed distribution and toolchain. Its direct parent must own both
 native acceptance and exact-device leases. Use the established output/deadline
 and free-space bounds (at most 100 MiB output and 600 seconds). Explicitly select
 `coredevice-only` and bind only `coredevice` and `syslog`; this route cannot start
-Home/HID. The existing wake adapter still permits only one termination of the
+Home/HID or interactive input. The sender receives at most 4 KiB of private
+request data through a one-shot pipe that the adapter closes before returning;
+the data never enters command arguments or process receipts. Observation-only
+windows reject this input. The existing wake adapter still permits only one termination of the
 exact admitted old PID. `existing_pid` must be a fresh actual inventory of the admitted app.
 
 `credentials` binds `iris-existing-apns-credentials-v1`: the production bundle,

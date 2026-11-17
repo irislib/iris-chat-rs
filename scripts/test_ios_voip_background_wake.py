@@ -12,6 +12,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 import ios_voip_background_wake as cold
+import ios_relaunch_adapters as adapters
 import ios_relaunch_lifecycle as life
 from ios_ordinary_relaunch import EvidenceError, binding
 from test_ios_ordinary_relaunch import DistributionFixture
@@ -370,18 +371,26 @@ class PrivateInputsTests(unittest.TestCase):
             'local_key':binding(key),'remote_key_sha256':binding(key)['sha256'],'key_id':'KEYID12345','team_id':'TEAM123456'}))
         class Sink:
             data=b''
+            closed=False
             def write(self,value): self.data+=value
-            def close(self): pass
+            def close(self): self.closed=True
         sink=Sink()
         window=Mock(config=self.window,environment={'PATH':'synthetic','NODE_OPTIONS':'untrusted','SSLKEYLOGFILE':'untrusted'})
-        window.spawn.return_value={'process':SimpleNamespace(stdin=sink)}
+        window.hid_capable=False; window.observation_only=False
+        window.out=self.root; window.serial=0; window.children=[]
+        window.spawn=Mock(wraps=lambda *args,**kwargs: adapters.OwnedWindow.spawn(window,*args,**kwargs))
         sender=cold.SendOnce(window,config)
-        with patch.object(cold.time,'time',return_value=1001): sender.start()
+        with patch.object(cold.time,'time',return_value=1001), \
+             patch.object(adapters.subprocess,'Popen',return_value=SimpleNamespace(stdin=sink,pid=123)) as spawn:
+            sender.start()
         sent=json.loads(sink.data)
         self.assertEqual(sent['token'],'ab'*32)
         self.assertEqual(sent['key_path'],str(key.resolve()))
-        self.assertNotIn(sent['token'],repr(window.spawn.call_args))
-        self.assertNotIn(str(key.resolve()),repr(window.spawn.call_args))
+        self.assertTrue(sink.closed)
+        self.assertEqual(spawn.call_args.kwargs['stdin'],subprocess.PIPE)
+        self.assertNotIn(sent['token'],repr(spawn.call_args))
+        self.assertNotIn(str(key.resolve()),repr(spawn.call_args))
+        self.assertNotIn(sent['token'],repr(sender.item))
         self.assertEqual(window.environment,{'PATH':'synthetic'})
         with self.assertRaises(EvidenceError): sender.start()
         self.assertEqual(window.spawn.call_count,1)

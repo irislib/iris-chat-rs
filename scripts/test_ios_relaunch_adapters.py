@@ -142,6 +142,48 @@ class WindowTests(unittest.TestCase):
             with self.assertRaises(FileNotFoundError): self.admit(mode='coredevice-only')
         self.assertFalse((self.root / 'output').exists())
 
+    def test_coredevice_apns_input_is_bounded_data_and_closed_before_return(self):
+        self.observation_input(); self.config['mode'] = 'coredevice-only'
+        window = self.admit(mode='coredevice-only')
+        sink = Mock(); child = Mock(pid=123, stdin=sink)
+        child.poll.return_value = 0; child.wait.return_value = 0
+        with patch.object(adapters.subprocess, 'Popen', return_value=child) as spawn:
+            item = window.spawn(['qualified-sender'], 'apns', input_data=b'{"synthetic":true}')
+        self.assertIs(item['process'], child)
+        self.assertEqual(spawn.call_args.kwargs['stdin'], adapters.subprocess.PIPE)
+        sink.write.assert_called_once_with(b'{"synthetic":true}')
+        sink.close.assert_called_once_with()
+        self.assertNotIn('synthetic', json.dumps(item['command']))
+        self.assertIn(item, window.children)
+        window.close()
+
+    def test_one_shot_input_cannot_enable_interactive_hid_or_observation_mutation(self):
+        self.observation_input(); self.config['mode'] = 'coredevice-only'
+        window = self.admit(mode='coredevice-only')
+        invalid = [dict(input_data=b'x', stdin=True), dict(input_data=b''),
+                   dict(input_data='x'), dict(input_data=b'x' * 4097)]
+        with patch.object(adapters.subprocess, 'Popen') as spawn:
+            for options in invalid:
+                with self.subTest(options=options), self.assertRaises(EvidenceError):
+                    window.spawn(['unused'], 'apns', **options)
+            for label in ('home', 'other'):
+                with self.subTest(label=label), self.assertRaises(EvidenceError):
+                    window.spawn(['unused'], label, input_data=b'x')
+            window.observation_only = True
+            with self.assertRaises(EvidenceError): window.spawn(['unused'], 'apns', input_data=b'x')
+        spawn.assert_not_called(); window.close()
+
+    def test_failed_one_shot_write_closes_pipe_and_retains_child_ownership(self):
+        self.observation_input(); self.config['mode'] = 'coredevice-only'
+        window = self.admit(mode='coredevice-only')
+        sink = Mock(); sink.write.side_effect = BrokenPipeError('synthetic')
+        child = Mock(pid=123, stdin=sink); child.poll.return_value = 0; child.wait.return_value = 0
+        with patch.object(adapters.subprocess, 'Popen', return_value=child):
+            with self.assertRaises(BrokenPipeError): window.spawn(['sender'], 'apns', input_data=b'x')
+        sink.close.assert_called_once_with()
+        self.assertIs(window.children[0]['process'], child)
+        window.close()
+
     def test_coredevice_only_allows_bound_ordinary_replacement_without_launch_overrides(self):
         self.observation_input(); self.config['mode'] = 'coredevice-only'
         window = self.admit(mode='coredevice-only'); core = adapters.CoreDevice(window)

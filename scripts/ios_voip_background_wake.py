@@ -237,9 +237,8 @@ class SendOnce:
         window.environment = {k:v for k,v in window.environment.items() if not k.upper().startswith(
             ('NODE_', 'OPENSSL_', 'SSL_', 'SSLKEYLOGFILE', 'HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY'))}
         self.started = {'started_utc':time.time(), 'started_monotonic':time.monotonic()}
-        self.item = window.spawn([str(node), '--no-addons', '--disable-proto=throw', '-e', NODE_MAIN], 'apns', stdin=True)
-        self.item['process'].stdin.write(json.dumps(private_input, separators=(',', ':')).encode())
-        self.item['process'].stdin.close()
+        self.item = window.spawn([str(node), '--no-addons', '--disable-proto=throw', '-e', NODE_MAIN], 'apns',
+                                 input_data=json.dumps(private_input, separators=(',', ':')).encode())
         return self.started
 
     def finish(self):

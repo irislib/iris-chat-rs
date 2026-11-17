@@ -125,17 +125,28 @@ class OwnedWindow:
                 info = path.stat(); total += max(info.st_size, info.st_blocks * 512)
         require(total + 4096 <= self.config['max_output_bytes'], 'Runtime output budget exceeded')
 
-    def spawn(self, command, label, *, stdin=False):
+    def spawn(self, command, label, *, stdin=False, input_data=None):
         require(self.hid_capable or (not stdin and label != 'home'), 'HID is forbidden in observation-only and coredevice-only modes')
+        if input_data is not None:
+            require(not stdin and not self.observation_only and label == 'apns'
+                    and isinstance(input_data, bytes) and 0 < len(input_data) <= 4096,
+                    'Only bounded one-shot APNs input is allowed; interactive input remains forbidden')
         self.guard()
         self.serial += 1
         base = self.out / f'{self.serial:03d}-{label}'
         stdout, stderr = base.with_suffix('.stdout'), base.with_suffix('.stderr')
         with stdout.open('xb') as output, stderr.open('xb') as errors:
-            child = subprocess.Popen(command, stdin=subprocess.PIPE if stdin else subprocess.DEVNULL,
+            child = subprocess.Popen(command, stdin=subprocess.PIPE if stdin or input_data is not None else subprocess.DEVNULL,
                 stdout=output, stderr=errors, start_new_session=True, env=self.environment)
             item = {'process': child, 'stdout': stdout, 'stderr': stderr, 'command': list(command), 'group': child.pid}
             self.children.append(item)
+        if input_data is not None:
+            # Keep private data off argv and close the pipe before returning.
+            # Retain child ownership even if the sender exits before reading.
+            try:
+                child.stdin.write(input_data)
+            finally:
+                child.stdin.close()
         return item
 
     def wait(self, item, seconds):
