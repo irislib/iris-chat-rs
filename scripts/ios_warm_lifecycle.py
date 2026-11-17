@@ -211,7 +211,7 @@ def observe(config_binding):
     require(config['schema'] == 'iris-warm-lifecycle-input-v1', 'Wrong warm configuration')
     qualification = read_bound(config['qualification'])
     require(qualification['passed'] is True and qualification['sources'] == sources(), 'Unqualified warm sources')
-    window = adapters.OwnedWindow(config['window'], read_bound(config['window'])['output_root'])
+    window = adapters.OwnedWindow(config['window'], read_bound(config['window'])['output_root'], mode='coredevice-only')
     core = WarmCoreDevice(window); capture = trace.OstraceCapture(window, core, config['transport'])
     reference = native.identity(read_bound(config['seed_launch'])['result'], window.config['executable'])
     record = {'schema': 'iris-warm-lifecycle-observation-v1', 'configuration': config_binding, 'process': reference,

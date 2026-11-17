@@ -107,6 +107,59 @@ class WindowTests(unittest.TestCase):
         self.config['mode'] = 'observation-only'
         self.config['tools'] = {name: self.tools[name] for name in ('coredevice', 'syslog')}
 
+    def test_coredevice_only_requires_explicit_admission_and_excludes_hid(self):
+        self.observation_input()
+        self.config['mode'] = 'coredevice-only'
+        for name in ('python', 'home_helper', 'home_disabled', 'home_qualification'):
+            Path(self.tools[name]['path']).unlink()
+        with self.assertRaises(EvidenceError): self.admit()
+        with self.assertRaises(EvidenceError): self.admit(mode='observation-only')
+        window = self.admit(mode='coredevice-only')
+        self.assertEqual(set(window.tools), {'coredevice', 'syslog'})
+        with patch.object(adapters.subprocess, 'Popen') as spawn:
+            with self.assertRaisesRegex(EvidenceError, 'HID'):
+                adapters.PrearmedHome(window)
+            home = object.__new__(adapters.PrearmedHome); home.window = window
+            for action in (home.arm, lambda: home.fire({}, {}),
+                           lambda: window.spawn(['unused-helper'], 'home'),
+                           lambda: window.spawn(['unused-helper'], 'other', stdin=True)):
+                with self.assertRaisesRegex(EvidenceError, 'HID'): action()
+        spawn.assert_not_called()
+        window.close()
+
+    def test_coredevice_only_preserves_ownership_capacity_and_exact_target(self):
+        self.observation_input(); self.config['mode'] = 'coredevice-only'
+        for key, value in [('owner_pid', os.getppid() + 1), ('deadline_monotonic', 9),
+                           ('max_output_bytes', 512 * 1024**2 + 1), ('minimum_free_bytes', 1),
+                           ('device', 'another-device')]:
+            original = self.config[key]; self.config[key] = value
+            with self.subTest(key=key), self.assertRaises(EvidenceError): self.admit(mode='coredevice-only')
+            self.config[key] = original
+        self.config['tools']['home_helper'] = self.tools['home_helper']
+        with self.assertRaises(EvidenceError): self.admit(mode='coredevice-only')
+        del self.config['tools']['home_helper']
+        with patch.object(adapters.native_lab, 'lock_path', side_effect=FileNotFoundError):
+            with self.assertRaises(FileNotFoundError): self.admit(mode='coredevice-only')
+        self.assertFalse((self.root / 'output').exists())
+
+    def test_coredevice_only_allows_bound_ordinary_replacement_without_launch_overrides(self):
+        self.observation_input(); self.config['mode'] = 'coredevice-only'
+        window = self.admit(mode='coredevice-only'); core = adapters.CoreDevice(window)
+        command = ['device', 'process', 'launch', '--terminate-existing', self.config['bundle_id']]
+        def respond(args, label):
+            Path(args[args.index('--json-output') + 1]).write_text(json.dumps({'result': {'synthetic': True}}))
+            return {}
+        with patch.object(window, 'spawn', side_effect=respond) as start, patch.object(window, 'wait'):
+            self.assertEqual(core.run(command), {'synthetic': True})
+            args = start.call_args.args[0]
+            self.assertEqual(args[args.index('--device') + 1], self.config['device'])
+            self.assertEqual(args[-2:], command[-2:])
+            for invalid in (command[:-1] + ['another.app'], command + ['--console'],
+                            command + ['--environment-variables', 'TEST=1']):
+                with self.subTest(command=invalid), self.assertRaises(EvidenceError): core.run(invalid)
+            self.assertEqual(start.call_count, 1)
+        window.close()
+
     def test_observation_only_admits_no_home_files_and_rejects_all_home_entrypoints(self):
         self.observation_input()
         for name in ('python', 'home_helper', 'home_disabled', 'home_qualification'):

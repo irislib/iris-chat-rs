@@ -73,6 +73,15 @@ the single execution-enable line change; it never creates that copy itself.
 The helper keeps its qualified USB-only transport and pinned dependency checks.
 There is no new UI runner, pairing, package installation or control fallback.
 
+For an ordinary CoreDevice switch to Settings, explicitly select
+`coredevice-only` in both the window admission and the `OwnedWindow` caller.
+Bind only `coredevice` and `syslog`; Home/HID entry points and interactive
+helper input are rejected. This mode permits the existing exact-target ordinary
+replacement launch, while `observation-only` continues to reject replacement.
+Device ownership, distribution provenance, deadlines, capacity, capture and
+lifecycle requirements are unchanged. A Settings switch still needs observed
+restoration overlap; launching Settings alone does not establish acceptance.
+
 Create `CoreDevice(window)`, `Capture(window, core)` and `PrearmedHome(window)`.
 Start capture before arming Home. Wire `snapshot=capture.snapshot`,
 `prearm=home.arm`, `capture_prefixes=capture.prefixes`, `launch=core.run` and

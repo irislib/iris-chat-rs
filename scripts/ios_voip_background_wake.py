@@ -622,7 +622,7 @@ def observe(config_binding, output, *, execute=False):
     require(config['schema'] == 'iris-voip-background-input-v1'
             and type(config['existing_pid']) is int and config['existing_pid'] > 0, 'Invalid wake admission')
     checker_sources = qualified_sources(config)
-    window = OwnedWindow(config['window'], output)
+    window = OwnedWindow(config['window'], output, mode='coredevice-only')
     record = {'schema':'iris-voip-background-capture-v1','configuration':config_binding,
               'checker_sources':checker_sources,'passed':False,'physical_release_acceptance':False,
               'push_attempts':0,'automatic_retry':False,'inventories':[]}

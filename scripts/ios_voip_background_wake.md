@@ -53,9 +53,10 @@ actual path, device identity, subscription and credential outside source control
 `window` is the existing `iris-relaunch-adapters-v1` admission, binding the
 reviewed installed distribution and toolchain. Its direct parent must own both
 native acceptance and exact-device leases. Use the established output/deadline
-and free-space bounds (at most 100 MiB output and 600 seconds). Existing HID tool
-bindings remain required by this shared admission but the wake route never
-starts HID. `existing_pid` must be a fresh actual inventory of the admitted app.
+and free-space bounds (at most 100 MiB output and 600 seconds). Explicitly select
+`coredevice-only` and bind only `coredevice` and `syslog`; this route cannot start
+Home/HID. The existing wake adapter still permits only one termination of the
+exact admitted old PID. `existing_pid` must be a fresh actual inventory of the admitted app.
 
 `credentials` binds `iris-existing-apns-credentials-v1`: the production bundle,
 environment, established `key_id`/`team_id`, owner-only `local_key` binding and

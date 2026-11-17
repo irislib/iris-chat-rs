@@ -412,7 +412,8 @@ class DriverTests(unittest.TestCase):
         output=self.root/'driver'; output.mkdir()
         cores=[]; attempts=[]
         class Window:
-            def __init__(self,*_):
+            def __init__(self,*_,mode):
+                assert mode == 'coredevice-only'
                 self.config,self.out,self.serial=window_config,output,0
                 self.capture,self.closed=None,False
                 self.clock=lambda:clock.now

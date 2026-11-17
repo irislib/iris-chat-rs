@@ -8,6 +8,10 @@ run XCTest, install a build or change launch arguments or environment.
 The release owner must review a hash-bound input and retain the two native
 device leases in the observer's direct parent. The existing owned window
 enforces a maximum 600-second deadline, bounded output and host disk reserve.
+The window explicitly selects `coredevice-only` and binds `coredevice` and
+`syslog`. It does not require or permit a Home/HID helper. The warm adapter
+continues to reject terminating launches and all operations outside its exact
+Iris/Settings activation and inventory allowlist.
 An external owner must also track and close descendant process groups if the
 observer is interrupted. Prior evidence and failures remain unchanged.
 
