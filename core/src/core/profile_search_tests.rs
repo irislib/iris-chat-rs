@@ -236,7 +236,10 @@ fn default_graph_fills_personalized_gaps_without_filtering_unknowns() {
         .map(|row| row.owner_pubkey_hex)
         .collect::<Vec<_>>();
     assert_eq!(owners, vec![GIGI_HEX.to_string(), unknown]);
-    let (distance, Reverse(friend_support)) = default_social_rank(GIGI_HEX);
+    let (distance, Reverse(friend_support)) = default_social_rank(
+        GIGI_HEX,
+        DEFAULT_SOCIAL_GRAPH.get().and_then(Option::as_ref),
+    );
     assert!(distance < 1_000);
     assert!(friend_support > 0);
 }

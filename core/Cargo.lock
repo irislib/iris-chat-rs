@@ -3533,14 +3533,21 @@ dependencies = [
 
 [[package]]
 name = "nostr-social-graph"
-version = "0.2.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "94ad34129aa71f3cb8344e39d3a690c08c7d84b5a230a42e146efc0aaa3f2d22"
+version = "0.2.3"
+source = "git+https://github.com/mmalmi/nostr-social-graph?rev=8649b78c73f183d4ab29eceb7c6e18630bb63c04#8649b78c73f183d4ab29eceb7c6e18630bb63c04"
 dependencies = [
+ "async-trait",
+ "futures-util",
+ "hashtree-core",
  "hex",
  "indexmap",
+ "nostr",
+ "reqwest",
  "serde",
+ "serde_json",
  "thiserror 2.0.21",
+ "tokio",
+ "tokio-tungstenite 0.26.2",
  "uuid",
 ]
 

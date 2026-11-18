@@ -266,6 +266,11 @@ pub(crate) enum InternalEvent {
         owner_pubkey_hex: String,
         result: Result<Vec<Event>, String>,
     },
+    PublicDiscoverySeedFinished {
+        generation: u64,
+        owner: String,
+        bytes: Option<Vec<u8>>,
+    },
     UserDiscoveryFetchFinished {
         token: u64,
         result: crate::core::UserDiscoveryFetchResult,

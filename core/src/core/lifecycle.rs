@@ -237,6 +237,7 @@ impl AppCore {
                     "DirectChatCapabilityFetchFinished"
                 }
                 InternalEvent::FollowUpdateReady { .. } => "FollowUpdateReady",
+                InternalEvent::PublicDiscoverySeedFinished { .. } => "PublicDiscoverySeedFinished",
                 InternalEvent::UserDiscoveryFetchFinished { .. } => "UserDiscoveryFetchFinished",
                 InternalEvent::PrivateInviteResolved { .. } => "PrivateInviteResolved",
                 InternalEvent::PrivateInviteUploaded { .. } => "PrivateInviteUploaded",
@@ -732,6 +733,13 @@ impl AppCore {
             ),
             InternalEvent::FollowUpdateReady { request_id, result } => {
                 self.finish_follow_update(&request_id, result)
+            }
+            InternalEvent::PublicDiscoverySeedFinished {
+                generation,
+                owner,
+                bytes,
+            } => {
+                self.finish_public_discovery_seed(generation, &owner, bytes);
             }
             InternalEvent::UserDiscoveryFetchFinished { token, result } => {
                 self.handle_user_discovery_fetch_finished(token, result);
