@@ -10,7 +10,7 @@ fn list(keys: &Keys, kind: Kind, at: u64, label: &str, target: PublicKey) -> Eve
         .unwrap()
 }
 
-fn install(graph: &mut SocialGraph, event: &Event) {
+fn install(graph: &mut SocialGraph, event: &Event, projected: bool) {
     graph.handle_event(
         &NostrEvent {
             created_at: event.created_at.as_secs(),
@@ -19,7 +19,11 @@ fn install(graph: &mut SocialGraph, event: &Event) {
             pubkey: event.pubkey.to_hex(),
             id: event.id.to_hex(),
             sig: String::new(),
-            tags: event.tags.iter().map(|t| t.as_slice().to_vec()).collect(),
+            tags: if projected {
+                Vec::new()
+            } else {
+                event.tags.iter().map(|t| t.as_slice().to_vec()).collect()
+            },
         },
         true,
         f64::INFINITY,
@@ -53,13 +57,20 @@ async fn live_public_seed_advertises_complete_ids_and_repairs_only_missing_bodie
     let follow = list(&author, Kind::ContactList, 100, "complete", target);
     let mut tied = [
         list(&author, Kind::MuteList, 101, "first", target),
-        list(&author, Kind::MuteList, 101, "second", target),
+        list(
+            &author,
+            Kind::MuteList,
+            101,
+            "second",
+            Keys::generate().public_key(),
+        ),
     ];
     tied.sort_by_key(|e| e.id);
     let [competing, mute] = tied;
-    install(&mut graph, &follow);
-    install(&mut graph, &mute);
+    install(&mut graph, &follow, false);
+    install(&mut graph, &mute, true);
     graph.mark_list_incomplete(&who, 10_000);
+    assert!(graph.get_muted_by_user(&who).is_empty());
     let stale = list(&author, Kind::MuteList, 90, "older", target);
     let future = list(
         &author,
@@ -89,6 +100,10 @@ async fn live_public_seed_advertises_complete_ids_and_repairs_only_missing_bodie
     let repaired =
         SocialGraph::from_mobile_binary(DEFAULT_SOCIAL_GRAPH_ROOT, &bytes, MOBILE_MIN_USERS)
             .unwrap();
+    assert_eq!(
+        repaired.get_muted_by_user(&who),
+        [mute.tags.iter().next().unwrap().as_slice()[1].clone()]
+    );
     let head = repaired.get_list_revision(&who, 10_000).unwrap();
     assert!(head.complete && head.id == mute.id.to_hex());
     assert_eq!(
@@ -171,6 +186,10 @@ async fn live_public_seed_advertises_complete_ids_and_repairs_only_missing_bodie
     assert_eq!(
         replaced.get_list_revision(&who, 10_000).unwrap().id,
         competing.id.to_hex()
+    );
+    assert_eq!(
+        replaced.get_muted_by_user(&who),
+        [competing.tags.iter().next().unwrap().as_slice()[1].clone()]
     );
     drop(keeper);
 }
