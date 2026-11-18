@@ -22,7 +22,7 @@ EXPECTED = {
     "hashtree-lmdb": "0.3.0",
     "hashtree-fips-transport": "0.5.0",
     "hashtree-network": "0.3.0",
-    "nostr-pubsub": "0.1.21",
+    "nostr-pubsub": "0.1.22",
     "nostr-pubsub-fips": "0.6.5",
     "nostr-pubsub-reconcile": "0.1.3",
     "nostr-pubsub-relay": "0.1.16",
@@ -159,7 +159,7 @@ class DependencyLockConsistencyTests(unittest.TestCase):
         self.assertRegex(manifest, r'(?m)^hashtree-fips-transport = "=0\.5\.0"$', "Hashtree/FIPS transport must stay on the gated release")
         self.assertRegex(manifest, r'(?m)^hashtree-network = "=0\.3\.0"$', "Hashtree network must stay on the gated release")
         self.assertRegex(manifest, r'(?m)^nostr-identity = "=0\.6\.0"$', "nostr-identity must stay on the gated release")
-        self.assertRegex(manifest, r'(?m)^nostr-pubsub = "=0\.1\.21"$', "nostr-pubsub must stay on the gated release")
+        self.assertIn(f'nostr-pubsub = "={EXPECTED["nostr-pubsub"]}"', manifest.splitlines())
         self.assertRegex(manifest, r'(?m)^nostr-pubsub-fips = "=0\.6\.5"$', "nostr-pubsub-fips must stay on the gated release")
         self.assertRegex(manifest, r'(?m)^nostr-pubsub-reconcile = "=0\.1\.3"$', "nostr-pubsub-reconcile must stay on the gated release")
         self.assertRegex(manifest, r'(?m)^nostr-pubsub-relay = "=0\.1\.16"$', "nostr-pubsub-relay must stay on the gated release")
