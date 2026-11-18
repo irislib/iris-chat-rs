@@ -22,12 +22,12 @@ EXPECTED = {
     "hashtree-lmdb": "0.3.0",
     "hashtree-fips-transport": "0.5.0",
     "hashtree-network": "0.3.0",
-    "nostr-pubsub": "0.1.21",
+    "nostr-pubsub": "0.1.22",
     "nostr-pubsub-fips": "0.6.5",
     "nostr-pubsub-reconcile": "0.1.3",
     "nostr-pubsub-relay": "0.1.16",
     "nostr-pubsub-social-graph": "0.3.1",
-    "nostr-social-graph": "0.2.2",
+    "nostr-social-graph": "0.2.3",
     "nostr-social-memory": "0.2.1",
 }
 
@@ -159,18 +159,18 @@ class DependencyLockConsistencyTests(unittest.TestCase):
         self.assertRegex(manifest, r'(?m)^hashtree-fips-transport = "=0\.5\.0"$', "Hashtree/FIPS transport must stay on the gated release")
         self.assertRegex(manifest, r'(?m)^hashtree-network = "=0\.3\.0"$', "Hashtree network must stay on the gated release")
         self.assertRegex(manifest, r'(?m)^nostr-identity = "=0\.6\.0"$', "nostr-identity must stay on the gated release")
-        self.assertRegex(manifest, r'(?m)^nostr-pubsub = "=0\.1\.21"$', "nostr-pubsub must stay on the gated release")
+        self.assertRegex(manifest, r'(?m)^nostr-pubsub = "=0\.1\.22"$', "nostr-pubsub must stay on the gated release")
         self.assertRegex(manifest, r'(?m)^nostr-pubsub-fips = "=0\.6\.5"$', "nostr-pubsub-fips must stay on the gated release")
         self.assertRegex(manifest, r'(?m)^nostr-pubsub-reconcile = "=0\.1\.3"$', "nostr-pubsub-reconcile must stay on the gated release")
         self.assertRegex(manifest, r'(?m)^nostr-pubsub-relay = "=0\.1\.16"$', "nostr-pubsub-relay must stay on the gated release")
-        self.assertRegex(manifest, r'(?m)^nostr-social-graph = "=0\.2\.2"$', "Direct graph consumer needs revision-aware lists")
+        self.assertRegex(manifest, r'(?m)^nostr-social-graph = \{ version = "=0\.2\.3", features = \["public-snapshot"\] \}$', "Native profile discovery needs the signed snapshot reader")
         # Direct and pubsub/memory consumers share the reviewed revision-aware graph.
         for lock_path in PLATFORM_LOCKS:
             entries = [block for block in lock_path.read_text().split("[[package]]")
                        if re.search(r'(?m)^name = "nostr-social-graph"$', block)
-                       and re.search(r'(?m)^version = "0\.2\.2"$', block)]
+                       and re.search(r'(?m)^version = "0\.2\.3"$', block)]
             self.assertEqual(len(entries), 1)
-            self.assertIn('checksum = "94ad34129aa71f3cb8344e39d3a690c08c7d84b5a230a42e146efc0aaa3f2d22"', entries[0])
+            self.assertIn('checksum = "e1580ee763ace197fa721c2815657c683fb7578f311bb8787f4efacb157fd5f8"', entries[0])
 
     def test_revision_aware_provider_archives_are_the_accepted_tuple(self):
         checksums = {

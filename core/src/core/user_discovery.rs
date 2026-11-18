@@ -60,6 +60,7 @@ impl AppCore {
         self.rebuild_state();
         self.emit_state();
 
+        self.start_public_discovery_seed(&relay_urls, local_owner);
         let previous = self.user_discovery.clone();
         let tx = self.core_sender.clone();
         let discovery = self.discovery_relays.clone();
@@ -73,6 +74,7 @@ impl AppCore {
     }
 
     pub(super) fn cancel_user_discovery_fetch(&mut self) {
+        self.cancel_public_discovery_seed();
         if let Some(task) = self.user_discovery_runtime.fetch_abort.take() {
             task.abort();
         }
@@ -160,6 +162,7 @@ impl AppCore {
     }
 
     pub(super) fn reset_user_discovery_runtime(&mut self) {
+        self.cancel_public_discovery_seed();
         if let Some(task) = self.user_discovery_runtime.fetch_abort.take() {
             task.abort();
         }

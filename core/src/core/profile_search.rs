@@ -11,13 +11,14 @@ use std::sync::OnceLock;
 const PROFILE_SEARCH_DEBOUNCE: Duration = Duration::from_millis(120);
 const PROFILE_SEARCH_RETRY_FLOOR: Duration = Duration::from_secs(30);
 const MAX_RECENT_PROFILE_SEARCHES: usize = 32;
-// Same reduced fallback graph shipped by nostr-social-graph/Iris Client.
-// SHA-256: 6d6ce09dfcc587e4de377a40ced50221568d674705d7e909182390e8edd58d1c.
+// Public discovery ranks profiles separately from personal message admission.
 const DEFAULT_SOCIAL_GRAPH_ROOT: &str =
     "4523be58d395b1b196a9b8c82b038b6895cb02b683d0c253a955068dba1facd0";
 static DEFAULT_SOCIAL_GRAPH: OnceLock<Option<SocialGraph>> = OnceLock::new();
 #[path = "profile_search_graph.rs"]
 mod graph;
+#[path = "profile_search_seed.rs"]
+mod seed;
 
 impl AppCore {
     pub(super) fn request_profile_search(&mut self, query: &str) {
@@ -352,6 +353,10 @@ fn search_people_candidates(
     let search_query = SearchQuery::new(&normalized_query);
     let explicit_owner = PublicKey::parse(query.trim()).ok().map(|key| key.to_hex());
     let personal_graph = graph::load_people_graph(conn, current_owner_hex)?;
+    let public_graph = seed::load(conn);
+    let fallback = public_graph
+        .as_deref()
+        .or_else(|| DEFAULT_SOCIAL_GRAPH.get().and_then(Option::as_ref));
     let personalized_social = match current_owner_hex {
         Some(owner) => conn
             .query_row(
@@ -504,7 +509,7 @@ fn search_people_candidates(
         }
 
         if explicit_owner.as_deref() != Some(owner_hex.as_str())
-            && graph::graph_hides_person(&owner_hex, personal_graph.as_deref())
+            && graph::graph_hides_person(&owner_hex, personal_graph.as_deref(), fallback)
         {
             continue;
         }
@@ -527,6 +532,7 @@ fn search_people_candidates(
             personalized_social,
             personalized_friend_support,
             personal_graph.as_deref(),
+            fallback,
         );
         // Nearby traffic can cache profiles for people we have never met.
         // Metadata and a messaging-capable device list alone are not a reason
@@ -583,6 +589,7 @@ fn social_rank(
     personalized_social: bool,
     personalized_friend_support: Option<usize>,
     personal_graph: Option<&SocialGraph>,
+    fallback: Option<&SocialGraph>,
 ) -> (u8, u32, Reverse<usize>) {
     if let Some(support) = personalized_friend_support.filter(|support| *support > 0) {
         return (0, 2, Reverse(support));
@@ -598,12 +605,12 @@ fn social_rank(
             return (0, distance, Reverse(support));
         }
     }
-    let (distance, support) = default_social_rank(owner);
+    let (distance, support) = default_social_rank(owner, fallback);
     (u8::from(personalized_social), distance, support)
 }
 
-fn default_social_rank(owner: &str) -> (u32, Reverse<usize>) {
-    let Some(graph) = DEFAULT_SOCIAL_GRAPH.get().and_then(Option::as_ref) else {
+fn default_social_rank(owner: &str, fallback: Option<&SocialGraph>) -> (u32, Reverse<usize>) {
+    let Some(graph) = fallback else {
         return (u32::MAX, Reverse(0));
     };
     let friend_support = graph

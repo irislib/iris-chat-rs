@@ -39,7 +39,11 @@ pub(super) fn load_people_graph(
     Ok(Some(graph))
 }
 
-pub(super) fn graph_hides_person(owner: &str, graph: Option<&SocialGraph>) -> bool {
+pub(super) fn graph_hides_person(
+    owner: &str,
+    graph: Option<&SocialGraph>,
+    fallback: Option<&SocialGraph>,
+) -> bool {
     // Personal opinions at the closest known distance take precedence, including
     // direct follows and direct mutes. Unknown people can still be discovered.
     if let Some(graph) = graph {
@@ -52,8 +56,5 @@ pub(super) fn graph_hides_person(owner: &str, graph: Option<&SocialGraph>) -> bo
             return graph.is_overmuted(owner, 1.0);
         }
     }
-    DEFAULT_SOCIAL_GRAPH
-        .get()
-        .and_then(Option::as_ref)
-        .is_some_and(|graph| graph.is_overmuted(owner, 1.0))
+    fallback.is_some_and(|graph| graph.is_overmuted(owner, 1.0))
 }
