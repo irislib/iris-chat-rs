@@ -16,6 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 NARROW_SELECTORS = [
     "-only-testing:IrisChatTests/ChatTimelineHistoryDiagnosticsTests",
     "-only-testing:IrisChatUITests/ChatPaginationUITests/testMixedHeightHistoryPrependPreservesVisibleMessage",
+    "-only-testing:IrisChatUITests/ChatPaginationUITests/testDeepHistoryReturnsToLatestAndSendsFromTheBoundedWindow",
 ]
 
 

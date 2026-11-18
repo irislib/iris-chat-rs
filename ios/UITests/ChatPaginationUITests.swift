@@ -164,6 +164,7 @@ final class ChatPaginationUITests: IrisChatUITestCase {
             "IRIS_UI_TEST_SEED_PEER": "self",
             "IRIS_UI_TEST_SEED_COUNT": "400",
             "IRIS_UI_TEST_SEED_MIXED_HEIGHTS": "1",
+            "IRIS_UI_TEST_TIMELINE_TRACE": "1",
             "IRIS_PERF_LOG": "1",
         ])
         submitWelcomeName(app)
@@ -219,17 +220,26 @@ final class ChatPaginationUITests: IrisChatUITestCase {
             let start = timeline.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.7))
             let end = timeline.coordinate(withNormalizedOffset: CGVector(dx: 0.15, dy: 0.4))
             start.press(forDuration: 0.05, thenDragTo: end, withVelocity: .slow, thenHoldForDuration: 0.25)
-            let afterMessages = messageSnapshots(in: try timeline.snapshot())
+            let afterSnapshot = try timeline.snapshot()
+            let afterMessages = messageSnapshots(in: afterSnapshot)
             let after = afterMessages.first { $0.label == anchor.label }
             let delta = (after?.frame.minY ?? .nan) - anchor.frame.minY
             let tolerance = max(20, viewport.height * 0.06)
-            if after == nil || !delta.isFinite || abs(delta + viewport.height * 0.3) > tolerance {
+            let discontinuity = after == nil || !delta.isFinite || abs(delta + viewport.height * 0.3) > tolerance
+            let beforeWindow = messages.compactMap { ordinal($0.label) }
+            let afterWindow = afterMessages.compactMap { ordinal($0.label) }
+            let transitioned = beforeWindow.min() != afterWindow.min() || beforeWindow.max() != afterWindow.max()
+            if discontinuity {
                 capture(app, name: "render-window-drag-discontinuity")
+            }
+            if discontinuity || transitioned {
                 let detail = XCTAttachment(string:
                     "anchor=\(ordinal(anchor.label) ?? -1) beforeFrame=\(anchor.frame) afterFrame=\(String(describing: after?.frame)) "
                     + "viewport=\(viewport) expectedDelta=\(-viewport.height * 0.3) actualDelta=\(delta) tolerance=\(tolerance) "
-                    + "beforeWindow=\(messages.compactMap { ordinal($0.label) }.min() ?? -1)...\(messages.compactMap { ordinal($0.label) }.max() ?? -1) "
-                    + "afterWindow=\(afterMessages.compactMap { ordinal($0.label) }.min() ?? -1)...\(afterMessages.compactMap { ordinal($0.label) }.max() ?? -1)")
+                    + "beforeWindow=\(beforeWindow.min() ?? -1)...\(beforeWindow.max() ?? -1) "
+                    + "afterWindow=\(afterWindow.min() ?? -1)...\(afterWindow.max() ?? -1)\n"
+                    + "before trace: \(String(describing: before.value).prefix(512))\n"
+                    + "after trace: \(String(describing: afterSnapshot.value).prefix(512))")
                 detail.name = "render-window-drag-geometry"
                 detail.lifetime = .keepAlways
                 add(detail)
