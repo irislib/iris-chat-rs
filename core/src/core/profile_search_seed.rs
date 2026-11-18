@@ -253,6 +253,7 @@ mod tests {
             .add_positive_relation(
                 DEFAULT_SOCIAL_GRAPH_ROOT,
                 &Keys::generate().public_key().to_hex(),
+                100,
             )
             .unwrap();
         let changed = graph.to_binary().unwrap();

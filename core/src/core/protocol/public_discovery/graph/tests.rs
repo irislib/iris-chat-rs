@@ -249,3 +249,84 @@ async fn graph_deadline_includes_shared_query_admission() {
     assert!(result.unwrap_err().contains("deadline"));
     assert_eq!(count(&fixture, "NEG-OPEN"), 0);
 }
+
+#[tokio::test]
+async fn complete_public_snapshot_ids_avoid_mobile_list_body_traffic_on_the_wire() {
+    use nostr_social_graph::{NostrEvent, SocialGraph};
+    let author = Keys::generate();
+    let owner = author.public_key();
+    let bundled = SocialGraph::from_binary(
+        "4523be58d395b1b196a9b8c82b038b6895cb02b683d0c253a955068dba1facd0",
+        include_bytes!("../../../../../assets/socialGraph.bin"),
+    )
+    .unwrap();
+    let mut peers = bundled.get_users_by_follow_distance(1);
+    peers.extend(bundled.get_users_by_follow_distance(2));
+    peers.sort_unstable();
+    let tags: Vec<Tag> = peers
+        .iter()
+        .take(256)
+        .map(|key| Tag::public_key(PublicKey::from_hex(key).unwrap()))
+        .collect();
+    assert_eq!(tags.len(), 256);
+    let mut seeded = SocialGraph::new(&owner.to_hex());
+    let mut events = vec![];
+    for kind in [Kind::ContactList, Kind::MuteList] {
+        let event = EventBuilder::new(kind, "")
+            .tags(tags.clone())
+            .custom_created_at(Timestamp::from(100))
+            .sign_with_keys(&author)
+            .unwrap();
+        seeded.handle_event(
+            &NostrEvent {
+                kind: u32::from(kind.as_u16()),
+                pubkey: owner.to_hex(),
+                created_at: 100,
+                tags: event.tags.iter().map(|t| t.as_slice().to_vec()).collect(),
+                content: String::new(),
+                id: event.id.to_hex(),
+                sig: String::new(),
+            },
+            true,
+            f64::INFINITY,
+        );
+        events.push(event);
+    }
+    let fixture = fixture(events).await;
+    let discovery = Arc::new(DiscoveryRelays::default());
+    let _lease = discovery
+        .open(std::slice::from_ref(&fixture.url))
+        .await
+        .unwrap();
+    let scope = discovery.public_snapshot_scope(&fixture.url).await.unwrap();
+    let warm = scope
+        .snapshot_opinions(Kind::ContactList, &[owner], &seeded)
+        .await
+        .unwrap();
+    assert!(warm.complete && warm.events.is_empty());
+    until(|| count(&fixture, "NEG-CLOSE") == 1).await;
+    let counter = discovery.wire.counter(&fixture.url).unwrap();
+    let empty = SocialGraph::new(&owner.to_hex());
+    let mut measured = vec![];
+    for (label, graph) in [("empty", &empty), ("seeded", &seeded)] {
+        fixture.wire.lock().unwrap().clear();
+        let before = counter.load(AtomicOrdering::Relaxed);
+        let started = std::time::Instant::now();
+        let mut bodies = 0;
+        for kind in [Kind::ContactList, Kind::MuteList] {
+            let result = scope
+                .snapshot_opinions(kind, &[owner], graph)
+                .await
+                .unwrap();
+            assert!(result.complete);
+            bodies += result.events.len();
+        }
+        let elapsed = started.elapsed();
+        until(|| count(&fixture, "NEG-CLOSE") == 2).await;
+        let bytes = counter.load(AtomicOrdering::Relaxed) - before;
+        println!("native_public_negentropy {label} two_256_entry_lists received_bytes={bytes} bodies={bodies} elapsed_us={}",elapsed.as_micros());
+        measured.push((bytes, bodies));
+    }
+    assert_eq!((measured[0].1, measured[1].1), (2, 0));
+    assert!(measured[1].0 < measured[0].0 / 10);
+}
