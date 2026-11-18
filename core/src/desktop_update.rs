@@ -517,26 +517,28 @@ fn copy_with_progress(
     destination: &Path,
     on_event: Option<&DownloadCallback>,
 ) -> Result<()> {
-    use std::io::{Read, Write};
+    use std::io::{BufRead, BufReader, Write};
     let emit = |event| {
         if let Some(on_event) = on_event {
             on_event(event);
         }
     };
-    let mut input = fs::File::open(source)?;
+    let input = fs::File::open(source)?;
     let length = input.metadata()?.len();
     emit(DownloadEvent::Started {
         content_length: (length > 0).then_some(length),
     });
     let mut output = fs::File::create(destination)?;
-    let mut buffer = vec![0u8; 256 * 1024];
+    let mut reader = BufReader::with_capacity(256 * 1024, input);
     let mut copied = 0u64;
     loop {
-        let read = input.read(&mut buffer)?;
-        if read == 0 {
+        let chunk = reader.fill_buf()?;
+        if chunk.is_empty() {
             break;
         }
-        output.write_all(&buffer[..read])?;
+        output.write_all(chunk)?;
+        let read = chunk.len();
+        reader.consume(read);
         copied += read as u64;
         emit(DownloadEvent::Progress {
             chunk_len: read as u64,
