@@ -140,5 +140,6 @@ targets:
         BUNDLE_LOADER: "$(TEST_HOST)"
     sources:
       - path: ../ios/Tests
+      - path: ../ios/ShareExtension/ShareURLText.swift
     dependencies:
       - target: IrisChatMac
