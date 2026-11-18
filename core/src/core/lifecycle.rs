@@ -736,10 +736,11 @@ impl AppCore {
             }
             InternalEvent::PublicDiscoverySeedFinished {
                 generation,
+                previous_digest,
                 owner,
                 bytes,
             } => {
-                self.finish_public_discovery_seed(generation, &owner, bytes);
+                self.finish_public_discovery_seed(generation, &owner, previous_digest, bytes);
             }
             InternalEvent::UserDiscoveryFetchFinished { token, result } => {
                 self.handle_user_discovery_fetch_finished(token, result);

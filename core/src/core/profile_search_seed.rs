@@ -4,6 +4,9 @@ use super::*;
 use nostr_social_graph::{public_snapshot, MOBILE_MAX_BYTES, MOBILE_MIN_USERS};
 use std::sync::Mutex;
 
+#[path = "profile_search_seed_sync.rs"]
+mod sync;
+
 type CachedSeed = (String, Arc<SocialGraph>);
 static PARSED: OnceLock<Mutex<Option<CachedSeed>>> = OnceLock::new();
 
@@ -61,6 +64,21 @@ fn insert(conn: &Connection, bytes: &[u8]) -> rusqlite::Result<bool> {
     )? == 1)
 }
 
+fn replace_public_projection(
+    conn: &Connection,
+    previous: &str,
+    bytes: &[u8],
+) -> rusqlite::Result<bool> {
+    let digest = hashtree_core::to_hex(&hashtree_core::sha256(bytes));
+    if digest == previous {
+        return Ok(false);
+    }
+    Ok(conn.execute(
+        "UPDATE public_discovery_seed SET sha256=?1, bytes=?2 WHERE id=1 AND sha256=?3",
+        rusqlite::params![digest, bytes, previous],
+    )? == 1)
+}
+
 fn default_network(relays: &[RelayUrl]) -> bool {
     use std::collections::BTreeSet;
     let actual: BTreeSet<_> = relays
@@ -82,31 +100,58 @@ impl AppCore {
         relays: &[RelayUrl],
         owner: PublicKey,
     ) {
-        if self.user_discovery_runtime.public_seed_abort.is_some()
-            || self.user_discovery.social_graph.is_some()
-            || !default_network(relays)
-        {
+        if self.user_discovery_runtime.public_seed_abort.is_some() || !default_network(relays) {
             return;
         }
         let connection = self.app_store.shared();
-        if !connection
+        let Some(stored) = connection
             .lock()
             .ok()
-            .is_some_and(|db| matches!(stored_digest(&db), Ok(None)))
-        {
+            .and_then(|db| stored_digest(&db).ok())
+        else {
+            return;
+        };
+        let round = unix_now().get() / 300;
+        if stored.is_some() {
+            if self.user_discovery_runtime.public_seed_round == Some(round) {
+                return;
+            }
+            self.user_discovery_runtime.public_seed_round = Some(round);
+        } else if self.user_discovery.social_graph.is_some() {
             return;
         }
         let generation = self.user_discovery_runtime.public_seed_generation;
         let sender = self.core_sender.clone();
+        let discovery = self.discovery_relays.clone();
+        let mut relays = relays.to_vec();
+        relays.sort();
+        relays.dedup();
         let task = self.runtime.spawn(async move {
-            let bytes = public_snapshot::fetch(DEFAULT_SOCIAL_GRAPH_ROOT, MOBILE_MIN_USERS)
-                .await
-                .ok()
-                .map(|seed| seed.bytes);
+            let bytes = if let Some(digest) = &stored {
+                let cached = connection.lock().ok().and_then(|db| {
+                    (stored_digest(&db).ok().flatten().as_ref() == Some(digest))
+                        .then(|| load(&db))
+                        .flatten()
+                });
+                match cached {
+                    Some(graph) => {
+                        let relay_count = relays.len() as u64;
+                        let relay = &relays[(round % relay_count) as usize];
+                        sync::refresh(discovery, relay, graph, round / relay_count).await
+                    }
+                    None => None,
+                }
+            } else {
+                public_snapshot::fetch(DEFAULT_SOCIAL_GRAPH_ROOT, MOBILE_MIN_USERS)
+                    .await
+                    .ok()
+                    .map(|seed| seed.bytes)
+            };
             let _ = sender.send(CoreMsg::Internal(Box::new(
                 InternalEvent::PublicDiscoverySeedFinished {
                     generation,
                     owner: owner.to_hex(),
+                    previous_digest: stored,
                     bytes,
                 },
             )));
@@ -128,6 +173,7 @@ impl AppCore {
         &mut self,
         generation: u64,
         owner: &str,
+        previous_digest: Option<String>,
         bytes: Option<Vec<u8>>,
     ) {
         if generation != self.user_discovery_runtime.public_seed_generation {
@@ -143,14 +189,26 @@ impl AppCore {
         }
         let Some(bytes) = bytes else { return };
         let connection = self.app_store.shared();
-        let inserted = connection
-            .lock()
-            .ok()
-            .is_some_and(|db| matches!(insert(&db, &bytes), Ok(true)));
-        if inserted {
+        let changed = connection.lock().ok().is_some_and(|db| {
+            match &previous_digest {
+                Some(digest) => replace_public_projection(&db, digest, &bytes),
+                None => insert(&db, &bytes),
+            }
+            .unwrap_or(false)
+        });
+        if changed {
             self.bump_user_discovery_revision();
             self.rebuild_state();
             self.emit_state();
+            if previous_digest.is_none() {
+                if let Some((relays, owner)) = self
+                    .logged_in
+                    .as_ref()
+                    .map(|s| (s.relay_urls.clone(), s.owner_pubkey))
+                {
+                    self.start_public_discovery_seed(&relays, owner);
+                }
+            }
         }
     }
 }
@@ -178,6 +236,36 @@ mod tests {
             )
             .unwrap();
         assert_eq!(retained, [1, 2, 3]);
+    }
+
+    #[test]
+    fn public_deltas_compare_the_seed_digest_and_leave_personal_rows_untouched() {
+        let db = Connection::open_in_memory().unwrap();
+        db.execute_batch(
+            "CREATE TABLE user_discovery_state(id INTEGER, social_graph BLOB);
+            INSERT INTO user_discovery_state VALUES(1,x'010203');",
+        )
+        .unwrap();
+        insert(&db, EMBEDDED).unwrap();
+        let baseline = stored_digest(&db).unwrap().unwrap();
+        let mut graph = (*load(&db).unwrap()).clone();
+        graph
+            .add_positive_relation(
+                DEFAULT_SOCIAL_GRAPH_ROOT,
+                &Keys::generate().public_key().to_hex(),
+            )
+            .unwrap();
+        let changed = graph.to_binary().unwrap();
+        assert!(!replace_public_projection(&db, "unrelated", &changed).unwrap());
+        assert!(replace_public_projection(&db, &baseline, &changed).unwrap());
+        assert!(!replace_public_projection(&db, &baseline, EMBEDDED).unwrap());
+        assert!(load(&db).is_some());
+        let bytes: Vec<u8> = db
+            .query_row("SELECT social_graph FROM user_discovery_state", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(bytes, [1, 2, 3]);
     }
 
     #[test]

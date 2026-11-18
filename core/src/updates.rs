@@ -268,6 +268,7 @@ pub(crate) enum InternalEvent {
     },
     PublicDiscoverySeedFinished {
         generation: u64,
+        previous_digest: Option<String>,
         owner: String,
         bytes: Option<Vec<u8>>,
     },

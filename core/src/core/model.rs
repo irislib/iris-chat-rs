@@ -156,6 +156,7 @@ pub(super) struct DiscoveredUserRecord {
 pub(super) struct UserDiscoveryRuntime {
     pub(super) public_seed_abort: Option<tokio::task::AbortHandle>,
     pub(super) public_seed_generation: u64,
+    pub(super) public_seed_round: Option<u64>,
     pub(super) fetch_abort: Option<tokio::task::AbortHandle>,
     pub(super) token: u64,
     pub(super) in_flight: bool,

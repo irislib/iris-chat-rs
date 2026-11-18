@@ -50,6 +50,18 @@ impl GraphBudget {
 }
 
 impl DiscoveryRelays {
+    pub(in crate::core) async fn public_snapshot_scope(
+        self: &Arc<Self>,
+        relay: &RelayUrl,
+    ) -> Result<GraphScope, String> {
+        let mut scope = self.graph_scope(std::slice::from_ref(relay)).await?;
+        scope.budget.max_bytes = 256 * 1024;
+        scope.budget.deadline = scope
+            .budget
+            .deadline
+            .min(tokio::time::Instant::now() + Duration::from_secs(8));
+        Ok(scope)
+    }
     pub(in crate::core) async fn graph_scope(
         self: &Arc<Self>,
         urls: &[RelayUrl],
@@ -131,6 +143,70 @@ impl GraphScope {
         {
             return Err("invalid graph reconciliation scope".into());
         }
+        let events = known
+            .iter()
+            .filter(|event| event.kind == kind && authors.contains(&event.pubkey))
+            .cloned()
+            .collect::<Vec<_>>();
+        let records = events
+            .iter()
+            .map(|e| (e.created_at.as_secs(), e.id))
+            .collect::<Vec<_>>();
+        self.opinion_round(
+            Filter::new().kind(kind).authors(authors.iter().copied()),
+            &records,
+            events,
+            max_events,
+        )
+        .await
+    }
+
+    pub(in crate::core) async fn snapshot_opinions(
+        &self,
+        kind: Kind,
+        authors: &[PublicKey],
+        graph: &nostr_social_graph::SocialGraph,
+    ) -> Result<GraphEvents, String> {
+        if !matches!(kind.as_u16(), 3 | 10000)
+            || authors.is_empty()
+            || authors.len() > MAX_GRAPH_AUTHORS
+        {
+            return Err("invalid snapshot reconciliation scope".into());
+        }
+        let mut records = Vec::new();
+        let mut since = u64::MAX;
+        for author in authors {
+            let key = author.to_hex();
+            let at = if kind == Kind::ContactList {
+                graph.get_follow_list_created_at(&key)
+            } else {
+                graph.get_mute_list_created_at(&key)
+            };
+            since = since.min(at.unwrap_or(0));
+            if let Some(head) = graph.get_list_revision(&key, u32::from(kind.as_u16())) {
+                if head.complete {
+                    if let Ok(id) = EventId::from_hex(&head.id) {
+                        records.push((head.created_at, id));
+                    }
+                }
+            }
+        }
+        // Include the oldest timestamp itself so partial heads and equal-time winners can be repaired.
+        let filter = Filter::new()
+            .kind(kind)
+            .authors(authors.iter().copied())
+            .since(Timestamp::from(since));
+        self.opinion_round(filter, &records, Vec::new(), authors.len() * 2)
+            .await
+    }
+
+    async fn opinion_round(
+        &self,
+        filter: Filter,
+        known: &[(u64, EventId)],
+        mut events: Vec<Event>,
+        max_events: usize,
+    ) -> Result<GraphEvents, String> {
         let operation = async {
             let _permit = self
                 .lease
@@ -143,12 +219,6 @@ impl GraphScope {
             if self.lease.pool.stopped.load(Ordering::Acquire) {
                 return Err(QueryFailure::Transport("public discovery stopped".into()));
             }
-            let filter = Filter::new().kind(kind).authors(authors.iter().copied());
-            let mut events = known
-                .iter()
-                .filter(|event| event.kind == kind && authors.contains(&event.pubkey))
-                .cloned()
-                .collect::<Vec<_>>();
             let mut complete = true;
             for url in &self.lease.urls {
                 self.budget.check()?;
@@ -166,13 +236,7 @@ impl GraphScope {
                 .await;
                 let (query, required_ids) = match result {
                     Ok(Ok(ids)) if ids.is_empty() => continue,
-                    Ok(Ok(ids)) => (
-                        Filter::new()
-                            .ids(ids.iter().copied())
-                            .kind(kind)
-                            .authors(authors.iter().copied()),
-                        ids,
-                    ),
+                    Ok(Ok(ids)) => (filter.clone().ids(ids.iter().copied()), ids),
                     Ok(Err(QueryFailure::Limit)) => return Err(QueryFailure::Limit),
                     _ => {
                         // Failed reconciliation leaves this relay incomplete; do not
@@ -234,21 +298,16 @@ impl Drop for NegSubscription {
 async fn reconcile(
     relay: &Relay,
     filter: &Filter,
-    known: &[Event],
+    known: &[(u64, EventId)],
     budget: &GraphBudget,
     max_events: usize,
 ) -> Result<HashSet<EventId>, QueryFailure> {
     let failure = |error: negentropy::Error| QueryFailure::Transport(error.to_string());
     let mut storage = NegentropyStorageVector::new();
-    for event in known {
-        if filter.match_event(event, nostr::filter::MatchEventOptions::new()) {
-            storage
-                .insert(
-                    event.created_at.as_secs(),
-                    Id::from_slice(event.id.as_bytes()).map_err(failure)?,
-                )
-                .map_err(failure)?;
-        }
+    for (created_at, id) in known {
+        storage
+            .insert(*created_at, Id::from_slice(id.as_bytes()).map_err(failure)?)
+            .map_err(failure)?;
     }
     storage.seal().map_err(failure)?;
     let mut negentropy = Negentropy::borrowed(&storage, 8 * 1024).map_err(failure)?;

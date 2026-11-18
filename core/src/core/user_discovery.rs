@@ -174,7 +174,9 @@ impl AppCore {
         self.user_discovery = UserDiscoveryCache::default();
         self.social_graph = None;
         self.pending_follow = None;
+        let seed_generation = self.user_discovery_runtime.public_seed_generation;
         self.user_discovery_runtime = UserDiscoveryRuntime::default();
+        self.user_discovery_runtime.public_seed_generation = seed_generation;
         self.user_discovery_runtime.token = invalidated_discovery_token;
         self.profile_search_runtime = ProfileSearchRuntime::default();
         self.profile_search_runtime.token = invalidated_search_token;

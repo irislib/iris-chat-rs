@@ -14,7 +14,7 @@ pub(in crate::core) struct Fixture {
     pub(super) hold_eose: Arc<AtomicBool>,
     pub(super) connections: Arc<AtomicUsize>,
     pub(super) active: Arc<AtomicUsize>,
-    pub(super) omitted: Arc<Mutex<HashSet<EventId>>>,
+    pub(in crate::core) omitted: Arc<Mutex<HashSet<EventId>>>,
     pub(super) raw: Arc<Mutex<Vec<Message>>>,
     pub(super) reject_auth: Arc<AtomicBool>,
     pub(super) hold_handshake: Arc<AtomicBool>,
