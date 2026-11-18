@@ -477,7 +477,7 @@ final class ShareViewController: UIViewController {
                     attachments.append(photo)
                     continue
                 }
-                if let urlText = await loadURLText(from: provider) {
+                if let urlText = await provider.sharedURLText() {
                     textParts.append(urlText)
                     continue
                 }
@@ -547,24 +547,6 @@ final class ShareViewController: UIViewController {
         interaction.identifier = "share-extension-pick-\(chatId)-\(Int(Date().timeIntervalSince1970))"
         interaction.groupIdentifier = "iris-chat-share-suggestions"
         interaction.donate(completion: nil)
-    }
-
-    private func loadURLText(from provider: NSItemProvider) async -> String? {
-        guard provider.hasItemConformingToTypeIdentifier(UTType.url.identifier) else {
-            return nil
-        }
-        return await withCheckedContinuation { continuation in
-            provider.loadItem(forTypeIdentifier: UTType.url.identifier, options: nil) { item, _ in
-                if let url = item as? URL {
-                    continuation.resume(returning: url.isFileURL ? nil : url.absoluteString)
-                } else if let string = item as? String {
-                    let url = URL(string: string)
-                    continuation.resume(returning: url?.isFileURL == true ? nil : string)
-                } else {
-                    continuation.resume(returning: nil)
-                }
-            }
-        }
     }
 
     private func loadPlainText(from provider: NSItemProvider) async -> String? {

@@ -116,6 +116,7 @@ targets:
     platform: iOS
     sources:
       - path: ShareExtension/ShareViewController.swift
+      - path: ShareExtension/ShareURLText.swift
       - path: Sources/IrisAvatarContent.swift
       - path: Sources/ShareSuggestionEntry.swift
     settings:
@@ -143,6 +144,7 @@ targets:
         BUNDLE_LOADER: "$(TEST_HOST)"
     sources:
       - path: Tests
+      - path: ShareExtension/ShareURLText.swift
       - path: Assets.xcassets/IrisLogo.imageset/iris-logo.png
         buildPhase: resources
     dependencies:
