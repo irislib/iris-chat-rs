@@ -70,7 +70,9 @@ final class GroupPickerUITests: IrisChatUITestCase {
         contact.tap()
         reveal(search, in: creationScroll, upward: false)
         typeText("Contact 02", into: search, app: app)
-        let second = app.buttons.containing(.staticText, identifier: "Contact 02").firstMatch
+        let second = boundedCreationList
+            ? app.buttons["newGroupKnownUser-\(peers[1].prefix(12))"]
+            : app.buttons.containing(.staticText, identifier: "Contact 02").firstMatch
         reveal(second, in: creationScroll, upward: true)
         second.tap()
         reveal(next, in: creationScroll, upward: false)
@@ -93,13 +95,13 @@ final class GroupPickerUITests: IrisChatUITestCase {
         }
         capture(app, "group-members-ordinary")
         openAdminAction(app, menu: memberMenu, owner: peers[20], title: "Make admin")
-        let confirmation = app.alerts.firstMatch
+        let confirmation = element(app, "groupDetailsConfirmAdminButton")
         XCTAssertTrue(confirmation.waitForExistence(timeout: 5))
-        confirmation.buttons["Cancel"].tap()
+        app.buttons["Cancel"].firstMatch.tap()
         openAdminAction(app, menu: memberMenu, owner: peers[20], title: "Make admin")
         XCTAssertTrue(confirmation.waitForExistence(timeout: 5))
         capture(app, "group-member-promotion-confirmation")
-        confirmation.buttons["groupDetailsConfirmAdminButton"].firstMatch.tap()
+        confirmation.tap()
         XCTAssertTrue(app.staticTexts["Admin"].firstMatch.waitForExistence(timeout: 10))
         capture(app, "group-members-admin-and-ordinary")
         if compactMenu {
@@ -152,14 +154,15 @@ final class GroupPickerUITests: IrisChatUITestCase {
 
     private func reveal(_ target: XCUIElement, in scroll: XCUIElement, upward: Bool,
                         file: StaticString = #filePath, line: UInt = #line) {
-        for _ in 0..<20 where !target.isHittable {
+        for _ in 0..<20 {
+            if target.exists && target.isHittable { return }
 #if os(macOS)
             scroll.scroll(byDeltaX: 0, deltaY: upward ? -250 : 250)
 #else
             if upward { scroll.swipeUp() } else { scroll.swipeDown() }
 #endif
         }
-        if !target.isHittable {
+        if !target.exists || !target.isHittable {
             let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
             attachment.name = "group-picker-unreachable-target"
             attachment.lifetime = .keepAlways
