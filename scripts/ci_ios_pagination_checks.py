@@ -69,6 +69,7 @@ class IosPaginationWorkflowTests(unittest.TestCase):
                             self.workflow.split("\njobs:\n", 1)[1], re.M | re.S)
         for scope, expected in [
             ("ios-pagination", {"ios"}), ("ios", {"ios"}), ("ios-unit", {"ios"}),
+            ("ios-groups", {"ios"}), ("macos-groups", {"macos"}),
             ("apple", {"ios", "macos"}),
             ("", {"rust", "android", "linux", "macos", "ios", "windows-ui", "cli-service"}),
             ("all", {"rust", "android", "linux", "macos", "ios", "windows-ui", "cli-service"}),
@@ -143,6 +144,25 @@ class IosPaginationWorkflowTests(unittest.TestCase):
             self.assertEqual(len(calls), 1)
             selected = [arg for arg in calls[0]["args"] if arg.startswith("-only-testing:")]
             self.assertEqual(selected, units if scope == "ios-unit" else units + ui)
+
+    def test_mac_group_scope_runs_native_menu_journey_and_retains_evidence(self):
+        mac = job(self.workflow, "macos", "ios")
+        narrow = step(mac, "macOS group creation and member management")
+        self.assertTrue(self.condition(narrow, "macos-groups"))
+        self.assertFalse(self.condition(narrow, "macos"))
+        self.assertFalse(self.condition(step(mac, "macOS tests"), "macos-groups"))
+        self.assertTrue(self.condition(step(mac, "macOS tests"), "macos"))
+        self.assertIn("CARGO_BUILD_JOBS: 2", narrow)
+        self.assertIn("IRIS_MACOS_RUST_TARGETS: aarch64-apple-darwin", narrow)
+        self.assertIn("IrisChatMacUITests/GroupPickerUITests/testLongContactListCreationAndMemberManagement IrisChatMacTests/GroupMemberCandidatesTests", narrow)
+        self.assertIn("./scripts/test-macos-ui", narrow)
+        installer = step(mac, "Install pinned Mac group qualification tools")
+        self.assertIn("--target aarch64-apple-darwin --tools macos", installer)
+        export = step(mac, "Export Mac group journey screenshots and results")
+        self.assertIn("if: always()", export)
+        self.assertIn("xcresulttool export attachments", export)
+        self.assertIn("xcresulttool get test-results summary", export)
+        self.assertIn("macos-groups-evidence", step(mac, "Upload compact Mac group journey evidence"))
 
     def test_group_scope_uses_simulator_only_build_and_exact_journey(self):
         self.assertTrue(self.condition(self.ios, "ios-groups"))

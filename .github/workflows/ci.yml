@@ -106,7 +106,7 @@ on:
         description: Checks to run; retain exact source-bound coverage for unchanged components
         type: choice
         default: all
-        options: [all, cli, core, protocol, android, android-ble-products, windows, windows-keyboard, windows-restore, apple, apple-codec, ios, ios-unit, ios-pagination, ios-groups, macos, linux, apple-products, ios-products, macos-products, ios-ui-runner, macos-ui-runner, rust-focused, rust-package]
+        options: [all, cli, core, protocol, android, android-ble-products, windows, windows-keyboard, windows-restore, apple, apple-codec, ios, ios-unit, ios-pagination, ios-groups, macos, macos-groups, linux, apple-products, ios-products, macos-products, ios-ui-runner, macos-ui-runner, rust-focused, rust-package]
       ios_core_seed_run:
         description: Optional exact successful core build/cache producer for Swift-only unit validation
         type: string
@@ -857,7 +857,7 @@ jobs:
           retention-days: 14
 
   macos:
-    if: ${{ inputs.scope == '' || inputs.scope == 'all' || inputs.scope == 'apple' || inputs.scope == 'macos' }}
+    if: ${{ inputs.scope == '' || inputs.scope == 'all' || inputs.scope == 'apple' || inputs.scope == 'macos' || inputs.scope == 'macos-groups' }}
     name: macOS build and tests
     runs-on: macos-15
     timeout-minutes: 75
@@ -868,11 +868,16 @@ jobs:
         working-directory: iris-chat-rs
     steps:
       - name: Checkout app
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           path: ${{ env.APP_DIR }}
 
+      - name: Install pinned Mac group qualification tools
+        if: inputs.scope == 'macos-groups'
+        run: python3 scripts/release-build-inputs.py --install --target aarch64-apple-darwin --tools macos --work "$RUNNER_TEMP/iris-mac-group-build-inputs"
+
       - name: Install build tools
+        if: inputs.scope != 'macos-groups'
         run: |
           brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
           rustup toolchain install stable --profile minimal
@@ -892,11 +897,53 @@ jobs:
             macos-${{ runner.os }}-${{ runner.arch }}-
 
       - name: macOS tests
+        if: inputs.scope != 'macos-groups'
         run: ./scripts/test-macos
+
+      - name: macOS group creation and member management
+        if: inputs.scope == 'macos-groups'
+        env:
+          CARGO_BUILD_JOBS: 2
+          IRIS_MACOS_RUST_TARGETS: aarch64-apple-darwin
+          IRIS_MACOS_ONLY_TESTING: IrisChatMacUITests/GroupPickerUITests/testLongContactListCreationAndMemberManagement IrisChatMacTests/GroupMemberCandidatesTests
+        run: |
+          set -Eeuo pipefail
+          mkdir -p work/mac-groups/evidence
+          git rev-parse HEAD > work/mac-groups/evidence/source.txt
+          xcodebuild -version > work/mac-groups/evidence/xcode.txt
+          rustc -Vv > work/mac-groups/evidence/rustc.txt
+          sw_vers > work/mac-groups/evidence/system.txt
+          ./scripts/test-macos-ui 2>&1 | tee work/mac-groups/evidence/test.log
+
+      - name: Export Mac group journey screenshots and results
+        if: always() && inputs.scope == 'macos-groups'
+        run: |
+          mkdir -p work/mac-groups/evidence
+          for result in macos/.build/DerivedData/Logs/Test/*.xcresult; do
+            [[ -d "$result" ]] || continue
+            xcrun xcresulttool export attachments --path "$result" --output-path work/mac-groups/attachments
+            xcrun xcresulttool get test-results summary --path "$result" --format json > work/mac-groups/evidence/summary.json
+            xcrun xcresulttool get test-results tests --path "$result" --format json > work/mac-groups/evidence/tests.json
+          done
+          if [[ -f "$RUNNER_TEMP/iris-mac-group-build-inputs/receipt.json" ]]; then
+            cp "$RUNNER_TEMP/iris-mac-group-build-inputs/receipt.json" work/mac-groups/evidence/build-inputs.json
+          fi
+
+      - name: Upload compact Mac group journey evidence
+        if: always() && inputs.scope == 'macos-groups'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: macos-groups-evidence
+          path: |
+            iris-chat-rs/work/mac-groups/evidence/
+            iris-chat-rs/work/mac-groups/attachments/*.png
+            iris-chat-rs/work/mac-groups/attachments/manifest.json
+          if-no-files-found: ignore
+          retention-days: 30
 
       - name: Upload macOS test results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: macos-composer-tests
           path: iris-chat-rs/macos/.build/DerivedData/Logs/Test/*.xcresult
