@@ -97,11 +97,16 @@ final class GroupMemberCandidatesTests: XCTestCase {
     }
 
     @MainActor private func capture(_ host: NSView, name: String) throws {
-        guard let directory = ProcessInfo.processInfo.environment["IRIS_VISUAL_OUTPUT"] else { return }
         let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
         host.cacheDisplay(in: host.bounds, to: bitmap)
         let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
-        try png.write(to: URL(fileURLWithPath: directory).appendingPathComponent(name + ".png"))
+        let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
+        if let directory = ProcessInfo.processInfo.environment["IRIS_VISUAL_OUTPUT"] {
+            try png.write(to: URL(fileURLWithPath: directory).appendingPathComponent(name + ".png"))
+        }
     }
     #endif
 

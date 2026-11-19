@@ -31,6 +31,9 @@ final class GroupPickerUITests: IrisChatUITestCase {
 
     func testLongContactListCreationAndMemberManagement() {
         continueAfterFailure = false
+#if os(macOS)
+        executionTimeAllowance = 180
+#endif
         let app = XCUIApplication()
         app.launchEnvironment["IRIS_UI_TEST_RESET"] = "1"
         app.launchEnvironment["IRIS_UI_TEST_RUN_ID"] = "group-picker-\(UUID().uuidString)"
@@ -48,6 +51,9 @@ final class GroupPickerUITests: IrisChatUITestCase {
         let creationScroll = app.scrollViews.containing(.any, identifier: "newGroupMemberInput").firstMatch
         let candidateList = app.scrollViews["newGroupKnownUsersList"]
         let boundedCreationList = candidateList.exists
+#if os(macOS)
+        capture(app, "group-creation-before-scroll")
+#endif
         let next = element(app, "newGroupNextButton")
         let nextFrame = next.frame
         // The same driver runs on the baseline: its whole page scrolls and
@@ -148,10 +154,16 @@ final class GroupPickerUITests: IrisChatUITestCase {
                         file: StaticString = #filePath, line: UInt = #line) {
         for _ in 0..<20 where !target.isHittable {
 #if os(macOS)
-            scroll.scroll(byDeltaX: 0, deltaY: upward ? 250 : -250)
+            scroll.scroll(byDeltaX: 0, deltaY: upward ? -250 : 250)
 #else
             if upward { scroll.swipeUp() } else { scroll.swipeDown() }
 #endif
+        }
+        if !target.isHittable {
+            let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+            attachment.name = "group-picker-unreachable-target"
+            attachment.lifetime = .keepAlways
+            add(attachment)
         }
         XCTAssertTrue(target.isHittable, "Target must be reachable by scrolling: \(target)", file: file, line: line)
     }
