@@ -1054,6 +1054,7 @@ jobs:
       - name: Export group journey screenshots and results
         if: always()
         run: |
+          mkdir -p work/clipboard/group-evidence
           if [[ -d work/clipboard/ios-groups.xcresult ]]; then
             xcrun xcresulttool export attachments --path work/clipboard/ios-groups.xcresult --output-path work/clipboard/group-attachments
             xcrun xcresulttool get test-results summary --path work/clipboard/ios-groups.xcresult --format json > work/clipboard/group-evidence/summary.json
