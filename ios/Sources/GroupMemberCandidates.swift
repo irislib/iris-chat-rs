@@ -20,21 +20,24 @@ struct GroupMemberCandidates: View {
     let isBusy: Bool
     let manager: AppManager?
     let onSelect: (String) -> Void
-    let onClose: () -> Void
+    var onClose: (() -> Void)? = nil
+    var identifier = "groupDetails"
 
     var body: some View {
         IrisSectionCard {
             HStack(alignment: .firstTextBaseline, spacing: 10) {
                 CardHeader(title: query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Known users" : "Search results")
                 Spacer()
-                Button(action: onClose) {
-                    Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 18, weight: .semibold))
+                if let onClose {
+                    Button(action: onClose) {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 18, weight: .semibold))
+                    }
+                    .buttonStyle(.irisPlain)
+                    .foregroundStyle(palette.muted)
+                    .accessibilityLabel("Close search results")
+                    .accessibilityIdentifier("\(identifier)CloseMemberResultsButton")
                 }
-                .buttonStyle(.irisPlain)
-                .foregroundStyle(palette.muted)
-                .accessibilityLabel("Close search results")
-                .accessibilityIdentifier("groupDetailsCloseMemberResultsButton")
             }
 
             ScrollView {
@@ -65,7 +68,7 @@ struct GroupMemberCandidates: View {
                         }
                         .frame(minHeight: rowHeight)
                         .buttonStyle(.irisPlain)
-                        .accessibilityIdentifier("groupDetailsKnownUser-\(String(chat.chatId.prefix(12)))")
+                        .accessibilityIdentifier("\(identifier)KnownUser-\(String(chat.chatId.prefix(12)))")
                         .accessibilityValue(selected ? "Selected" : "Not selected")
                         .disabled(isBusy)
 
@@ -76,8 +79,9 @@ struct GroupMemberCandidates: View {
                 }
             }
             .frame(height: CGFloat(min(chats.count, 6)) * (rowHeight + 1))
+            .irisInteractiveKeyboardDismiss()
             .id(query.trimmingCharacters(in: .whitespacesAndNewlines))
-            .accessibilityIdentifier("groupDetailsKnownUsersList")
+            .accessibilityIdentifier("\(identifier)KnownUsersList")
         }
     }
 }

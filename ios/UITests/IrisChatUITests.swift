@@ -583,29 +583,40 @@ final class IrisChatComposerUITests: IrisChatUITestCase {
         XCTAssertTrue(element(app, "groupDetailsNameInput").waitForExistence(timeout: 5))
         XCTAssertTrue(element(app, "groupDetailsAddMembersButton").waitForExistence(timeout: 5))
 
-        let adminButton = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'groupDetailsAdminMember-' AND label == 'Make admin'")).firstMatch
-        XCTAssertTrue(adminButton.exists)
-        for _ in 0..<5 where !adminButton.isHittable {
+        let memberMenu = app.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier BEGINSWITH 'groupDetailsMemberMenu-'")).firstMatch
+        for _ in 0..<5 where !memberMenu.isHittable {
 #if os(macOS)
-            app.scrollViews.firstMatch.scroll(byDeltaX: 0, deltaY: 400)
+            app.scrollViews.containing(.any, identifier: "groupDetailsNameInput").firstMatch.scroll(byDeltaX: 0, deltaY: 350)
 #else
             app.swipeUp()
 #endif
         }
-        adminButton.tap()
+        XCTAssertTrue(memberMenu.isHittable)
+        memberMenu.tap()
+#if os(macOS)
+        let makeAdmin = app.menuItems["Make admin"].firstMatch
+        let dismissAdmin = app.menuItems["Dismiss admin"].firstMatch
+#else
+        let makeAdmin = app.buttons["Make admin"].firstMatch
+        let dismissAdmin = app.buttons["Dismiss admin"].firstMatch
+#endif
+        makeAdmin.tap()
         let confirmation = app.alerts.firstMatch
         XCTAssertTrue(confirmation.waitForExistence(timeout: 5), "Granting admin access must require confirmation")
         confirmation.buttons["Cancel"].tap()
-        XCTAssertEqual(adminButton.label, "Make admin", "Cancel must leave the member's role unchanged")
-
-        adminButton.tap()
+        memberMenu.tap()
+        XCTAssertTrue(makeAdmin.waitForExistence(timeout: 5), "Cancel must leave the member's role unchanged")
+        makeAdmin.tap()
         XCTAssertTrue(confirmation.waitForExistence(timeout: 5))
         let screenshot = XCTAttachment(screenshot: app.screenshot())
         screenshot.name = "confirm-group-admin-promotion"
         screenshot.lifetime = .keepAlways
         add(screenshot)
         confirmation.buttons["groupDetailsConfirmAdminButton"].firstMatch.tap()
-        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'groupDetailsAdminMember-' AND label == 'Dismiss admin'")).firstMatch.waitForExistence(timeout: 10))
+        memberMenu.tap()
+        XCTAssertTrue(dismissAdmin.waitForExistence(timeout: 10))
+
     }
 
 }

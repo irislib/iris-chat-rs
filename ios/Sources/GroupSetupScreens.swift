@@ -257,43 +257,22 @@ struct NewGroupScreen: View {
     }
 
     private var knownUsersCard: some View {
-        IrisSectionCard {
-            CardHeader(title: memberInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Known users" : "Search results")
-
-            ForEach(Array(filteredKnownChats.enumerated()), id: \.element.chatId) { index, chat in
-                Button {
-                    if selectedOwners.contains(chat.chatId) {
-                        selectedOwners.remove(chat.chatId)
-                    } else {
-                        selectedOwners.insert(chat.chatId)
-                    }
-                    memberInput = ""
-                } label: {
-                    HStack(spacing: 12) {
-                        IrisAvatar(socialConnection: chat.socialConnection, ownerPubkeyHex: chat.chatId, label: chat.displayName, size: 38, emphasize: selectedOwners.contains(chat.chatId), manager: manager)
-                        VStack(alignment: .leading, spacing: 4) {
-                            personNameText(chat.displayName, identity: chat.chatId, explicitName: explicitPersonName(nickname: chat.nickname, profileName: chat.profileName))
-                                .font(.system(.headline, design: .rounded, weight: .semibold))
-                                .foregroundStyle(palette.textPrimary)
-                            if let subtitle = secondaryDisplayName(chat.subtitle, primary: chat.displayName) {
-                                Text(subtitle)
-                                    .font(.system(.footnote, design: .rounded))
-                                    .foregroundStyle(palette.muted)
-                            }
-                        }
-                        Spacer()
-                        Image(systemName: selectedOwners.contains(chat.chatId) ? "checkmark.circle.fill" : "circle")
-                            .foregroundStyle(selectedOwners.contains(chat.chatId) ? palette.textPrimary : palette.muted)
-                    }
-                    .contentShape(Rectangle())
+        GroupMemberCandidates(
+            chats: filteredKnownChats,
+            query: memberInput,
+            selectedOwners: selectedOwners,
+            isBusy: manager.state.busy.creatingGroup,
+            manager: manager,
+            onSelect: { owner in
+                if selectedOwners.contains(owner) {
+                    selectedOwners.remove(owner)
+                } else {
+                    selectedOwners.insert(owner)
                 }
-                .buttonStyle(.irisPlain)
-
-                if index < filteredKnownChats.count - 1 {
-                    Divider().overlay(palette.border)
-                }
-            }
-        }
+                memberInput = ""
+            },
+            identifier: "newGroup"
+        )
     }
 
     private var selectedMembersChips: some View {

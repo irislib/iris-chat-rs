@@ -14,6 +14,7 @@ import PhotosUI
 
 struct GroupDetailsScreen: View {
     @Environment(\.irisPalette) private var palette
+    @ScaledMetric(relativeTo: .body) private var memberRowHeight = 52.0
     @ObservedObject var manager: AppManager
     let groupId: String
 
@@ -190,62 +191,9 @@ struct GroupDetailsScreen: View {
                         subtitle: "\(details.members.count) people in this conversation."
                     )
 
-                    ForEach(Array(details.members.enumerated()), id: \.element.ownerPubkeyHex) { index, member in
-                        VStack(alignment: .leading, spacing: 10) {
-                            let memberHeader = HStack(alignment: .top, spacing: 12) {
-                                IrisAvatar(
-                                    ownerPubkeyHex: member.ownerPubkeyHex,
-                                    size: 38,
-                                    emphasize: member.isLocalOwner
-                                )
-
-                                VStack(alignment: .leading, spacing: 6) {
-                                    personNameText(member.displayName, identity: member.ownerPubkeyHex, explicitName: explicitPersonName(for: member.ownerPubkeyHex, state: manager.state))
-                                        .font(.system(.headline, design: .rounded, weight: .semibold))
-                                        .foregroundStyle(palette.textPrimary)
-                                    HStack(spacing: 6) {
-                                        if member.isLocalOwner {
-                                            IrisInfoPill("You")
-                                        }
-                                        if member.isCreator {
-                                            IrisInfoPill("Creator")
-                                        } else if member.isAdmin {
-                                            IrisInfoPill("Admin")
-                                        }
-                                    }
-                                }
-
-                                Spacer()
-                            }
-                            if member.isLocalOwner {
-                                memberHeader
-                            } else {
-                                Button {
-                                    manager.dispatch(.createChat(peerInput: member.ownerPubkeyHex))
-                                } label: {
-                                    memberHeader
-                                        .contentShape(Rectangle())
-                                }
-                                .buttonStyle(.irisPlain)
-                                .accessibilityIdentifier("groupDetailsOpenMember-\(String(member.ownerPubkeyHex.prefix(12)))")
-                            }
-
-                            if details.canManage && !member.isLocalOwner {
-                                ViewThatFits(in: .horizontal) {
-                                    HStack(spacing: 8) {
-                                        memberAdminButton(member)
-                                        removeMemberButton(member)
-                                    }
-                                    VStack(spacing: 8) {
-                                        memberAdminButton(member)
-                                        removeMemberButton(member)
-                                    }
-                                }
-                            }
-                        }
-
-                        if index < details.members.count - 1 {
-                            Divider().overlay(palette.border)
+                    LazyVStack(spacing: 0) {
+                        ForEach(details.members, id: \.ownerPubkeyHex) { member in
+                            memberRow(member, canManage: details.canManage)
                         }
                     }
                 }
@@ -537,6 +485,65 @@ struct GroupDetailsScreen: View {
         return OwnerPresentation(primary: fallbackProfileNameForIdentity(normalized), secondary: nil)
     }
 
+    private func memberRow(_ member: GroupMemberSnapshot, canManage: Bool) -> some View {
+        let name = PersonNamePresentation(member.displayName, identity: member.ownerPubkeyHex,
+            explicitName: explicitPersonName(for: member.ownerPubkeyHex, state: manager.state)).name
+        return HStack(spacing: 8) {
+            let header = HStack(spacing: 12) {
+                IrisAvatar(ownerPubkeyHex: member.ownerPubkeyHex, size: 36, emphasize: member.isLocalOwner)
+                personNameText(member.displayName, identity: member.ownerPubkeyHex,
+                    explicitName: explicitPersonName(for: member.ownerPubkeyHex, state: manager.state))
+                    .font(.system(.body, design: .rounded, weight: .semibold))
+                    .foregroundStyle(palette.textPrimary)
+                    .lineLimit(1)
+                if member.isLocalOwner {
+                    Text("(You)")
+                        .font(.system(.caption, design: .rounded))
+                        .foregroundStyle(palette.muted)
+                }
+                Spacer(minLength: 4)
+            }
+            .frame(minHeight: memberRowHeight)
+            .contentShape(Rectangle())
+
+            if member.isLocalOwner {
+                header
+            } else {
+                Button {
+                    manager.dispatch(.createChat(peerInput: member.ownerPubkeyHex))
+                } label: { header }
+                .buttonStyle(.irisPlain)
+                .accessibilityIdentifier("groupDetailsOpenMember-\(String(member.ownerPubkeyHex.prefix(12)))")
+            }
+
+            if member.isCreator || member.isAdmin {
+                Text(member.isCreator ? "Creator" : "Admin")
+                    .font(.system(.caption, design: .rounded))
+                    .foregroundStyle(palette.muted)
+                    .fixedSize()
+                    .accessibilityIdentifier("groupDetailsMemberRole-\(String(member.ownerPubkeyHex.prefix(12)))")
+            }
+            if canManage && !member.isLocalOwner && !member.isCreator {
+                Menu {
+                    memberAdminButton(member)
+                    removeMemberButton(member)
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .frame(width: 44, height: 44)
+                        .contentShape(Rectangle())
+                }
+                #if os(macOS)
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                #endif
+                .fixedSize()
+                .accessibilityLabel("Actions for \(name)")
+                .accessibilityIdentifier("groupDetailsMemberMenu-\(String(member.ownerPubkeyHex.prefix(12)))")
+                .disabled(manager.state.busy.updatingGroup)
+            }
+        }
+    }
+
     private func memberAdminButton(_ member: GroupMemberSnapshot) -> some View {
         Button(member.isAdmin ? "Dismiss admin" : "Make admin") {
             if member.isAdmin {
@@ -549,16 +556,14 @@ struct GroupDetailsScreen: View {
                 pendingAdminPromotion = member
             }
         }
-        .buttonStyle(IrisSecondaryButtonStyle(compact: true))
         .disabled(manager.state.busy.updatingGroup || member.isCreator)
         .accessibilityIdentifier("groupDetailsAdminMember-\(String(member.ownerPubkeyHex.prefix(12)))")
     }
 
     private func removeMemberButton(_ member: GroupMemberSnapshot) -> some View {
-        Button("Remove", role: .destructive) {
+        Button("Remove from group", role: .destructive) {
             manager.dispatch(.removeGroupMember(groupId: groupId, ownerPubkeyHex: member.ownerPubkeyHex))
         }
-        .buttonStyle(IrisSecondaryButtonStyle(compact: true))
         .disabled(manager.state.busy.updatingGroup || member.isCreator)
         .accessibilityIdentifier("groupDetailsRemoveMember-\(String(member.ownerPubkeyHex.prefix(12)))")
     }
