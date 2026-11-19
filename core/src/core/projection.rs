@@ -782,6 +782,7 @@ impl AppCore {
         let logged_in = self.logged_in.as_ref()?;
         let group = self.groups.get(group_id)?.clone();
         let local_owner_hex = logged_in.owner_pubkey.to_hex();
+        let creator = group.created_by.to_string();
         let mut members = group
             .members
             .iter()
@@ -800,8 +801,7 @@ impl AppCore {
                         .admins
                         .iter()
                         .any(|admin| admin.to_string() == owner_hex),
-                    is_creator: group.admins.first().map(ToString::to_string).as_ref()
-                        == Some(&owner_hex),
+                    is_creator: owner_hex == creator,
                     is_local_owner: owner_hex == local_owner_hex,
                 }
             })
@@ -815,11 +815,6 @@ impl AppCore {
                 .then_with(|| left.owner_pubkey_hex.cmp(&right.owner_pubkey_hex))
         });
 
-        let creator = group
-            .admins
-            .first()
-            .map(ToString::to_string)
-            .unwrap_or_else(|| local_owner_hex.clone());
         let creator_npub = PublicKey::parse(&creator)
             .ok()
             .and_then(owner_npub_from_owner)

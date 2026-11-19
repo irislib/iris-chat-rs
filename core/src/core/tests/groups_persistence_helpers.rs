@@ -5,6 +5,63 @@
 use super::*;
 
 #[test]
+fn group_details_creator_survives_admin_reordering() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let member = Keys::generate();
+    let mut core = logged_in_test_core("group-creator-reordering", &owner, &device);
+    let owner_hex = owner.public_key().to_hex();
+    let member_hex = member.public_key().to_hex();
+
+    for admins in [
+        vec![owner.public_key()],
+        vec![member.public_key(), owner.public_key()],
+        vec![owner.public_key(), member.public_key()],
+        vec![member.public_key()],
+    ] {
+        let can_manage = admins.contains(&owner.public_key());
+        let group = test_group_snapshot(
+            "creator-reordering",
+            "Our group",
+            owner.public_key(),
+            vec![owner.public_key(), member.public_key()],
+            admins,
+            2,
+        );
+        core.groups.insert(group.group_id.clone(), group);
+
+        let details = core
+            .build_group_details_snapshot("creator-reordering")
+            .unwrap();
+        assert_eq!(
+            details.created_by_npub,
+            owner_npub_from_owner(owner.public_key()).unwrap()
+        );
+        assert_eq!(details.can_manage, can_manage);
+        let creator = details
+            .members
+            .iter()
+            .find(|member| member.owner_pubkey_hex == owner_hex)
+            .unwrap();
+        let member = details
+            .members
+            .iter()
+            .find(|member| member.owner_pubkey_hex == member_hex)
+            .unwrap();
+        assert!(creator.is_creator);
+        assert!(!member.is_creator);
+        assert_eq!(
+            details
+                .members
+                .iter()
+                .filter(|member| member.is_creator)
+                .count(),
+            1
+        );
+    }
+}
+
+#[test]
 fn member_profile_from_group_survives_updates_and_returns_to_group() {
     let owner = Keys::generate();
     let device = Keys::generate();
