@@ -75,9 +75,9 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("id: ios-build", ios)
         self.assertIn("inputs.scope == 'ios-unit'", ios)
         progress = ios.split("      - name: iOS device linking progress test\n", 1)[1]
-        self.assertTrue(progress.startswith("        if: inputs.scope != 'ios-unit' && inputs.scope != 'ios-pagination'\n"))
+        self.assertTrue(progress.startswith("        if: inputs.scope != 'ios-unit' && inputs.scope != 'ios-pagination' && inputs.scope != 'ios-groups'\n"))
         units = ios.split("      - name: iOS native composer, clipboard, and timeline tests\n", 1)[1]
-        self.assertTrue(units.startswith("        if: ${{ !cancelled() && steps.ios-build.outcome == 'success' && inputs.scope != 'ios-pagination' }}\n"))
+        self.assertTrue(units.startswith("        if: ${{ !cancelled() && steps.ios-build.outcome == 'success' && inputs.scope != 'ios-pagination' && inputs.scope != 'ios-groups' }}\n"))
         self.assertIn("selectors=(-only-testing:IrisChatTests -only-testing:NotificationServiceTests)", units)
         self.assertIn('if [[ "$IOS_VALIDATION_SCOPE" != ios-unit ]]; then', units)
         self.assertIn('-only-testing:IrisChatUITests/ComposerCompletionUITests', units)

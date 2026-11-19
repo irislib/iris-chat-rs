@@ -48,7 +48,7 @@ class IosPaginationWorkflowTests(unittest.TestCase):
                         'cargo_jobs': os.environ.get('CARGO_BUILD_JOBS'),
                         'rust_targets': os.environ.get('IRIS_IOS_RUST_TARGETS')}) + '\\n')
                 """)
-            for path in (root / "scripts/ios-build", root / "bin/xcodebuild"):
+            for path in (root / "scripts/ios-build", *(root / "bin" / name for name in ("xcodebuild", "git", "xcrun", "rustc"))):
                 path.write_text(recorder)
                 path.chmod(0o700)
             destination = root / "scripts/ios-simulator-destination"
@@ -143,6 +143,30 @@ class IosPaginationWorkflowTests(unittest.TestCase):
             self.assertEqual(len(calls), 1)
             selected = [arg for arg in calls[0]["args"] if arg.startswith("-only-testing:")]
             self.assertEqual(selected, units if scope == "ios-unit" else units + ui)
+
+    def test_group_scope_uses_simulator_only_build_and_exact_journey(self):
+        self.assertTrue(self.condition(self.ios, "ios-groups"))
+        self.assertFalse(self.condition(step(self.ios, "iOS device linking progress test"), "ios-groups"))
+        self.assertFalse(self.condition(step(self.ios, "iOS native composer, clipboard, and timeline tests"), "ios-groups"))
+        group = step(self.ios, "iOS group creation and member management")
+        for scope in ["", "all", "ios", "ios-groups"]:
+            self.assertTrue(self.condition(group, scope))
+        for scope in ["ios-unit", "ios-pagination"]:
+            self.assertFalse(self.condition(group, scope))
+        self.assertFalse(self.condition(group, "ios-groups", build="failure"))
+        result, calls = self.run_step("iOS simulator build", "ios-groups")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        core = next(call for call in calls if call["program"] == "ios-build")
+        self.assertEqual(core["rust_targets"], "aarch64-apple-ios-sim")
+        self.assertEqual(core["cargo_jobs"], "2")
+        result, calls = self.run_step("iOS group creation and member management", "ios-groups")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        test = next(call for call in calls if call["program"] == "xcodebuild" and "test" in call["args"])
+        selectors = [arg for arg in test["args"] if arg.startswith("-only-testing:")]
+        self.assertEqual(selectors, ["-only-testing:IrisChatTests/GroupMemberCandidatesTests",
+                                     "-only-testing:IrisChatUITests/GroupPickerUITests"])
+        self.assertIn("work/clipboard/ios-groups.xcresult", test["args"])
+        self.assertIn("-parallel-testing-enabled", test["args"])
 
 
 if __name__ == "__main__":
