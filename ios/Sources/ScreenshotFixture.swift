@@ -47,6 +47,7 @@ struct ScreenshotFixture {
         let isMuted: Bool
         var socialConnection: SocialConnectionSnapshot? = nil
         var isFavorite: Bool = false
+        var profileName: String? = nil
     }
 
     private static let following = SocialConnectionSnapshot(
@@ -321,6 +322,17 @@ extension ScreenshotFixture {
     static func configured(environment: [String: String]) -> ScreenshotFixture? {
         guard enabled(environment: environment) else { return nil }
         var fixture = environment["IRIS_UI_TEST_SCREENSHOT_STYLE"] == "marketing" ? Self.marketing : Self.default
+        if let peers = environment["IRIS_UI_TEST_GROUP_CONTACTS"] {
+            // Only the known-contact presentation is seeded. Creation and
+            // membership actions still go through the real core.
+            let contacts = peers.split(separator: ",").enumerated().map { index, peer in
+                let name = String(format: "Contact %02d", index + 1)
+                return Thread(chatId: String(peer), kind: .direct, displayName: name, subtitle: nil,
+                    lastMessagePreview: "", lastMessageAgeSecs: Double(index), lastMessageIsOutgoing: false,
+                    unreadCount: 0, memberCount: 2, isPinned: false, isMuted: false, profileName: name)
+            }
+            fixture = ScreenshotFixture(ownerDisplayName: "Alex", threads: contacts, timelines: [:], nearbyPeers: [])
+        }
         if environment["IRIS_UI_TEST_MESSAGE_REQUEST"] == "1" {
             fixture.messageRequestChatId = "\(chatIdPrefix)1"
         }
@@ -466,7 +478,7 @@ extension ScreenshotFixture {
             displayName: thread.displayName,
             nickname: nil,
             contactNote: nil,
-            profileName: nil,
+            profileName: thread.profileName,
             subtitle: thread.subtitle,
             pictureUrl: Self.avatarURL(for: thread.displayName),
             about: nil,

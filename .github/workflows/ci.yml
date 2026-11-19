@@ -106,7 +106,7 @@ on:
         description: Checks to run; retain exact source-bound coverage for unchanged components
         type: choice
         default: all
-        options: [all, cli, core, protocol, android, android-ble-products, windows, windows-keyboard, windows-restore, apple, apple-codec, ios, ios-unit, ios-pagination, macos, linux, apple-products, ios-products, macos-products, ios-ui-runner, macos-ui-runner, rust-focused, rust-package]
+        options: [all, cli, core, protocol, android, android-ble-products, windows, windows-keyboard, windows-restore, apple, apple-codec, ios, ios-unit, ios-pagination, ios-groups, macos, linux, apple-products, ios-products, macos-products, ios-ui-runner, macos-ui-runner, rust-focused, rust-package]
       ios_core_seed_run:
         description: Optional exact successful core build/cache producer for Swift-only unit validation
         type: string
@@ -904,7 +904,7 @@ jobs:
           retention-days: 14
 
   ios:
-    if: ${{ inputs.scope == '' || inputs.scope == 'all' || inputs.scope == 'apple' || inputs.scope == 'ios' || inputs.scope == 'ios-unit' || (github.event_name == 'workflow_dispatch' && inputs.scope == 'ios-pagination') }}
+    if: ${{ inputs.scope == '' || inputs.scope == 'all' || inputs.scope == 'apple' || inputs.scope == 'ios' || inputs.scope == 'ios-unit' || (github.event_name == 'workflow_dispatch' && (inputs.scope == 'ios-pagination' || inputs.scope == 'ios-groups')) }}
     name: iOS simulator build and composer tests
     runs-on: macos-15
     timeout-minutes: 75
@@ -918,11 +918,16 @@ jobs:
         working-directory: iris-chat-rs
     steps:
       - name: Checkout app
-        uses: actions/checkout@v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           path: ${{ env.APP_DIR }}
 
+      - name: Install pinned group qualification tools
+        if: inputs.scope == 'ios-groups'
+        run: python3 scripts/release-build-inputs.py --install --target aarch64-apple-ios-sim --tools ios --work "$RUNNER_TEMP/iris-group-build-inputs"
+
       - name: Install build tools
+        if: inputs.scope != 'ios-groups'
         run: |
           brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
           rustup toolchain install stable --profile minimal
@@ -931,7 +936,7 @@ jobs:
 
       - name: Restore Cargo cache
         id: ios_cargo_cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
             ~/.cargo/registry
@@ -961,7 +966,7 @@ jobs:
               sh -c 'cd ios && xcodegen generate --spec project.yml'
             xcodebuild -project ios/IrisChat.xcodeproj -scheme IrisChat \
               -destination "$(./scripts/ios-simulator-destination)" -jobs 2 build
-          elif [[ "$IOS_VALIDATION_SCOPE" == ios-pagination ]]; then
+          elif [[ "$IOS_VALIDATION_SCOPE" == ios-pagination || "$IOS_VALIDATION_SCOPE" == ios-groups ]]; then
             CARGO_BUILD_JOBS=2 IRIS_IOS_RUST_TARGETS=aarch64-apple-ios-sim \
               ./scripts/ios-build ios-xcframework
             ./scripts/ios-build ios-xcodeproj
@@ -973,7 +978,7 @@ jobs:
 
       - name: Save successful iOS compiler cache
         if: ${{ github.event_name == 'workflow_dispatch' && steps.ios_cargo_cache.outputs.cache-hit != 'true' }}
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
             ~/.cargo/registry
@@ -982,7 +987,7 @@ jobs:
           key: ${{ steps.ios_cargo_cache.outputs.cache-primary-key }}
 
       - name: iOS device linking progress test
-        if: inputs.scope != 'ios-unit' && inputs.scope != 'ios-pagination'
+        if: inputs.scope != 'ios-unit' && inputs.scope != 'ios-pagination' && inputs.scope != 'ios-groups'
         run: |
           mkdir -p work/clipboard
           xcodebuild -project ios/IrisChat.xcodeproj -scheme IrisChat \
@@ -992,7 +997,7 @@ jobs:
             -resultBundlePath work/clipboard/ios-device-link.xcresult test
 
       - name: iOS native composer, clipboard, and timeline tests
-        if: ${{ !cancelled() && steps.ios-build.outcome == 'success' && inputs.scope != 'ios-pagination' }}
+        if: ${{ !cancelled() && steps.ios-build.outcome == 'success' && inputs.scope != 'ios-pagination' && inputs.scope != 'ios-groups' }}
         env:
           IOS_VALIDATION_SCOPE: ${{ inputs.scope }}
           IOS_CORE_SEED_RUN: ${{ inputs.ios_core_seed_run }}
@@ -1028,9 +1033,51 @@ jobs:
             -only-testing:IrisChatUITests/ChatPaginationUITests/testDeepHistoryReturnsToLatestAndSendsFromTheBoundedWindow \
             -resultBundlePath work/clipboard/ios-pagination.xcresult test
 
+      - name: iOS group creation and member management
+        if: ${{ !cancelled() && steps.ios-build.outcome == 'success' && inputs.scope != 'ios-unit' && inputs.scope != 'ios-pagination' }}
+        run: |
+          set -o pipefail
+          mkdir -p work/clipboard/group-evidence
+          destination="$(./scripts/ios-simulator-destination)"
+          git rev-parse HEAD > work/clipboard/group-evidence/source.txt
+          xcodebuild -version > work/clipboard/group-evidence/xcode.txt
+          rustc -Vv > work/clipboard/group-evidence/rustc.txt
+          xcrun simctl list devices --json > work/clipboard/group-evidence/devices.json
+          xcrun simctl list runtimes --json > work/clipboard/group-evidence/runtimes.json
+          printf '%s\n' "$destination" > work/clipboard/group-evidence/destination.txt
+          xcodebuild -project ios/IrisChat.xcodeproj -scheme IrisChat \
+            -destination "$destination" -parallel-testing-enabled NO -jobs 2 \
+            -only-testing:IrisChatTests/GroupMemberCandidatesTests \
+            -only-testing:IrisChatUITests/GroupPickerUITests \
+            -resultBundlePath work/clipboard/ios-groups.xcresult test 2>&1 | tee work/clipboard/group-evidence/test.log
+
+      - name: Export group journey screenshots and results
+        if: always()
+        run: |
+          if [[ -d work/clipboard/ios-groups.xcresult ]]; then
+            xcrun xcresulttool export attachments --path work/clipboard/ios-groups.xcresult --output-path work/clipboard/group-attachments
+            xcrun xcresulttool get test-results summary --path work/clipboard/ios-groups.xcresult --format json > work/clipboard/group-evidence/summary.json
+            xcrun xcresulttool get test-results tests --path work/clipboard/ios-groups.xcresult --format json > work/clipboard/group-evidence/tests.json
+          fi
+          if [[ -f "$RUNNER_TEMP/iris-group-build-inputs/receipt.json" ]]; then
+            cp "$RUNNER_TEMP/iris-group-build-inputs/receipt.json" work/clipboard/group-evidence/build-inputs.json
+          fi
+
+      - name: Upload compact group journey evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ios-groups-evidence
+          path: |
+            iris-chat-rs/work/clipboard/group-evidence/
+            iris-chat-rs/work/clipboard/group-attachments/*.png
+            iris-chat-rs/work/clipboard/group-attachments/manifest.json
+          if-no-files-found: ignore
+          retention-days: 30
+
       - name: Upload iOS test results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ios-composer-tests
           path: iris-chat-rs/work/clipboard/
