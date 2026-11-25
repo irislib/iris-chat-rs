@@ -608,6 +608,7 @@ impl AppCore {
                 }
             }
         }
+        self.send_nearby_group_wakes();
     }
 
     pub(super) fn ack_pending_decrypted_deliveries_after_app_persist(&mut self) {

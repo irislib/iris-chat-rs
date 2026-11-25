@@ -46,6 +46,104 @@ pub(super) fn sender_matches(engine: &ProtocolEngine, sender: PublicKey, event: 
 }
 
 impl AppCore {
+    /// Group data is one shared ciphertext, which no nearby carrier may take.
+    /// While it waits in the outbox, each member with a device on a live
+    /// nearby link also gets it inside that member's own ratchet envelope:
+    /// when it is queued, and again when a member comes into range. Receivers
+    /// drop the copy they see second.
+    pub(super) fn send_nearby_group_wakes(&mut self) {
+        let pending = self
+            .pending_relay_publishes
+            .values()
+            .filter(|pending| pending.label == GROUP_DATA_PUBLISH_LABEL)
+            .filter(|pending| pending.event_json.len() <= MAX_GROUP_WAKE_BYTES / 2)
+            .filter_map(|pending| {
+                Some((
+                    pending.event_id.clone(),
+                    pending.chat_id.clone()?,
+                    pending.event_json.clone(),
+                ))
+            })
+            .collect::<Vec<_>>();
+        self.nearby_group_wakes_sent
+            .retain(|(event, _)| pending.iter().any(|(id, _, _)| id == event));
+        let Some(local_owner) = self.logged_in.as_ref().map(|login| login.owner_pubkey) else {
+            return;
+        };
+        let local_hex = local_owner.to_hex();
+        let nearby_owners = self
+            .app_keys
+            .iter()
+            .filter(|(owner, _)| **owner != local_hex)
+            .filter(|(owner, _)| !self.preferences.blocked_owner_pubkeys.contains(*owner))
+            .filter(|(_, keys)| {
+                keys.devices.iter().any(|device| {
+                    self.fips_nearby_links.iter().any(|link| {
+                        link.device_pubkey_hex
+                            .eq_ignore_ascii_case(&device.identity_pubkey_hex)
+                    })
+                })
+            })
+            .map(|(owner, _)| owner.clone())
+            .collect::<Vec<_>>();
+        if nearby_owners.is_empty() {
+            return;
+        }
+        for (event_id, chat_id, event_json) in pending {
+            let Some(members) = parse_group_id_from_chat_id(&chat_id)
+                .and_then(|group| self.groups.get(&group))
+                .map(|group| {
+                    group
+                        .members
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                })
+            else {
+                continue;
+            };
+            let Ok(event) = serde_json::from_str::<Event>(&event_json) else {
+                continue;
+            };
+            for owner in nearby_owners
+                .iter()
+                .filter(|owner| members.iter().any(|member| member == *owner))
+            {
+                let key = (event_id.clone(), owner.clone());
+                if self.nearby_group_wakes_sent.contains(&key) {
+                    continue;
+                }
+                let Ok(peer) = PublicKey::from_hex(owner) else {
+                    continue;
+                };
+                let rumor = UnsignedEvent::new(
+                    local_owner,
+                    event.created_at,
+                    Kind::Custom(GROUP_WAKE_KIND as u16),
+                    [],
+                    serde_json::json!({"v": 1, "type": "group-wake", "event": event}).to_string(),
+                );
+                let Some(engine) = self.protocol_engine.as_mut() else {
+                    return;
+                };
+                match engine.send_direct_unsigned_event_to_peer_only(
+                    peer,
+                    &chat_id,
+                    rumor,
+                    unix_now(),
+                ) {
+                    Ok(result) => {
+                        self.nearby_group_wakes_sent.insert(key);
+                        for ProtocolEffect::Publish(publish) in result.effects {
+                            self.publish_protocol_event(publish);
+                        }
+                    }
+                    Err(error) => self.push_debug_log("group.nearby_wake.send", error.to_string()),
+                }
+            }
+        }
+    }
+
     pub(super) fn cache_direct_group_preview_carrier(&mut self, outer_event_id: Option<&str>) {
         let Some(outer_event_id) = outer_event_id else {
             return;

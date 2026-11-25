@@ -85,7 +85,10 @@ class GroupGate(Gate):
 
     def linux_sync(self):
         # The CLI only receives while a command runs, so each poll syncs first.
-        self.linux("sync", "--wait-ms", "15000", timeout=90)
+        try:
+            self.linux("sync", "--wait-ms", "15000", timeout=90)
+        except RuntimeError:
+            pass  # One slow message-server sync is not a failure; the caller polls again.
 
     def linux_group_id(self):
         self.linux_sync()
@@ -198,6 +201,8 @@ class GroupGate(Gate):
             "IRIS_FIPS_GROUP_OFFLINE_ACK": self.msg["android-ack"],
             "IRIS_FIPS_GROUP_EXPECT_ONLINE": self.msg["linux-while-offline"],
         }
+        if self.args.iphone_offline:
+            environment["IRIS_FIPS_GROUP_IPHONE_OFFLINE"] = "1"
         self.ios = self.ios_test(self.xctestrun(TEST, environment, "group.xctestrun"), "ios-group")
         self.wait_ios("IRIS_FIPS_GROUP_CREATED", 420)
 
@@ -258,13 +263,14 @@ class GroupGate(Gate):
         # went offline, only its running test can turn Wi-Fi back on (a new test
         # runner cannot launch offline), so let that test finish instead of killing it.
         try:
-            if self.ios is not None and self.ios.poll() is None and "IRIS_FIPS_IPHONE_OFFLINE" in self.ios_log():
+            if (self.args.iphone_offline and self.ios is not None and self.ios.poll() is None
+                    and "IRIS_FIPS_IPHONE_OFFLINE" in self.ios_log()):
                 try:
                     self.ios.wait(timeout=1200)
                 except subprocess.TimeoutExpired:
                     self.result["iosStillRunning"] = True
             stop(self.ios)
-            spec = self.phone_previous or ("wifi:1" if "IRIS_FIPS_GROUP_MEMBERS_READY" in self.ios_log() else "")
+            spec = self.phone_previous or ""
             if spec:
                 restore = self.ios_test(self.xctestrun(RESTORE_TEST, {"IRIS_FIPS_RESTORE_NETWORK": spec},
                                                        "restore.xctestrun"), "ios-restore")
@@ -298,6 +304,8 @@ def main():
     p.add_argument("--artifact-dir", type=Path, required=True)
     p.add_argument("--linux-host", required=True, help="SSH host of the online member")
     p.add_argument("--linux-iris", required=True, help="Path to the iris CLI on that host")
+    p.add_argument("--iphone-offline", action="store_true",
+                   help="Also switch off the iPhone's Wi-Fi and mobile data (needs a tap on the phone if interrupted)")
     args = p.parse_args()
     args.sample_seconds = 60
     os.umask(0o077)

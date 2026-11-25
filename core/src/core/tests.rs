@@ -92,6 +92,7 @@ mod private_block_sync;
 mod private_contact_migration;
 mod private_contacts;
 mod private_control_interop;
+mod nearby_group_wake;
 mod private_group_wake;
 mod private_invite_join_navigation;
 mod private_invite_owner_crash;

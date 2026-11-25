@@ -297,15 +297,21 @@ final class FipsBlePhysicalUITests: XCTestCase {
         }
         print("IRIS_FIPS_GROUP_MEMBERS_READY")
 
-        let previous = setPhoneNetwork(enabled: false)
-        // A fresh test runner cannot launch offline (iOS must verify the developer
-        // certificate online), so restore from this process even if a check fails.
-        addTeardownBlock { [weak self] in
-            self?.setPhoneNetwork(enabled: true, only: previous.filter { $0.value })
+        // The Android member has no IP path, so its messages can only cross
+        // Bluetooth. Taking the iPhone offline too is opt-in: if this test is
+        // interrupted, nothing can turn the radios back on remotely, because iOS
+        // cannot launch a new test runner offline.
+        var previous: [String: Bool] = [:]
+        if environment["IRIS_FIPS_GROUP_IPHONE_OFFLINE"] == "1" {
+            previous = setPhoneNetwork(enabled: false)
+            let restore = previous.filter { $0.value }
+            addTeardownBlock { [weak self] in
+                self?.setPhoneNetwork(enabled: true, only: restore)
+            }
+            print("IRIS_FIPS_PHONE_NETWORK_PREVIOUS=" + previous.map { "\($0.key):\($0.value ? 1 : 0)" }
+                .sorted().joined(separator: ","))
+            app.activate()
         }
-        print("IRIS_FIPS_PHONE_NETWORK_PREVIOUS=" + previous.map { "\($0.key):\($0.value ? 1 : 0)" }
-            .sorted().joined(separator: ","))
-        app.activate()
         XCTAssertTrue(element(app, "chatMessageInput").waitForExistence(timeout: 20))
         print("IRIS_FIPS_IPHONE_OFFLINE")
 
@@ -320,8 +326,10 @@ final class FipsBlePhysicalUITests: XCTestCase {
                       "offline group reply was not acknowledged over Bluetooth")
         print("IRIS_FIPS_GROUP_OFFLINE_ACKED")
 
-        _ = setPhoneNetwork(enabled: true, only: previous)
-        app.activate()
+        if !previous.isEmpty {
+            setPhoneNetwork(enabled: true, only: previous.filter { $0.value })
+            app.activate()
+        }
         print("IRIS_FIPS_IPHONE_ONLINE")
         XCTAssertTrue(app.staticTexts[onlineIncoming].waitForExistence(timeout: 300),
                       "message from the online member did not arrive after reconnecting")

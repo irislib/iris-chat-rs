@@ -793,6 +793,8 @@ impl AppCore {
 
     fn set_fips_connection_links(&mut self, links: Vec<crate::updates::FipsNearbyLinkSnapshot>) {
         self.fips_nearby_links = links;
+        // A member that just came into range gets the group data still queued.
+        self.send_nearby_group_wakes();
         self.emit_fips_nearby_peers();
         let roster = self.build_device_roster_snapshot();
         if self.state.device_roster != roster {

@@ -735,6 +735,8 @@ pub struct AppCore {
     host_ble_ownership: Option<HostBleOwnership>,
     host_ble_attached: bool,
     fips_nearby_links: Vec<crate::updates::FipsNearbyLinkSnapshot>,
+    // (group data event, member) pairs already sealed for a nearby member.
+    nearby_group_wakes_sent: std::collections::BTreeSet<(String, String)>,
     // Presentation only. Live transport and roster decisions use fips_nearby_links.
     recent_nearby_peers: BTreeMap<String, fips_nearby::RecentNearbyPeer>,
     fips_nearby_bootstrap: std::cell::RefCell<Option<fips_nearby::FipsNearbyBootstrapCache>>,
