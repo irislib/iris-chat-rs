@@ -397,6 +397,17 @@ impl AppManager {
         self.refresh_nearby_avatar_badges(&self.current_state());
     }
 
+    /// The desktop Nearby service reports visibility only; FIPS owns the peer
+    /// list. Keep current peers while visible so start/stop cannot erase them.
+    pub fn apply_nearby_service_snapshot(&self, snapshot: DesktopNearbySnapshot) {
+        let peers = if snapshot.visible {
+            self.nearby_snapshot.borrow().peers.clone()
+        } else {
+            Vec::new()
+        };
+        self.apply_nearby_snapshot(DesktopNearbySnapshot { peers, ..snapshot });
+    }
+
     pub fn track_nearby_avatar_badge(&self, owner: &str, badge: &gtk::Widget) {
         let state = self.current_state();
         badge.set_visible(nearby_avatar_visible(

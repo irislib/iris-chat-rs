@@ -14,7 +14,10 @@ const APP_ID: &str = "to.iris.chat";
 
 fn main() -> glib::ExitCode {
     bootstrap_session_bus();
-    let start_in_background = std::env::args().any(|arg| arg == platform::startup::BACKGROUND_ARG);
+    // GApplication rejects options it does not know, so take ours out first.
+    let (background_args, gtk_args): (Vec<String>, Vec<String>) =
+        std::env::args().partition(|arg| arg == platform::startup::BACKGROUND_ARG);
+    let start_in_background = !background_args.is_empty();
 
     let app = adw::Application::builder().application_id(APP_ID).build();
 
@@ -48,7 +51,7 @@ fn main() -> glib::ExitCode {
             window.present();
         }
     });
-    app.run()
+    app.run_with_args(&gtk_args)
 }
 
 // GApplication keys its single-instance behaviour off the session bus.

@@ -153,7 +153,7 @@ pub fn build_ui(app: &adw::Application, present_on_create: bool) -> Option<Rc<Ap
     let current_for_nearby = current.clone();
     glib::MainContext::default().spawn_local(async move {
         while let Ok(snapshot) = nearby_rx.recv().await {
-            manager_for_nearby.apply_nearby_snapshot(snapshot);
+            manager_for_nearby.apply_nearby_service_snapshot(snapshot);
             let slot = current_for_nearby.borrow();
             apply_state(
                 &content_for_nearby,

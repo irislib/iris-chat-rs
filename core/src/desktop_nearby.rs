@@ -71,16 +71,66 @@ impl FfiDesktopNearby {
 }
 
 impl FfiDesktopNearby {
+    /// Reports visibility only. Peers come from `AppUpdate::NearbyPeersChanged`,
+    /// so shells must not let this empty peer list replace theirs. Repeated
+    /// start/stop calls are no-ops: shells call them on every state sync.
     fn set_visible(&self, visible: bool) {
         let snapshot = DesktopNearbySnapshot {
             visible,
             status: if visible { "Visible" } else { "Off" }.to_string(),
             peers: Vec::new(),
         };
-        match self.snapshot.write() {
-            Ok(mut current) => *current = snapshot.clone(),
-            Err(poison) => *poison.into_inner() = snapshot.clone(),
+        let mut current = match self.snapshot.write() {
+            Ok(current) => current,
+            Err(poison) => poison.into_inner(),
+        };
+        if current.visible == visible {
+            return;
         }
+        *current = snapshot.clone();
+        drop(current);
         self.observer.desktop_nearby_changed(snapshot);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    #[derive(Default)]
+    struct Recorder(Mutex<Vec<DesktopNearbySnapshot>>);
+
+    impl DesktopNearbyObserver for Arc<Recorder> {
+        fn desktop_nearby_changed(&self, snapshot: DesktopNearbySnapshot) {
+            self.0.lock().unwrap().push(snapshot);
+        }
+    }
+
+    #[test]
+    fn repeated_start_does_not_reemit_empty_peer_lists() {
+        let recorder = Arc::new(Recorder::default());
+        let nearby = FfiDesktopNearby {
+            observer: Arc::new(recorder.clone()),
+            snapshot: RwLock::new(DesktopNearbySnapshot {
+                visible: false,
+                status: "Off".to_string(),
+                peers: Vec::new(),
+            }),
+        };
+        nearby.start("a".into());
+        nearby.start("a".into());
+        nearby.start("a".into());
+        nearby.stop();
+        nearby.stop();
+        nearby.start("a".into());
+        let visibility = recorder
+            .0
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|snapshot| snapshot.visible)
+            .collect::<Vec<_>>();
+        assert_eq!(visibility, vec![true, false, true]);
     }
 }

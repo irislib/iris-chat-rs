@@ -188,6 +188,26 @@ pub fn run() {
         mark.is_visible(),
         "existing avatar updates; nearby-list preference is independent"
     );
+    // Every state update syncs the Nearby service. Its visibility reports
+    // carry no peers and must not erase the FIPS peer list.
+    let service_rx = manager.nearby_update_rx();
+    let mut lan_state = state.clone();
+    lan_state.preferences.nearby_lan_enabled = true;
+    for _ in 0..3 {
+        manager.sync_nearby_preference(&lan_state);
+        while let Ok(snapshot) = service_rx.try_recv() {
+            manager.apply_nearby_service_snapshot(snapshot);
+        }
+    }
+    assert_eq!(manager.nearby_snapshot().peers, nearby.peers);
+    assert!(mark.is_visible(), "state sync keeps nearby peers");
+    manager.apply_nearby_service_snapshot(DesktopNearbySnapshot {
+        visible: false,
+        status: "Off".into(),
+        peers: vec![],
+    });
+    assert!(manager.nearby_snapshot().peers.is_empty());
+    manager.apply_nearby_snapshot(nearby.clone());
     assert_eq!(
         (mark.halign(), mark.valign()),
         (gtk::Align::End, gtk::Align::End)
