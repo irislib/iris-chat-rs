@@ -201,6 +201,18 @@ pub fn run() {
     }
     assert_eq!(manager.nearby_snapshot().peers, nearby.peers);
     assert!(mark.is_visible(), "state sync keeps nearby peers");
+    let mut second_device = nearby.clone();
+    second_device.peers.push(DesktopNearbyPeerSnapshot {
+        id: "second-device".into(),
+        owner_pubkey_hex: Some(PEER.to_lowercase()),
+        ..nearby.peers[0].clone()
+    });
+    manager.apply_nearby_snapshot(second_device);
+    assert_eq!(
+        manager.nearby_snapshot().peers,
+        nearby.peers,
+        "a person with two nearby devices shows once"
+    );
     manager.apply_nearby_service_snapshot(DesktopNearbySnapshot {
         visible: false,
         status: "Off".into(),
@@ -364,7 +376,8 @@ fn verify_nearby_row_geometry(manager: &std::rc::Rc<AppManager>) {
                 .map(|index| DesktopNearbyPeerSnapshot {
                     id: format!("peer-{index}"),
                     name: format!("A long nearby display name {index}"),
-                    owner_pubkey_hex: None,
+                    // Real peers have owners (profile avatars); odd ones stay unresolved.
+                    owner_pubkey_hex: (index % 2 == 0).then(|| format!("{:064x}", index + 1)),
                     picture_url: None,
                     profile_event_id: None,
                     last_seen_secs: 1,
@@ -384,6 +397,7 @@ fn verify_nearby_row_geometry(manager: &std::rc::Rc<AppManager>) {
         let bounds = row.compute_bounds(&column).unwrap();
         let following_bounds = following.compute_bounds(&column).unwrap();
         let geometry = (bounds.y(), bounds.height(), following_bounds.y());
+        check_nearby_columns_centered(&row, count);
         if let Some(baseline) = baseline {
             assert_eq!(
                 geometry, baseline,
@@ -395,4 +409,48 @@ fn verify_nearby_row_geometry(manager: &std::rc::Rc<AppManager>) {
     }
     window.close();
     manager.apply_nearby_snapshot(original);
+}
+
+fn check_nearby_columns_centered(row: &gtk::Widget, count: usize) {
+    fn first_avatar(widget: &gtk::Widget) -> Option<gtk::Widget> {
+        if widget.is::<adw::Avatar>() {
+            return Some(widget.clone());
+        }
+        let mut child = widget.first_child();
+        while let Some(widget) = child {
+            if let Some(found) = first_avatar(&widget) {
+                return Some(found);
+            }
+            child = widget.next_sibling();
+        }
+        None
+    }
+    fn columns(widget: &gtk::Widget, found: &mut Vec<gtk::Widget>) {
+        if widget.has_css_class("nearby-preview-button") && widget.is::<gtk::Button>() {
+            if let Some(column) = widget.first_child().filter(|c| c.is::<gtk::Box>()) {
+                found.push(column);
+                return;
+            }
+        }
+        let mut child = widget.first_child();
+        while let Some(widget) = child {
+            columns(&widget, found);
+            child = widget.next_sibling();
+        }
+    }
+    let mut found = Vec::new();
+    columns(row, &mut found);
+    assert_eq!(found.len(), count, "one column per nearby person");
+    for column in found {
+        let avatar = first_avatar(&column).expect("nearby avatar");
+        let name = column.last_child().expect("nearby name");
+        let center = |widget: &gtk::Widget| {
+            let bounds = widget.compute_bounds(&column).unwrap();
+            bounds.x() + bounds.width() / 2.0
+        };
+        assert!(
+            (center(&avatar) - center(&name)).abs() < 1.0,
+            "nearby avatar and name share a center line"
+        );
+    }
 }

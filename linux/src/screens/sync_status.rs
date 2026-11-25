@@ -12,17 +12,21 @@ impl SyncStatus {
     pub fn new() -> Self {
         let root = gtk::Box::new(gtk::Orientation::Horizontal, 8);
         root.set_widget_name("message-sync-status");
+        // Floats over the list so showing or hiding it never moves rows.
+        root.add_css_class("sync-pill");
+        root.set_halign(gtk::Align::Center);
+        root.set_valign(gtk::Align::End);
         root.set_margin_start(20);
         root.set_margin_end(20);
-        root.set_margin_top(10);
-        root.set_margin_bottom(4);
+        root.set_margin_bottom(12);
+        root.set_can_target(false);
         let spinner = gtk::Spinner::new();
         let waiting = gtk::Image::from_icon_name("media-playback-pause-symbolic");
         let label = gtk::Label::new(None);
         label.add_css_class("dim-label");
         label.add_css_class("caption");
         label.set_xalign(0.0);
-        label.set_wrap(true);
+        label.set_ellipsize(gtk::pango::EllipsizeMode::End);
         root.append(&spinner);
         root.append(&waiting);
         root.append(&label);

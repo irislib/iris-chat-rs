@@ -21,6 +21,22 @@ fn named(root: &gtk::Widget, name: &str) -> gtk::Widget {
         .unwrap_or_else(|| panic!("missing widget {name}"))
 }
 
+// The sync status floats over the list: showing or hiding it never moves rows.
+fn check_sync_status_floats(root: &gtk::Widget) {
+    let statuses: Vec<_> = descendants(root)
+        .into_iter()
+        .filter(|widget| widget.widget_name() == "message-sync-status")
+        .collect();
+    assert!(!statuses.is_empty());
+    for status in statuses {
+        let overlay = status
+            .parent()
+            .and_then(|parent| parent.downcast::<gtk::Overlay>().ok())
+            .expect("sync status is an overlay, not a list row");
+        assert_ne!(overlay.child(), Some(status), "sync status is not the list");
+    }
+}
+
 fn owns_focus(window: &adw::Window, widget: &gtk::Widget) -> bool {
     gtk::prelude::GtkWindowExt::focus(window)
         .is_some_and(|focused| focused == *widget || focused.is_ancestor(widget))
@@ -249,6 +265,7 @@ pub(super) fn run(manager: Rc<AppManager>) {
     check_controls(root);
     check_sidebar_settings(root);
     check_wide_section_shortcuts(&slot, &manager, &window);
+    check_sync_status_floats(root);
 
     search.grab_focus();
     pump_until(|| owns_focus(&window, search.upcast_ref()));

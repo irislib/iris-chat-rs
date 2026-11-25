@@ -392,7 +392,14 @@ impl AppManager {
         self.nearby_snapshot.borrow().clone()
     }
 
-    pub fn apply_nearby_snapshot(&self, snapshot: DesktopNearbySnapshot) {
+    pub fn apply_nearby_snapshot(&self, mut snapshot: DesktopNearbySnapshot) {
+        // FIPS reports devices; Nearby shows people once.
+        let mut owners = std::collections::HashSet::new();
+        snapshot.peers.retain(|peer| {
+            peer.owner_pubkey_hex
+                .as_deref()
+                .is_none_or(|owner| owners.insert(owner.to_ascii_lowercase()))
+        });
         *self.nearby_snapshot.borrow_mut() = snapshot;
         self.refresh_nearby_avatar_badges(&self.current_state());
     }

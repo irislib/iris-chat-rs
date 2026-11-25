@@ -119,22 +119,33 @@ fn nearby_avatar_strip(
     let prefs = manager.current_state().preferences.clone();
     for peer in peers {
         let name = nearby_peer_resolved_name(peer, manager, "Nearby user");
-        let avatar = adw::Avatar::new(avatar_size, Some(&name), true);
-        if let Some(url) = peer.picture_url.as_ref() {
-            image_cache::fetch_proxied_into_avatar(&avatar, url, &prefs, (avatar_size * 2) as u32);
-        }
         let column = gtk::Box::new(gtk::Orientation::Vertical, 4);
         column.set_size_request(64, -1);
         column.set_halign(gtk::Align::Center);
         column.set_valign(gtk::Align::Start);
-        column.append(&crate::widgets::social_badge::user_avatar(
-            &avatar,
-            manager
-                .contact_social_connection(peer.owner_pubkey_hex.as_deref().unwrap_or_default())
-                .as_ref(),
-            peer.owner_pubkey_hex.as_deref().unwrap_or_default(),
-            manager,
-        ));
+        // Everyone here is nearby, so skip the per-avatar nearby badge.
+        match peer.owner_pubkey_hex.as_deref() {
+            Some(owner) => {
+                let avatar =
+                    crate::widgets::user_profile::avatar(manager, owner, avatar_size, false);
+                avatar.set_halign(gtk::Align::Center);
+                column.append(&avatar);
+            }
+            None => {
+                let avatar = adw::Avatar::new(avatar_size, Some(&name), true);
+                if let Some(url) = peer.picture_url.as_ref() {
+                    image_cache::fetch_proxied_into_avatar(
+                        &avatar,
+                        url,
+                        &prefs,
+                        (avatar_size * 2) as u32,
+                    );
+                }
+                let avatar = crate::widgets::social_badge::avatar(&avatar, None);
+                avatar.set_halign(gtk::Align::Center);
+                column.append(&avatar);
+            }
+        }
         let label = gtk::Label::new(Some(&nearby_peer_display_name(&name)));
         label.add_css_class("caption");
         label.add_css_class("dim-label");
@@ -168,6 +179,7 @@ fn nearby_avatar_strip(
     }
 
     let scrolled = gtk::ScrolledWindow::new();
+    scrolled.add_css_class("nearby-strip");
     scrolled.set_policy(gtk::PolicyType::Automatic, gtk::PolicyType::Never);
     scrolled.set_hexpand(true);
     scrolled.set_min_content_height(avatar_size + 22);

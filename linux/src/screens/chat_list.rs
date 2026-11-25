@@ -56,11 +56,13 @@ impl ChatListView {
         let (search_box, entry, scope) = build_search_box(manager);
         root.append(&search_box);
         let sync = super::sync_status::SyncStatus::new();
-        root.append(&sync.root);
         let scrolled = gtk::ScrolledWindow::new();
         scrolled.set_hscrollbar_policy(gtk::PolicyType::Never);
         scrolled.set_vexpand(true);
-        root.append(&scrolled);
+        let list = gtk::Overlay::new();
+        list.set_child(Some(&scrolled));
+        list.add_overlay(&sync.root);
+        root.append(&list);
         Self {
             root,
             entry,

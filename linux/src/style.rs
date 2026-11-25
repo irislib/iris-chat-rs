@@ -302,6 +302,19 @@ button.suggested-action {{
     color: #fff;
 }}
 
+.iris-root scrolledwindow.nearby-strip,
+.iris-root scrolledwindow.nearby-strip viewport {{
+    background-color: transparent;
+}}
+
+.sync-pill {{
+    background-color: @iris_panel_alt;
+    border: 1px solid @iris_border;
+    border-radius: 999px;
+    padding: 6px 14px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+}}
+
 .nearby-off {{
     background-color: @iris_panel_alt;
     color: @iris_muted;
