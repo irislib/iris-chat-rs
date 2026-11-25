@@ -2,6 +2,32 @@
 
 Each release has channel-specific notes. The release tag must match the `##` heading exactly.
 
+## v2026.11.25
+
+### GitHub
+
+- Includes the unpublished v2026.11.18 changes: lighter linked-device group key updates, steadier nearby Bluetooth peers, and Mac Bluetooth scan pauses during Bluetooth audio.
+- Keep LAN nearby peers listed through brief link loss on every platform. On Linux and Windows, Nearby service updates no longer replace the peer list.
+- Linux: show each nearby person once with their avatar, stop Nearby and sync status from shifting the chat list, close dialogs on an outside click, fix "Open at login", and use a bundled send icon.
+- macOS and Windows: show each desktop update step after Install, with time limits and Retry; the Mac reopens reliably after updating.
+- iOS: shared links arrive as message text. Group member menus and creation contacts are more compact, and the group creator stays recorded when admins change.
+- Deliver group messages over Bluetooth and nearby Wi-Fi without internet: each group member in range gets the message inside its own ratchet envelope, at send time or when the member comes into range. Shared group data still never goes to a nearby carrier. Add a physical-device gate for this.
+- Update nostr-pubsub to 0.1.22.
+
+### Apple
+
+- Group messages now reach nearby group members over Bluetooth without internet.
+- Nearby people stay listed through brief Wi-Fi and Bluetooth interruptions.
+- On Mac, installing an update shows each step, offers Retry if a step fails, and reopens the app reliably.
+- Links shared from other apps arrive as message text.
+- Group member menus are more compact, and linked devices use less data catching up with groups.
+
+### Zapstore
+
+- Group messages now reach nearby group members over Bluetooth without internet.
+- Nearby people stay listed through brief Wi-Fi and Bluetooth interruptions.
+- Linked devices use less data catching up with groups.
+
 ## v2026.11.18
 
 ### GitHub
