@@ -764,7 +764,7 @@ impl AppCore {
             self.retry_protocol_engine_pending_work("owner_registration_backfill");
         }
         if app_keys_changed
-            && (!self.fips_nearby_links.is_empty() || !self.recent_bluetooth_peers.is_empty())
+            && (!self.fips_nearby_links.is_empty() || !self.recent_nearby_peers.is_empty())
         {
             self.emit_fips_nearby_peers();
         }

@@ -207,7 +207,7 @@ impl AppCore {
             return;
         }
         if !enabled {
-            self.clear_recent_bluetooth_peers();
+            self.forget_disabled_recent_nearby_peers();
         }
         self.reconcile_device_sync();
         self.rebuild_persist_and_emit_state();
@@ -235,7 +235,7 @@ impl AppCore {
         }
         self.preferences.nearby_bluetooth_enabled = enabled;
         if !enabled {
-            self.clear_recent_bluetooth_peers();
+            self.forget_disabled_recent_nearby_peers();
         }
         self.rebuild_persist_and_emit_state();
     }
@@ -245,6 +245,9 @@ impl AppCore {
             return;
         }
         self.preferences.nearby_lan_enabled = enabled;
+        if !enabled {
+            self.forget_disabled_recent_nearby_peers();
+        }
         self.reconcile_device_sync();
         self.rebuild_persist_and_emit_state();
     }

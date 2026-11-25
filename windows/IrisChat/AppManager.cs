@@ -731,6 +731,16 @@ public sealed partial class AppManager : INotifyPropertyChanged
         Notify(nameof(NearbySnapshot));
     }
 
+    // The Nearby service reports visibility only. Peers come from the core's
+    // NearbyPeersChanged updates, so its empty peer list must not erase them.
+    private void ApplyNearbyServiceSnapshot(DesktopNearbySnapshot snapshot)
+    {
+        ApplyNearbySnapshot(snapshot with
+        {
+            peers = snapshot.visible ? _nearbySnapshot.peers : Array.Empty<DesktopNearbyPeerSnapshot>(),
+        });
+    }
+
     private void SyncNearbyPreference(AppState old, AppState next)
     {
         var wasVisible = old.preferences.nearbyEnabled && old.preferences.nearbyLanEnabled;
@@ -1190,7 +1200,7 @@ public sealed partial class AppManager : INotifyPropertyChanged
 
         public void DesktopNearbyChanged(DesktopNearbySnapshot snapshot)
         {
-            _owner._ui.BeginInvoke(new Action(() => _owner.ApplyNearbySnapshot(snapshot)));
+            _owner._ui.BeginInvoke(new Action(() => _owner.ApplyNearbyServiceSnapshot(snapshot)));
         }
     }
 

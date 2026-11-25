@@ -249,9 +249,9 @@ fn bluetooth_dropouts_have_a_display_only_grace_period() {
     assert_eq!(bluetooth.as_slice(), std::slice::from_ref(&id));
     assert_eq!(rows.len(), 1);
     assert!(core.fips_nearby_links.is_empty());
-    let first_deadline = core.recent_bluetooth_peers[&id].0;
-    core.expire_recent_bluetooth_peers(first_deadline - Duration::from_millis(1));
-    assert!(core.recent_bluetooth_peers.contains_key(&id));
+    let first_deadline = core.recent_nearby_peers[&id].expires;
+    core.expire_recent_nearby_peers(first_deadline - Duration::from_millis(1));
+    assert!(core.recent_nearby_peers.contains_key(&id));
 
     core.update_fips_connection_links(vec![ble.clone()]);
     assert_eq!(
@@ -259,14 +259,14 @@ fn bluetooth_dropouts_have_a_display_only_grace_period() {
         1,
         "reconnecting must not duplicate the row"
     );
-    assert!(core.recent_bluetooth_peers.is_empty());
+    assert!(core.recent_nearby_peers.is_empty());
     core.update_fips_connection_links(vec![]);
-    core.expire_recent_bluetooth_peers(first_deadline);
+    core.expire_recent_nearby_peers(first_deadline);
     assert!(
-        core.recent_bluetooth_peers.contains_key(&id),
+        core.recent_nearby_peers.contains_key(&id),
         "an old timer must respect the new deadline"
     );
-    core.expire_recent_bluetooth_peers(core.recent_bluetooth_peers[&id].0);
+    core.expire_recent_nearby_peers(core.recent_nearby_peers[&id].expires);
     assert!(snapshot().0.is_empty());
 
     core.update_fips_connection_links(vec![ble.clone()]);
@@ -300,4 +300,84 @@ fn bluetooth_dropouts_have_a_display_only_grace_period() {
         snapshot().0.is_empty(),
         "stopping the runtime must clear remembered peers"
     );
+}
+
+#[test]
+fn lan_peers_stay_listed_through_brief_link_loss_and_then_expire() {
+    let directory = tempfile::TempDir::new().unwrap();
+    let (tx, rx) = flume::unbounded();
+    let mut core = AppCore::new(
+        tx,
+        flume::unbounded().0,
+        directory.path().to_string_lossy().into_owned(),
+        Arc::new(RwLock::new(AppState::empty())),
+    );
+    core.preferences.nearby_enabled = true;
+    core.preferences.nearby_lan_enabled = true;
+    let id = "cd".repeat(32);
+    let lan = crate::updates::FipsNearbyLinkSnapshot {
+        device_pubkey_hex: id.clone(),
+        transport_type: "udp".to_owned(),
+        transport_addr: Some("192.168.178.20:52296".to_owned()),
+    };
+    let lan_rows = || {
+        rx.try_iter()
+            .filter_map(|update| match update {
+                AppUpdate::NearbyPeersChanged {
+                    snapshot,
+                    lan_peer_ids,
+                    ..
+                } => Some((snapshot.peers.len(), lan_peer_ids)),
+                _ => None,
+            })
+            .last()
+            .unwrap()
+    };
+
+    core.update_fips_connection_links(vec![lan.clone()]);
+    assert_eq!(lan_rows(), (1, vec![id.clone()]));
+    // A missed heartbeat window or a timed-out peer snapshot reports no links.
+    core.update_fips_connection_links(vec![]);
+    assert_eq!(
+        lan_rows(),
+        (1, vec![id.clone()]),
+        "brief loss keeps the row"
+    );
+    assert!(
+        core.fips_nearby_links.is_empty(),
+        "transport state stays exact"
+    );
+    let deadline = core.recent_nearby_peers[&id].expires;
+    assert!(deadline <= Instant::now() + super::NEARBY_PRESENCE_HOLD);
+
+    // FIPS can re-path a same-LAN peer through the router's public address.
+    core.update_fips_connection_links(vec![crate::updates::FipsNearbyLinkSnapshot {
+        transport_addr: Some("203.0.113.7:41000".to_owned()),
+        ..lan.clone()
+    }]);
+    assert_eq!(lan_rows(), (1, vec![id.clone()]), "re-path keeps the row");
+
+    core.update_fips_connection_links(vec![lan.clone()]);
+    assert_eq!(
+        lan_rows(),
+        (1, vec![id.clone()]),
+        "reconnect does not duplicate"
+    );
+    assert!(core.recent_nearby_peers.is_empty());
+
+    core.update_fips_connection_links(vec![]);
+    let deadline = core.recent_nearby_peers[&id].expires;
+    core.expire_recent_nearby_peers(deadline - Duration::from_millis(1));
+    assert!(core.recent_nearby_peers.contains_key(&id));
+    core.expire_recent_nearby_peers(deadline);
+    assert_eq!(
+        lan_rows(),
+        (0, vec![]),
+        "an unreachable peer leaves after the hold"
+    );
+
+    core.update_fips_connection_links(vec![lan]);
+    core.update_fips_connection_links(vec![]);
+    core.set_nearby_lan_enabled(false);
+    assert_eq!(lan_rows(), (0, vec![]), "turning LAN off ends the hold");
 }

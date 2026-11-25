@@ -1458,6 +1458,12 @@ fn listen(data_dir: &Path, chat: Option<&str>, interval_ms: u64, nearby_lan: boo
     } else {
         None
     };
+    if nearby_lan {
+        cli.app
+            .dispatch(AppAction::SetNearbyEnabled { enabled: true });
+        cli.app
+            .dispatch(AppAction::SetNearbyLanEnabled { enabled: true });
+    }
     let _ = cli.dispatch_and_wait_network(AppAction::AppForegrounded, Duration::from_secs(8))?;
     let state = cli.wait_for_network_runtime_ready(Duration::from_secs(55), true)?;
     fail_on_toast(&state)?;
@@ -1474,6 +1480,47 @@ fn listen(data_dir: &Path, chat: Option<&str>, interval_ms: u64, nearby_lan: boo
     loop {
         thread::sleep(interval);
         stream_new_messages(data_dir, chat_filter.as_deref(), &mut seen, &owner)?;
+        // Drain updates so a long listen stays bounded; report nearby changes.
+        let updates = cli
+            .reconciler
+            .updates
+            .lock()
+            .map(|mut updates| std::mem::take(&mut *updates))
+            .unwrap_or_default();
+        let nearby = updates.into_iter().rev().find_map(|update| match update {
+            AppUpdate::NearbyPeersChanged {
+                snapshot,
+                bluetooth_peer_ids,
+                lan_peer_ids,
+            } => Some((snapshot, bluetooth_peer_ids, lan_peer_ids)),
+            _ => None,
+        });
+        if let Some((snapshot, bluetooth, lan)) = nearby {
+            let peers = snapshot
+                .peers
+                .iter()
+                .map(|peer| {
+                    let transport = if bluetooth.contains(&peer.id) {
+                        "bluetooth"
+                    } else if lan.contains(&peer.id) {
+                        "lan"
+                    } else {
+                        "other"
+                    };
+                    json!({
+                        "id": peer.id,
+                        "name": peer.name,
+                        "owner_pubkey_hex": peer.owner_pubkey_hex,
+                        "transport": transport,
+                        "last_seen_secs": peer.last_seen_secs,
+                    })
+                })
+                .collect::<Vec<_>>();
+            print_stream_envelope(
+                "nearby",
+                json!({ "visible": snapshot.visible, "peers": peers }),
+            )?;
+        }
     }
 }
 

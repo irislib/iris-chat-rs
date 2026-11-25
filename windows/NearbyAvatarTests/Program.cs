@@ -18,6 +18,7 @@ internal static class Program
 {
     private const string Peer = "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
     private static readonly MethodInfo Apply = typeof(AppManager).GetMethod("Apply", BindingFlags.Instance | BindingFlags.NonPublic)!;
+    private static readonly MethodInfo ApplyService = typeof(AppManager).GetMethod("ApplyNearbyServiceSnapshot", BindingFlags.Instance | BindingFlags.NonPublic)!;
 
     [STAThread]
     private static int Main(string[] args)
@@ -122,6 +123,8 @@ internal static class Program
             Apply.Invoke(manager, new object[] { new AppUpdate.NearbyPeersChanged(nearby with { peers = Array.Empty<DesktopNearbyPeerSnapshot>() }, Array.Empty<string>(), Array.Empty<string>()) });
             Check(!avatar.IsNearby && !header.IsNearby, "Peer removal immediately hides both badges");
             Apply.Invoke(manager, new object[] { new AppUpdate.NearbyPeersChanged(nearby, Array.Empty<string>(), Array.Empty<string>()) });
+            ApplyService.Invoke(manager, new object[] { nearby with { peers = Array.Empty<DesktopNearbyPeerSnapshot>() } });
+            Check(avatar.IsNearby && header.IsNearby, "Nearby service visibility reports keep core peers");
             var disabled = manager.State with { rev = manager.State.rev + 1, preferences = manager.Preferences with { nearbyEnabled = false } };
             Apply.Invoke(manager, new object[] { new AppUpdate.FullState(disabled) });
             Check(!avatar.IsNearby && !header.IsNearby, "Turning nearby off clears badges");

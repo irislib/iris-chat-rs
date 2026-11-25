@@ -56,7 +56,7 @@ impl AppCore {
             }
         }
         self.foreground_background_ble();
-        self.expire_recent_bluetooth_peers(Instant::now());
+        self.expire_recent_nearby_peers(Instant::now());
         self.resume_remote_signer_events();
         self.expire_pending_signer_login();
         if self.pending_linked_device.is_some() {

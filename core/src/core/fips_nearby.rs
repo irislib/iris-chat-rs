@@ -14,6 +14,18 @@ const FIPS_NEARBY_VERSION: u8 = 1;
 const FIPS_NEARBY_MAX_PACKET_BYTES: usize = 48 * 1024;
 pub(super) const FIPS_NEARBY_OUTBOX_MAX_EVENTS: usize = 256;
 const FIPS_NEARBY_OUTBOX_MAX_LINKS_PER_EVENT: usize = 32;
+/// How long a nearby peer stays listed after its last local link drops.
+/// FIPS declares a silent link dead after 30 seconds; the hold also covers
+/// rediscovery and handshake after a brief Wi-Fi or Bluetooth gap.
+pub(super) const NEARBY_PRESENCE_HOLD: Duration = Duration::from_secs(60);
+
+/// A nearby peer whose local link dropped recently. Presentation only.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct RecentNearbyPeer {
+    pub(super) expires: Instant,
+    pub(super) last_seen_secs: u64,
+    pub(super) bluetooth: bool,
+}
 
 #[derive(Clone, Debug)]
 pub(crate) struct HostBleOwnership(Arc<std::sync::atomic::AtomicBool>);
@@ -687,59 +699,94 @@ impl AppCore {
         // These are direct transport links. End-to-end history streams can keep
         // using a routed path when one disappears; their requests and revocation
         // checks own reconciliation cancellation.
-        if self.preferences.nearby_enabled && self.preferences.nearby_bluetooth_enabled {
-            let now = Instant::now();
-            let last_seen = unix_now().get();
-            let bluetooth: BTreeSet<_> = links
-                .iter()
-                .filter(|link| link.is_bluetooth())
-                .map(|link| link.device_pubkey_hex.as_str())
-                .collect();
-            self.recent_bluetooth_peers
-                .retain(|id, (expires, _)| *expires > now && !bluetooth.contains(id.as_str()));
-            let deadline = now + Duration::from_secs(60);
-            let mut lost_peers = false;
-            for link in &self.fips_nearby_links {
-                if link.is_bluetooth() && !bluetooth.contains(link.device_pubkey_hex.as_str()) {
-                    self.recent_bluetooth_peers
-                        .insert(link.device_pubkey_hex.clone(), (deadline, last_seen));
-                    lost_peers = true;
-                }
+        //
+        // The nearby list is presentation only. A LAN or Bluetooth link can drop
+        // and come back within seconds: a phone misses heartbeats in Wi-Fi power
+        // save, FIPS re-paths a LAN peer through the router's public address, or
+        // a busy endpoint times out a peer snapshot. Keep each lost local peer
+        // listed for a short hold instead of making it blink out of the list.
+        let now = Instant::now();
+        let last_seen = unix_now().get();
+        // Holds are per transport, so a Bluetooth sighting survives a handover
+        // to a LAN link that then drops. Live links still win in the snapshot.
+        let live: BTreeSet<_> = links
+            .iter()
+            .filter(|link| link.is_local_nearby())
+            .map(|link| (link.device_pubkey_hex.as_str(), link.is_bluetooth()))
+            .collect();
+        self.recent_nearby_peers.retain(|id, held| {
+            held.expires > now && !live.contains(&(id.as_str(), held.bluetooth))
+        });
+        let deadline = now + NEARBY_PRESENCE_HOLD;
+        let mut lost_peers = false;
+        for link in self
+            .fips_nearby_links
+            .iter()
+            .filter(|link| link.is_local_nearby())
+        {
+            let bluetooth = link.is_bluetooth();
+            if live.contains(&(link.device_pubkey_hex.as_str(), bluetooth))
+                || !self.nearby_transport_enabled(bluetooth)
+            {
+                continue;
             }
-            if lost_peers {
-                let sender = self.core_sender.clone();
-                let generation = self.fips_connection_generation;
-                self.runtime.spawn(async move {
-                    sleep_until(deadline).await;
-                    let _ = sender.send(CoreMsg::Internal(Box::new(
-                        InternalEvent::ExpireNearbyPeers { generation },
-                    )));
-                });
-            }
+            self.recent_nearby_peers.insert(
+                link.device_pubkey_hex.clone(),
+                RecentNearbyPeer {
+                    expires: deadline,
+                    last_seen_secs: last_seen,
+                    bluetooth,
+                },
+            );
+            lost_peers = true;
+        }
+        if lost_peers {
+            let sender = self.core_sender.clone();
+            let generation = self.fips_connection_generation;
+            self.runtime.spawn(async move {
+                sleep_until(deadline).await;
+                let _ = sender.send(CoreMsg::Internal(Box::new(
+                    InternalEvent::ExpireNearbyPeers { generation },
+                )));
+            });
         }
         self.set_fips_connection_links(links);
     }
 
+    fn nearby_transport_enabled(&self, bluetooth: bool) -> bool {
+        self.preferences.nearby_enabled
+            && if bluetooth {
+                self.preferences.nearby_bluetooth_enabled
+            } else {
+                self.preferences.nearby_lan_enabled
+            }
+    }
+
     pub(super) fn clear_fips_connection_links(&mut self) {
-        if self.fips_nearby_links.is_empty() && self.recent_bluetooth_peers.is_empty() {
+        if self.fips_nearby_links.is_empty() && self.recent_nearby_peers.is_empty() {
             return;
         }
-        self.recent_bluetooth_peers.clear();
+        self.recent_nearby_peers.clear();
         self.set_fips_connection_links(Vec::new());
     }
 
-    pub(super) fn clear_recent_bluetooth_peers(&mut self) {
-        if !self.recent_bluetooth_peers.is_empty() {
-            self.recent_bluetooth_peers.clear();
+    /// Ends the hold for peers whose transport the user turned off.
+    pub(super) fn forget_disabled_recent_nearby_peers(&mut self) {
+        let previous = self.recent_nearby_peers.len();
+        let bluetooth = self.nearby_transport_enabled(true);
+        let lan = self.nearby_transport_enabled(false);
+        self.recent_nearby_peers
+            .retain(|_, held| if held.bluetooth { bluetooth } else { lan });
+        if previous != self.recent_nearby_peers.len() {
             self.emit_fips_nearby_peers();
         }
     }
 
-    pub(super) fn expire_recent_bluetooth_peers(&mut self, now: Instant) {
-        let previous = self.recent_bluetooth_peers.len();
-        self.recent_bluetooth_peers
-            .retain(|_, (expires, _)| *expires > now);
-        if previous != self.recent_bluetooth_peers.len() {
+    pub(super) fn expire_recent_nearby_peers(&mut self, now: Instant) {
+        let previous = self.recent_nearby_peers.len();
+        self.recent_nearby_peers
+            .retain(|_, held| held.expires > now);
+        if previous != self.recent_nearby_peers.len() {
             self.emit_fips_nearby_peers();
         }
     }
@@ -772,17 +819,17 @@ impl AppCore {
             .filter(|link| link.is_local_nearby())
             .map(|link| (&link.device_pubkey_hex, link.is_bluetooth(), now));
         let clock = Instant::now();
-        // Prefer a live local link to a remembered Bluetooth sighting of the same device.
-        let live_ids: BTreeSet<_> = if self.recent_bluetooth_peers.is_empty() {
+        // Prefer a live local link to a remembered sighting of the same device.
+        let live_ids: BTreeSet<_> = if self.recent_nearby_peers.is_empty() {
             BTreeSet::new()
         } else {
             live.clone().map(|(id, _, _)| id).collect()
         };
         let recent = self
-            .recent_bluetooth_peers
+            .recent_nearby_peers
             .iter()
-            .filter(|(id, (expires, _))| *expires > clock && !live_ids.contains(id))
-            .map(|(id, (_, seen))| (id, true, *seen));
+            .filter(|(id, held)| held.expires > clock && !live_ids.contains(id))
+            .map(|(id, held)| (id, held.bluetooth, held.last_seen_secs));
         let peers = live
             .chain(recent)
             .filter_map(|(id, bluetooth, last_seen_secs)| {
