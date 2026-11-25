@@ -15,6 +15,8 @@ mod device_roster;
 mod group_details;
 mod join_invite;
 mod nearby;
+#[cfg(feature = "ui-tests")]
+pub(crate) use nearby::{nearby_list_for_test, update_nearby_list_for_test};
 mod new_chat;
 mod new_group;
 mod remote_signer;

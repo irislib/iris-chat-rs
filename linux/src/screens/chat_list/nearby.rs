@@ -21,14 +21,17 @@ pub(super) fn nearby_row(manager: &Rc<AppManager>) -> gtk::Widget {
     const NEARBY_ROW_CONTENT_HEIGHT: i32 = NEARBY_AVATAR_SIZE + 22;
 
     let outer = gtk::Box::new(gtk::Orientation::Horizontal, 12);
-    outer.set_margin_top(6);
-    outer.set_margin_bottom(6);
+    // Names add empty line space below their text; offset it so the
+    // avatars and names sit visually centered in the card.
+    outer.set_margin_top(8);
+    outer.set_margin_bottom(4);
     outer.set_margin_start(12);
     outer.set_margin_end(12);
     outer.set_hexpand(true);
     outer.set_size_request(-1, NEARBY_ROW_CONTENT_HEIGHT);
     outer.set_valign(gtk::Align::Start);
-    outer.append(&nearby_icon_button(manager, active, NEARBY_AVATAR_SIZE));
+    let icon_button = nearby_icon_button(manager, active, NEARBY_AVATAR_SIZE);
+    outer.append(&icon_button);
 
     if !peers.is_empty() {
         outer.append(&nearby_avatar_strip(peers, manager));
@@ -54,6 +57,11 @@ pub(super) fn nearby_row(manager: &Rc<AppManager>) -> gtk::Widget {
     button.add_css_class("nearby-preview-button");
     button.show_pointer_cursor();
     button.set_hexpand(true);
+    // Same height as the Nearby button so the text lines up with its center.
+    button.set_valign(gtk::Align::Start);
+    let heights = gtk::SizeGroup::new(gtk::SizeGroupMode::Vertical);
+    heights.add_widget(&icon_button);
+    heights.add_widget(&button);
     button.set_child(Some(&label));
     let manager_for_click = manager.clone();
     button.connect_clicked(move |btn| {

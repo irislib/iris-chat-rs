@@ -23,6 +23,14 @@ use nearby::nearby_row;
 pub fn nearby_row_for_test(manager: &Rc<AppManager>) -> gtk::Widget {
     nearby_row(manager)
 }
+
+/// The Nearby row inside its real grouped card.
+#[cfg(feature = "ui-tests")]
+pub fn nearby_card_for_test(manager: &Rc<AppManager>) -> gtk::Widget {
+    let list = grouped_list();
+    list.append(&nearby_row(manager));
+    list.upcast()
+}
 #[cfg(feature = "ui-tests")]
 pub use timestamps::verify_ui as verify_timestamps_ui;
 use timestamps::Timestamps;

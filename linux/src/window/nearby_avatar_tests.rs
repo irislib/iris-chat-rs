@@ -287,6 +287,9 @@ pub fn run() {
         "stopped service clears badge even with old peers"
     );
     manager.apply_nearby_snapshot(nearby);
+    check_nearby_screen_list(&manager);
+    check_nearby_card_balanced(&manager);
+    check_nearby_dialog_scrolls(&manager);
 
     install_nearby_css();
     verify_nearby_row_geometry(&manager);
@@ -398,6 +401,9 @@ fn verify_nearby_row_geometry(manager: &std::rc::Rc<AppManager>) {
         let following_bounds = following.compute_bounds(&column).unwrap();
         let geometry = (bounds.y(), bounds.height(), following_bounds.y());
         check_nearby_columns_centered(&row, count);
+        if count == 0 {
+            check_empty_label_centered(&row);
+        }
         if let Some(baseline) = baseline {
             assert_eq!(
                 geometry, baseline,
@@ -453,4 +459,181 @@ fn check_nearby_columns_centered(row: &gtk::Widget, count: usize) {
             "nearby avatar and name share a center line"
         );
     }
+}
+
+fn check_nearby_screen_list(manager: &std::rc::Rc<AppManager>) {
+    fn has(widget: &gtk::Widget, found: &dyn Fn(&gtk::Widget) -> bool) -> bool {
+        if found(widget) {
+            return true;
+        }
+        let mut child = widget.first_child();
+        while let Some(widget) = child {
+            if has(&widget, found) {
+                return true;
+            }
+            child = widget.next_sibling();
+        }
+        false
+    }
+    let mut rendered = None;
+    let list = crate::screens::nearby_list_for_test(manager, &mut rendered);
+    let rows: Vec<gtk::Widget> = {
+        let mut rows = Vec::new();
+        let mut child = list.first_child();
+        while let Some(row) = child {
+            child = row.next_sibling();
+            rows.push(row);
+        }
+        rows
+    };
+    assert!(!rows.is_empty());
+    for row in &rows {
+        assert!(
+            has(row, &|widget| widget.is::<adw::Avatar>()),
+            "Nearby list shows each person's avatar"
+        );
+        assert!(
+            !has(row, &|widget| widget
+                .downcast_ref::<gtk::Image>()
+                .and_then(|image| image.icon_name())
+                .is_some_and(|name| name == "avatar-default-symbolic")),
+            "no generic person icon"
+        );
+    }
+    crate::screens::update_nearby_list_for_test(&list, manager, &mut rendered);
+    assert_eq!(
+        list.first_child(),
+        Some(rows[0].clone()),
+        "unchanged Nearby keeps its rows"
+    );
+}
+
+/// Space above the avatars matches space below the names' text.
+fn check_nearby_card_balanced(manager: &std::rc::Rc<AppManager>) {
+    fn find(widget: &gtk::Widget, found: &dyn Fn(&gtk::Widget) -> bool) -> Option<gtk::Widget> {
+        if found(widget) {
+            return Some(widget.clone());
+        }
+        let mut child = widget.first_child();
+        while let Some(widget) = child {
+            if let Some(hit) = find(&widget, found) {
+                return Some(hit);
+            }
+            child = widget.next_sibling();
+        }
+        None
+    }
+    let card = crate::screens::chat_list::nearby_card_for_test(manager);
+    let window = adw::Window::builder()
+        .default_width(360)
+        .default_height(200)
+        .build();
+    let column = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    column.set_valign(gtk::Align::Start);
+    column.append(&card);
+    window.set_content(Some(&column));
+    window.present();
+    let row = card.first_child().expect("card row");
+    pump_until(|| row.height() > 0 && row.is_mapped());
+    let avatar = find(&row, &|widget| widget.is::<adw::Avatar>()).expect("nearby avatar");
+    let name = find(&row, &|widget| {
+        widget.is::<gtk::Label>() && widget.has_css_class("caption")
+    })
+    .and_then(|widget| widget.downcast::<gtk::Label>().ok())
+    .expect("nearby name");
+    let top = avatar.compute_bounds(&row).unwrap().y() as f64;
+    let name_bounds = name.compute_bounds(&row).unwrap();
+    let (ink, _) = name.layout().pixel_extents();
+    let (_, offset_y) = name.layout_offsets();
+    let ink_bottom = name_bounds.y() as f64 + offset_y as f64 + (ink.y() + ink.height()) as f64;
+    let bottom = row.height() as f64 - ink_bottom;
+    window.close();
+    assert!(
+        (top - bottom).abs() <= 1.5,
+        "Nearby card is off-center: {top}px above avatars, {bottom}px below names"
+    );
+}
+
+/// "No users nearby" lines up with the center of the Nearby button.
+fn check_empty_label_centered(row: &gtk::Widget) {
+    fn find(widget: &gtk::Widget, found: &dyn Fn(&gtk::Widget) -> bool) -> Option<gtk::Widget> {
+        if found(widget) {
+            return Some(widget.clone());
+        }
+        let mut child = widget.first_child();
+        while let Some(widget) = child {
+            if let Some(hit) = find(&widget, found) {
+                return Some(hit);
+            }
+            child = widget.next_sibling();
+        }
+        None
+    }
+    let icon = find(row, &|widget| widget.has_css_class("nearby-avatar-button")).unwrap();
+    let label = find(row, &|widget| widget.is::<gtk::Label>()).unwrap();
+    let center = |widget: &gtk::Widget| {
+        let bounds = widget.compute_bounds(row).unwrap();
+        bounds.y() + bounds.height() / 2.0
+    };
+    assert!(
+        (center(&icon) - center(&label)).abs() <= 1.0,
+        "empty Nearby text is centered on the Nearby button"
+    );
+}
+
+/// With many people nearby in a short window, the Nearby dialog scrolls.
+fn check_nearby_dialog_scrolls(manager: &std::rc::Rc<AppManager>) {
+    fn all(widget: &gtk::Widget, out: &mut Vec<gtk::Widget>) {
+        out.push(widget.clone());
+        let mut child = widget.first_child();
+        while let Some(widget) = child {
+            all(&widget, out);
+            child = widget.next_sibling();
+        }
+    }
+    let original = manager.nearby_snapshot();
+    manager.apply_nearby_snapshot(DesktopNearbySnapshot {
+        visible: true,
+        status: "Nearby".into(),
+        peers: (0..12)
+            .map(|index| DesktopNearbyPeerSnapshot {
+                id: format!("dialog-peer-{index}"),
+                name: format!("Person {index}"),
+                owner_pubkey_hex: None,
+                picture_url: None,
+                profile_event_id: None,
+                last_seen_secs: 1,
+            })
+            .collect(),
+    });
+    let window = adw::ApplicationWindow::builder()
+        .default_width(400)
+        .default_height(360)
+        .build();
+    window.present();
+    pump_until(|| window.is_mapped());
+    crate::screens::present_nearby(Some(window.upcast_ref()), manager.clone());
+    let scroller = || {
+        let mut widgets = Vec::new();
+        all(window.upcast_ref(), &mut widgets);
+        widgets.into_iter().find_map(|widget| {
+            let scroller = widget.downcast::<gtk::ScrolledWindow>().ok()?;
+            let mut inner = Vec::new();
+            all(scroller.upcast_ref(), &mut inner);
+            inner
+                .iter()
+                .any(|w| w.is::<gtk::ListBox>() && w.has_css_class("boxed-list"))
+                .then_some(scroller)
+        })
+    };
+    pump_until(|| scroller().is_some_and(|s| s.height() > 0));
+    let scroller = scroller().unwrap();
+    pump_until(|| scroller.vadjustment().upper() > 0.0);
+    let adjustment = scroller.vadjustment();
+    assert!(
+        adjustment.upper() > adjustment.page_size(),
+        "12 nearby people overflow a short window, so the dialog scrolls"
+    );
+    window.close();
+    manager.apply_nearby_snapshot(original);
 }

@@ -302,6 +302,10 @@ button.suggested-action {{
     color: #fff;
 }}
 
+.nearby-preview-button {{
+    font-weight: normal;
+}}
+
 .iris-root scrolledwindow.nearby-strip,
 .iris-root scrolledwindow.nearby-strip viewport {{
     background-color: transparent;

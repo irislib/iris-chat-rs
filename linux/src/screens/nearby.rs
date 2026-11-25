@@ -76,39 +76,84 @@ pub fn present(parent: Option<&gtk::Window>, manager: Rc<AppManager>) {
     list.add_css_class("boxed-list");
     content.append(&list);
 
-    refresh(
-        &list,
-        &status,
-        manager.current_state().preferences.nearby_enabled,
-        &manager.nearby_snapshot(),
-        &manager,
-    );
+    let mut rendered = None;
+    update_list(&list, &status, &manager, &mut rendered);
 
-    let list_for_updates = list.clone();
-    let status_for_updates = status.clone();
-    let lan_for_updates = lan.clone();
-    let mailbag_for_updates = mailbag.clone();
+    let list_for_updates = list.downgrade();
+    let status_for_updates = status.downgrade();
+    let lan_for_updates = lan.downgrade();
+    let mailbag_for_updates = mailbag.downgrade();
     let manager_for_updates = manager.clone();
     glib::timeout_add_seconds_local(1, move || {
-        let snapshot = manager_for_updates.nearby_snapshot();
+        // Stop once the dialog is gone.
+        let (Some(list), Some(status), Some(lan), Some(mailbag)) = (
+            list_for_updates.upgrade(),
+            status_for_updates.upgrade(),
+            lan_for_updates.upgrade(),
+            mailbag_for_updates.upgrade(),
+        ) else {
+            return glib::ControlFlow::Break;
+        };
+        if list.root().is_none() {
+            return glib::ControlFlow::Break;
+        }
         let nearby_enabled = manager_for_updates
             .current_state()
             .preferences
             .nearby_enabled;
-        lan_for_updates.set_sensitive(nearby_enabled);
-        mailbag_for_updates.set_sensitive(nearby_enabled);
-        refresh(
-            &list_for_updates,
-            &status_for_updates,
-            nearby_enabled,
-            &snapshot,
-            &manager_for_updates,
-        );
+        lan.set_sensitive(nearby_enabled);
+        mailbag.set_sensitive(nearby_enabled);
+        update_list(&list, &status, &manager_for_updates, &mut rendered);
         glib::ControlFlow::Continue
     });
 
-    dialog.set_child(Some(&content));
+    // Scroll when many people are nearby; otherwise keep the natural height.
+    let scroller = gtk::ScrolledWindow::builder()
+        .hscrollbar_policy(gtk::PolicyType::Never)
+        .propagate_natural_height(true)
+        .child(&content)
+        .build();
+    dialog.set_child(Some(&scroller));
     crate::widgets::dialogs::present(&dialog, parent);
+}
+
+type RenderedNearby = Option<(bool, DesktopNearbySnapshot)>;
+
+/// Rebuilds rows only when Nearby changed, so rows and avatars stay put.
+fn update_list(
+    list: &gtk::ListBox,
+    status: &gtk::Label,
+    manager: &Rc<AppManager>,
+    rendered: &mut RenderedNearby,
+) {
+    let next = (
+        manager.current_state().preferences.nearby_enabled,
+        manager.nearby_snapshot(),
+    );
+    if rendered.as_ref() == Some(&next) {
+        return;
+    }
+    refresh(list, status, next.0, &next.1, manager);
+    *rendered = Some(next);
+}
+
+#[cfg(feature = "ui-tests")]
+pub(crate) fn nearby_list_for_test(
+    manager: &Rc<AppManager>,
+    rendered: &mut Option<(bool, DesktopNearbySnapshot)>,
+) -> gtk::ListBox {
+    let list = gtk::ListBox::new();
+    update_list(&list, &gtk::Label::new(None), manager, rendered);
+    list
+}
+
+#[cfg(feature = "ui-tests")]
+pub(crate) fn update_nearby_list_for_test(
+    list: &gtk::ListBox,
+    manager: &Rc<AppManager>,
+    rendered: &mut Option<(bool, DesktopNearbySnapshot)>,
+) {
+    update_list(list, &gtk::Label::new(None), manager, rendered);
 }
 
 fn refresh(
@@ -183,8 +228,7 @@ fn peer_row(peer: &DesktopNearbyPeerSnapshot, manager: &Rc<AppManager>) -> adw::
     if peer.owner_pubkey_hex.is_some() {
         row.show_pointer_cursor();
     }
-    let icon = gtk::Image::from_icon_name("avatar-default-symbolic");
-    row.add_prefix(&icon);
+    row.add_prefix(&peer_avatar(peer, &title, manager));
     if let Some(owner) = peer.owner_pubkey_hex.clone() {
         let manager = manager.clone();
         let peer = peer.clone();
@@ -205,6 +249,31 @@ fn peer_row(peer: &DesktopNearbyPeerSnapshot, manager: &Rc<AppManager>) -> adw::
         });
     }
     row
+}
+
+fn peer_avatar(
+    peer: &DesktopNearbyPeerSnapshot,
+    title: &str,
+    manager: &Rc<AppManager>,
+) -> gtk::Widget {
+    const SIZE: i32 = 36;
+    let avatar: gtk::Widget = match peer.owner_pubkey_hex.as_deref() {
+        Some(owner) => crate::widgets::user_profile::avatar(manager, owner, SIZE, false).upcast(),
+        None => {
+            let avatar = adw::Avatar::new(SIZE, Some(title), true);
+            if let Some(url) = peer.picture_url.as_deref() {
+                crate::widgets::image_cache::fetch_proxied_into_avatar(
+                    &avatar,
+                    url,
+                    &manager.current_state().preferences,
+                    (SIZE * 2) as u32,
+                );
+            }
+            avatar.upcast()
+        }
+    };
+    avatar.set_valign(gtk::Align::Center);
+    avatar
 }
 
 fn is_known_direct_chat(manager: &Rc<AppManager>, owner: &str) -> bool {
