@@ -1014,6 +1014,73 @@ class RealRelayHarnessTest : PhysicalBleHarnessBase() {
         )
     }
 
+    /** Waits for a group someone else created, found by its name. */
+    @Test
+    fun wait_for_group_named_from_args() {
+        ensureLoggedIn()
+        val groupName = requiredArg("group_name")
+        val timeoutMs =
+            optionalArg("timeout_ms")?.toLongOrNull()
+                ?: ((optionalArg("timeout_secs")?.toLongOrNull() ?: 120L) * 1_000L)
+        val wakeRelay = relayWakeCallback(null)
+        val thread =
+            waitForState("group named $groupName", timeoutMs = timeoutMs) {
+                wakeRelay()
+                appManager()
+                    .state
+                    .value
+                    .chatList
+                    .firstOrNull { thread -> thread.displayName == groupName && thread.memberCount > 1u }
+            }
+        appManager().openChat(thread.chatId)
+        reportStatus(
+            "chat_id" to thread.chatId,
+            "group_name" to thread.displayName,
+            "member_count" to thread.memberCount.toString(),
+        )
+    }
+
+    /**
+     * Sends one group message over Nearby Bluetooth, then stays running until
+     * the expected group reply arrives, so both legs travel while this phone
+     * has no IP path.
+     */
+    @Test
+    fun nearby_group_exchange_from_args() {
+        ensureLoggedIn()
+        val chatId = requiredArg("chat_id")
+        val outgoing = requiredArg("send_message")
+        val expected = requiredArg("expect_message")
+        val timeoutMs = (optionalArg("timeout_secs")?.toLongOrNull() ?: 300L) * 1_000L
+        appManager().dispatch(AppAction.SetNearbyEnabled(true))
+        appManager().dispatch(AppAction.SetNearbyBluetoothEnabled(true))
+        val chat = ensureChatOpenById(chatId)
+        val startedAt = SystemClock.elapsedRealtime()
+        appManager().sendText(chat.chatId, outgoing)
+        waitForState("outgoing $outgoing", timeoutMs = 30_000) {
+            true.takeIf { countMessages(chat.chatId, outgoing, "outgoing") > 0 }
+        }
+        println("fips_ble_group_sent=true")
+        waitForState("incoming $expected", timeoutMs = timeoutMs) {
+            true.takeIf { countMessages(chat.chatId, expected, "incoming") > 0 }
+        }
+        val ack = optionalArg("ack_message")?.takeIf { it.isNotBlank() }
+        if (ack != null) {
+            appManager().sendText(chat.chatId, ack)
+            waitForState("outgoing $ack", timeoutMs = 30_000) {
+                true.takeIf { countMessages(chat.chatId, ack, "outgoing") > 0 }
+            }
+            // Stay up so the acknowledgement can leave over Bluetooth.
+            SystemClock.sleep(optionalArg("ack_hold_ms")?.toLongOrNull() ?: 60_000L)
+        }
+        reportStatus(
+            "chat_id" to chat.chatId,
+            "sent" to outgoing,
+            "received" to expected,
+            "elapsed_ms" to (SystemClock.elapsedRealtime() - startedAt).toString(),
+        )
+    }
+
     @Test
     fun wait_for_group_admin_from_args() {
         ensureLoggedIn()

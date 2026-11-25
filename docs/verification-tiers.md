@@ -144,6 +144,18 @@ To require it from the release gate, pass `--physical-ble-idle` (or set
 and `IRIS_PHYSICAL_BLE_XCTESTRUN`. This lane always executes, even when a recent
 source-only release receipt exists; missing hardware/build inputs fail.
 
+`scripts/physical_ble_group.py` extends this to a group. The iPhone creates a
+group with the `.blegate` Android account and a fresh `iris` CLI account on an
+online Linux host (`--linux-host`, `--linux-iris`). Both phones then go offline:
+Android loses every IP path and the iPhone test switches off Wi-Fi and mobile
+data in Settings. They exchange group messages over Bluetooth, reconnect, and
+the online member must receive both. The iPhone test turns its radios back on
+from its own process, even after a failed check, because iOS cannot launch a
+new test runner offline. The driver therefore waits for that test to finish
+instead of stopping it. As of v2026.11.25 this gate fails: group messages are
+shared sender-key ciphertext, which never travels over Bluetooth, so offline
+phones do not exchange group messages.
+
 Saved evidence can be rechecked without accessing the phones:
 
 ```sh

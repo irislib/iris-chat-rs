@@ -235,6 +235,178 @@ final class FipsBlePhysicalUITests: XCTestCase {
 #endif
     }
 
+    /// Opt-in physical gate: a group keeps working over Bluetooth while both
+    /// phones are offline, and catches up with an online member afterwards.
+    /// Driven by `scripts/physical_ble_group.py`, which takes the Android
+    /// member offline and keeps a third member online.
+    func testGroupMessagesOverFipsBleWhileOffline() throws {
+#if os(macOS) || targetEnvironment(simulator)
+        throw XCTSkip("Offline Bluetooth group gate needs a physical iPhone")
+#else
+        let environment = ProcessInfo.processInfo.environment
+        guard let members = environment["IRIS_FIPS_GROUP_MEMBERS"]?
+                .split(separator: ",").map(String.init), !members.isEmpty,
+              let groupName = environment["IRIS_FIPS_GROUP_NAME"],
+              let offlineIncoming = environment["IRIS_FIPS_GROUP_EXPECT_OFFLINE"],
+              let offlineOutgoing = environment["IRIS_FIPS_GROUP_SEND_OFFLINE"],
+              let offlineAck = environment["IRIS_FIPS_GROUP_OFFLINE_ACK"],
+              let onlineIncoming = environment["IRIS_FIPS_GROUP_EXPECT_ONLINE"] else {
+            throw XCTSkip("Run through scripts/physical_ble_group.py")
+        }
+        let readyMessages = (environment["IRIS_FIPS_GROUP_READY_MESSAGES"] ?? "")
+            .split(separator: ",").map(String.init)
+
+        let app = XCUIApplication()
+        app.launchEnvironment["IRIS_UI_TEST_RESET"] = "1"
+        app.launchEnvironment["IRIS_UI_TEST_RUN_ID"] = environment["IRIS_FIPS_PHYSICAL_RUN_ID"] ?? "fips-ble-group"
+        app.launchEnvironment["IRIS_UI_TEST_BYPASS_KEYCHAIN"] = "1"
+        app.launchEnvironment["IRIS_DISABLE_NOTIFICATIONS"] = "1"
+        app.launch()
+        XCTAssertTrue(app.wait(for: .runningForeground, timeout: 20))
+        dismissBlockingSystemAlertIfPresent()
+        createTestAccount(in: app)
+        enableFipsBluetooth(in: app)
+
+        element(app, "chatListNewChatButton").tap()
+        let newGroup = element(app, "newChatNewGroupButton")
+        XCTAssertTrue(newGroup.waitForExistence(timeout: 15))
+        newGroup.tap()
+        let memberInput = element(app, "newGroupMemberInput")
+        XCTAssertTrue(memberInput.waitForExistence(timeout: 10))
+        for (index, member) in members.enumerated() {
+            memberInput.tap()
+            memberInput.typeText(member)
+            let chips = app.descendants(matching: .any).matching(identifier: "memberChipRemove")
+            let added = XCTNSPredicateExpectation(
+                predicate: NSPredicate(format: "count >= %d", index + 1), object: chips
+            )
+            XCTAssertEqual(XCTWaiter.wait(for: [added], timeout: 10), .completed, "group member was not added")
+        }
+        element(app, "newGroupNextButton").tap()
+        let nameInput = element(app, "newGroupNameInput")
+        XCTAssertTrue(nameInput.waitForExistence(timeout: 10))
+        nameInput.tap()
+        nameInput.typeText(groupName)
+        element(app, "newGroupCreateButton").tap()
+        XCTAssertTrue(element(app, "chatMessageInput").waitForExistence(timeout: 60))
+        print("IRIS_FIPS_GROUP_CREATED")
+
+        for message in readyMessages {
+            XCTAssertTrue(app.staticTexts[message].waitForExistence(timeout: 300),
+                          "member did not join the group while online: \(message)")
+        }
+        print("IRIS_FIPS_GROUP_MEMBERS_READY")
+
+        let previous = setPhoneNetwork(enabled: false)
+        // A fresh test runner cannot launch offline (iOS must verify the developer
+        // certificate online), so restore from this process even if a check fails.
+        addTeardownBlock { [weak self] in
+            self?.setPhoneNetwork(enabled: true, only: previous.filter { $0.value })
+        }
+        print("IRIS_FIPS_PHONE_NETWORK_PREVIOUS=" + previous.map { "\($0.key):\($0.value ? 1 : 0)" }
+            .sorted().joined(separator: ","))
+        app.activate()
+        XCTAssertTrue(element(app, "chatMessageInput").waitForExistence(timeout: 20))
+        print("IRIS_FIPS_IPHONE_OFFLINE")
+
+        XCTAssertTrue(app.staticTexts[offlineIncoming].waitForExistence(timeout: 300),
+                      "offline group message did not arrive over Bluetooth")
+        print("IRIS_FIPS_GROUP_OFFLINE_RECEIVED")
+        typeExactly(offlineOutgoing, into: element(app, "chatMessageInput"))
+        element(app, "chatSendButton").tap()
+        XCTAssertTrue(app.staticTexts[offlineOutgoing].waitForExistence(timeout: 15))
+        print("IRIS_FIPS_GROUP_OFFLINE_SENT")
+        XCTAssertTrue(app.staticTexts[offlineAck].waitForExistence(timeout: 300),
+                      "offline group reply was not acknowledged over Bluetooth")
+        print("IRIS_FIPS_GROUP_OFFLINE_ACKED")
+
+        _ = setPhoneNetwork(enabled: true, only: previous)
+        app.activate()
+        print("IRIS_FIPS_IPHONE_ONLINE")
+        XCTAssertTrue(app.staticTexts[onlineIncoming].waitForExistence(timeout: 300),
+                      "message from the online member did not arrive after reconnecting")
+        print("IRIS_FIPS_GROUP_DONE")
+#endif
+    }
+
+    /// Always run by the driver afterwards, so a failed group run cannot leave
+    /// the phone offline.
+    func testRestorePhoneNetworkAfterBleGroup() throws {
+#if os(macOS) || targetEnvironment(simulator)
+        throw XCTSkip("Physical iPhone only")
+#else
+        guard let spec = ProcessInfo.processInfo.environment["IRIS_FIPS_RESTORE_NETWORK"] else {
+            throw XCTSkip("Run through scripts/physical_ble_group.py")
+        }
+        var wanted: [String: Bool] = [:]
+        for pair in spec.split(separator: ",") {
+            let parts = pair.split(separator: ":")
+            if parts.count == 2 { wanted[String(parts[0])] = parts[1] == "1" }
+        }
+        // Restoring an already-on radio is a no-op, so this is safe after success too.
+        setPhoneNetwork(enabled: true, only: wanted.filter { $0.value })
+        print("IRIS_FIPS_PHONE_NETWORK_RESTORED")
+#endif
+    }
+
+    /// Switches Wi-Fi and mobile data in Settings. Returns each radio's state
+    /// before the change, only for radios this phone has.
+    @discardableResult
+    private func setPhoneNetwork(enabled: Bool, only: [String: Bool]? = nil) -> [String: Bool] {
+        let settings = XCUIApplication(bundleIdentifier: "com.apple.Preferences")
+        let rows: [(String, NSPredicate)] = [
+            ("wifi", NSPredicate(format: "identifier == 'com.apple.settings.wifi' OR label BEGINSWITH 'Wi'")),
+            ("cellular", NSPredicate(format:
+                "identifier == 'com.apple.settings.cellular' OR label IN {'Cellular', 'Mobile Service', 'Mobile Data'}")),
+        ]
+        var before: [String: Bool] = [:]
+        for (radio, predicate) in rows {
+            if let only, only[radio] == nil { continue }
+            settings.terminate()
+            settings.launch()
+            let row = settings.descendants(matching: .any).matching(predicate)
+                .matching(NSPredicate(format: "elementType IN {%d, %d}",
+                                      XCUIElement.ElementType.cell.rawValue,
+                                      XCUIElement.ElementType.button.rawValue)).firstMatch
+            guard row.waitForExistence(timeout: 8) else {
+                XCTAssertNotEqual(radio, "wifi", "Wi-Fi settings row is missing")
+                continue
+            }
+            row.tap()
+            let toggle = settings.switches.firstMatch
+            guard toggle.waitForExistence(timeout: 8) else {
+                XCTFail("\(radio) switch is missing")
+                continue
+            }
+            let isOn = (toggle.value as? String) == "1"
+            before[radio] = isOn
+            if isOn != enabled {
+                toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+                let changed = XCTNSPredicateExpectation(
+                    predicate: NSPredicate(format: "value == %@", enabled ? "1" : "0"), object: toggle
+                )
+                XCTAssertEqual(XCTWaiter.wait(for: [changed], timeout: 10), .completed,
+                               "\(radio) did not switch \(enabled ? "on" : "off")")
+            }
+        }
+        return before
+    }
+
+    private func typeExactly(_ text: String, into field: XCUIElement) {
+        field.tap()
+        var entered = ""
+        let characters = Array(text)
+        for offset in stride(from: 0, to: characters.count, by: 8) {
+            let chunk = String(characters[offset..<min(offset + 8, characters.count)])
+            field.typeText(chunk)
+            entered += chunk
+            let exact = XCTNSPredicateExpectation(
+                predicate: NSPredicate(format: "value == %@", entered), object: field
+            )
+            XCTAssertEqual(XCTWaiter.wait(for: [exact], timeout: 3), .completed, "text was not entered exactly")
+        }
+    }
+
     private func dismissBlockingSystemAlertIfPresent() {
         let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
         let ok = springboard.buttons["OK"]
