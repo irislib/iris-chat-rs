@@ -219,8 +219,7 @@ fn build_header(manager: &Rc<AppManager>) -> (adw::HeaderBar, HeaderWidgets) {
     let empty_title = gtk::Label::new(None);
     header.set_title_widget(Some(&empty_title));
 
-    let back_button = gtk::Button::from_icon_name("go-previous-symbolic");
-    back_button.set_tooltip_text(Some("Back"));
+    let back_button = crate::widgets::controls::back_button();
     back_button.set_visible(false);
     {
         let manager = manager.clone();
@@ -228,7 +227,6 @@ fn build_header(manager: &Rc<AppManager>) -> (adw::HeaderBar, HeaderWidgets) {
             manager.dispatch(AppAction::NavigateBack);
         });
     }
-    back_button.add_css_class("circular");
     header.pack_start(&back_button);
     header.pack_start(&title_slot);
 

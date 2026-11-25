@@ -9,7 +9,39 @@ pub fn composer_control(control: &impl IsA<gtk::Widget>) {
     control.show_pointer_cursor();
 }
 
+/// Filled paper plane for send buttons. Bundled so it reads the same in
+/// every icon theme (several themes draw "send" as an upload arrow).
+pub fn send_icon() -> gtk::Image {
+    thread_local! {
+        static TEXTURE: gtk::gdk::Texture = gtk::gdk::Texture::from_bytes(
+            &gtk::glib::Bytes::from_static(include_bytes!("../../resources/send.png")),
+        )
+        .expect("bundled send icon");
+    }
+    let image = TEXTURE.with(|texture| gtk::Image::from_paintable(Some(texture)));
+    image.set_pixel_size(20);
+    // The plane's weight sits left of its box; nudge it to look centered.
+    image.set_margin_start(2);
+    image
+}
+
+/// Circular header back button.
+pub fn back_button() -> gtk::Button {
+    let button = gtk::Button::from_icon_name("go-previous-symbolic");
+    button.add_css_class("circular");
+    button.add_css_class("header-back");
+    button.set_valign(gtk::Align::Center);
+    button.set_tooltip_text(Some("Back"));
+    button
+}
+
 pub const CSS: &str = r#"
+headerbar button.header-back {
+    border-radius: 9999px;
+    min-width: 34px;
+    min-height: 34px;
+    padding: 0;
+}
 button.composer-control.circular,
 menubutton.composer-control > button {
     border-radius: 9999px;

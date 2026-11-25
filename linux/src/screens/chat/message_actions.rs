@@ -158,7 +158,7 @@ fn confirm_delete(
     content.append(&actions);
     dialog.set_child(Some(&content));
     dialog.set_default_widget(Some(&cancel));
-    dialog.present(parent);
+    crate::widgets::dialogs::present(&dialog, parent);
 }
 
 pub(super) fn history_button(

@@ -174,7 +174,7 @@ pub(crate) fn confirm_delete_app_data(parent: Option<&gtk::Window>, manager: &Rc
 
     content.append(&buttons);
     dialog.set_child(Some(&content));
-    dialog.present(parent);
+    crate::widgets::dialogs::present(&dialog, parent);
 }
 
 pub(crate) fn show_chat_mute_options(
@@ -334,7 +334,7 @@ pub(crate) fn confirm_delete_chat(
 
     content.append(&buttons);
     dialog.set_child(Some(&content));
-    dialog.present(parent);
+    crate::widgets::dialogs::present(&dialog, parent);
 }
 
 pub(crate) fn dispatch_on_click<F>(button: &gtk::Button, manager: &Rc<AppManager>, action: F)

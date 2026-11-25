@@ -266,6 +266,7 @@ pub(super) fn run(manager: Rc<AppManager>) {
     check_sidebar_settings(root);
     check_wide_section_shortcuts(&slot, &manager, &window);
     check_sync_status_floats(root);
+    check_chrome_buttons(&window, &slot, &manager);
 
     search.grab_focus();
     pump_until(|| owns_focus(&window, search.upcast_ref()));
@@ -376,4 +377,69 @@ pub(super) fn run(manager: Rc<AppManager>) {
     );
     screenshot(&window, "linux-settings-shell-narrow.png");
     window.destroy();
+}
+
+/// Back is a circle, send shows the bundled paper plane, and confirmation
+/// dialogs close on an outside click.
+fn check_chrome_buttons(window: &adw::Window, slot: &Content, manager: &Rc<AppManager>) {
+    fn find(widget: &gtk::Widget, found: &dyn Fn(&gtk::Widget) -> bool) -> Option<gtk::Widget> {
+        if found(widget) {
+            return Some(widget.clone());
+        }
+        let mut child = widget.first_child();
+        while let Some(widget) = child {
+            if let Some(hit) = find(&widget, found) {
+                return Some(hit);
+            }
+            child = widget.next_sibling();
+        }
+        None
+    }
+
+    let header_window = adw::Window::builder()
+        .default_width(360)
+        .default_height(120)
+        .build();
+    let header = adw::HeaderBar::new();
+    let back = crate::widgets::controls::back_button();
+    header.pack_start(&back);
+    let column = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    column.append(&header);
+    header_window.set_content(Some(&column));
+    header_window.present();
+    pump_until(|| back.width() > 0);
+    assert_eq!(
+        (back.width(), back.height()),
+        (34, 34),
+        "back button is a circle"
+    );
+    header_window.close();
+    // Give focus back to the app window for the checks that follow.
+    window.present();
+    pump_until(|| window.is_active());
+
+    let send = find(slot.root.upcast_ref(), &|widget| {
+        widget.is::<gtk::Button>() && widget.tooltip_text().as_deref() == Some("Send")
+    })
+    .expect("send button");
+    let icon = send
+        .first_child()
+        .and_then(|child| child.downcast::<gtk::Image>().ok())
+        .expect("send icon");
+    assert!(
+        icon.paintable().is_some(),
+        "send uses the bundled paper plane"
+    );
+    assert_ne!(icon.icon_name().as_deref(), Some("go-up-symbolic"));
+    pump_until(|| send.width() > 0);
+    assert_eq!(send.width(), send.height(), "send button is a circle");
+
+    crate::screens::confirm_delete_app_data(Some(window.upcast_ref()), manager);
+    let dialog = window.visible_dialog().expect("confirmation dialog");
+    assert!(
+        dialog.has_css_class("dismiss-on-backdrop"),
+        "confirmation closes on an outside click"
+    );
+    dialog.force_close();
+    pump_until(|| window.visible_dialog().is_none());
 }

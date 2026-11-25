@@ -201,7 +201,7 @@ fn present_link_device_confirmation(
 
     content.append(&buttons);
     dialog.set_child(Some(&content));
-    dialog.present(parent);
+    crate::widgets::dialogs::present(&dialog, parent);
 }
 
 fn link_device_confirmation_title(_input: &ResolvedDeviceAuthorizationInput) -> String {

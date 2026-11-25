@@ -655,7 +655,7 @@ fn present_qr_dialog(
     content.append(&actions);
 
     dialog.set_child(Some(&content));
-    dialog.present(parent);
+    crate::widgets::dialogs::present(&dialog, parent);
 }
 
 fn general_group(prefs: &PreferencesSnapshot, manager: &Rc<AppManager>) -> adw::PreferencesGroup {

@@ -207,6 +207,9 @@ fn palette_css(palette: GtkPalette) -> String {
 @define-color window_fg_color {text_primary};
 @define-color view_bg_color {background};
 @define-color view_fg_color {text_primary};
+@define-color sidebar_bg_color {background};
+@define-color sidebar_backdrop_color {background};
+@define-color sidebar_fg_color {text_primary};
 @define-color headerbar_bg_color {toolbar};
 @define-color headerbar_fg_color {text_primary};
 @define-color card_bg_color {panel};

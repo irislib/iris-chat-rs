@@ -187,5 +187,5 @@ fn present_nickname_editor(
     content.append(&actions);
 
     dialog.set_child(Some(&content));
-    dialog.present(parent);
+    crate::widgets::dialogs::present(&dialog, parent);
 }

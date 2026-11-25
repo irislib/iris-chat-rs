@@ -76,7 +76,7 @@ impl EditControls {
         input.remove_css_class("editing-message");
         banner.set_visible(false);
         attach.set_sensitive(true);
-        send.set_icon_name("go-up-symbolic");
+        send.set_child(Some(&crate::widgets::controls::send_icon()));
         send.add_css_class("circular");
         send.set_tooltip_text(Some("Send"));
         preview.set_visible(
@@ -392,7 +392,8 @@ impl Composer {
         }
 
         let busy = state.busy.sending_message;
-        let send = gtk::Button::from_icon_name("go-up-symbolic");
+        let send = gtk::Button::new();
+        send.set_child(Some(&crate::widgets::controls::send_icon()));
         send.add_css_class("suggested-action");
         crate::widgets::controls::composer_control(&send);
         send.set_tooltip_text(Some("Send"));

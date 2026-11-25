@@ -277,7 +277,7 @@ impl Calls {
             .body(message)
             .build();
         dialog.add_response("close", "Close");
-        dialog.present(Some(&self.window));
+        crate::widgets::dialogs::present(dialog.upcast_ref(), Some(&self.window));
     }
     fn stop_screen(&mut self, restore_camera: bool) {
         if let Some(selection) = self.screen_selection.take() {
@@ -550,7 +550,10 @@ impl Calls {
                         .body(&message)
                         .build();
                     dialog.add_response("close", "Close");
-                    dialog.present(self.window.transient_for().as_ref());
+                    crate::widgets::dialogs::present(
+                        dialog.upcast_ref(),
+                        self.window.transient_for().as_ref(),
+                    );
                     break;
                 }
             }

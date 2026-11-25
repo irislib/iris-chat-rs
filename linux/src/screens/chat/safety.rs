@@ -309,7 +309,7 @@ pub(super) fn present_block_user_dialog(
     content.append(&cancel);
 
     dialog.set_child(Some(&content));
-    dialog.present(parent);
+    crate::widgets::dialogs::present(&dialog, parent);
 }
 
 pub(super) fn present_report_user_dialog(
@@ -388,7 +388,7 @@ pub(super) fn present_report_user_dialog(
     content.append(&cancel);
 
     dialog.set_child(Some(&content));
-    dialog.present(parent);
+    crate::widgets::dialogs::present(&dialog, parent);
 }
 
 fn present_block_and_report_user_dialog(
@@ -453,7 +453,7 @@ fn present_block_and_report_user_dialog(
     content.append(&cancel);
 
     dialog.set_child(Some(&content));
-    dialog.present(parent);
+    crate::widgets::dialogs::present(&dialog, parent);
 }
 
 fn dialog_action_button(label: &str, destructive: bool) -> gtk::Button {

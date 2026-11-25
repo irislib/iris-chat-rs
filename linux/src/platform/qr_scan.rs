@@ -156,7 +156,7 @@ pub fn open_scanner<F: Fn(String) + 'static>(parent: Option<&gtk::Window>, on_re
         stop_for_close.store(true, Ordering::SeqCst);
     });
 
-    dialog.present(parent);
+    crate::widgets::dialogs::present(&dialog, parent);
 }
 
 #[cfg(target_os = "linux")]
