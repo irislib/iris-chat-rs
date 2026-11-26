@@ -71,7 +71,7 @@ impl ProtocolEngine {
             self.group_sender_key_retry.borrow_mut().yielded = true;
             return Ok(None);
         }
-        let (active, mut remaining) = {
+        let (active, mut remaining, probe_frontier) = {
             let mut retry = self.group_sender_key_retry.borrow_mut();
             if retry
                 .active
@@ -82,7 +82,17 @@ impl ProtocolEngine {
                 retry.yielded = true;
                 return Ok(None);
             }
-            (retry.active.take(), retry.key_trials_remaining)
+            let active = retry.active.take();
+            // When starting a fresh blind decrypt on a rotated stream (or live
+            // ingress before retry inputs are built), probe each key's current
+            // frontier (latest_key_id first) before starting an exhaustive
+            // BTreeMap-ordered scan across older epochs.
+            let probe_frontier = active.is_none()
+                && retry
+                    .inputs
+                    .get(&message.sender_event_pubkey)
+                    .is_none_or(GroupSenderKeyRetryInput::has_multiple_sender_keys);
+            (active, retry.key_trials_remaining, probe_frontier)
         };
         let (mut cursor, cached_message, pending_index) = active.map_or_else(
             || (None, message.clone(), usize::MAX),
@@ -91,11 +101,33 @@ impl ProtocolEngine {
         let decrypt_started = std::time::Instant::now();
         #[cfg(test)]
         let trials_before = remaining;
-        let result = self.group_manager.plan_sender_key_message_with_budget(
-            message.clone(),
-            &mut cursor,
-            &mut remaining,
-        );
+        let result = if probe_frontier {
+            // Frontier probes are not resumable. Keep one trial for the ordinary
+            // search so many retained epochs cannot consume every turn without
+            // creating or advancing a history cursor.
+            let mut frontier_remaining = remaining.saturating_sub(1);
+            let frontier_budget = frontier_remaining;
+            let frontier_result = self
+                .group_manager
+                .plan_sender_key_message_frontier_with_budget(message, &mut frontier_remaining);
+            remaining -= frontier_budget - frontier_remaining;
+            match frontier_result {
+                Ok(Some(plan)) => Ok(Some(plan)),
+                Ok(None) if remaining == 0 => Ok(None),
+                Ok(None) => self.group_manager.plan_sender_key_message_with_budget(
+                    message.clone(),
+                    &mut cursor,
+                    &mut remaining,
+                ),
+                Err(error) => Err(error),
+            }
+        } else {
+            self.group_manager.plan_sender_key_message_with_budget(
+                message.clone(),
+                &mut cursor,
+                &mut remaining,
+            )
+        };
         let decrypt_elapsed = decrypt_started.elapsed();
         #[cfg(test)]
         {

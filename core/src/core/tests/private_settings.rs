@@ -241,3 +241,34 @@ fn check_private_state_link_history(legacy_acceptance: bool) {
         }
     }
 }
+
+#[test]
+fn request_decision_cache_retries_after_interrupted_storage_read() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer = Keys::generate().public_key().to_hex();
+    let (mut core, _, _dir) =
+        logged_in_test_core_with_updates("decision-cache-read-retry", &owner, &device);
+    let event = nostr_identity::build_private_setting(
+        owner.public_key(),
+        "requestDecision",
+        &peer,
+        &serde_json::json!({"chatId":peer,"decision":"rejected","updatedAtMs":1000}),
+    )
+    .unwrap();
+    assert!(core.merge_private_setting(&event));
+    core.clear_request_decisions_cache();
+    assert_eq!(core.request_decision(&peer).unwrap().decision, "rejected");
+    core.clear_request_decisions_cache();
+
+    let db = core.app_store.shared();
+    db.lock().unwrap().progress_handler(1, Some(|| true));
+    assert!(core.request_decision(&peer).is_none());
+    db.lock().unwrap().progress_handler(0, None::<fn() -> bool>);
+
+    assert_eq!(
+        core.request_decision(&peer).unwrap().decision,
+        "rejected",
+        "A failed read must not permanently cache an empty decision set"
+    );
+}

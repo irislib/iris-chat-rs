@@ -19,6 +19,7 @@ mod engine_persistence;
 mod engine_remote_sends;
 mod engine_resolution;
 mod engine_sender_key_repair;
+mod engine_sender_key_repair_response;
 mod engine_sends;
 mod engine_state_helpers;
 mod engine_test_support;

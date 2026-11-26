@@ -331,21 +331,27 @@ impl ProtocolEngine {
                 }
             }
         };
-        let remote_sender_key_distribution_group_id =
-            if sender_owner != self.local_owner && sender_device.is_some() {
-                JsonGroupPayloadCodecV1
-                    .decode_pairwise_command(payload)
-                    .ok()
-                    .flatten()
-                    .and_then(|command| match command {
-                        GroupPairwiseCommand::SenderKeyDistribution { distribution } => {
-                            Some(distribution.group_id)
-                        }
-                        _ => None,
-                    })
-            } else {
-                None
-            };
+        let sender_key_distribution_source = if sender_device.is_some() {
+            JsonGroupPayloadCodecV1
+                .decode_pairwise_command(payload)
+                .ok()
+                .flatten()
+                .and_then(|command| match command {
+                    GroupPairwiseCommand::SenderKeyDistribution { distribution } => {
+                        Some((distribution.group_id, distribution.sender_event_pubkey))
+                    }
+                    _ => None,
+                })
+        } else {
+            None
+        };
+        let remote_sender_key_distribution_group_id = if sender_owner != self.local_owner {
+            sender_key_distribution_source
+                .as_ref()
+                .map(|(group_id, _)| group_id.clone())
+        } else {
+            None
+        };
         let previous_groups = is_supported_group_payload.then(|| self.group_manager.snapshot());
         let result = match sender_device {
             Some(device_pubkey) => {
@@ -362,8 +368,9 @@ impl ProtocolEngine {
                     .as_ref()
                     .is_some_and(|previous| *previous != self.group_manager.snapshot());
                 if let GroupIncomingEvent::SenderKeyRepairRequested(repair) = event {
-                    let effects = self.sender_key_repair_response_effects(
+                    let effects = self.sender_key_repair_response_effects_for_device(
                         repair.requester_owner,
+                        repair.requester_device,
                         &repair.request,
                         NdrUnixSeconds(unix_now().get()),
                     )?;
@@ -375,10 +382,25 @@ impl ProtocolEngine {
                     });
                 }
                 let mut effects = Vec::new();
-                if group_changed && matches!(&event, GroupIncomingEvent::MetadataUpdated(_)) {
-                    for pending in &mut self.pending_group_pairwise_payloads {
-                        pending.next_retry_at_secs = 0;
+                let mut repairs_changed = false;
+                if let GroupIncomingEvent::MetadataUpdated(group) = &event {
+                    repairs_changed |=
+                        self.clear_satisfied_revision_repairs(&group.group_id, group.revision);
+                    if group_changed {
+                        for pending in &mut self.pending_group_pairwise_payloads {
+                            pending.next_retry_at_secs = 0;
+                        }
                     }
+                }
+                if let Some((dist_group_id, dist_sender_event_pubkey)) =
+                    &sender_key_distribution_source
+                {
+                    repairs_changed |= self.record_sender_key_distribution_repair_feedback(
+                        dist_group_id,
+                        *dist_sender_event_pubkey,
+                        group_changed,
+                        trust_local_sibling_attribution,
+                    );
                 }
                 if group_changed && forward_to_local_siblings && sender_owner != self.local_owner {
                     // Learning a sender chain also returns MetadataUpdated, although the
@@ -404,7 +426,7 @@ impl ProtocolEngine {
                 effects.extend(retry.effects);
                 let fanout_retry = self.retry_pending_group_fanouts(now)?;
                 effects.extend(fanout_retry.effects);
-                if group_changed || !effects.is_empty() {
+                if group_changed || repairs_changed || !effects.is_empty() {
                     self.persist()?;
                 }
                 Ok(ProtocolGroupIncomingResult {
@@ -851,13 +873,17 @@ impl ProtocolEngine {
             match outcome {
                 Ok(Some(event)) => {
                     if let GroupIncomingEvent::SenderKeyRepairRequested(repair) = event {
-                        let effects = self.sender_key_repair_response_effects(
+                        let effects = self.sender_key_repair_response_effects_for_device(
                             repair.requester_owner,
+                            repair.requester_device,
                             &repair.request,
                             now,
                         )?;
                         result.effects.extend(effects);
                     } else {
+                        if let GroupIncomingEvent::MetadataUpdated(group) = &event {
+                            self.clear_satisfied_revision_repairs(&group.group_id, group.revision);
+                        }
                         result.events.push(event);
                     }
                     persist_needed = true;

@@ -144,6 +144,8 @@ impl ProtocolEngine {
         }
 
         let mut manager_snapshot = self.group_manager.snapshot();
+        let installed_group_id = snapshot.group_id.clone();
+        let installed_revision = snapshot.revision;
         match manager_snapshot
             .groups
             .iter_mut()
@@ -157,6 +159,7 @@ impl ProtocolEngine {
             .groups
             .sort_by(|left, right| left.group_id.cmp(&right.group_id));
         self.group_manager = GroupEventManager::from_snapshot(manager_snapshot)?;
+        self.clear_satisfied_revision_repairs(&installed_group_id, installed_revision);
         for pending in &mut self.pending_group_pairwise_payloads {
             pending.next_retry_at_secs = 0;
         }

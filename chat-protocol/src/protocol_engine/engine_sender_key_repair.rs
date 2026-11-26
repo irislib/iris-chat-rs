@@ -229,6 +229,121 @@ impl ProtocolEngine {
             })
     }
 
+    fn has_other_pending_group_sender_key_candidate(
+        &self,
+        group_id: &str,
+        sender_event_pubkey: NdrDevicePubkey,
+        exclude_fingerprint: &str,
+    ) -> bool {
+        self.pending_group_sender_key_messages
+            .iter()
+            .any(|pending| {
+                pending.sender_event_pubkey == sender_event_pubkey
+                    && self
+                        .group_sender_key_message_from_parsed(pending)
+                        .is_some_and(|message| {
+                            message.group_id == group_id
+                                && group_sender_key_fingerprint(&message) != exclude_fingerprint
+                        })
+            })
+    }
+
+    fn clear_group_sender_key_repairs_for_resolved_message(
+        &mut self,
+        group_id: &str,
+        sender_event_pubkey: NdrDevicePubkey,
+        key_id: Option<u32>,
+        message_number: Option<u32>,
+        fingerprint: &str,
+    ) {
+        // Camouflaged messages carry no plaintext key/position selector. Only
+        // retire the stream's blind repair once no other pending ciphertexts
+        // remain for that stream, so decrypting a newer live message never
+        // resets an existing repair's retry backoff or answered-round counter.
+        if key_id.is_none()
+            && self.has_other_pending_group_sender_key_candidate(
+                group_id,
+                sender_event_pubkey,
+                fingerprint,
+            )
+        {
+            return;
+        }
+        self.clear_group_sender_key_repairs(group_id, sender_event_pubkey, key_id, message_number);
+    }
+
+    pub(super) fn clear_satisfied_revision_repairs(
+        &mut self,
+        group_id: &str,
+        current_revision: u64,
+    ) -> bool {
+        let original_len = self.pending_group_sender_key_repairs.len();
+        self.pending_group_sender_key_repairs.retain(|pending| {
+            !(pending.group_id == group_id
+                && pending
+                    .required_revision
+                    .is_some_and(|required| current_revision >= required))
+        });
+        self.pending_group_sender_key_repairs.len() != original_len
+    }
+
+    pub(super) fn record_sender_key_distribution_repair_feedback(
+        &mut self,
+        group_id: &str,
+        sender_event_pubkey: NdrDevicePubkey,
+        group_changed: bool,
+        from_local_sibling_wrapper: bool,
+    ) -> bool {
+        let sender_hex = sender_event_pubkey.to_hex();
+
+        if group_changed {
+            for pending in &mut self.pending_group_sender_key_repairs {
+                if pending.group_id == group_id
+                    && pending.sender_event_pubkey_hex == sender_hex
+                    && (pending.unchanged_response_rounds > 0
+                        || pending.last_unchanged_response_request_count > 0)
+                {
+                    pending.unchanged_response_rounds = 0;
+                    pending.last_unchanged_response_request_count = 0;
+                }
+            }
+            return false;
+        }
+
+        if from_local_sibling_wrapper {
+            return false;
+        }
+
+        // If the stream's own writer keeps answering repair rounds with keys
+        // this device already holds, back off the repair schedule steeply
+        // (5m -> 15m -> 1h) without deleting ciphertexts: genuinely pre-join
+        // or during-removal traffic goes quiet, while harsh-network packet
+        // loss or a newer key rotation can still recover.
+        for pending in &mut self.pending_group_sender_key_repairs {
+            if pending.group_id != group_id
+                || pending.sender_event_pubkey_hex != sender_hex
+                || pending.required_revision.is_some()
+                || pending.request_count == 0
+            {
+                continue;
+            }
+            if pending.last_unchanged_response_request_count < pending.request_count {
+                pending.last_unchanged_response_request_count = pending.request_count;
+                pending.unchanged_response_rounds =
+                    pending.unchanged_response_rounds.saturating_add(1);
+                if pending.unchanged_response_rounds >= 3 && pending.last_requested_at_secs > 0 {
+                    pending.next_retry_at_secs = protocol_sender_key_repair_next_retry_at_for(
+                        NdrUnixSeconds(pending.last_requested_at_secs),
+                        pending.request_count,
+                        pending.unchanged_response_rounds,
+                    )
+                    .get();
+                }
+            }
+        }
+        false
+    }
+
     pub(super) fn unmapped_group_sender_key_candidate_is_known_message_author(
         &self,
         parsed: &nostr_double_ratchet::wire::ParsedGroupSenderKeyMessageEvent,
@@ -456,11 +571,16 @@ impl ProtocolEngine {
                 Err(nostr_double_ratchet::Error::Decryption(error))
                     if error == "duplicate or missing sender-key message" =>
                 {
-                    self.clear_group_sender_key_repairs(
+                    self.group_sender_key_retry
+                        .borrow_mut()
+                        .pending_revision_fingerprints
+                        .remove(&fingerprint);
+                    self.clear_group_sender_key_repairs_for_resolved_message(
                         &message_repair_group_id,
                         message_repair_sender,
                         message_repair_key_id,
                         message_repair_number,
+                        &fingerprint,
                     );
                     self.processed_group_sender_key_messages.insert(fingerprint);
                     self.persist()?;
@@ -476,6 +596,10 @@ impl ProtocolEngine {
             SenderKeyRepairRequest::from_pending_sender_key_message(&message, &result, now);
         match result {
             GroupSenderKeyHandleResult::Event(event) => {
+                self.group_sender_key_retry
+                    .borrow_mut()
+                    .pending_revision_fingerprints
+                    .remove(&fingerprint);
                 let discard = matches!(&event, GroupIncomingEvent::Message(received)
                     if received.sender_owner == self.local_owner
                         && is_message_mutation_payload(&received.body));
@@ -512,11 +636,12 @@ impl ProtocolEngine {
                         );
                     }
                 }
-                self.clear_group_sender_key_repairs(
+                self.clear_group_sender_key_repairs_for_resolved_message(
                     &message_repair_group_id,
                     message_repair_sender,
                     message_repair_key_id,
                     message_repair_number,
+                    &fingerprint,
                 );
                 self.processed_group_sender_key_messages.insert(fingerprint);
                 self.persist()?;
@@ -526,12 +651,39 @@ impl ProtocolEngine {
                     ..Default::default()
                 })
             }
-            GroupSenderKeyHandleResult::PendingDistribution { .. }
-            | GroupSenderKeyHandleResult::PendingRevision { .. } => {
+            GroupSenderKeyHandleResult::PendingDistribution { .. } => {
+                self.group_sender_key_retry
+                    .borrow_mut()
+                    .pending_revision_fingerprints
+                    .remove(&fingerprint);
                 let Some(request) = repair_request else {
                     anyhow::bail!("pending sender-key result did not produce a repair request");
                 };
-                let effects = self.sender_key_repair_request_effects(request, now)?;
+                let effects = self.sender_key_repair_request_effects_for_message(
+                    request,
+                    Some(message.created_at),
+                    now,
+                )?;
+                Ok(ProtocolGroupIncomingResult {
+                    consumed: true,
+                    pending: true,
+                    effects,
+                    ..Default::default()
+                })
+            }
+            GroupSenderKeyHandleResult::PendingRevision { .. } => {
+                self.group_sender_key_retry
+                    .borrow_mut()
+                    .pending_revision_fingerprints
+                    .insert(fingerprint);
+                let Some(request) = repair_request else {
+                    anyhow::bail!("pending sender-key result did not produce a repair request");
+                };
+                let effects = self.sender_key_repair_request_effects_for_message(
+                    request,
+                    Some(message.created_at),
+                    now,
+                )?;
                 Ok(ProtocolGroupIncomingResult {
                     consumed: true,
                     pending: true,
@@ -540,13 +692,18 @@ impl ProtocolEngine {
                 })
             }
             GroupSenderKeyHandleResult::Ignored => {
-                self.processed_group_sender_key_messages.insert(fingerprint);
-                self.clear_group_sender_key_repairs(
+                self.group_sender_key_retry
+                    .borrow_mut()
+                    .pending_revision_fingerprints
+                    .remove(&fingerprint);
+                self.clear_group_sender_key_repairs_for_resolved_message(
                     &message_repair_group_id,
                     message_repair_sender,
                     message_repair_key_id,
                     message_repair_number,
+                    &fingerprint,
                 );
+                self.processed_group_sender_key_messages.insert(fingerprint);
                 self.persist()?;
                 Ok(ProtocolGroupIncomingResult {
                     consumed: true,
@@ -559,6 +716,15 @@ impl ProtocolEngine {
     pub(super) fn sender_key_repair_request_effects(
         &mut self,
         request: SenderKeyRepairRequest,
+        now: NdrUnixSeconds,
+    ) -> anyhow::Result<Vec<ProtocolEffect>> {
+        self.sender_key_repair_request_effects_for_message(request, None, now)
+    }
+
+    fn sender_key_repair_request_effects_for_message(
+        &mut self,
+        request: SenderKeyRepairRequest,
+        message_created_at: Option<NdrUnixSeconds>,
         now: NdrUnixSeconds,
     ) -> anyhow::Result<Vec<ProtocolEffect>> {
         if self.local_owner_is_inactive_for_group(&request.group_id) {
@@ -574,17 +740,64 @@ impl ProtocolEngine {
         }
 
         let sender_event_pubkey_hex = request.sender_event_pubkey.to_hex();
-        let position = self
-            .pending_group_sender_key_repairs
-            .iter()
-            .position(|pending| {
-                pending.group_id == request.group_id
-                    && pending.sender_event_pubkey_hex == sender_event_pubkey_hex
-                    && pending.key_id == request.key_id
-                    && pending.message_number == request.message_number
-                    && pending.required_revision == request.required_revision
-            });
+        // Coalesce pending revision repairs per (group_id, required_revision)
+        // since the message already decrypted its sender key and only needs
+        // metadata at that revision. Coalesce explicit key-id repairs per
+        // (group_id, sender, key_id) keeping the lowest message_number.
+        let position = if let Some(required_revision) = request.required_revision {
+            self.pending_group_sender_key_repairs
+                .iter()
+                .position(|pending| {
+                    pending.group_id == request.group_id
+                        && pending.required_revision == Some(required_revision)
+                })
+        } else if let Some(key_id) = request.key_id {
+            self.pending_group_sender_key_repairs
+                .iter()
+                .position(|pending| {
+                    pending.group_id == request.group_id
+                        && pending.sender_event_pubkey_hex == sender_event_pubkey_hex
+                        && pending.key_id == Some(key_id)
+                        && pending.required_revision.is_none()
+                })
+        } else {
+            self.pending_group_sender_key_repairs
+                .iter()
+                .position(|pending| {
+                    pending.group_id == request.group_id
+                        && pending.sender_event_pubkey_hex == sender_event_pubkey_hex
+                        && pending.key_id == request.key_id
+                        && pending.message_number == request.message_number
+                        && pending.required_revision == request.required_revision
+                })
+        };
         let index = if let Some(index) = position {
+            if request.required_revision.is_none() {
+                if let Some(pending) = self.pending_group_sender_key_repairs.get_mut(index) {
+                    if let Some(incoming_number) = request.message_number {
+                        if pending
+                            .message_number
+                            .is_none_or(|existing| incoming_number < existing)
+                        {
+                            pending.message_number = Some(incoming_number);
+                        }
+                    }
+                    // A genuinely newer un-decryptable ciphertext must wake a
+                    // repair that backed off after unchanged replies for older
+                    // history (e.g. a later key rotation missed after rejoin).
+                    if pending.unchanged_response_rounds >= 3
+                        && message_created_at
+                            .is_some_and(|created| created.get() > pending.created_at_secs)
+                    {
+                        pending.created_at_secs = now.get();
+                        pending.request_count = 0;
+                        pending.last_requested_at_secs = 0;
+                        pending.next_retry_at_secs = 0;
+                        pending.unchanged_response_rounds = 0;
+                        pending.last_unchanged_response_request_count = 0;
+                    }
+                }
+            }
             index
         } else {
             self.pending_group_sender_key_repairs
@@ -598,6 +811,8 @@ impl ProtocolEngine {
                     last_requested_at_secs: 0,
                     request_count: 0,
                     next_retry_at_secs: 0,
+                    unchanged_response_rounds: 0,
+                    last_unchanged_response_request_count: 0,
                 });
             self.pending_group_sender_key_repairs.len() - 1
         };
@@ -607,14 +822,14 @@ impl ProtocolEngine {
         if Self::pending_group_sender_key_repair_due_at_secs(pending_repair) > now.get() {
             return Ok(Vec::new());
         }
+        let prior_request_count = pending_repair.request_count;
+        let effective_request = SenderKeyRepairRequest {
+            message_number: pending_repair.message_number.or(request.message_number),
+            ..request
+        };
 
-        let mut rng = OsRng;
-        let mut ctx = ProtocolContext::new(now, &mut rng);
-        let prepared = self.group_manager.request_sender_key_repair(
-            &mut self.session_manager,
-            &mut ctx,
-            &request,
-        )?;
+        let prepared =
+            self.prepare_group_repair_request_send(&effective_request, prior_request_count, now)?;
         let session_progress =
             [&prepared.remote, &prepared.local_sibling]
                 .into_iter()
@@ -632,8 +847,12 @@ impl ProtocolEngine {
         if let Some(pending) = self.pending_group_sender_key_repairs.get_mut(index) {
             pending.last_requested_at_secs = now.get();
             pending.request_count = pending.request_count.saturating_add(1);
-            pending.next_retry_at_secs =
-                protocol_sender_key_repair_next_retry_at(now, pending.request_count).get();
+            pending.next_retry_at_secs = protocol_sender_key_repair_next_retry_at_for(
+                now,
+                pending.request_count,
+                pending.unchanged_response_rounds,
+            )
+            .get();
         }
         if session_progress || fanouts_changed || local_sibling_state_may_change {
             // Persist after updating the clocks so a delivered request remains
@@ -648,6 +867,17 @@ impl ProtocolEngine {
         &mut self,
         now: NdrUnixSeconds,
     ) -> anyhow::Result<Vec<ProtocolEffect>> {
+        let before_prune = self.pending_group_sender_key_repairs.len();
+        self.pending_group_sender_key_repairs.retain(|pending| {
+            !pending.required_revision.is_some_and(|required| {
+                self.group_manager
+                    .group(&pending.group_id)
+                    .is_some_and(|group| group.revision >= required)
+            })
+        });
+        if self.pending_group_sender_key_repairs.len() != before_prune {
+            self.persist()?;
+        }
         let requests = self
             .pending_group_sender_key_repairs
             .iter()
@@ -681,121 +911,15 @@ impl ProtocolEngine {
             return pending.next_retry_at_secs;
         }
         let capped_due_at = pending.last_requested_at_secs.saturating_add(
-            protocol_sender_key_repair_retry_delay_secs(pending.request_count),
+            protocol_sender_key_repair_retry_delay_secs_for(
+                pending.request_count,
+                pending.unchanged_response_rounds,
+            ),
         );
         if pending.next_retry_at_secs == 0 {
             capped_due_at
         } else {
             pending.next_retry_at_secs.min(capped_due_at)
-        }
-    }
-
-    pub(super) fn sender_key_repair_response_effects(
-        &mut self,
-        requester_owner: NdrOwnerPubkey,
-        request: &SenderKeyRepairRequest,
-        now: NdrUnixSeconds,
-    ) -> anyhow::Result<Vec<ProtocolEffect>> {
-        if self.group_sender_key_repair_response_throttled(requester_owner, request, now) {
-            return Ok(Vec::new());
-        }
-        let mut rng = OsRng;
-        let mut ctx = ProtocolContext::new(now, &mut rng);
-        let prepared = self.group_manager.respond_to_sender_key_repair_request(
-            &mut self.session_manager,
-            &mut ctx,
-            requester_owner,
-            request,
-        )?;
-        let response_deferred = !prepared.remote.pending_fanouts.is_empty()
-            || !prepared.local_sibling.pending_fanouts.is_empty();
-        let output = self.protocol_group_send_from_prepared(&prepared, None)?;
-        if !output.effects.is_empty() || response_deferred {
-            self.remember_group_sender_key_repair_response(requester_owner, request, now);
-        }
-        self.invalidate_known_message_author_cache();
-        Ok(output.effects)
-    }
-
-    pub(super) fn group_sender_key_repair_response_throttled(
-        &self,
-        requester_owner: NdrOwnerPubkey,
-        request: &SenderKeyRepairRequest,
-        now: NdrUnixSeconds,
-    ) -> bool {
-        let requester_owner_hex = requester_owner.to_hex();
-        let sender_event_pubkey_hex = request.sender_event_pubkey.to_hex();
-        // Peers may recreate the same repair with a fresh timestamp. The missing
-        // stream/key/revision owns the backoff, not the request envelope.
-        self.answered_group_sender_key_repairs
-            .iter()
-            .any(|answered| {
-                answered.requester_owner_hex == requester_owner_hex
-                    && answered.group_id == request.group_id.as_str()
-                    && answered.sender_event_pubkey_hex == sender_event_pubkey_hex
-                    && answered.key_id == request.key_id
-                    && answered.message_number == request.message_number
-                    && answered.required_revision == request.required_revision
-                    && answered.next_response_at_secs > now.get()
-            })
-    }
-
-    fn remember_group_sender_key_repair_response(
-        &mut self,
-        requester_owner: NdrOwnerPubkey,
-        request: &SenderKeyRepairRequest,
-        now: NdrUnixSeconds,
-    ) {
-        let requester_owner_hex = requester_owner.to_hex();
-        let sender_event_pubkey_hex = request.sender_event_pubkey.to_hex();
-        let position = self
-            .answered_group_sender_key_repairs
-            .iter()
-            .position(|answered| {
-                answered.requester_owner_hex == requester_owner_hex
-                    && answered.group_id == request.group_id.as_str()
-                    && answered.sender_event_pubkey_hex == sender_event_pubkey_hex
-                    && answered.key_id == request.key_id
-                    && answered.message_number == request.message_number
-                    && answered.required_revision == request.required_revision
-            });
-        let response_count = position
-            .and_then(|index| {
-                self.answered_group_sender_key_repairs
-                    .get(index)
-                    .map(|answered| answered.response_count.saturating_add(1))
-            })
-            .unwrap_or(1);
-        let next_response_at_secs =
-            protocol_sender_key_repair_next_retry_at(now, response_count).get();
-        if let Some(index) = position {
-            if let Some(answered) = self.answered_group_sender_key_repairs.get_mut(index) {
-                answered.last_responded_at_secs = now.get();
-                answered.request_created_at_secs = request.created_at.get();
-                answered.response_count = response_count;
-                answered.next_response_at_secs = next_response_at_secs;
-            }
-        } else {
-            self.answered_group_sender_key_repairs
-                .push(ProtocolAnsweredGroupSenderKeyRepair {
-                    requester_owner_hex,
-                    group_id: request.group_id.clone(),
-                    sender_event_pubkey_hex,
-                    key_id: request.key_id,
-                    message_number: request.message_number,
-                    required_revision: request.required_revision,
-                    request_created_at_secs: request.created_at.get(),
-                    last_responded_at_secs: now.get(),
-                    response_count,
-                    next_response_at_secs,
-                });
-        }
-        let excess = self
-            .answered_group_sender_key_repairs
-            .len()
-            .saturating_sub(ANSWERED_GROUP_SENDER_KEY_REPAIR_LIMIT);
-        if excess > 0 {
-            self.answered_group_sender_key_repairs.drain(0..excess);
         }
     }
 

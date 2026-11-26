@@ -209,6 +209,14 @@ pub(super) struct ProtocolPendingGroupPairwisePayload {
     pub(super) next_retry_at_secs: u64,
 }
 
+fn is_zero_u32(value: &u32) -> bool {
+    *value == 0
+}
+
+fn is_zero_u64(value: &u64) -> bool {
+    *value == 0
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub(super) struct ProtocolPendingGroupSenderKeyRepair {
     pub(super) group_id: String,
@@ -223,11 +231,17 @@ pub(super) struct ProtocolPendingGroupSenderKeyRepair {
     pub(super) last_requested_at_secs: u64,
     pub(super) request_count: u32,
     pub(super) next_retry_at_secs: u64,
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    pub(super) unchanged_response_rounds: u32,
+    #[serde(default, skip_serializing_if = "is_zero_u32")]
+    pub(super) last_unchanged_response_request_count: u32,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub(super) struct ProtocolAnsweredGroupSenderKeyRepair {
     pub(super) requester_owner_hex: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) requester_device_hex: Option<String>,
     pub(super) group_id: String,
     pub(super) sender_event_pubkey_hex: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -240,6 +254,10 @@ pub(super) struct ProtocolAnsweredGroupSenderKeyRepair {
     pub(super) last_responded_at_secs: u64,
     pub(super) response_count: u32,
     pub(super) next_response_at_secs: u64,
+    #[serde(default, skip_serializing_if = "is_zero_u64")]
+    pub(super) last_group_revision: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(super) last_latest_key_id: Option<u32>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]

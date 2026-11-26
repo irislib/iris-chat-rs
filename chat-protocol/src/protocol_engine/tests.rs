@@ -14,6 +14,7 @@ mod fanout_retry_tests;
 mod group_decrypt_budget_tests;
 mod group_fresh_tests;
 mod group_ingress_migration_tests;
+mod group_repair_efficiency_tests;
 mod group_retry_budget_tests;
 mod group_retry_pacing_tests;
 mod group_source_event_tests;

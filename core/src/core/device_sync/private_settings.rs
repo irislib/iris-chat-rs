@@ -334,7 +334,7 @@ impl AppCore {
         if needs_load {
             let loaded = self
                 .load_request_decisions_from_db(&owner_hex, false)
-                .unwrap_or_default();
+                .ok()?;
             *cache = Some((owner_hex, loaded));
         }
         cache.as_ref()?.1.get(target).cloned()

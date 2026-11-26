@@ -51,15 +51,37 @@ pub use storage::{
 
 const GROUP_ROSTER_FACT_EVENT_HISTORY_LIMIT: usize = 256;
 pub const PROTOCOL_SENDER_KEY_REPAIR_RETRY_DELAYS_SECS: [u64; 5] = [10, 30, 60, 60, 60];
+const PROTOCOL_SENDER_KEY_REPAIR_EXTENDED_RETRY_DELAYS_SECS: [u64; 8] =
+    [10, 30, 60, 60, 60, 120, 180, 300];
+const PROTOCOL_SENDER_KEY_REPAIR_UNCHANGED_RETRY_DELAYS_SECS: [u64; 3] = [300, 900, 3_600];
+const PROTOCOL_SENDER_KEY_REPAIR_RESPONSE_RETRY_DELAYS_SECS: [u64; 5] = [10, 30, 60, 120, 300];
+const PROTOCOL_SENDER_KEY_REPAIR_REVISION_RESPONSE_RETRY_DELAYS_SECS: [u64; 5] =
+    [10, 30, 60, 60, 60];
 
 fn protocol_sender_key_repair_retry_delay_secs(sent_request_count: u32) -> u64 {
     let index = sent_request_count
         .saturating_sub(1)
-        .min((PROTOCOL_SENDER_KEY_REPAIR_RETRY_DELAYS_SECS.len() - 1) as u32)
+        .min((PROTOCOL_SENDER_KEY_REPAIR_EXTENDED_RETRY_DELAYS_SECS.len() - 1) as u32)
         as usize;
-    PROTOCOL_SENDER_KEY_REPAIR_RETRY_DELAYS_SECS[index]
+    PROTOCOL_SENDER_KEY_REPAIR_EXTENDED_RETRY_DELAYS_SECS[index]
 }
 
+fn protocol_sender_key_repair_retry_delay_secs_for(
+    sent_request_count: u32,
+    unchanged_response_rounds: u32,
+) -> u64 {
+    let base = protocol_sender_key_repair_retry_delay_secs(sent_request_count);
+    if unchanged_response_rounds < 3 {
+        return base;
+    }
+    let unchanged_index = unchanged_response_rounds
+        .saturating_sub(3)
+        .min((PROTOCOL_SENDER_KEY_REPAIR_UNCHANGED_RETRY_DELAYS_SECS.len() - 1) as u32)
+        as usize;
+    base.max(PROTOCOL_SENDER_KEY_REPAIR_UNCHANGED_RETRY_DELAYS_SECS[unchanged_index])
+}
+
+#[cfg(test)]
 fn protocol_sender_key_repair_next_retry_at(
     now: NdrUnixSeconds,
     sent_request_count: u32,
@@ -70,6 +92,36 @@ fn protocol_sender_key_repair_next_retry_at(
                 sent_request_count,
             )),
     )
+}
+
+fn protocol_sender_key_repair_next_retry_at_for(
+    now: NdrUnixSeconds,
+    sent_request_count: u32,
+    unchanged_response_rounds: u32,
+) -> NdrUnixSeconds {
+    NdrUnixSeconds(
+        now.get()
+            .saturating_add(protocol_sender_key_repair_retry_delay_secs_for(
+                sent_request_count,
+                unchanged_response_rounds,
+            )),
+    )
+}
+
+fn protocol_sender_key_repair_response_next_retry_at(
+    now: NdrUnixSeconds,
+    response_count: u32,
+    revision_only: bool,
+) -> NdrUnixSeconds {
+    let delays = if revision_only {
+        &PROTOCOL_SENDER_KEY_REPAIR_REVISION_RESPONSE_RETRY_DELAYS_SECS
+    } else {
+        &PROTOCOL_SENDER_KEY_REPAIR_RESPONSE_RETRY_DELAYS_SECS
+    };
+    let index = response_count
+        .saturating_sub(1)
+        .min((delays.len() - 1) as u32) as usize;
+    NdrUnixSeconds(now.get().saturating_add(delays[index]))
 }
 
 pub type SharedConnection = Arc<Mutex<rusqlite::Connection>>;

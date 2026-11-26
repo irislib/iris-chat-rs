@@ -3,18 +3,37 @@ use super::*;
 pub(super) const GROUP_SENDER_KEY_RETRY_LIMIT: usize = 8;
 const GROUP_SENDER_KEY_TRIALS_PER_TURN: usize = 256;
 const GROUP_SENDER_KEY_RETRY_SLICE: std::time::Duration = std::time::Duration::from_millis(25);
+// Ordinary live messages advance state.iteration by one, which cannot unlock
+// failed blind history unless the ratchet jumps far enough to bring a
+// >10,000-skip ciphertext into window, or a new key / backward extension arrives.
+const GROUP_RETRY_STATE_JUMP_WINDOW: u32 = 1_024;
+
+#[derive(Clone, PartialEq, Eq)]
+struct GroupSenderKeyStateAnchor {
+    key_id: u32,
+    base_iteration: u32,
+    last_iteration: u32,
+    last_chain_key: [u8; 32],
+}
 
 #[derive(Clone, PartialEq, Eq)]
 pub(super) struct GroupSenderKeyRetryInput {
     group_id: String,
     protocol: GroupProtocol,
-    members: Vec<NdrOwnerPubkey>,
+    sender_is_member: bool,
+    local_is_member: bool,
     pub(super) revision: u64,
     sender_owner: NdrOwnerPubkey,
     sender_device: NdrDevicePubkey,
     is_local_sending_chain: bool,
-    states: Vec<nostr_double_ratchet::SenderKeyState>,
+    state_anchors: Vec<GroupSenderKeyStateAnchor>,
     distributions: Vec<nostr_double_ratchet::SenderKeyDistribution>,
+}
+
+impl GroupSenderKeyRetryInput {
+    pub(super) fn has_multiple_sender_keys(&self) -> bool {
+        self.state_anchors.len() > 1
+    }
 }
 
 /// Scheduling is ephemeral; the existing durable ciphertext queue is authoritative.
@@ -25,6 +44,7 @@ pub(super) struct ProtocolGroupSenderKeyRetry {
     pub(super) inputs: BTreeMap<NdrDevicePubkey, GroupSenderKeyRetryInput>,
     pub(super) ready: std::collections::VecDeque<(NdrDevicePubkey, String)>,
     pub(super) queued: HashSet<String>,
+    pub(super) pending_revision_fingerprints: HashSet<String>,
     pub(super) started: Option<std::time::Instant>,
     pub(super) attempts: usize,
     pub(super) key_trials_remaining: usize,
@@ -46,6 +66,7 @@ impl Default for ProtocolGroupSenderKeyRetry {
             inputs: BTreeMap::new(),
             ready: Default::default(),
             queued: HashSet::new(),
+            pending_revision_fingerprints: HashSet::new(),
             started: None,
             attempts: 0,
             key_trials_remaining: GROUP_SENDER_KEY_TRIALS_PER_TURN,
@@ -144,6 +165,7 @@ impl ProtocolEngine {
             retry.inputs.clear();
             retry.ready.clear();
             retry.queued.clear();
+            retry.pending_revision_fingerprints.clear();
             return;
         }
         if retry.active.is_some() || retry.prepared.is_some() {
@@ -160,44 +182,118 @@ impl ProtocolEngine {
             .into_iter()
             .map(|group| (group.group_id.clone(), group))
             .collect::<BTreeMap<_, _>>();
-        let inputs = snapshot
-            .sender_keys
-            .into_iter()
-            .filter_map(|record| {
-                let group = groups.get(&record.group_id)?;
-                Some((
-                    record.sender_event_pubkey,
-                    GroupSenderKeyRetryInput {
-                        group_id: record.group_id.clone(),
-                        protocol: group.protocol,
-                        members: group.members.clone(),
-                        revision: group.revision,
-                        sender_owner: record.sender_owner,
-                        sender_device: record.sender_device,
-                        is_local_sending_chain: record.sender_event_secret_key.is_some(),
-                        states: record.states,
-                        distributions: record.distribution_history,
-                    },
-                ))
-            })
-            .collect::<BTreeMap<_, _>>();
-        let changed = inputs
-            .iter()
-            .filter_map(|(author, input)| {
-                (retry.inputs.get(author) != Some(input)).then_some(*author)
-            })
-            .collect::<HashSet<_>>();
+        #[derive(Clone, Copy, PartialEq, Eq)]
+        enum StreamWakeup {
+            Full,
+            RevisionOnly,
+        }
+        let mut inputs = BTreeMap::new();
+        let mut wakeups: BTreeMap<NdrDevicePubkey, StreamWakeup> = BTreeMap::new();
+        for record in snapshot.sender_keys {
+            let Some(group) = groups.get(&record.group_id) else {
+                continue;
+            };
+            let author = record.sender_event_pubkey;
+            let previous = retry.inputs.get(&author);
+            let mut states_materially_changed =
+                previous.is_none_or(|prev| prev.state_anchors.len() != record.states.len());
+            let mut state_anchors = Vec::with_capacity(record.states.len());
+            for state in &record.states {
+                let key_id = state.key_id();
+                let iteration = state.iteration();
+                let chain_key = state.chain_key();
+                let prev_anchor = previous.and_then(|prev| {
+                    prev.state_anchors
+                        .iter()
+                        .find(|anchor| anchor.key_id == key_id)
+                });
+                let anchor = match prev_anchor {
+                    Some(prev)
+                        if iteration == prev.last_iteration && chain_key == prev.last_chain_key =>
+                    {
+                        prev.clone()
+                    }
+                    Some(prev)
+                        if iteration > prev.last_iteration
+                            && iteration.saturating_sub(prev.base_iteration)
+                                < GROUP_RETRY_STATE_JUMP_WINDOW =>
+                    {
+                        GroupSenderKeyStateAnchor {
+                            key_id,
+                            base_iteration: prev.base_iteration,
+                            last_iteration: iteration,
+                            last_chain_key: chain_key,
+                        }
+                    }
+                    _ => {
+                        states_materially_changed = true;
+                        GroupSenderKeyStateAnchor {
+                            key_id,
+                            base_iteration: iteration,
+                            last_iteration: iteration,
+                            last_chain_key: chain_key,
+                        }
+                    }
+                };
+                state_anchors.push(anchor);
+            }
+            let input = GroupSenderKeyRetryInput {
+                group_id: record.group_id.clone(),
+                protocol: group.protocol,
+                sender_is_member: group.members.contains(&record.sender_owner),
+                local_is_member: group.members.contains(&self.local_owner),
+                revision: group.revision,
+                sender_owner: record.sender_owner,
+                sender_device: record.sender_device,
+                is_local_sending_chain: record.sender_event_secret_key.is_some(),
+                state_anchors,
+                distributions: record.distribution_history,
+            };
+            let wakeup = match previous {
+                None => Some(StreamWakeup::Full),
+                Some(prev) => {
+                    let decrypt_inputs_changed = states_materially_changed
+                        || prev.group_id != input.group_id
+                        || prev.protocol != input.protocol
+                        || prev.sender_is_member != input.sender_is_member
+                        || prev.local_is_member != input.local_is_member
+                        || prev.sender_owner != input.sender_owner
+                        || prev.sender_device != input.sender_device
+                        || prev.is_local_sending_chain != input.is_local_sending_chain
+                        || prev.distributions != input.distributions;
+                    if decrypt_inputs_changed {
+                        Some(StreamWakeup::Full)
+                    } else if prev.revision != input.revision {
+                        Some(StreamWakeup::RevisionOnly)
+                    } else {
+                        None
+                    }
+                }
+            };
+            if let Some(wakeup) = wakeup {
+                wakeups.insert(author, wakeup);
+            }
+            inputs.insert(author, input);
+        }
         #[cfg(all(test, target_os = "linux"))]
-        tests::audit_group_retry_input_changes(&changed);
+        {
+            let changed = wakeups.keys().copied().collect::<HashSet<_>>();
+            tests::audit_group_retry_input_changes(&changed);
+        }
         retry.inputs = inputs;
         for parsed in &self.pending_group_sender_key_messages {
-            if !changed.contains(&parsed.sender_event_pubkey) {
+            let Some(wakeup) = wakeups.get(&parsed.sender_event_pubkey).copied() else {
                 continue;
-            }
+            };
             let Some(message) = self.group_sender_key_message_from_parsed(parsed) else {
                 continue;
             };
             let fingerprint = group_sender_key_fingerprint(&message);
+            if wakeup == StreamWakeup::RevisionOnly
+                && !retry.pending_revision_fingerprints.contains(&fingerprint)
+            {
+                continue;
+            }
             if retry.queued.insert(fingerprint.clone()) {
                 retry
                     .ready
@@ -315,21 +411,16 @@ impl ProtocolEngine {
             let Some(message) = self.group_sender_key_message_from_parsed(&parsed) else {
                 continue;
             };
+            // Never discard ciphertexts solely because their created_at precedes
+            // the earliest distribution currently installed: relay backfill and
+            // repair replies can deliver a newer epoch key before an older key.
             let discard = self.local_owner_is_inactive_for_group(&message.group_id)
                 || self
                     .group_sender_key_retry
                     .borrow()
                     .inputs
                     .get(&author)
-                    .is_some_and(|input| {
-                        !input.members.contains(&self.local_owner)
-                            || input
-                                .distributions
-                                .iter()
-                                .map(|distribution| distribution.created_at.get())
-                                .min()
-                                .is_some_and(|first| parsed.created_at.get() < first)
-                    });
+                    .is_some_and(|input| !input.local_is_member);
             if discard {
                 let mut retry = self.group_sender_key_retry.borrow_mut();
                 retry.fresh.retain(|fresh| fresh.fingerprint != fingerprint);

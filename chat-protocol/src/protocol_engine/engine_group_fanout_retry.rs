@@ -218,7 +218,7 @@ impl ProtocolEngine {
                 ),
                 (GroupPendingFanout::LocalSiblings { payload }, None) => self
                     .session_manager
-                    .prepare_local_sibling_send_reusing_all_sessions(&mut ctx, payload.clone()),
+                    .prepare_local_sibling_send(&mut ctx, payload.clone()),
             }
             .map(|prepared| GroupPreparedPublish {
                 deliveries: prepared.deliveries,

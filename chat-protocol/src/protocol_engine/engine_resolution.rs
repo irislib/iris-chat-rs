@@ -341,18 +341,51 @@ impl ProtocolEngine {
         ))
     }
 
+    pub(super) fn has_authorized_local_siblings(&self) -> bool {
+        self.session_manager
+            .roster(self.local_owner)
+            .is_some_and(|roster| {
+                roster
+                    .devices()
+                    .iter()
+                    .any(|device| device.device_pubkey != self.local_device)
+            })
+    }
+
     pub(super) fn sync_group_to_local_siblings(
         &mut self,
         group: &GroupSnapshot,
     ) -> anyhow::Result<Vec<ProtocolEffect>> {
+        if !self.has_authorized_local_siblings() {
+            return Ok(Vec::new());
+        }
         let now = NdrUnixSeconds(unix_now().get());
+        let payload = JsonGroupPayloadCodecV1.encode_pairwise_command(
+            nostr_double_ratchet::GroupPayloadEncodeContext {
+                local_device_pubkey: self.local_device,
+                created_at: now,
+            },
+            &GroupPairwiseCommand::MetadataSnapshot {
+                snapshot: group.clone(),
+            },
+        )?;
         let mut rng = OsRng;
         let mut ctx = ProtocolContext::new(now, &mut rng);
-        let prepared = self.group_manager.sync_group_to_local_siblings(
-            &mut self.session_manager,
-            &mut ctx,
-            &group.group_id,
-        )?;
+        let prepared = self
+            .session_manager
+            .prepare_local_sibling_send(&mut ctx, payload.clone())?;
+        let pending_fanouts = if prepared.relay_gaps.is_empty() {
+            Vec::new()
+        } else {
+            vec![GroupPendingFanout::LocalSiblings { payload }]
+        };
+        let prepared = GroupPreparedPublish {
+            deliveries: prepared.deliveries,
+            invite_responses: prepared.invite_responses,
+            sender_key_messages: Vec::new(),
+            relay_gaps: prepared.relay_gaps,
+            pending_fanouts,
+        };
         self.queue_group_pending_fanouts(&group.group_id, &prepared, None);
         let mut event_ids = Vec::new();
         let effects = protocol_effects_from_group_prepared_publish(
@@ -372,6 +405,9 @@ impl ProtocolEngine {
         sender_device: NdrDevicePubkey,
         payload: &[u8],
     ) -> anyhow::Result<Vec<ProtocolEffect>> {
+        if !self.has_authorized_local_siblings() {
+            return Ok(Vec::new());
+        }
         let payload = local_sibling_payload_with_original_sender(
             public_owner(sender_owner)?,
             Some(public_device(sender_device)?),
@@ -382,7 +418,7 @@ impl ProtocolEngine {
         let mut ctx = ProtocolContext::new(now, &mut rng);
         let prepared = self
             .session_manager
-            .prepare_local_sibling_send_reusing_all_sessions(&mut ctx, payload.clone())?;
+            .prepare_local_sibling_send(&mut ctx, payload.clone())?;
         let pending_fanouts = if prepared.relay_gaps.is_empty() {
             Vec::new()
         } else {
