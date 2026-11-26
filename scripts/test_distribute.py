@@ -209,6 +209,8 @@ class DistributeTests(unittest.TestCase):
             fi
             case "$1" in
               user) printf '%s\n' "$FAKE_ACTIVE_HTREE_NPUB" ;;
+              start) rm -f "${FAKE_DAEMON_DOWN_FILE:-/nonexistent}" ;;
+              pins) [[ "${FAKE_HTREE_PINS_FAIL:-0}" != "1" ]] || exit 30 ;;
               add) printf '%s\n' 'cid: fake-cid' ;;
               release)
                 if [[ "${FAKE_HTREE_ROOT_CONFLICT:-0}" == "1" ]]; then
@@ -245,10 +247,14 @@ class DistributeTests(unittest.TestCase):
             while [[ $# -gt 0 ]]; do
               case "$1" in
                 -o) output="$2"; shift 2 ;;
-                https://*) url="$1"; shift ;;
+                https://*|http://*) url="$1"; shift ;;
                 *) shift ;;
               esac
             done
+            if [[ "$url" == http://*"/api/status" ]]; then
+              [[ ! -e "${FAKE_DAEMON_DOWN_FILE:-/nonexistent}" ]] || exit 7
+              exit 0
+            fi
             if [[ "$url" == *"/api/nostr/resolve/"* ]]; then
               [[ "${FAKE_REFRESH_FAIL:-0}" != "1" ]] || exit 22
               printf '%s\n' '{"hash":"refreshed-root"}' > "$output"
@@ -801,6 +807,36 @@ class DistributeTests(unittest.TestCase):
                 self.assertIn("--connect-timeout 10", line)
                 self.assertIn("--max-time 30", line)
         self.assertNotIn("latest", log)
+
+    def test_hashtree_publish_starts_the_release_daemon_when_none_is_running(self) -> None:
+        down = self.root / "daemon-down"
+        down.write_text("down")
+        env = self.environment()
+        env["FAKE_DAEMON_DOWN_FILE"] = str(down)
+        result = self.run_distribution("hashtree", env=env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        log = self.log.read_text()
+        start = f"htree start --data-dir {self.root / 'htree-data'}"
+        self.assertEqual(log.count(start), 1)
+        self.assertLess(log.index(start), log.index("htree add "))
+        self.assertIn("htree release publish ", log)
+
+    def test_hashtree_publish_keeps_a_running_release_daemon(self) -> None:
+        result = self.run_distribution("hashtree")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        log = self.log.read_text()
+        self.assertNotIn("htree start", log)
+        self.assertLess(log.index("/api/status"), log.index("htree add "))
+
+    def test_hashtree_publish_reports_storage_held_by_a_stale_daemon(self) -> None:
+        env = self.environment()
+        env["FAKE_HTREE_PINS_FAIL"] = "1"
+        result = self.run_distribution("hashtree", env=env)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Stop the long-running 'htree start --data-dir", result.stderr)
+        log = self.log.read_text()
+        self.assertNotIn("htree add ", log)
+        self.assertNotIn("htree release publish", log)
 
     def test_hashtree_publish_requires_an_explicit_verified_root(self) -> None:
         env = self.environment()

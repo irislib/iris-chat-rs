@@ -102,7 +102,13 @@ require_command python3
 require_command jq
 "$ROOT/scripts/release-manifest.py" validate-tag --tag "$TAG"
 
+RELEASE_DAEMON_PID=""
+
 cleanup() {
+  if [[ -n "$RELEASE_DAEMON_PID" ]]; then
+    kill "$RELEASE_DAEMON_PID" 2>/dev/null || true
+    wait "$RELEASE_DAEMON_PID" 2>/dev/null || true
+  fi
   if [[ -n "$DOWNLOAD_DIR" && -d "$DOWNLOAD_DIR" ]]; then
     rm -rf "$DOWNLOAD_DIR"
   fi
@@ -226,6 +232,45 @@ verify_hashtree_publication() {
     --cli "$DOWNLOAD_DIR/updater-check/iris/iris" --tag "$TAG"
 }
 
+hashtree_daemon_running() {
+  local address
+  address="$(awk -F'"' '/^[[:space:]]*bind_address[[:space:]]*=/ { print $2; exit }' \
+    "$IRIS_HASHTREE_CONFIG_DIR/config.toml" 2>/dev/null || true)"
+  curl -fsS --connect-timeout 10 --max-time 30 \
+    "http://${address:-127.0.0.1:8080}/api/status" -o /dev/null 2>/dev/null
+}
+
+# `htree release publish` needs the local daemon of the release profile. Start
+# one for this run when none is up, and stop only the one started here. A
+# daemon left running for days can hold the storage so that `htree add` fails
+# with "open pool catalog: Invalid argument"; report that plainly instead.
+ensure_hashtree_daemon() {
+  local attempt
+  if ! hashtree_daemon_running; then
+    HTREE_CONFIG_DIR="$IRIS_HASHTREE_CONFIG_DIR" \
+    HTREE_DATA_DIR="$IRIS_HASHTREE_DATA_DIR" \
+      htree start --data-dir "$IRIS_HASHTREE_DATA_DIR" \
+      >"$DOWNLOAD_DIR/htree-daemon.log" 2>&1 &
+    RELEASE_DAEMON_PID=$!
+    for attempt in $(seq 60); do
+      sleep 1
+      if hashtree_daemon_running; then
+        break
+      fi
+    done
+    if ! hashtree_daemon_running; then
+      echo "The local htree daemon for the release profile did not start." >&2
+      return 1
+    fi
+  fi
+  if ! HTREE_CONFIG_DIR="$IRIS_HASHTREE_CONFIG_DIR" \
+       HTREE_DATA_DIR="$IRIS_HASHTREE_DATA_DIR" htree pins >/dev/null 2>&1; then
+    echo "The release storage cannot be opened beside the running local htree daemon." >&2
+    echo "Stop the long-running 'htree start --data-dir $IRIS_HASHTREE_DATA_DIR' process and retry; this script starts a fresh one." >&2
+    return 1
+  fi
+}
+
 publish_hashtree() {
   local assets=()
   local stage_args=()
@@ -283,6 +328,7 @@ publish_hashtree() {
   HAPS_HOME="$IRIS_HASHTREE_DATA_DIR/haps" \
     env -u NOSTR_RELAYS haps "${haps_args[@]}" --publish-source
 
+  ensure_hashtree_daemon
   add_output="$(
     HTREE_CONFIG_DIR="$IRIS_HASHTREE_CONFIG_DIR" \
     HTREE_DATA_DIR="$IRIS_HASHTREE_DATA_DIR" htree add "$stage_dir"

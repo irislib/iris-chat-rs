@@ -653,6 +653,13 @@ the release manifest's source commit. Do not restore the older tagged distributo
 move the tag, substitute the tooling source for the manifest source, or rebuild
 the release assets to pick up a publication-tooling fix.
 
+Hashtree publication needs the local `htree` daemon of the release profile
+(`bind_address` in `$IRIS_HASHTREE_CONFIG_DIR/config.toml`). The distributor
+starts one for the run when none is up and stops only the one it started. A
+daemon left running for days can hold the storage so that the upload fails
+with "open pool catalog: Invalid argument"; the distributor then stops before
+uploading and names the process to stop. Stop it and rerun.
+
 Use this order: Hashtree, Homebrew, Zapstore. Homebrew refuses to publish
 until the exact Hashtree tag exists. Commands are safe to retry with the same
 tag and bytes; they never select a tag, workflow run, or local build
