@@ -25,8 +25,9 @@ impl AppStore {
         {
             return Ok(thread.unread_count);
         }
-        // Include pending incoming rows before locating the counted unread window.
-        upsert_thread_rows(&tx, chat_id, thread)?;
+        // Include unsaved incoming rows before locating the counted unread window.
+        let thread_plan =
+            upsert_unsaved_thread_rows(&tx, self.cache.threads.get(chat_id), chat_id, thread)?;
         let remaining = group_notice_reads::acknowledge(
             &tx,
             chat_id,
@@ -34,7 +35,21 @@ impl AppStore {
             thread.unread_count as i64,
         )?;
         tx.commit()?;
-        self.cache.threads.remove(chat_id);
+        if let Some(plan) = thread_plan {
+            let entry = self.cache.threads.entry(chat_id.clone()).or_default();
+            plan.apply_to_cache(entry);
+        }
+        if let Some(entry) = self.cache.threads.get_mut(chat_id) {
+            entry.header_hash = None;
+            for message in &thread.messages {
+                if message.kind == ChatMessageKind::System
+                    && !message.is_outgoing
+                    && message.created_at_secs <= through
+                {
+                    entry.messages.remove(&message.id);
+                }
+            }
+        }
         Ok(remaining as u64)
     }
 
@@ -85,22 +100,22 @@ impl AppStore {
             .lock()
             .map_err(|_| anyhow::anyhow!("storage connection mutex poisoned"))?;
         let tx = conn.transaction()?;
-        if let Some(thread) = thread {
-            upsert_thread_rows(&tx, chat_id, thread)?;
-        }
+        let thread_plan = match thread {
+            Some(thread) => {
+                upsert_unsaved_thread_rows(&tx, self.cache.threads.get(chat_id), chat_id, thread)?
+            }
+            None => None,
+        };
 
         let prior_unread: Option<i64> = tx
-            .query_row(
-                "SELECT unread_count FROM threads WHERE chat_id = ?1",
-                [chat_id],
-                |row| row.get(0),
-            )
+            .prepare_cached("SELECT unread_count FROM threads WHERE chat_id = ?1")?
+            .query_row([chat_id], |row| row.get(0))
             .optional()?;
         // Only the most recent counted messages belong to the existing badge.
         // Older Received rows may already have had their badges cleared.
         let remaining_unread = prior_unread
             .map(|prior| -> anyhow::Result<u64> {
-                let mut statement = tx.prepare(
+                let mut statement = tx.prepare_cached(
                     "SELECT created_at_secs, id FROM messages
                      WHERE chat_id = ?1 AND is_outgoing = 0 AND delivery != 'seen'
                      ORDER BY created_at_secs DESC, rowid DESC LIMIT ?2",
@@ -121,47 +136,78 @@ impl AppStore {
                 Ok(remaining)
             })
             .transpose()?;
-        tx.execute(
+        tx.prepare_cached(
             "INSERT INTO app_meta(key, value) VALUES (?1, ?2)
              ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-            params![
-                format!("{READ_STATE_PREFIX}{chat_id}"),
-                serde_json::to_string(state)?
-            ],
-        )?;
-        for (id, read) in reads {
-            if store_message_deletions::contains(&tx, chat_id, Some(id), None)?
-                || store_chat_deletions::message_was_deleted(&tx, chat_id, read.created_at_secs)?
-                || read
-                    .expires_at_secs
-                    .is_some_and(|expiry| expiry <= unix_now().get())
-            {
-                continue;
-            }
-            tx.execute(
+        )?
+        .execute(params![
+            format!("{READ_STATE_PREFIX}{chat_id}"),
+            serde_json::to_string(state)?
+        ])?;
+        let mut updated_message_ids = Vec::new();
+        if !reads.is_empty() {
+            let mut mark_seen = tx.prepare_cached(
                 "UPDATE messages SET delivery = 'seen' WHERE chat_id = ?1 AND id = ?2
-                 AND is_outgoing = 0 AND created_at_secs = ?3",
-                params![chat_id, id, read.created_at_secs as i64],
+                 AND is_outgoing = 0 AND created_at_secs = ?3 AND delivery != 'seen'",
             )?;
-            // No event log: known messages retain only their existing delivery
-            // flag. Unknown originals need one deduplicated pending marker.
-            tx.execute(
+            let mut upsert_pending = tx.prepare_cached(
                 "INSERT INTO pending_message_reads(chat_id, id, created_at_secs, expires_at_secs)
                  SELECT ?1, ?2, ?3, ?4 WHERE NOT EXISTS (
                     SELECT 1 FROM messages WHERE chat_id = ?1 AND id = ?2)
                  ON CONFLICT(chat_id, id) DO UPDATE SET
                     expires_at_secs = COALESCE(pending_message_reads.expires_at_secs, excluded.expires_at_secs)",
-                params![chat_id, id, read.created_at_secs as i64, read.expires_at_secs.map(|v| v as i64)],
             )?;
+            for (id, read) in reads {
+                if store_message_deletions::contains(&tx, chat_id, Some(id), None)?
+                    || store_chat_deletions::message_was_deleted(
+                        &tx,
+                        chat_id,
+                        read.created_at_secs,
+                    )?
+                    || read
+                        .expires_at_secs
+                        .is_some_and(|expiry| expiry <= unix_now().get())
+                {
+                    continue;
+                }
+                let updated =
+                    mark_seen.execute(params![chat_id, id, read.created_at_secs as i64])?;
+                if updated > 0 {
+                    updated_message_ids.push(id.clone());
+                } else {
+                    // No event log: known messages retain only their existing delivery
+                    // flag. Unknown originals need one deduplicated pending marker.
+                    upsert_pending.execute(params![
+                        chat_id,
+                        id,
+                        read.created_at_secs as i64,
+                        read.expires_at_secs.map(|v| v as i64)
+                    ])?;
+                }
+            }
         }
-        if let Some(unread_count) = remaining_unread {
-            tx.execute(
-                "UPDATE threads SET unread_count = ?2 WHERE chat_id = ?1",
-                params![chat_id, unread_count as i64],
-            )?;
-        }
+        let unread_updated = if let Some(unread_count) = remaining_unread {
+            tx.prepare_cached(
+                "UPDATE threads SET unread_count = ?2 WHERE chat_id = ?1 AND unread_count != ?2",
+            )?
+            .execute(params![chat_id, unread_count as i64])?
+                > 0
+        } else {
+            false
+        };
         tx.commit()?;
-        self.cache.threads.remove(chat_id);
+        if let Some(plan) = thread_plan {
+            let entry = self.cache.threads.entry(chat_id.to_string()).or_default();
+            plan.apply_to_cache(entry);
+        }
+        if let Some(entry) = self.cache.threads.get_mut(chat_id) {
+            if unread_updated {
+                entry.header_hash = None;
+            }
+            for id in updated_message_ids {
+                entry.messages.remove(&id);
+            }
+        }
         Ok(remaining_unread)
     }
 
@@ -174,21 +220,21 @@ impl AppStore {
             .conn
             .lock()
             .map_err(|_| anyhow::anyhow!("storage connection mutex poisoned"))?;
-        conn.query_row(
+        let mut stmt = conn.prepare_cached(
             "SELECT created_at_secs, expires_at_secs FROM messages
              WHERE chat_id = ?1 AND id = ?2 AND is_outgoing = 0 AND delivery = 'seen'
              UNION ALL SELECT created_at_secs, expires_at_secs FROM pending_message_reads
              WHERE chat_id = ?1 AND id = ?2 LIMIT 1",
-            params![chat_id, id],
-            |row| {
+        )?;
+        let result = stmt
+            .query_row(params![chat_id, id], |row| {
                 Ok(MessageReadState {
                     created_at_secs: row.get::<_, i64>(0)?.max(0) as u64,
                     expires_at_secs: row.get::<_, Option<i64>>(1)?.map(|v| v.max(0) as u64),
                 })
-            },
-        )
-        .optional()
-        .map_err(Into::into)
+            })
+            .optional()?;
+        Ok(result)
     }
 
     pub(crate) fn message_read_page(
@@ -383,11 +429,22 @@ mod tests {
                 .unwrap();
             }
         }
-        store.cache.threads.insert("chat".to_string(), 123);
+        store.cache.threads.insert(
+            "chat".to_string(),
+            ThreadPersistCache {
+                header_hash: Some(123),
+                messages: [("boundary-seen".to_string(), 1), ("older".to_string(), 2)]
+                    .into_iter()
+                    .collect(),
+            },
+        );
         store
             .save_chat_read_state("chat", &sample_read_state(), None)
             .unwrap();
-        assert!(!store.cache.threads.contains_key("chat"));
+        let cached = store.cache.threads.get("chat").unwrap();
+        assert_eq!(cached.header_hash, None);
+        assert!(!cached.messages.contains_key("boundary-seen"));
+        assert_eq!(cached.messages.get("older"), Some(&2));
 
         let thread = store.load_thread("chat", 100).unwrap().unwrap();
         assert_eq!(thread.unread_count, 4);

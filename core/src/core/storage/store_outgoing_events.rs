@@ -66,27 +66,22 @@ impl AppStore {
             .lock()
             .map_err(|_| anyhow::anyhow!("storage connection mutex poisoned"))?;
         let tx = conn.transaction()?;
-        tx.execute(
-            "INSERT INTO threads(chat_id, unread_count, updated_at_secs, draft)
-             VALUES (?1, ?2, ?3, ?4)
-             ON CONFLICT(chat_id) DO UPDATE SET
-                unread_count = excluded.unread_count,
-                updated_at_secs = excluded.updated_at_secs,
-                draft = excluded.draft",
-            params![
-                thread.chat_id,
-                thread.unread_count as i64,
-                thread.updated_at_secs as i64,
-                thread.draft
-            ],
-        )?;
+        upsert_thread_header(&tx, &thread.chat_id, thread)?;
         upsert_message_row(&tx, &thread.chat_id, message)?;
-        tx.execute(
+        tx.prepare_cached(
             "UPDATE messages SET outgoing_event_json = ?3 WHERE chat_id = ?1 AND id = ?2",
-            params![thread.chat_id, message.id, event_json],
-        )?;
+        )?
+        .execute(params![thread.chat_id, message.id, event_json])?;
         tx.commit()?;
-        self.cache.threads.remove(&thread.chat_id);
+        let entry = self
+            .cache
+            .threads
+            .entry(thread.chat_id.clone())
+            .or_default();
+        entry.header_hash = Some(hash_thread_header(thread));
+        entry
+            .messages
+            .insert(message.id.clone(), hash_message(message));
         Ok(())
     }
 

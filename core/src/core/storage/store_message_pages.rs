@@ -15,7 +15,7 @@ pub(crate) fn load_recent_messages_with_visibility(
     hidden_authors_json: Option<&str>,
     blocked_intervals_json: Option<&str>,
 ) -> anyhow::Result<Vec<PersistedMessage>> {
-    let mut stmt = conn.prepare(
+    let mut stmt = conn.prepare_cached(
         "SELECT chat_id, id, kind, author, author_owner_pubkey_hex, body, is_outgoing, created_at_secs, expires_at_secs,
 	                delivery, attachments_json, reactions_json, reactors_json, source_event_id,
 	                recipient_deliveries_json, delivery_trace_json, call_json, system_notice_owner_pubkey_hex, edit_history_json, deleted_for_everyone
@@ -76,7 +76,7 @@ pub(crate) fn load_messages_before_with_visibility(
     if limit == 0 {
         return Ok(Vec::new());
     }
-    let mut stmt = conn.prepare(
+    let mut stmt = conn.prepare_cached(
         "WITH anchor AS (
 	             SELECT created_at_secs AS anchor_created,
 	                    rowid AS anchor_storage_order
@@ -167,7 +167,7 @@ pub(crate) fn load_messages_around_with_visibility(
         hidden_authors_json,
         blocked_intervals_json,
     )?;
-    let mut stmt = conn.prepare(
+    let mut stmt = conn.prepare_cached(
         "WITH anchor AS (
 	             SELECT created_at_secs AS anchor_created,
 	                    rowid AS anchor_storage_order

@@ -91,24 +91,25 @@ impl AppCore {
             tx.execute("INSERT INTO app_meta(key,value) VALUES (?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value", rusqlite::params![format!("iris-chat-private-block-intervals-v1:{owner}"),intervals])?;
         }
         tx.commit()?;
+        drop(conn);
+        if let DeviceSyncRecord::PrivateEvent { event } = record {
+            if let Some(state) = super::super::private_settings::request_decision_state(event) {
+                self.cache_request_decision(state);
+            }
+        }
         Ok(true)
     }
-    pub(super) fn reaction_records_for_message(
-        &self,
-        chat: &str,
-        message: &str,
-    ) -> Vec<DeviceSyncRecord> {
+    fn reaction_records_with_prefix(&self, key_prefix: &str) -> Vec<DeviceSyncRecord> {
         let Some(prefix) = self.sync_record_prefix() else {
             return Vec::new();
         };
-        let key = serde_json::json!(["reaction", chat, message]).to_string();
-        let start = format!("{prefix}{},", key.trim_end_matches(']'));
+        let start = format!("{prefix}{},", key_prefix.trim_end_matches(']'));
         let end = format!("{start}\u{10ffff}");
         let shared = self.app_store.shared();
         let Ok(conn) = shared.lock() else {
             return Vec::new();
         };
-        let Ok(mut query) = conn.prepare(
+        let Ok(mut query) = conn.prepare_cached(
             "SELECT value FROM app_meta WHERE key>=?1 AND key<?2 ORDER BY key LIMIT 100001",
         ) else {
             return Vec::new();
@@ -119,6 +120,18 @@ impl AppCore {
         rows.filter_map(Result::ok)
             .filter_map(|json| serde_json::from_str(&json).ok())
             .collect()
+    }
+    pub(super) fn reaction_records_for_message(
+        &self,
+        chat: &str,
+        message: &str,
+    ) -> Vec<DeviceSyncRecord> {
+        let key = serde_json::json!(["reaction", chat, message]).to_string();
+        self.reaction_records_with_prefix(&key)
+    }
+    pub(super) fn reaction_records_for_chat(&self, chat: &str) -> Vec<DeviceSyncRecord> {
+        let key = serde_json::json!(["reaction", chat]).to_string();
+        self.reaction_records_with_prefix(&key)
     }
     pub(in crate::core::device_sync) fn sync_record_page(
         &self,
@@ -320,8 +333,9 @@ impl AppCore {
         let end = format!("iris-chat-sync-record-v1:{owner};");
         let shared = self.app_store.shared();
         let conn = shared.lock().map_err(|_| anyhow::anyhow!("Storage lock"))?;
-        let mut query = conn.prepare(
+        let mut query = conn.prepare_cached(
             "SELECT value FROM app_meta WHERE key>=?1 AND key<?2
+               AND instr(key, '[\"messageMutation\",') > 0
                AND json_extract(CASE WHEN json_valid(value) THEN value END, '$.type') = 'messageMutation'
                AND json_type(CASE WHEN json_valid(value) THEN value END, '$.mutation') = 'object'
                AND json_extract(CASE WHEN json_valid(value) THEN value END, '$.mutation.chatId') = ?3
@@ -340,5 +354,47 @@ impl AppCore {
             }
         }
         Ok(records.into_values().collect())
+    }
+    pub(in crate::core) fn message_mutation_records_for_chat(
+        &self,
+        chat: &str,
+    ) -> anyhow::Result<std::collections::BTreeMap<String, Vec<MessageMutation>>> {
+        let owner = self
+            .logged_in
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("No account"))?
+            .owner_pubkey
+            .to_hex();
+        let start = format!("iris-chat-sync-record-v1:{owner}:");
+        let end = format!("iris-chat-sync-record-v1:{owner};");
+        let shared = self.app_store.shared();
+        let conn = shared.lock().map_err(|_| anyhow::anyhow!("Storage lock"))?;
+        let mut query = conn.prepare_cached(
+            "SELECT value FROM app_meta WHERE key>=?1 AND key<?2
+               AND instr(key, '[\"messageMutation\",') > 0
+               AND json_extract(CASE WHEN json_valid(value) THEN value END, '$.type') = 'messageMutation'
+               AND json_type(CASE WHEN json_valid(value) THEN value END, '$.mutation') = 'object'
+               AND json_extract(CASE WHEN json_valid(value) THEN value END, '$.mutation.chatId') = ?3
+             ORDER BY key",
+        )?;
+        let rows = query.query_map(rusqlite::params![start, end, chat], |row| {
+            row.get::<_, String>(0)
+        })?;
+        let mut by_message: std::collections::BTreeMap<
+            String,
+            std::collections::BTreeMap<String, MessageMutation>,
+        > = std::collections::BTreeMap::new();
+        for row in rows {
+            if let DeviceSyncRecord::MessageMutation { mutation } = serde_json::from_str(&row?)? {
+                let per_message = by_message.entry(mutation.message_id.clone()).or_default();
+                if let Some(previous) = per_message.insert(mutation.id.clone(), mutation.clone()) {
+                    anyhow::ensure!(previous == mutation, "Conflicting stored message mutation");
+                }
+            }
+        }
+        Ok(by_message
+            .into_iter()
+            .map(|(message_id, records)| (message_id, records.into_values().collect()))
+            .collect())
     }
 }

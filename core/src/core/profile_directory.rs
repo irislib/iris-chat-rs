@@ -51,6 +51,7 @@ impl AppCore {
         }
         let mut next = BTreeMap::new();
         if let Some(local) = account.as_ref() {
+            let social_ctx = self.social_connection_context();
             let owners: BTreeSet<_> = self
                 .owner_profiles
                 .keys()
@@ -83,7 +84,7 @@ impl AppCore {
                         owner_pubkey_hex: owner.clone(),
                         name,
                         picture_url: normalize_profile_url(picture),
-                        social_connection: self.social_connection(&owner),
+                        social_connection: self.social_connection_with_context(&social_ctx, &owner),
                     },
                 );
             }

@@ -412,12 +412,6 @@ impl AppCore {
             .get(owner_hex)
             .and_then(|profile| profile.about.clone())
     }
-
-    pub(super) fn owner_secondary_identifier(&self, owner_hex: &str) -> Option<String> {
-        let nickname = self.owner_nickname(owner_hex)?;
-        let profile_name = self.owner_profile_name(owner_hex)?;
-        (profile_name != nickname).then_some(profile_name)
-    }
 }
 
 pub(crate) fn fallback_profile_name_for_identity(identity: &str) -> String {
@@ -430,13 +424,20 @@ pub(crate) fn fallback_profile_name_for_identity(identity: &str) -> String {
         "Tiger", "Wolf",
     ];
 
-    let normalized = PublicKey::parse(identity.trim())
-        .ok()
-        .map(|key| key.to_hex());
-    let trimmed = normalized.as_deref().unwrap_or_else(|| identity.trim());
-    if trimmed.is_empty() {
+    let raw = identity.trim();
+    if raw.is_empty() {
         return "Quiet Otter".to_string();
     }
+    // Canonical 64-char lowercase hex either parses to itself or fails to parse;
+    // in both cases `trimmed` equals `raw`, so skip secp256k1 parsing.
+    let is_canonical_hex =
+        raw.len() == 64 && raw.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'));
+    let normalized = if is_canonical_hex {
+        None
+    } else {
+        PublicKey::parse(raw).ok().map(|key| key.to_hex())
+    };
+    let trimmed = normalized.as_deref().unwrap_or(raw);
 
     let hash = trimmed.bytes().fold(0_u32, |hash, byte| {
         hash.wrapping_mul(31).wrapping_add(byte as u32)
@@ -458,6 +459,23 @@ pub(crate) fn profile_name_for_identity(name: &str, identity: &str) -> Option<St
     let name = name.trim();
     if name.is_empty() {
         return None;
+    }
+    // Real names cannot match a hex/npub key or a truncated `...`/`…` identifier,
+    // so skip secp256k1 parsing, bech32 encoding, and lowercase allocations.
+    let has_ellipsis = name.contains("...") || name.contains('…');
+    let looks_like_pubkey = (name.len() == 64 && name.bytes().all(|b| b.is_ascii_hexdigit()))
+        || (name.len() == 63
+            && name
+                .as_bytes()
+                .get(..5)
+                .is_some_and(|prefix| prefix.eq_ignore_ascii_case(b"npub1")));
+    if !has_ellipsis && !looks_like_pubkey {
+        let same_as_identity = if name.is_ascii() && identity.is_ascii() {
+            name.eq_ignore_ascii_case(identity)
+        } else {
+            name.to_lowercase() == identity.to_lowercase()
+        };
+        return (!same_as_identity).then(|| name.to_string());
     }
     let lower = name.to_lowercase();
     let owner = PublicKey::parse(identity).ok();
@@ -499,10 +517,18 @@ mod person_name_tests {
     fn cached_identifiers_are_not_profile_names_but_real_labels_are_preserved() {
         let hex = "ab".repeat(32);
         let npub = PublicKey::from_hex(&hex).unwrap().to_bech32().unwrap();
-        for value in [&hex, &npub, "abababab...abababab", "abababab…abababab", " "] {
+        for value in [
+            hex.as_str(),
+            &hex.to_uppercase(),
+            npub.as_str(),
+            &npub.to_uppercase(),
+            "abababab...abababab",
+            "abababab…abababab",
+            " ",
+        ] {
             assert_eq!(profile_name_for_identity(value, &hex), None);
         }
-        for name in ["Alice", "Mum", "Golden Hare", "Amber Fox"] {
+        for name in ["Alice", "Mum", "Golden Hare", "Amber Fox", "Åsa"] {
             assert_eq!(profile_name_for_identity(name, &hex).as_deref(), Some(name));
         }
     }

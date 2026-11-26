@@ -205,6 +205,24 @@ impl AppCore {
     }
 
     pub(super) fn project_message_mutations(&mut self, chat: &str, target: &str) -> bool {
+        self.project_message_mutations_inner(chat, target, None)
+    }
+
+    pub(super) fn project_message_mutations_with_records(
+        &mut self,
+        chat: &str,
+        target: &str,
+        mutations: Vec<MessageMutation>,
+    ) -> bool {
+        self.project_message_mutations_inner(chat, target, Some(mutations))
+    }
+
+    fn project_message_mutations_inner(
+        &mut self,
+        chat: &str,
+        target: &str,
+        preloaded_mutations: Option<Vec<MessageMutation>>,
+    ) -> bool {
         let mut message = match self.message_for_mutation_result(chat, target) {
             Ok(Some(message)) => message,
             Ok(None) => return true,
@@ -216,8 +234,12 @@ impl AppCore {
         let Some(author) = message.author_owner_pubkey_hex.clone() else {
             return true;
         };
-        let Ok(mut mutations) = self.message_mutation_records_result(chat, target) else {
-            return false;
+        let mut mutations = match preloaded_mutations {
+            Some(mutations) => mutations,
+            None => match self.message_mutation_records_result(chat, target) {
+                Ok(mutations) => mutations,
+                Err(_) => return false,
+            },
         };
         if mutations.is_empty() && !message.deleted_for_everyone {
             return true;

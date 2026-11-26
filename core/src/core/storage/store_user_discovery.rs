@@ -58,15 +58,6 @@ impl AppStore {
             let (owner, support) = row?;
             cache.social_friend_support.insert(owner, support);
         }
-        let opinion_json: String = conn
-            .query_row(
-                "SELECT social_opinion_events_json FROM user_discovery_state WHERE id = 1",
-                [],
-                |row| row.get(0),
-            )
-            .optional()?
-            .unwrap_or_else(|| "[]".to_owned());
-        cache.social_opinion_events = serde_json::from_str(&opinion_json).unwrap_or_default();
         Ok(cache)
     }
 

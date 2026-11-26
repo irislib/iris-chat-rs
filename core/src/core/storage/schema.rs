@@ -7,7 +7,7 @@ use rusqlite::{params, Connection, Transaction};
 // Bump when a non-additive change to the schema lands and migrate
 // inside `ensure_schema` below. Greenfield: version 1 is the initial
 // shape and there is no previous JSON layout to migrate from.
-const SCHEMA_VERSION: u32 = 50;
+const SCHEMA_VERSION: u32 = 51;
 
 const INITIAL_SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS direct_file_transfers (
@@ -273,7 +273,10 @@ CREATE TRIGGER IF NOT EXISTS messages_fts_ad AFTER DELETE ON messages BEGIN
     DELETE FROM messages_fts WHERE rowid = old.rowid;
 END;
 
-CREATE TRIGGER IF NOT EXISTS messages_fts_au AFTER UPDATE ON messages BEGIN
+CREATE TRIGGER IF NOT EXISTS messages_fts_au
+    AFTER UPDATE OF body, chat_id, id ON messages
+    WHEN old.body IS NOT new.body OR old.chat_id IS NOT new.chat_id OR old.id IS NOT new.id
+BEGIN
     DELETE FROM messages_fts WHERE rowid = old.rowid;
     INSERT INTO messages_fts(rowid, body, chat_id, message_id)
     VALUES (new.rowid, new.body, new.chat_id, new.id);
@@ -732,6 +735,21 @@ pub(super) fn ensure_schema(conn: &mut Connection) -> anyhow::Result<()> {
     }
     if (1..50).contains(&current) && column_exists(&tx, "threads", "unread_count")? {
         super::group_notice_reads::migrate(&tx)?;
+    }
+    if (1..51).contains(&current) {
+        tx.execute_batch(
+            "DROP TRIGGER IF EXISTS messages_fts_au;
+             CREATE TRIGGER messages_fts_au
+                 AFTER UPDATE OF body, chat_id, id ON messages
+                 WHEN old.body IS NOT new.body
+                   OR old.chat_id IS NOT new.chat_id
+                   OR old.id IS NOT new.id
+             BEGIN
+                 DELETE FROM messages_fts WHERE rowid = old.rowid;
+                 INSERT INTO messages_fts(rowid, body, chat_id, message_id)
+                 VALUES (new.rowid, new.body, new.chat_id, new.id);
+             END;",
+        )?;
     }
     tx.pragma_update(None, "user_version", SCHEMA_VERSION as i64)?;
     tx.commit()?;

@@ -59,6 +59,7 @@ mod groups_sender_key;
 mod groups_sender_key_continuation;
 mod groups_sender_key_retry;
 mod handshake_owner_proof;
+mod hot_flow_perf;
 mod image_proxy_preferences;
 mod invite_notifications;
 mod issued_invites;

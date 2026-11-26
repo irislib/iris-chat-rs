@@ -69,6 +69,7 @@ impl AppCore {
     }
 
     pub(super) fn clear_persistence_best_effort(&mut self) {
+        self.clear_request_decisions_cache();
         if let Err(error) = self.app_store.clear() {
             self.push_debug_log("storage.clear_failed", error.to_string());
         }

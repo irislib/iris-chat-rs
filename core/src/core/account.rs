@@ -790,6 +790,7 @@ impl AppCore {
         let relay_urls = relay_urls_from_strings(&self.preferences.nostr_relay_urls);
         self.start_notifications_loop(client.clone());
 
+        self.clear_request_decisions_cache();
         self.logged_in = Some(LoggedInState {
             owner_pubkey,
             owner_keys: owner_keys.clone(),

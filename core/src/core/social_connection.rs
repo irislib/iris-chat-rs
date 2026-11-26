@@ -2,6 +2,77 @@ use super::*;
 use crate::state::{SocialBadge, SocialConnectionSnapshot};
 use nostr_social_graph::SocialGraph;
 
+pub(super) struct SocialConnectionContext<'a> {
+    owner: Option<String>,
+    graph: Option<&'a SocialGraph>,
+    muted_by_owner: HashSet<String>,
+    root_friends: Vec<String>,
+}
+
+impl<'a> SocialConnectionContext<'a> {
+    pub(super) fn new(owner: Option<String>, graph: Option<&'a SocialGraph>) -> Self {
+        let matching_graph = owner
+            .as_deref()
+            .and_then(|owner| graph.filter(|graph| graph.get_root() == owner));
+        let (muted_by_owner, root_friends) = match (owner.as_deref(), matching_graph) {
+            (Some(owner), Some(graph)) => (
+                graph.get_muted_by_user(owner).into_iter().collect(),
+                graph.get_users_by_follow_distance(1),
+            ),
+            _ => (HashSet::new(), Vec::new()),
+        };
+        Self {
+            owner,
+            graph: matching_graph,
+            muted_by_owner,
+            root_friends,
+        }
+    }
+
+    pub(super) fn connection(
+        &self,
+        target: &str,
+        is_favorite: bool,
+    ) -> Option<SocialConnectionSnapshot> {
+        let owner = self.owner.as_deref()?;
+        // Group IDs and device IDs must never acquire a person's social badge.
+        if target.len() != 64 || PublicKey::from_hex(target).is_err() {
+            return None;
+        }
+        if owner == target {
+            return Some(SocialConnectionSnapshot {
+                is_favorite: false,
+                badge: Some(SocialBadge::Following),
+                follow_distance: Some(0),
+                followed_by_friends: 0,
+                description: "You".into(),
+            });
+        }
+        let Some(graph) = self.graph else {
+            return is_favorite.then(|| SocialConnectionSnapshot {
+                badge: None,
+                follow_distance: None,
+                followed_by_friends: 0,
+                description: "Favorite · Only you".into(),
+                is_favorite: true,
+            });
+        };
+        let distance = graph.get_follow_distance(target);
+        // Any distance-1 friend following `target` forces `distance <= 2`.
+        let friends = if distance <= 2 {
+            self.root_friends
+                .iter()
+                .filter(|friend| graph.is_following(friend, target))
+                .count() as u32
+        } else {
+            0
+        };
+        let muted = self.muted_by_owner.contains(target);
+        let overmuted = !muted && graph.is_overmuted(target, 1.0);
+        build_social_connection_snapshot(distance, friends, muted, overmuted, is_favorite)
+    }
+}
+
 impl AppCore {
     pub(super) fn refresh_social_graph(&mut self) {
         self.social_graph = self
@@ -14,6 +85,27 @@ impl AppCore {
         self.mark_mobile_push_dirty();
     }
 
+    pub(super) fn social_connection_context(&self) -> SocialConnectionContext<'_> {
+        let owner = self
+            .logged_in
+            .as_ref()
+            .map(|login| login.owner_pubkey.to_hex());
+        SocialConnectionContext::new(owner, self.social_graph.as_ref())
+    }
+
+    pub(super) fn social_connection_with_context(
+        &self,
+        context: &SocialConnectionContext<'_>,
+        target: &str,
+    ) -> Option<SocialConnectionSnapshot> {
+        let is_favorite = self
+            .owner_profiles
+            .get(target)
+            .is_some_and(|profile| profile.contact_memory.favorite);
+        context.connection(target, is_favorite)
+    }
+
+    #[cfg(test)]
     pub(super) fn social_connection(&self, target: &str) -> Option<SocialConnectionSnapshot> {
         let owner = self.logged_in.as_ref()?.owner_pubkey.to_hex();
         social_connection(
@@ -35,7 +127,9 @@ pub(super) fn social_connection(
 ) -> Option<SocialConnectionSnapshot> {
     let owner = owner?;
     // Group IDs and device IDs must never acquire a person's social badge.
-    PublicKey::from_hex(target).ok()?;
+    if target.len() != 64 || PublicKey::from_hex(target).is_err() {
+        return None;
+    }
     if owner == target {
         return Some(SocialConnectionSnapshot {
             is_favorite: false,
@@ -55,16 +149,30 @@ pub(super) fn social_connection(
         });
     };
     let distance = graph.get_follow_distance(target);
-    let friends = graph
-        .get_followers_by_user(target)
-        .iter()
-        .filter(|friend| graph.get_follow_distance(friend) == 1)
-        .count() as u32;
+    let friends = if distance <= 2 {
+        graph
+            .get_followers_by_user(target)
+            .iter()
+            .filter(|friend| graph.get_follow_distance(friend) == 1)
+            .count() as u32
+    } else {
+        0
+    };
     let muted = graph
         .get_muted_by_user(owner)
         .iter()
         .any(|user| user == target);
-    let overmuted = graph.is_overmuted(target, 1.0);
+    let overmuted = !muted && graph.is_overmuted(target, 1.0);
+    build_social_connection_snapshot(distance, friends, muted, overmuted, is_favorite)
+}
+
+fn build_social_connection_snapshot(
+    distance: u32,
+    friends: u32,
+    muted: bool,
+    overmuted: bool,
+    is_favorite: bool,
+) -> Option<SocialConnectionSnapshot> {
     let badge = if muted {
         Some(SocialBadge::Muted)
     } else if overmuted {
@@ -232,5 +340,42 @@ mod tests {
                 .unwrap()
                 .is_favorite
         );
+    }
+
+    #[test]
+    fn social_connection_context_matches_single_lookup_across_graph_states() {
+        let mut graph = SocialGraph::new(&key(1));
+        event(&mut graph, 1, &(2..=12).collect::<Vec<_>>(), 3, 1);
+        for n in 2..=12 {
+            event(&mut graph, n, &[20], 3, 1);
+        }
+        event(&mut graph, 2, &[20, 21], 3, 2);
+        event(&mut graph, 21, &[30], 3, 1);
+        event(&mut graph, 1, &[25], 10_000, 1);
+        event(&mut graph, 2, &[26], 3, 2);
+        event(&mut graph, 3, &[26], 10_000, 1);
+        event(&mut graph, 4, &[26], 10_000, 1);
+
+        let owner = key(1);
+        let ctx = SocialConnectionContext::new(Some(owner.clone()), Some(&graph));
+        for target in [
+            key(1),
+            key(2),
+            key(20),
+            key(21),
+            key(25),
+            key(26),
+            key(30),
+            key(40),
+            "group:abc".to_string(),
+        ] {
+            for is_favorite in [false, true] {
+                assert_eq!(
+                    ctx.connection(&target, is_favorite),
+                    social_connection(Some(&owner), &target, Some(&graph), is_favorite),
+                    "target={target} favorite={is_favorite}"
+                );
+            }
+        }
     }
 }

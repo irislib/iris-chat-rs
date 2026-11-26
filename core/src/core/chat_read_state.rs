@@ -216,6 +216,7 @@ impl AppCore {
         };
         for message in &mut thread.messages {
             if !message.is_outgoing
+                && !matches!(message.delivery, DeliveryState::Seen)
                 && self
                     .app_store
                     .message_read_state(chat_id, &message.id)

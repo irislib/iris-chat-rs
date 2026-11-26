@@ -702,3 +702,102 @@ fn migrates_v47_request_policy_without_enabling_previously_disabled_requests() {
         assert_eq!(actual, (enabled, enabled, false));
     }
 }
+
+#[test]
+fn migrates_v50_fts_trigger_to_skip_non_body_updates() {
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
+
+    let mut conn = Connection::open_in_memory().unwrap();
+    ensure_schema(&mut conn).unwrap();
+    conn.execute_batch(
+        "DROP TRIGGER IF EXISTS messages_fts_au;
+         CREATE TRIGGER messages_fts_au AFTER UPDATE ON messages BEGIN
+             DELETE FROM messages_fts WHERE rowid = old.rowid;
+             INSERT INTO messages_fts(rowid, body, chat_id, message_id)
+             VALUES (new.rowid, new.body, new.chat_id, new.id);
+         END;
+         PRAGMA user_version = 50;",
+    )
+    .unwrap();
+
+    ensure_schema(&mut conn).unwrap();
+    assert_eq!(user_version(&conn), SCHEMA_VERSION);
+
+    conn.execute(
+        "INSERT INTO threads(chat_id, unread_count, updated_at_secs, draft) VALUES ('chat-a', 0, 10, '')",
+        [],
+    )
+    .unwrap();
+    conn.execute(
+        "INSERT INTO messages(chat_id, id, kind, author, body, is_outgoing, created_at_secs, delivery)
+         VALUES ('chat-a', 'm1', 'user', 'me', 'alpha search needle', 1, 10, 'pending')",
+        [],
+    )
+    .unwrap();
+
+    let fts_writes = Arc::new(AtomicUsize::new(0));
+    let sink = fts_writes.clone();
+    conn.update_hook(Some(move |_, _: &str, table: &str, _: i64| {
+        if table.starts_with("messages_fts") {
+            sink.fetch_add(1, Ordering::Relaxed);
+        }
+    }));
+
+    // Delivery and outgoing-event updates must not re-index FTS5.
+    conn.execute(
+        "UPDATE messages SET delivery = 'seen', outgoing_event_json = '{\"id\":\"1\"}'
+         WHERE chat_id = 'chat-a' AND id = 'm1'",
+        [],
+    )
+    .unwrap();
+    assert_eq!(
+        fts_writes.load(Ordering::Relaxed),
+        0,
+        "delivery/metadata updates must not rewrite messages_fts"
+    );
+
+    // Body edits must still update the FTS5 index.
+    conn.execute(
+        "UPDATE messages SET body = 'beta replacement token' WHERE chat_id = 'chat-a' AND id = 'm1'",
+        [],
+    )
+    .unwrap();
+    assert!(
+        fts_writes.load(Ordering::Relaxed) > 0,
+        "body edits must update messages_fts"
+    );
+    let old_hits: i64 = conn
+        .query_row(
+            "SELECT count(*) FROM messages_fts WHERE messages_fts MATCH '\"alpha\"'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let new_hits: i64 = conn
+        .query_row(
+            "SELECT count(*) FROM messages_fts WHERE messages_fts MATCH '\"beta\"'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(old_hits, 0);
+    assert_eq!(new_hits, 1);
+
+    // Deleting the message must still clean up FTS5.
+    conn.execute(
+        "DELETE FROM messages WHERE chat_id = 'chat-a' AND id = 'm1'",
+        [],
+    )
+    .unwrap();
+    let remaining_hits: i64 = conn
+        .query_row(
+            "SELECT count(*) FROM messages_fts WHERE messages_fts MATCH '\"beta\"'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(remaining_hits, 0);
+}

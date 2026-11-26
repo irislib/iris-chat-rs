@@ -39,31 +39,64 @@ pub(super) fn load_owner_profiles(
     Ok(profiles)
 }
 
-pub(super) fn write_owner_profiles(
+pub(super) fn write_owner_profiles_diff(
     tx: &Transaction,
     profiles: &BTreeMap<String, OwnerProfileRecord>,
+    diff: &MapDiff,
 ) -> anyhow::Result<()> {
-    tx.execute("DELETE FROM owner_profiles", [])?;
-    tx.execute(
-        "DELETE FROM app_meta WHERE key LIKE 'iris-profile-projection-v1:%'",
-        [],
+    let mut delete_meta = tx.prepare_cached("DELETE FROM app_meta WHERE key = ?1")?;
+    if diff.full_replace {
+        tx.execute("DELETE FROM owner_profiles", [])?;
+        tx.execute(
+            "DELETE FROM app_meta WHERE key LIKE 'iris-profile-projection-v1:%'",
+            [],
+        )?;
+    } else if !diff.deletes.is_empty() {
+        let mut delete_profile =
+            tx.prepare_cached("DELETE FROM owner_profiles WHERE owner_pubkey_hex = ?1")?;
+        for owner_pubkey_hex in &diff.deletes {
+            delete_profile.execute([owner_pubkey_hex])?;
+            delete_meta.execute([format!("iris-profile-projection-v1:{owner_pubkey_hex}")])?;
+        }
+    }
+    if diff.upserts.is_empty() {
+        return Ok(());
+    }
+    let mut upsert_meta = tx.prepare_cached(
+        "INSERT INTO app_meta(key, value) VALUES (?1, ?2)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
     )?;
-    let mut stmt = tx.prepare_cached(
+    let mut upsert_profile = tx.prepare_cached(
         "INSERT INTO owner_profiles
             (owner_pubkey_hex, nickname, name, display_name, picture, about,
              extra_metadata_json, extra_tags_json, updated_at_secs, contact_note, contact_updated_at_ms, contact_memory_json)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)
+         ON CONFLICT(owner_pubkey_hex) DO UPDATE SET
+            nickname = excluded.nickname,
+            name = excluded.name,
+            display_name = excluded.display_name,
+            picture = excluded.picture,
+            about = excluded.about,
+            extra_metadata_json = excluded.extra_metadata_json,
+            extra_tags_json = excluded.extra_tags_json,
+            updated_at_secs = excluded.updated_at_secs,
+            contact_note = excluded.contact_note,
+            contact_updated_at_ms = excluded.contact_updated_at_ms,
+            contact_memory_json = excluded.contact_memory_json",
     )?;
-    for (owner_pubkey_hex, profile) in profiles {
+    for (owner_pubkey_hex, _) in &diff.upserts {
+        let Some(profile) = profiles.get(owner_pubkey_hex) else {
+            continue;
+        };
+        let meta_key = format!("iris-profile-projection-v1:{owner_pubkey_hex}");
         if let Some(id) = &profile.source_event_id {
-            tx.execute(
-                "INSERT INTO app_meta(key,value) VALUES (?1,?2)",
-                params![format!("iris-profile-projection-v1:{owner_pubkey_hex}"), id],
-            )?;
+            upsert_meta.execute(params![meta_key, id])?;
+        } else if !diff.full_replace {
+            delete_meta.execute([meta_key])?;
         }
         let extra_tags_json =
             serde_json::to_string(&profile.extra_tags).unwrap_or_else(|_| "[]".to_string());
-        stmt.execute(params![
+        upsert_profile.execute(params![
             owner_pubkey_hex,
             profile.nickname,
             profile.name,

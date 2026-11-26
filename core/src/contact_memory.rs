@@ -6,7 +6,7 @@
 //! metadata. A favorite is a private preference and conveys no social trust.
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, Hash)]
 #[serde(default)]
 pub struct ContactMemory {
     pub first_seen_name: Option<String>,
@@ -15,7 +15,7 @@ pub struct ContactMemory {
     pub name_changes: Vec<AcceptedNameChange>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct AcceptedNameChange {
     pub previous_name: String,
     pub accepted_name: String,

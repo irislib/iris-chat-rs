@@ -4,7 +4,7 @@ use super::*;
 use fips_core::{FipsEndpoint, PeerIdentity as FipsPeerIdentity};
 use nostr_double_ratchet::{GroupProtocol, GroupStrategy};
 use nostr_pubsub_fips::{FipsPubsubClient, FipsPubsubClientOptions};
-pub(super) use private_settings::InviteAcceptanceIntent;
+pub(super) use private_settings::{InviteAcceptanceIntent, RequestDecision};
 use tokio::task::JoinHandle;
 
 use anti_entropy::metadata_page_packets;

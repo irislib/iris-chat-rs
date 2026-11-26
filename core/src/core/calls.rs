@@ -223,7 +223,7 @@ impl AppCore {
     pub(super) fn start_call(&mut self, owner: &str, video: bool) {
         if self.calls.active.is_some() {
             // Recover the current call screen if a shell missed its snapshot.
-            self.last_emitted_state = None;
+            self.has_emitted_state = false;
             self.emit_state();
             return;
         }
@@ -290,7 +290,7 @@ impl AppCore {
         self.state.toast = Some(message.into());
         // A retry is a new interaction even when its error text is identical.
         // Otherwise snapshot deduplication makes subsequent taps look ignored.
-        self.last_emitted_state = None;
+        self.has_emitted_state = false;
         self.emit_state();
     }
     #[allow(clippy::too_many_arguments)]

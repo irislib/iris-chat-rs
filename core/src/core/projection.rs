@@ -1,6 +1,7 @@
 use super::chat_typing::typing_indicator_is_active;
 use super::*;
 use crate::state::{ChatKind, ChatMessageKind, MutualGroupsSnapshot};
+use std::collections::HashMap;
 
 mod blocked_people;
 mod devices;
@@ -37,18 +38,10 @@ pub(super) fn is_message_request_thread(
         return false;
     }
     match kind {
-        ChatKind::Direct => {
-            if accepted_owner_pubkeys
-                .iter()
-                .any(|hex| hex == &thread.chat_id)
-            {
-                return false;
-            }
-            thread
-                .messages
-                .iter()
-                .any(|m| !m.is_outgoing && matches!(m.kind, ChatMessageKind::User))
-        }
+        ChatKind::Direct => thread
+            .messages
+            .iter()
+            .any(|m| !m.is_outgoing && matches!(m.kind, ChatMessageKind::User)),
         ChatKind::Group => {
             // Group adds by unknowns get the same Signal-style request
             // gate: we created it, the creator is in our accepted set
@@ -112,6 +105,7 @@ impl AppCore {
         chat_id: &str,
         group_snapshot: Option<&GroupSnapshot>,
         local_owner_hex: Option<&str>,
+        social_ctx: &social_connection::SocialConnectionContext<'_>,
     ) -> Vec<ChatParticipantSnapshot> {
         let mut owners = if let Some(group) = group_snapshot {
             group
@@ -129,7 +123,7 @@ impl AppCore {
         owners.dedup();
         owners
             .into_iter()
-            .map(|owner| self.participant_snapshot_for_owner(&owner, local_owner_hex))
+            .map(|owner| self.participant_snapshot_for_owner(&owner, local_owner_hex, social_ctx))
             .collect()
     }
 
@@ -137,6 +131,7 @@ impl AppCore {
         &self,
         owner_hex: &str,
         local_owner_hex: Option<&str>,
+        social_ctx: &social_connection::SocialConnectionContext<'_>,
     ) -> ChatParticipantSnapshot {
         let is_local_owner = local_owner_hex == Some(owner_hex);
         let display_name = if is_local_owner {
@@ -150,7 +145,7 @@ impl AppCore {
             self.owner_display_label(owner_hex)
         };
         ChatParticipantSnapshot {
-            social_connection: self.social_connection(owner_hex),
+            social_connection: self.social_connection_with_context(social_ctx, owner_hex),
             owner_pubkey_hex: owner_hex.to_string(),
             display_name,
             picture_url: self.owner_picture_url(owner_hex),
@@ -158,11 +153,28 @@ impl AppCore {
         }
     }
 
+    fn cached_owner_label_and_picture(
+        &self,
+        author_cache: &mut HashMap<String, (String, Option<String>)>,
+        owner_hex: &str,
+    ) -> (String, Option<String>) {
+        if let Some(cached) = author_cache.get(owner_hex) {
+            return cached.clone();
+        }
+        let entry = (
+            self.owner_display_label(owner_hex),
+            self.owner_picture_url(owner_hex),
+        );
+        author_cache.insert(owner_hex.to_string(), entry.clone());
+        entry
+    }
+
     fn decorate_message_snapshot(
         &self,
         message: &ChatMessageSnapshot,
         chat_id: &str,
         local_owner_hex: Option<&str>,
+        author_cache: &mut HashMap<String, (String, Option<String>)>,
     ) -> ChatMessageSnapshot {
         let mut decorated = message.clone();
         for attachment in &mut decorated.attachments {
@@ -184,20 +196,23 @@ impl AppCore {
             }
         });
         if let Some(owner) = author_owner {
-            decorated.author = self.owner_display_label(&owner);
-            decorated.author_owner_pubkey_hex = Some(owner.clone());
-            decorated.author_picture_url = self.owner_picture_url(&owner);
+            let (label, picture) = self.cached_owner_label_and_picture(author_cache, &owner);
+            decorated.author = label;
+            decorated.author_picture_url = picture;
+            decorated.author_owner_pubkey_hex = Some(owner);
         }
-        decorated.recipient_deliveries = decorated
-            .recipient_deliveries
-            .iter()
-            .map(|delivery| self.decorate_recipient_delivery(delivery))
-            .collect();
-        decorated.reactors = decorated
-            .reactors
-            .iter()
-            .map(|reactor| self.decorate_reactor(reactor))
-            .collect();
+        for delivery in &mut decorated.recipient_deliveries {
+            let (label, picture) =
+                self.cached_owner_label_and_picture(author_cache, &delivery.owner_pubkey_hex);
+            delivery.display_name = label;
+            delivery.picture_url = picture;
+        }
+        for reactor in &mut decorated.reactors {
+            let (label, picture) =
+                self.cached_owner_label_and_picture(author_cache, &reactor.author);
+            reactor.display_name = label;
+            reactor.picture_url = picture;
+        }
         direct_files::decorate(
             &mut decorated,
             self.state.account.as_ref(),
@@ -205,22 +220,59 @@ impl AppCore {
         );
         decorated
     }
+}
 
-    fn decorate_recipient_delivery(
+struct ThreadPresentation {
+    display_name: String,
+    nickname: Option<String>,
+    contact_note: Option<String>,
+    profile_name: Option<String>,
+    subtitle: Option<String>,
+    picture_url: Option<String>,
+    about: Option<String>,
+    member_count: u64,
+}
+
+impl AppCore {
+    fn thread_presentation(
         &self,
-        delivery: &MessageRecipientDeliverySnapshot,
-    ) -> MessageRecipientDeliverySnapshot {
-        let mut decorated = delivery.clone();
-        decorated.display_name = self.owner_display_label(&decorated.owner_pubkey_hex);
-        decorated.picture_url = self.owner_picture_url(&decorated.owner_pubkey_hex);
-        decorated
-    }
-
-    fn decorate_reactor(&self, reactor: &MessageReactor) -> MessageReactor {
-        let mut decorated = reactor.clone();
-        decorated.display_name = self.owner_display_label(&decorated.author);
-        decorated.picture_url = self.owner_picture_url(&decorated.author);
-        decorated
+        chat_id: &str,
+        group: Option<&GroupSnapshot>,
+        include_group_member_subtitle: bool,
+    ) -> ThreadPresentation {
+        let contact_note = self
+            .owner_profiles
+            .get(chat_id)
+            .and_then(|profile| profile.contact_note.clone());
+        if let Some(group) = group {
+            return ThreadPresentation {
+                display_name: group.name.clone(),
+                nickname: None,
+                contact_note,
+                profile_name: None,
+                subtitle: include_group_member_subtitle
+                    .then(|| format!("{} members", group.members.len())),
+                picture_url: self.group_picture_url(group),
+                about: group.about.clone(),
+                member_count: group.members.len() as u64,
+            };
+        }
+        let nickname = self.owner_nickname(chat_id);
+        let profile_name = self.owner_profile_name(chat_id);
+        let subtitle = match (nickname.as_deref(), profile_name.as_deref()) {
+            (Some(nick), Some(profile)) if profile != nick => Some(profile.to_string()),
+            _ => None,
+        };
+        ThreadPresentation {
+            display_name: self.direct_chat_display_label(chat_id),
+            nickname,
+            contact_note,
+            profile_name,
+            subtitle,
+            picture_url: self.owner_picture_url(chat_id),
+            about: self.owner_about(chat_id),
+            member_count: 0,
+        }
     }
 }
 
@@ -311,11 +363,33 @@ impl AppCore {
         };
 
         self.prune_expired_typing_indicators();
+        let now = unix_now().get();
+        let pinned_ids: HashSet<String> = self
+            .preferences
+            .pinned_chat_ids
+            .iter()
+            .filter_map(|id| self.normalize_local_chat_setting_id(id))
+            .collect();
+        let mut muted_ids: HashSet<String> = self
+            .preferences
+            .muted_chat_ids
+            .iter()
+            .filter_map(|id| self.normalize_local_chat_setting_id(id))
+            .collect();
+        for mute in &self.preferences.timed_chat_mutes {
+            if mute.until_secs > now {
+                if let Some(id) = self.normalize_local_chat_setting_id(&mute.chat_id) {
+                    muted_ids.insert(id);
+                }
+            }
+        }
+        let social_ctx = self.social_connection_context();
+
         // Blocking keeps the conversation readable; sending is gated separately.
         let mut threads: Vec<&ThreadRecord> = self.threads.values().collect();
         threads.sort_by(|left, right| {
-            let left_pinned = self.is_chat_pinned(&left.chat_id);
-            let right_pinned = self.is_chat_pinned(&right.chat_id);
+            let left_pinned = !pinned_ids.is_empty() && pinned_ids.contains(&left.chat_id);
+            let right_pinned = !pinned_ids.is_empty() && pinned_ids.contains(&right.chat_id);
             right_pinned
                 .cmp(&left_pinned)
                 .then_with(|| right.updated_at_secs.cmp(&left.updated_at_secs))
@@ -325,7 +399,7 @@ impl AppCore {
             .logged_in
             .as_ref()
             .map(|logged_in| logged_in.owner_pubkey.to_hex());
-        self.state.chat_list = threads
+        let chat_list = threads
             .iter()
             .map(|thread| {
                 let last_message = thread.messages.iter().rev().find(|m| {
@@ -333,68 +407,28 @@ impl AppCore {
                         && !self.group_message_is_hidden(&thread.chat_id, m)
                 });
                 let thread_kind = chat_kind_for_id(&thread.chat_id);
-                let group_snapshot = self.group_snapshot_for_chat_id(&thread.chat_id);
-                let is_muted = self.is_chat_muted(&thread.chat_id);
-                let is_pinned = self.is_chat_pinned(&thread.chat_id);
-                let display_name = group_snapshot
-                    .as_ref()
-                    .map(|group| group.name.clone())
-                    .unwrap_or_else(|| self.direct_chat_display_label(&thread.chat_id));
-                let direct_nickname = if group_snapshot.is_none() {
-                    self.owner_nickname(&thread.chat_id)
-                } else {
-                    None
-                };
-                let direct_profile_name = if group_snapshot.is_none() {
-                    self.owner_profile_name(&thread.chat_id)
-                } else {
-                    None
-                };
-                let subtitle = if group_snapshot.is_some() {
-                    None
-                } else {
-                    self.owner_secondary_identifier(&thread.chat_id)
-                };
-                let member_count = group_snapshot
-                    .as_ref()
-                    .map(|group| group.members.len() as u64)
-                    .unwrap_or(0);
-                let direct_picture = if group_snapshot.is_none() {
-                    self.owner_picture_url(&thread.chat_id)
-                } else {
-                    None
-                };
-                let direct_about = if group_snapshot.is_none() {
-                    self.owner_about(&thread.chat_id)
-                } else {
-                    None
-                };
+                let group = self.group_for_chat_id(&thread.chat_id);
+                let is_muted = !muted_ids.is_empty() && muted_ids.contains(&thread.chat_id);
+                let is_pinned = !pinned_ids.is_empty() && pinned_ids.contains(&thread.chat_id);
+                let presentation = self.thread_presentation(&thread.chat_id, group, false);
                 let is_request = self.thread_is_message_request(&thread.chat_id);
                 ChatThreadSnapshot {
                     new_chat_notification_id: self
                         .new_chat_notifications
                         .get(&thread.chat_id)
                         .cloned(),
-                    social_connection: self.social_connection(&thread.chat_id),
+                    social_connection: self
+                        .social_connection_with_context(&social_ctx, &thread.chat_id),
                     chat_id: thread.chat_id.clone(),
                     kind: thread_kind,
-                    display_name,
-                    nickname: direct_nickname,
-                    contact_note: self
-                        .owner_profiles
-                        .get(&thread.chat_id)
-                        .and_then(|profile| profile.contact_note.clone()),
-                    profile_name: direct_profile_name,
-                    subtitle,
-                    picture_url: group_snapshot
-                        .as_ref()
-                        .and_then(|group| self.group_picture_url(group))
-                        .or(direct_picture),
-                    about: group_snapshot
-                        .as_ref()
-                        .and_then(|group| group.about.clone())
-                        .or(direct_about),
-                    member_count,
+                    display_name: presentation.display_name,
+                    nickname: presentation.nickname,
+                    contact_note: presentation.contact_note,
+                    profile_name: presentation.profile_name,
+                    subtitle: presentation.subtitle,
+                    picture_url: presentation.picture_url,
+                    about: presentation.about,
+                    member_count: presentation.member_count,
                     last_message_preview: last_message.map(message_preview),
                     last_message_at_secs: last_message.map(|message| message.created_at_secs),
                     last_message_is_outgoing: last_message.map(|message| message.is_outgoing),
@@ -420,65 +454,30 @@ impl AppCore {
             _ => self.active_chat_id.as_ref(),
         };
 
-        self.state.current_chat = current_chat_id
+        let current_chat = current_chat_id
             .and_then(|chat_id| self.threads.get(chat_id))
             .map(|thread| {
-                let group_snapshot = self.group_snapshot_for_chat_id(&thread.chat_id);
-                let is_muted = self.is_chat_muted(&thread.chat_id);
-                let direct_picture = if group_snapshot.is_none() {
-                    self.owner_picture_url(&thread.chat_id)
-                } else {
-                    None
-                };
-                let direct_nickname = if group_snapshot.is_none() {
-                    self.owner_nickname(&thread.chat_id)
-                } else {
-                    None
-                };
-                let direct_profile_name = if group_snapshot.is_none() {
-                    self.owner_profile_name(&thread.chat_id)
-                } else {
-                    None
-                };
-                let direct_about = if group_snapshot.is_none() {
-                    self.owner_about(&thread.chat_id)
-                } else {
-                    None
-                };
+                let group = self.group_for_chat_id(&thread.chat_id);
+                let is_muted = !muted_ids.is_empty() && muted_ids.contains(&thread.chat_id);
+                let presentation = self.thread_presentation(&thread.chat_id, group, true);
                 let current_chat_kind = chat_kind_for_id(&thread.chat_id);
                 let is_request = self.thread_is_message_request(&thread.chat_id);
+                let mut author_cache = HashMap::new();
                 CurrentChatSnapshot {
                     contact_identity: self.contact_identity(&thread.chat_id),
-                    social_connection: self.social_connection(&thread.chat_id),
+                    social_connection: self
+                        .social_connection_with_context(&social_ctx, &thread.chat_id),
                     chat_id: thread.chat_id.clone(),
                     kind: current_chat_kind.clone(),
-                    display_name: group_snapshot
-                        .as_ref()
-                        .map(|group| group.name.clone())
-                        .unwrap_or_else(|| self.direct_chat_display_label(&thread.chat_id)),
-                    nickname: direct_nickname,
-                    contact_note: self
-                        .owner_profiles
-                        .get(&thread.chat_id)
-                        .and_then(|profile| profile.contact_note.clone()),
-                    profile_name: direct_profile_name,
-                    subtitle: group_snapshot
-                        .as_ref()
-                        .map(|group| format!("{} members", group.members.len()))
-                        .or_else(|| self.owner_secondary_identifier(&thread.chat_id)),
-                    picture_url: group_snapshot
-                        .as_ref()
-                        .and_then(|group| self.group_picture_url(group))
-                        .or(direct_picture),
-                    about: group_snapshot
-                        .as_ref()
-                        .and_then(|group| group.about.clone())
-                        .or(direct_about),
-                    group_id: group_snapshot.as_ref().map(|group| group.group_id.clone()),
-                    member_count: group_snapshot
-                        .as_ref()
-                        .map(|group| group.members.len() as u64)
-                        .unwrap_or(0),
+                    display_name: presentation.display_name,
+                    nickname: presentation.nickname,
+                    contact_note: presentation.contact_note,
+                    profile_name: presentation.profile_name,
+                    subtitle: presentation.subtitle,
+                    picture_url: presentation.picture_url,
+                    about: presentation.about,
+                    group_id: group.map(|group| group.group_id.clone()),
+                    member_count: presentation.member_count,
                     message_ttl_seconds: self
                         .chat_message_ttl_seconds
                         .get(&thread.chat_id)
@@ -486,8 +485,9 @@ impl AppCore {
                     is_muted,
                     participants: self.chat_participants_for_thread(
                         &thread.chat_id,
-                        group_snapshot.as_ref(),
+                        group,
                         local_owner_hex.as_deref(),
+                        &social_ctx,
                     ),
                     messages: thread
                         .messages
@@ -501,6 +501,7 @@ impl AppCore {
                                 message,
                                 &thread.chat_id,
                                 local_owner_hex.as_deref(),
+                                &mut author_cache,
                             )
                         })
                         .collect(),
@@ -511,6 +512,9 @@ impl AppCore {
                         .chat_capability(&thread.chat_id, &current_chat_kind),
                 }
             });
+        drop(social_ctx);
+        self.state.chat_list = chat_list;
+        self.state.current_chat = current_chat;
 
         self.state.group_details = self.screen_stack.last().and_then(|screen| match screen {
             Screen::GroupDetails { group_id } => self.build_group_details_snapshot(group_id),
@@ -534,6 +538,9 @@ impl AppCore {
     }
 
     pub(super) fn prune_expired_typing_indicators(&mut self) {
+        if self.typing_indicators.is_empty() {
+            return;
+        }
         let now = unix_now().get();
         let latest_message_secs_by_chat = self.latest_message_secs_by_chat();
         self.typing_indicators.retain(|_, indicator| {
@@ -542,6 +549,9 @@ impl AppCore {
     }
 
     pub(super) fn thread_has_typing_indicator(&self, chat_id: &str) -> bool {
+        if self.typing_indicators.is_empty() {
+            return false;
+        }
         let now = unix_now().get();
         let latest_message_secs = self.latest_message_secs_for_chat(chat_id);
         self.typing_indicators.values().any(|indicator| {
@@ -552,6 +562,9 @@ impl AppCore {
     }
 
     pub(super) fn typing_indicator_snapshots(&self, chat_id: &str) -> Vec<TypingIndicatorSnapshot> {
+        if self.typing_indicators.is_empty() {
+            return Vec::new();
+        }
         let now = unix_now().get();
         let latest_message_secs = self.latest_message_secs_for_chat(chat_id);
         let mut indicators = self
@@ -689,9 +702,9 @@ impl AppCore {
         })
     }
 
-    pub(super) fn group_snapshot_for_chat_id(&self, chat_id: &str) -> Option<GroupSnapshot> {
+    pub(super) fn group_for_chat_id(&self, chat_id: &str) -> Option<&GroupSnapshot> {
         let group_id = parse_group_id_from_chat_id(chat_id)?;
-        self.groups.get(&group_id).cloned()
+        self.groups.get(&group_id)
     }
 
     pub(super) fn mutual_groups_snapshot(&self, owner_input: &str) -> MutualGroupsSnapshot {
@@ -780,8 +793,9 @@ impl AppCore {
         group_id: &str,
     ) -> Option<GroupDetailsSnapshot> {
         let logged_in = self.logged_in.as_ref()?;
-        let group = self.groups.get(group_id)?.clone();
+        let group = self.groups.get(group_id)?;
         let local_owner_hex = logged_in.owner_pubkey.to_hex();
+        let social_ctx = self.social_connection_context();
         let creator = group.created_by.to_string();
         let mut members = group
             .members
@@ -790,7 +804,7 @@ impl AppCore {
                 let owner_hex = owner.to_string();
                 let owner = PublicKey::parse(&owner_hex).ok();
                 GroupMemberSnapshot {
-                    social_connection: self.social_connection(&owner_hex),
+                    social_connection: self.social_connection_with_context(&social_ctx, &owner_hex),
                     owner_pubkey_hex: owner_hex.clone(),
                     display_name: self.owner_display_label(&owner_hex),
                     npub: owner
@@ -820,13 +834,13 @@ impl AppCore {
             .and_then(owner_npub_from_owner)
             .unwrap_or_else(|| creator.clone());
         let is_muted = self.is_chat_muted(&group_chat_id(&group.group_id));
-        let picture_url = self.group_picture_url(&group);
+        let picture_url = self.group_picture_url(group);
         let about = group.about.clone();
 
         let invite_links = self.group_invite_snapshots(group_id);
         Some(GroupDetailsSnapshot {
-            group_id: group.group_id,
-            name: group.name,
+            group_id: group.group_id.clone(),
+            name: group.name.clone(),
             picture_url,
             about,
             created_by_display_name: self.owner_display_label(&creator),
@@ -906,8 +920,15 @@ impl AppCore {
         // thread). The post-OpenChat cascade (SyncComplete →
         // FetchCatchUpEvents → ...) was producing 3-4 redundant pushes
         // and >1 s of Skipped frames each time.
-        if let Some(last) = self.last_emitted_state.as_ref() {
-            if state_content_eq(last, &self.state, self.app_in_foreground) {
+        if self.has_emitted_state {
+            let unchanged = {
+                let last = self
+                    .shared_state
+                    .read()
+                    .unwrap_or_else(|poison| poison.into_inner());
+                state_content_eq(&last, &self.state, self.app_in_foreground)
+            };
+            if unchanged {
                 return;
             }
         }
@@ -929,7 +950,7 @@ impl AppCore {
         };
         let t_shared = crate::perflog::now_ms();
         drop(previous);
-        self.last_emitted_state = Some(snapshot.clone());
+        self.has_emitted_state = true;
         let _ = self.update_tx.send(AppUpdate::FullState(snapshot));
         crate::perflog!(
             "emit_state rev={} clone_ms={} shared_write_ms={} total_ms={} chats={} cur_chat_msgs={}",

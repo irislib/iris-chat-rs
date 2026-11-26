@@ -63,7 +63,8 @@ impl AppCore {
         self.debug_snapshot.write_dirty = false;
         self.cached_mobile_push = MobilePushSyncSnapshot::default();
         self.mobile_push_dirty = true;
-        self.last_emitted_state = None;
+        self.clear_request_decisions_cache();
+        self.has_emitted_state = false;
         self.next_message_id = 1;
         self.state = AppState::empty();
         self.state.rev = previous_rev;

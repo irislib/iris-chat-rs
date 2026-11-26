@@ -66,59 +66,70 @@ impl AppCore {
             .collect();
         let mut delayed_message_authors = Vec::new();
         if let Some(engine) = self.protocol_engine.as_ref() {
-            // Shared group authors would let the authenticated notification
-            // service correlate members. Only pairwise session keys belong here.
-            let owner_pubkey =
-                nostr_double_ratchet::OwnerPubkey::from_bytes(logged_in.owner_pubkey.to_bytes());
-            let group_peers = self
-                .groups
-                .values()
-                .filter(|group| {
-                    group.members.contains(&owner_pubkey)
-                        && !self.thread_is_message_request(&group_chat_id(&group.group_id))
-                })
-                .flat_map(|group| group.members.iter().map(ToString::to_string))
-                .collect::<HashSet<_>>();
             let now = unix_now().get();
-            let muted_authors = |chat_id: &str| -> Vec<PublicKey> {
-                // A muted DM can carry an unmuted group's private wake. Keep
-                // its transport subscribed and apply chat mute after decryption.
-                if parse_group_id_from_chat_id(chat_id).is_some() || group_peers.contains(chat_id) {
-                    Vec::new()
-                } else {
-                    PublicKey::from_hex(chat_id)
-                        .ok()
-                        .map(|owner| engine.message_author_pubkeys_for_owner(owner))
-                        .unwrap_or_default()
-                }
-            };
-            // Map chat owners to their rotating event keys, not the owner's public key.
-            for chat_id in &self.preferences.muted_chat_ids {
-                if mention_policy::keep_group_subscription(&self.preferences, chat_id) {
-                    continue;
-                }
-                for key in muted_authors(chat_id) {
-                    message_author_pubkeys.remove(&key.to_hex());
-                }
-            }
-            for mute in &self.preferences.timed_chat_mutes {
-                if mute.until_secs <= now
-                    || self.preferences.muted_chat_ids.contains(&mute.chat_id)
-                    || mention_policy::keep_group_subscription(&self.preferences, &mute.chat_id)
-                {
-                    continue;
-                }
-                for key in muted_authors(&mute.chat_id) {
-                    let author_pubkey = key.to_hex();
-                    if message_author_pubkeys.remove(&author_pubkey) {
-                        delayed_message_authors.push(MobilePushDelayedAuthor {
-                            author_pubkey,
-                            since_secs: mute.until_secs,
-                        });
+            let has_active_mutes = !self.preferences.muted_chat_ids.is_empty()
+                || self
+                    .preferences
+                    .timed_chat_mutes
+                    .iter()
+                    .any(|mute| mute.until_secs > now);
+            if has_active_mutes {
+                // Shared group authors would let the authenticated notification
+                // service correlate members. Only pairwise session keys belong here.
+                let owner_pubkey = nostr_double_ratchet::OwnerPubkey::from_bytes(
+                    logged_in.owner_pubkey.to_bytes(),
+                );
+                let group_peers = self
+                    .groups
+                    .values()
+                    .filter(|group| {
+                        group.members.contains(&owner_pubkey)
+                            && !self.thread_is_message_request(&group_chat_id(&group.group_id))
+                    })
+                    .flat_map(|group| group.members.iter().map(ToString::to_string))
+                    .collect::<HashSet<_>>();
+                let muted_authors = |chat_id: &str| -> Vec<PublicKey> {
+                    // A muted DM can carry an unmuted group's private wake. Keep
+                    // its transport subscribed and apply chat mute after decryption.
+                    if parse_group_id_from_chat_id(chat_id).is_some()
+                        || group_peers.contains(chat_id)
+                    {
+                        Vec::new()
+                    } else {
+                        PublicKey::from_hex(chat_id)
+                            .ok()
+                            .map(|owner| engine.message_author_pubkeys_for_owner(owner))
+                            .unwrap_or_default()
+                    }
+                };
+                // Map chat owners to their rotating event keys, not the owner's public key.
+                for chat_id in &self.preferences.muted_chat_ids {
+                    if mention_policy::keep_group_subscription(&self.preferences, chat_id) {
+                        continue;
+                    }
+                    for key in muted_authors(chat_id) {
+                        message_author_pubkeys.remove(&key.to_hex());
                     }
                 }
+                for mute in &self.preferences.timed_chat_mutes {
+                    if mute.until_secs <= now
+                        || self.preferences.muted_chat_ids.contains(&mute.chat_id)
+                        || mention_policy::keep_group_subscription(&self.preferences, &mute.chat_id)
+                    {
+                        continue;
+                    }
+                    for key in muted_authors(&mute.chat_id) {
+                        let author_pubkey = key.to_hex();
+                        if message_author_pubkeys.remove(&author_pubkey) {
+                            delayed_message_authors.push(MobilePushDelayedAuthor {
+                                author_pubkey,
+                                since_secs: mute.until_secs,
+                            });
+                        }
+                    }
+                }
+                delayed_message_authors.sort_by(|a, b| a.author_pubkey.cmp(&b.author_pubkey));
             }
-            delayed_message_authors.sort_by(|a, b| a.author_pubkey.cmp(&b.author_pubkey));
         }
         let background_message_author_pubkeys = self
             .protocol_engine

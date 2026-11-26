@@ -5,6 +5,7 @@ impl AppCore {
     // Heads are committed before projections. Replay them after an interrupted
     // app-state save, without reauthoring or republishing the original controls.
     pub(in crate::core) fn restore_device_sync_record_projection(&mut self) -> anyhow::Result<()> {
+        self.clear_request_decisions_cache();
         // Only app projection/persistence is coalesced here. Protocol commits
         // keep their existing ordering, including when no outer batch exists.
         // The caller owns the completed-state emission after this checked save.
@@ -155,19 +156,40 @@ impl AppCore {
     }
 
     pub(in crate::core) fn restore_device_sync_chat_reactions(&mut self, chat: &str) {
-        let ids = self
-            .threads
-            .get(chat)
-            .map(|thread| {
-                thread
-                    .messages
-                    .iter()
-                    .map(|message| message.id.clone())
-                    .collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
-        for id in ids {
-            self.restore_device_sync_reactions(chat, &id);
+        let Some(thread) = self.threads.get(chat) else {
+            return;
+        };
+        if thread.messages.is_empty() {
+            return;
+        }
+        let mut loaded_ids = HashSet::with_capacity(thread.messages.len());
+        let mut deleted_ids = Vec::new();
+        for message in &thread.messages {
+            loaded_ids.insert(message.id.clone());
+            if message.deleted_for_everyone {
+                deleted_ids.push(message.id.clone());
+            }
+        }
+        if let Ok(mut mutations_by_message) = self.message_mutation_records_for_chat(chat) {
+            for id in deleted_ids {
+                let mutations = mutations_by_message.remove(&id).unwrap_or_default();
+                self.project_message_mutations_with_records(chat, &id, mutations);
+            }
+            for (id, mutations) in mutations_by_message {
+                if loaded_ids.contains(&id) {
+                    self.project_message_mutations_with_records(chat, &id, mutations);
+                }
+            }
+        }
+        for record in self.reaction_records_for_chat(chat) {
+            if let DeviceSyncRecord::Reaction { reaction: r } = record {
+                if r.chat_id == chat
+                    && loaded_ids.contains(&r.message_id)
+                    && self.sync_record_author_allowed(chat, &r.author, false)
+                {
+                    self.apply_incoming_reaction_to_chat(chat, &r.message_id, &r.author, &r.emoji);
+                }
+            }
         }
     }
 

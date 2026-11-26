@@ -217,7 +217,7 @@ pub struct DeviceRosterSnapshot {
     pub devices: Vec<DeviceEntrySnapshot>,
 }
 
-#[derive(uniffi::Enum, Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(uniffi::Enum, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum DeliveryState {
     Queued,
     Pending,
@@ -233,13 +233,13 @@ pub enum ChatKind {
     Group,
 }
 
-#[derive(uniffi::Enum, Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(uniffi::Enum, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum ChatMessageKind {
     User,
     System,
 }
 
-#[derive(uniffi::Record, Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(uniffi::Record, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct MessageAttachmentSnapshot {
     /// Local historical receipts for complete encrypted attachment trees.
     #[serde(default)]
@@ -254,14 +254,14 @@ pub struct MessageAttachmentSnapshot {
     pub is_audio: bool,
 }
 
-#[derive(uniffi::Record, Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(uniffi::Record, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct MessageReactionSnapshot {
     pub emoji: String,
     pub count: u64,
     pub reacted_by_me: bool,
 }
 
-#[derive(uniffi::Record, Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(uniffi::Record, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct MessageReactor {
     /// Hex-encoded pubkey of the user who reacted.
     pub author: String,
@@ -274,7 +274,7 @@ pub struct MessageReactor {
     pub emoji: String,
 }
 
-#[derive(uniffi::Record, Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(uniffi::Record, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct MessageRecipientDeliverySnapshot {
     /// Hex-encoded owner/user pubkey.
     pub owner_pubkey_hex: String,
@@ -287,7 +287,7 @@ pub struct MessageRecipientDeliverySnapshot {
     pub updated_at_secs: u64,
 }
 
-#[derive(uniffi::Record, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[derive(uniffi::Record, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash, Default)]
 #[serde(default)]
 pub struct MessageDeliveryTraceSnapshot {
     pub outer_event_ids: Vec<String>,

@@ -770,11 +770,14 @@ pub struct AppCore {
     pending_delivered_receipts: BTreeMap<(String, String), Instant>,
     pending_delivered_receipt_flush_due_at: Option<Instant>,
     pending_delivered_receipt_token: u64,
-    /// Last `AppState` we successfully pushed across the FFI boundary, kept
-    /// so `emit_state_inner` can skip pushes that don't change anything
-    /// user-visible (a full `AppState` JNI marshal + Compose recomposition
-    /// is ~400-1000 ms on Android debug).
-    last_emitted_state: Option<AppState>,
+    /// In-memory mirror of stored `requestDecision` private settings for the
+    /// active account, avoiding N+1 `app_meta` queries during state rebuilds.
+    request_decisions_cache:
+        std::cell::RefCell<Option<(String, BTreeMap<String, device_sync::RequestDecision>)>>,
+    /// Whether `shared_state` already holds a state we emitted across FFI, so
+    /// `emit_state_inner` can compare directly against `shared_state` instead of
+    /// retaining a duplicate full `AppState` clone.
+    has_emitted_state: bool,
     /// SQLite-backed durable storage for app state and NDR ratchet
     /// state. See `core/storage/`.
     app_store: AppStore,

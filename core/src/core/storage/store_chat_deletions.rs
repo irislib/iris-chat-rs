@@ -86,11 +86,8 @@ pub(super) fn message_was_deleted(
     created_at: u64,
 ) -> anyhow::Result<bool> {
     let value: Option<String> = conn
-        .query_row(
-            "SELECT value FROM app_meta WHERE key = ?1",
-            [format!("{DELETION_PREFIX}{chat_id}")],
-            |row| row.get(0),
-        )
+        .prepare_cached("SELECT value FROM app_meta WHERE key = ?1")?
+        .query_row([format!("{DELETION_PREFIX}{chat_id}")], |row| row.get(0))
         .optional()?;
     Ok(value
         .map(|at| at.parse::<u64>())

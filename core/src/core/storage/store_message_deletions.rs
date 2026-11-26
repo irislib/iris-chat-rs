@@ -205,12 +205,13 @@ impl AppStore {
             .map_err(|_| anyhow::anyhow!("storage connection mutex poisoned"))?;
         let tx = conn.transaction()?;
         // Pending UI/relay updates may still exist only in memory. Include
-        // them in the same transaction before deciding which row owns a badge.
-        if let Some(thread) = thread.filter(|thread| {
-            thread.unread_count > 0 && self.cache.threads.get(chat_id) != Some(&hash_thread(thread))
-        }) {
-            upsert_thread_rows(&tx, chat_id, thread)?;
-        }
+        // unsaved rows in the same transaction before deciding which row owns a badge.
+        let thread_plan = match thread.filter(|thread| thread.unread_count > 0) {
+            Some(thread) => {
+                upsert_unsaved_thread_rows(&tx, self.cache.threads.get(chat_id), chat_id, thread)?
+            }
+            None => None,
+        };
         if let Some((key, value)) = sync_entry {
             tx.execute(
                 "INSERT OR IGNORE INTO app_meta(key,value) VALUES (?1,?2)",
@@ -261,7 +262,14 @@ impl AppStore {
             params![chat_id, message_id],
         )?;
         tx.commit()?;
-        self.cache.threads.remove(chat_id);
+        if let Some(plan) = thread_plan {
+            let entry = self.cache.threads.entry(chat_id.to_string()).or_default();
+            plan.apply_to_cache(entry);
+        }
+        if let Some(entry) = self.cache.threads.get_mut(chat_id) {
+            entry.header_hash = None;
+            entry.messages.remove(message_id);
+        }
         Ok(removed_unread)
     }
 
@@ -355,7 +363,14 @@ impl AppStore {
             )?;
         }
         tx.commit()?;
-        self.cache.threads.remove(&message.chat_id);
+        let entry = self
+            .cache
+            .threads
+            .entry(message.chat_id.clone())
+            .or_default();
+        entry
+            .messages
+            .insert(message.id.clone(), hash_message(message));
         Ok(())
     }
 }

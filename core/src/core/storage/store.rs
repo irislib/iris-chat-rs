@@ -39,6 +39,8 @@ mod store_outgoing_events;
 
 #[path = "store_message_pages.rs"]
 mod store_message_pages;
+#[path = "store_persist_cache.rs"]
+mod store_persist_cache;
 #[path = "store_preferences.rs"]
 mod store_preferences;
 #[cfg(test)]
@@ -48,12 +50,21 @@ pub(crate) use store_message_pages::{
     load_messages_around_with_visibility, load_messages_before_with_visibility,
     load_recent_messages_with_visibility,
 };
-use store_preferences::{hash_preferences, load_preferences, write_preferences};
+pub(crate) use store_persist_cache::SaveSnapshot;
+use store_persist_cache::{
+    hash_group_entry, hash_message, hash_meta_fields, hash_persisted_message,
+    hash_seen_events_iter, hash_std, hash_thread_header, hash_thread_header_fields,
+    plan_thread_write, MapDiff, PersistCache, SavePlan, SeenEventsPlan, ThreadPersistCache,
+    ThreadWritePlan,
+};
+use store_preferences::{
+    hash_persisted_preferences, hash_preferences, load_preferences, write_preferences,
+};
 #[path = "store_private_contacts.rs"]
 mod store_private_contacts;
 #[path = "store_profiles.rs"]
 mod store_profiles;
-use store_profiles::{load_owner_profiles, write_owner_profiles};
+use store_profiles::{load_owner_profiles, write_owner_profiles_diff};
 #[path = "store_profile_search.rs"]
 mod store_profile_search;
 #[path = "store_user_discovery.rs"]
@@ -63,31 +74,6 @@ const META_ACTIVE_CHAT_ID: &str = "active_chat_id";
 const META_NEXT_MESSAGE_ID: &str = "next_message_id";
 const META_AUTHORIZATION_STATE: &str = "authorization_state";
 const RESTORED_MESSAGES_PER_THREAD: usize = 80;
-
-/// Per-slice fingerprints from the last successful save. We hash the
-/// canonical wire form of each slice and skip writes when nothing has
-/// changed, so a routine `persist_best_effort` tick that only opens a
-/// chat doesn't rewrite preferences/profiles/groups/etc. The cache is
-/// reset on `clear` and on construction (a fresh `AppStore` will issue
-/// a full write the first time it sees state).
-#[derive(Default)]
-struct PersistCache {
-    meta: Option<u64>,
-    preferences: Option<u64>,
-    owner_profiles: Option<u64>,
-    chat_ttls: Option<u64>,
-    app_keys: Option<u64>,
-    groups: Option<u64>,
-    /// Event ids currently in the `seen_events` table. Mirrors DB rows so
-    /// we can compute an INSERT/DELETE diff per save instead of rewriting
-    /// the whole window. Populated from `load_state` and after each save.
-    seen_events_persisted: HashSet<String>,
-    /// Monotonic next-sequence to assign to a newly inserted seen event.
-    /// Sequences are only used for `ORDER BY sequence ASC` on load, so
-    /// they need to grow but don't need to be dense.
-    seen_events_next_seq: i64,
-    threads: HashMap<String, u64>,
-}
 
 pub(crate) struct AppStore {
     pub(super) conn: SharedConnection,
@@ -142,7 +128,7 @@ impl AppStore {
             .optional()?
             .and_then(parse_authorization_state);
 
-        let preferences = load_preferences(&conn)?.unwrap_or_default();
+        let persisted_preferences = load_preferences(&conn)?;
         let owner_profiles = load_owner_profiles(&conn)?;
         let chat_message_ttl_seconds = load_chat_ttls(&conn)?;
         let app_keys = load_app_keys(&conn)?;
@@ -152,14 +138,74 @@ impl AppStore {
         let (seen_event_ids, seen_events_max_seq) = load_seen_events(&conn)?;
         drop(conn);
 
-        // Seed the diff cache so subsequent saves only INSERT new event ids
-        // and DELETE evicted ones, rather than rewriting the whole table on
-        // every relay event. Without this, the first save after launch
-        // would treat the loaded window as "new" and INSERT OR IGNORE all
-        // entries (cheap but pointless).
+        // Seed the diff cache from the raw rows we just read so the first save
+        // after launch only writes slices/rows that actually changed (including
+        // any legacy normalization applied in memory after load).
+        self.cache.meta = Some(hash_meta_fields(
+            active_chat_id.as_deref(),
+            next_message_id,
+            authorization_state.as_ref(),
+        ));
+        self.cache.preferences = persisted_preferences
+            .as_ref()
+            .map(hash_persisted_preferences);
+        self.cache.owner_profiles = Some(
+            owner_profiles
+                .iter()
+                .map(|(k, v)| (k.clone(), hash_std(v)))
+                .collect(),
+        );
+        self.cache.chat_ttls = Some(
+            chat_message_ttl_seconds
+                .iter()
+                .map(|(k, v)| (k.clone(), hash_std(v)))
+                .collect(),
+        );
+        self.cache.app_keys = Some(
+            app_keys
+                .iter()
+                .map(|entry| (entry.owner_pubkey_hex.clone(), hash_std(entry)))
+                .collect(),
+        );
+        self.cache.groups = Some(
+            groups
+                .iter()
+                .map(|group| {
+                    (
+                        group.group_id.clone(),
+                        hash_group_entry(group, group_pictures.get(&group.group_id)),
+                    )
+                })
+                .collect(),
+        );
+        self.cache.threads = threads
+            .iter()
+            .map(|thread| {
+                (
+                    thread.chat_id.clone(),
+                    ThreadPersistCache {
+                        header_hash: Some(hash_thread_header_fields(
+                            thread.unread_count,
+                            thread.updated_at_secs,
+                            &thread.draft,
+                        )),
+                        messages: thread
+                            .messages
+                            .iter()
+                            .map(|message| (message.id.clone(), hash_persisted_message(message)))
+                            .collect(),
+                    },
+                )
+            })
+            .collect();
         self.cache.seen_events_persisted = seen_event_ids.iter().cloned().collect();
+        self.cache.seen_events_hash = Some(hash_seen_events_iter(
+            seen_event_ids.len(),
+            seen_event_ids.iter().map(String::as_str),
+        ));
         self.cache.seen_events_next_seq = seen_events_max_seq.saturating_add(1);
 
+        let preferences = persisted_preferences.unwrap_or_default();
         Ok(Some(PersistedState {
             version: PERSISTED_STATE_VERSION,
             active_chat_id,
@@ -272,6 +318,9 @@ impl AppStore {
             "DELETE FROM messages WHERE chat_id = ?1 AND id = ?2",
             params![chat_id, message_id],
         )?;
+        if let Some(entry) = self.cache.threads.get_mut(chat_id) {
+            entry.messages.remove(message_id);
+        }
         Ok(())
     }
 
@@ -390,8 +439,38 @@ impl AppStore {
         load_messages_around(&conn, chat_id, message_id, before_limit, after_limit)
     }
 
+    pub(crate) fn seed_loaded_messages(&mut self, chat_id: &str, messages: &[PersistedMessage]) {
+        if messages.is_empty() {
+            return;
+        }
+        let entry = self.cache.threads.entry(chat_id.to_string()).or_default();
+        for message in messages {
+            entry
+                .messages
+                .insert(message.id.clone(), hash_persisted_message(message));
+        }
+    }
+
+    pub(crate) fn seed_loaded_thread(&mut self, thread: &PersistedThread) {
+        let entry = self
+            .cache
+            .threads
+            .entry(thread.chat_id.clone())
+            .or_default();
+        entry.header_hash = Some(hash_thread_header_fields(
+            thread.unread_count,
+            thread.updated_at_secs,
+            &thread.draft,
+        ));
+        for message in &thread.messages {
+            entry
+                .messages
+                .insert(message.id.clone(), hash_persisted_message(message));
+        }
+    }
+
     pub(crate) fn save_message_receipts(
-        &self,
+        &mut self,
         chat_id: &str,
         messages: &[ChatMessageSnapshot],
         unread_thread: Option<&ThreadRecord>,
@@ -405,14 +484,20 @@ impl AppStore {
             .map_err(|_| anyhow::anyhow!("storage connection mutex poisoned"))?;
         let tx = conn.transaction()?;
         let mut newly_seen_unread = 0;
+        let mut written_messages = Vec::new();
         if let Some(thread) = unread_thread {
             // A relay batch may have newer incoming rows only in memory. Include
-            // them before locating the last counted unread messages, or an old
-            // receipt could incorrectly clear a newer message's badge.
+            // unsaved ones before locating the last counted unread messages, or
+            // an old receipt could incorrectly clear a newer message's badge.
+            let cached = self.cache.threads.get(chat_id);
             for message in &thread.messages {
-                upsert_message_row(&tx, chat_id, message)?;
+                let message_hash = hash_message(message);
+                if cached.and_then(|entry| entry.messages.get(&message.id)) != Some(&message_hash) {
+                    upsert_message_row(&tx, chat_id, message)?;
+                    written_messages.push((message.id.clone(), message_hash));
+                }
             }
-            let mut statement = tx.prepare(
+            let mut statement = tx.prepare_cached(
                 "SELECT id FROM messages WHERE chat_id = ?1
                  AND is_outgoing = 0 AND delivery != 'seen'
                  ORDER BY created_at_secs DESC, rowid DESC LIMIT ?2",
@@ -440,6 +525,15 @@ impl AppStore {
             }
         }
         tx.commit()?;
+        if !written_messages.is_empty() || self.cache.threads.contains_key(chat_id) {
+            let entry = self.cache.threads.entry(chat_id.to_string()).or_default();
+            for (id, hash) in written_messages {
+                entry.messages.insert(id, hash);
+            }
+            for message in messages {
+                entry.messages.remove(&message.id);
+            }
+        }
         Ok(newly_seen_unread)
     }
 
@@ -527,7 +621,12 @@ impl AppStore {
         }
         upsert_notification_preview_message_row(&tx, chat_id, message)?;
         tx.commit()?;
-        self.cache.threads.remove(chat_id);
+        if let Some(entry) = self.cache.threads.get_mut(chat_id) {
+            if !message_exists {
+                entry.header_hash = None;
+            }
+            entry.messages.remove(&message.id);
+        }
         Ok(())
     }
 }
@@ -552,274 +651,6 @@ const TABLES_TO_CLEAR: &[&str] = &[
     "app_meta",
     "ndr_kv",
 ];
-/// View into `AppCore` fields used to drive a single `save_state` call.
-pub(crate) struct SaveSnapshot<'a> {
-    pub active_chat_id: Option<&'a str>,
-    pub next_message_id: u64,
-    pub authorization_state: Option<PersistedAuthorizationState>,
-    pub preferences: &'a PreferencesSnapshot,
-    pub owner_profiles: &'a BTreeMap<String, OwnerProfileRecord>,
-    pub chat_message_ttl_seconds: &'a BTreeMap<String, u64>,
-    pub app_keys: &'a BTreeMap<String, KnownAppKeys>,
-    pub groups: &'a BTreeMap<String, GroupSnapshot>,
-    pub group_pictures: &'a BTreeMap<String, String>,
-    pub threads: &'a BTreeMap<String, ThreadRecord>,
-    pub seen_event_order: &'a VecDeque<String>,
-}
-
-/// Diff against the persisted `seen_events` mirror. We only apply rows
-/// that actually changed instead of rewriting the whole window every save:
-/// the window holds up to MAX_SEEN_EVENT_IDS (2048) entries and the old
-/// code did `DELETE FROM seen_events` + `INSERT × N` on every relay event,
-/// which was the SQLite hot path that iOS RUNNINGBOARD 0xdead10cc'd while
-/// the journal was mid-fsync.
-struct SeenEventsPlan {
-    to_insert: Vec<String>,
-    to_delete: Vec<String>,
-    first_insert_seq: i64,
-    next_persisted: HashSet<String>,
-    next_sequence: i64,
-}
-
-/// Decision tree for one save tick. Carries the new fingerprints so the
-/// cache can be updated atomically with the write.
-struct SavePlan {
-    meta: Option<u64>,
-    preferences: Option<u64>,
-    owner_profiles: Option<u64>,
-    chat_ttls: Option<u64>,
-    app_keys: Option<u64>,
-    groups: Option<u64>,
-    seen_events: Option<SeenEventsPlan>,
-    /// chat_id -> new hash; only changed threads are listed here.
-    threads_to_write: HashMap<String, u64>,
-    /// chat_ids cached previously but no longer present in the snapshot.
-    threads_to_delete: Vec<String>,
-}
-
-impl SavePlan {
-    fn compute(cache: &PersistCache, snapshot: &SaveSnapshot<'_>) -> Self {
-        let meta_hash = hash_meta(snapshot);
-        let preferences_hash = hash_preferences(snapshot.preferences);
-        let owner_profiles_hash = hash_value(snapshot.owner_profiles);
-        let chat_ttls_hash = hash_value(snapshot.chat_message_ttl_seconds);
-        let app_keys_hash = hash_value(snapshot.app_keys);
-        let groups_hash = hash_groups(snapshot.groups, snapshot.group_pictures);
-        let seen_events = plan_seen_events_diff(cache, snapshot.seen_event_order);
-
-        let mut threads_to_write = HashMap::new();
-        for (chat_id, thread) in snapshot.threads {
-            let hash = hash_thread(thread);
-            if cache.threads.get(chat_id) != Some(&hash) {
-                threads_to_write.insert(chat_id.clone(), hash);
-            }
-        }
-        let threads_to_delete: Vec<String> = cache
-            .threads
-            .keys()
-            .filter(|chat_id| !snapshot.threads.contains_key(chat_id.as_str()))
-            .cloned()
-            .collect();
-
-        Self {
-            meta: changed(cache.meta, meta_hash),
-            preferences: changed(cache.preferences, preferences_hash),
-            owner_profiles: changed(cache.owner_profiles, owner_profiles_hash),
-            chat_ttls: changed(cache.chat_ttls, chat_ttls_hash),
-            app_keys: changed(cache.app_keys, app_keys_hash),
-            groups: changed(cache.groups, groups_hash),
-            seen_events,
-            threads_to_write,
-            threads_to_delete,
-        }
-    }
-
-    fn is_empty(&self) -> bool {
-        self.meta.is_none()
-            && self.preferences.is_none()
-            && self.owner_profiles.is_none()
-            && self.chat_ttls.is_none()
-            && self.app_keys.is_none()
-            && self.groups.is_none()
-            && self.seen_events.is_none()
-            && self.threads_to_write.is_empty()
-            && self.threads_to_delete.is_empty()
-    }
-
-    fn apply(&self, tx: &Transaction, snapshot: &SaveSnapshot<'_>) -> anyhow::Result<()> {
-        if self.meta.is_some() {
-            write_meta(tx, snapshot)?;
-        }
-        if self.preferences.is_some() {
-            write_preferences(tx, snapshot.preferences)?;
-        }
-        if self.owner_profiles.is_some() {
-            write_owner_profiles(tx, snapshot.owner_profiles)?;
-        }
-        if self.chat_ttls.is_some() {
-            write_chat_ttls(tx, snapshot.chat_message_ttl_seconds)?;
-        }
-        if self.app_keys.is_some() {
-            write_app_keys(tx, snapshot.app_keys)?;
-        }
-        if self.groups.is_some() {
-            write_groups(tx, snapshot.groups, snapshot.group_pictures)?;
-        }
-        if let Some(plan) = &self.seen_events {
-            apply_seen_events_diff(tx, plan)?;
-        }
-        for chat_id in &self.threads_to_delete {
-            // Cascades to messages.
-            tx.execute("DELETE FROM threads WHERE chat_id = ?1", [chat_id])?;
-        }
-        for chat_id in self.threads_to_write.keys() {
-            let Some(thread) = snapshot.threads.get(chat_id) else {
-                return Err(anyhow::anyhow!("persist plan missing thread {chat_id}"));
-            };
-            upsert_thread_rows(tx, chat_id, thread)?;
-        }
-        Ok(())
-    }
-
-    fn update_cache(self, cache: &mut PersistCache) {
-        if let Some(hash) = self.meta {
-            cache.meta = Some(hash);
-        }
-        if let Some(hash) = self.preferences {
-            cache.preferences = Some(hash);
-        }
-        if let Some(hash) = self.owner_profiles {
-            cache.owner_profiles = Some(hash);
-        }
-        if let Some(hash) = self.chat_ttls {
-            cache.chat_ttls = Some(hash);
-        }
-        if let Some(hash) = self.app_keys {
-            cache.app_keys = Some(hash);
-        }
-        if let Some(hash) = self.groups {
-            cache.groups = Some(hash);
-        }
-        if let Some(plan) = self.seen_events {
-            cache.seen_events_persisted = plan.next_persisted;
-            cache.seen_events_next_seq = plan.next_sequence;
-        }
-        for chat_id in self.threads_to_delete {
-            cache.threads.remove(&chat_id);
-        }
-        for (chat_id, hash) in self.threads_to_write {
-            cache.threads.insert(chat_id, hash);
-        }
-    }
-}
-
-fn changed(previous: Option<u64>, current: u64) -> Option<u64> {
-    if previous == Some(current) {
-        None
-    } else {
-        Some(current)
-    }
-}
-
-fn hash_value<T: serde::Serialize>(value: &T) -> u64 {
-    let mut hasher = DefaultHasher::new();
-    if let Ok(bytes) = serde_json::to_vec(value) {
-        bytes.hash(&mut hasher);
-    }
-    hasher.finish()
-}
-
-fn hash_meta(snapshot: &SaveSnapshot<'_>) -> u64 {
-    let mut hasher = DefaultHasher::new();
-    snapshot.active_chat_id.hash(&mut hasher);
-    snapshot.next_message_id.hash(&mut hasher);
-    serialize_authorization_state(snapshot.authorization_state.as_ref()).hash(&mut hasher);
-    hasher.finish()
-}
-
-fn hash_groups(
-    groups: &BTreeMap<String, GroupSnapshot>,
-    group_pictures: &BTreeMap<String, String>,
-) -> u64 {
-    // GroupSnapshot isn't Hash, but its serde shape is canonical enough for
-    // change detection.
-    hash_value(&(groups, group_pictures))
-}
-
-/// Build the set of `INSERT` / `DELETE` ops needed to bring the persisted
-/// `seen_events` window in line with the in-memory snapshot. Returns
-/// `None` when nothing changed so the caller can short-circuit and skip
-/// the transaction entirely.
-fn plan_seen_events_diff(
-    cache: &PersistCache,
-    seen_event_order: &VecDeque<String>,
-) -> Option<SeenEventsPlan> {
-    let mut next_persisted: HashSet<String> = HashSet::with_capacity(seen_event_order.len());
-    let mut to_insert: Vec<String> = Vec::new();
-    for event_id in seen_event_order {
-        if !cache.seen_events_persisted.contains(event_id) {
-            to_insert.push(event_id.clone());
-        }
-        next_persisted.insert(event_id.clone());
-    }
-    let to_delete: Vec<String> = cache
-        .seen_events_persisted
-        .iter()
-        .filter(|event_id| !next_persisted.contains(event_id.as_str()))
-        .cloned()
-        .collect();
-    if to_insert.is_empty() && to_delete.is_empty() {
-        return None;
-    }
-    let first_insert_seq = cache.seen_events_next_seq;
-    let next_sequence = first_insert_seq.saturating_add(to_insert.len() as i64);
-    Some(SeenEventsPlan {
-        to_insert,
-        to_delete,
-        first_insert_seq,
-        next_persisted,
-        next_sequence,
-    })
-}
-
-fn hash_thread(thread: &ThreadRecord) -> u64 {
-    let mut hasher = DefaultHasher::new();
-    thread.unread_count.hash(&mut hasher);
-    thread.updated_at_secs.hash(&mut hasher);
-    thread.draft.hash(&mut hasher);
-    for message in &thread.messages {
-        message.id.hash(&mut hasher);
-        message.author.hash(&mut hasher);
-        message.body.hash(&mut hasher);
-        message.edit_history.hash(&mut hasher);
-        message.deleted_for_everyone.hash(&mut hasher);
-        message.is_outgoing.hash(&mut hasher);
-        message.created_at_secs.hash(&mut hasher);
-        message.expires_at_secs.hash(&mut hasher);
-        message.source_event_id.hash(&mut hasher);
-        message.call.hash(&mut hasher);
-        serialize_delivery(&message.delivery).hash(&mut hasher);
-        serialize_message_kind(&message.kind).hash(&mut hasher);
-        // Attachments / reactions / reactors are vec-of-struct; fall
-        // back to JSON for a stable byte sequence.
-        if let Ok(bytes) = serde_json::to_vec(&message.attachments) {
-            bytes.hash(&mut hasher);
-        }
-        if let Ok(bytes) = serde_json::to_vec(&message.reactions) {
-            bytes.hash(&mut hasher);
-        }
-        if let Ok(bytes) = serde_json::to_vec(&message.reactors) {
-            bytes.hash(&mut hasher);
-        }
-        if let Ok(bytes) = serde_json::to_vec(&message.recipient_deliveries) {
-            bytes.hash(&mut hasher);
-        }
-        if let Ok(bytes) = serde_json::to_vec(&message.delivery_trace) {
-            bytes.hash(&mut hasher);
-        }
-    }
-    hasher.finish()
-}
 
 fn write_meta(tx: &Transaction, snapshot: &SaveSnapshot<'_>) -> anyhow::Result<()> {
     let mut upsert = tx.prepare_cached(
@@ -874,7 +705,7 @@ fn serialize_authorization_state(state: Option<&PersistedAuthorizationState>) ->
     }
 }
 
-fn upsert_thread_rows(
+fn upsert_thread_header(
     tx: &Transaction,
     chat_id: &str,
     thread: &ThreadRecord,
@@ -893,11 +724,38 @@ fn upsert_thread_rows(
         thread.updated_at_secs as i64,
         thread.draft
     ])?;
-    for message in &thread.messages {
+    Ok(())
+}
+
+fn apply_thread_write_plan(
+    tx: &Transaction,
+    chat_id: &str,
+    thread: &ThreadRecord,
+    plan: &ThreadWritePlan,
+) -> anyhow::Result<()> {
+    if plan.header_hash.is_some() {
+        upsert_thread_header(tx, chat_id, thread)?;
+    }
+    for &(index, _, _) in &plan.messages {
         // The row upsert preserves a previously stored incoming Seen.
-        upsert_message_row(tx, chat_id, message)?;
+        if let Some(message) = thread.messages.get(index) {
+            upsert_message_row(tx, chat_id, message)?;
+        }
     }
     Ok(())
+}
+
+fn upsert_unsaved_thread_rows(
+    tx: &Transaction,
+    cached: Option<&ThreadPersistCache>,
+    chat_id: &str,
+    thread: &ThreadRecord,
+) -> anyhow::Result<Option<ThreadWritePlan>> {
+    let Some(plan) = plan_thread_write(cached, thread) else {
+        return Ok(None);
+    };
+    apply_thread_write_plan(tx, chat_id, thread, &plan)?;
+    Ok(Some(plan))
 }
 
 fn upsert_message_row(
@@ -913,11 +771,16 @@ fn upsert_message_row(
     )? {
         return Ok(());
     }
-    let pending_seen: bool = !message.is_outgoing && tx.query_row(
-        "SELECT EXISTS(SELECT 1 FROM pending_message_reads WHERE chat_id = ?1 AND id = ?2 AND created_at_secs = ?3)",
-        params![chat_id, message.id, message.created_at_secs as i64], |row| row.get(0),
-    )?;
-    tx.execute(
+    let pending_seen: bool = !message.is_outgoing
+        && tx
+            .prepare_cached(
+                "SELECT EXISTS(SELECT 1 FROM pending_message_reads WHERE chat_id = ?1 AND id = ?2 AND created_at_secs = ?3)",
+            )?
+            .query_row(
+                params![chat_id, message.id, message.created_at_secs as i64],
+                |row| row.get(0),
+            )?;
+    tx.prepare_cached(
         "INSERT INTO messages(
             chat_id, id, kind, author, author_owner_pubkey_hex, body, is_outgoing, created_at_secs,
             expires_at_secs, delivery, attachments_json, reactions_json, reactors_json,
@@ -942,37 +805,39 @@ fn upsert_message_row(
             system_notice_owner_pubkey_hex = excluded.system_notice_owner_pubkey_hex,
             edit_history_json = excluded.edit_history_json,
             deleted_for_everyone = excluded.deleted_for_everyone",
-        params![
-            chat_id,
-            message.id,
-            serialize_message_kind(&message.kind),
-            message.author,
-            message.author_owner_pubkey_hex,
-            message.body,
-            message.is_outgoing as i64,
-            message.created_at_secs as i64,
-            message.expires_at_secs.map(|secs| secs as i64),
-            if pending_seen { "seen" } else { serialize_delivery(&message.delivery) },
-            serde_json::to_string(&message.attachments)?,
-            serde_json::to_string(&message.reactions)?,
-            serde_json::to_string(&message.reactors)?,
-            message.source_event_id,
-            serde_json::to_string(&message.recipient_deliveries)?,
-            serde_json::to_string(&message.delivery_trace)?,
-            message
-                .call
-                .as_ref()
-                .map(serde_json::to_string)
-                .transpose()?,
-            message.system_notice_owner_pubkey_hex,
-            serde_json::to_string(&message.edit_history)?,
-            message.deleted_for_everyone as i64,
-        ],
-    )?;
-    tx.execute(
-        "DELETE FROM pending_message_reads WHERE chat_id = ?1 AND id = ?2",
-        params![chat_id, message.id],
-    )?;
+    )?
+    .execute(params![
+        chat_id,
+        message.id,
+        serialize_message_kind(&message.kind),
+        message.author,
+        message.author_owner_pubkey_hex,
+        message.body,
+        message.is_outgoing as i64,
+        message.created_at_secs as i64,
+        message.expires_at_secs.map(|secs| secs as i64),
+        if pending_seen {
+            "seen"
+        } else {
+            serialize_delivery(&message.delivery)
+        },
+        serde_json::to_string(&message.attachments)?,
+        serde_json::to_string(&message.reactions)?,
+        serde_json::to_string(&message.reactors)?,
+        message.source_event_id,
+        serde_json::to_string(&message.recipient_deliveries)?,
+        serde_json::to_string(&message.delivery_trace)?,
+        message
+            .call
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()?,
+        message.system_notice_owner_pubkey_hex,
+        serde_json::to_string(&message.edit_history)?,
+        message.deleted_for_everyone as i64,
+    ])?;
+    tx.prepare_cached("DELETE FROM pending_message_reads WHERE chat_id = ?1 AND id = ?2")?
+        .execute(params![chat_id, message.id])?;
     Ok(())
 }
 
@@ -981,11 +846,16 @@ fn upsert_notification_preview_message_row(
     chat_id: &str,
     message: &ChatMessageSnapshot,
 ) -> anyhow::Result<()> {
-    let pending_seen: bool = !message.is_outgoing && tx.query_row(
-        "SELECT EXISTS(SELECT 1 FROM pending_message_reads WHERE chat_id = ?1 AND id = ?2 AND created_at_secs = ?3)",
-        params![chat_id, message.id, message.created_at_secs as i64], |row| row.get(0),
-    )?;
-    tx.execute(
+    let pending_seen: bool = !message.is_outgoing
+        && tx
+            .prepare_cached(
+                "SELECT EXISTS(SELECT 1 FROM pending_message_reads WHERE chat_id = ?1 AND id = ?2 AND created_at_secs = ?3)",
+            )?
+            .query_row(
+                params![chat_id, message.id, message.created_at_secs as i64],
+                |row| row.get(0),
+            )?;
+    tx.prepare_cached(
         "INSERT INTO messages(
             chat_id, id, kind, author, author_owner_pubkey_hex, body, is_outgoing, created_at_secs,
             expires_at_secs, delivery, attachments_json, reactions_json, reactors_json,
@@ -995,33 +865,39 @@ fn upsert_notification_preview_message_row(
             author_owner_pubkey_hex = COALESCE(messages.author_owner_pubkey_hex, excluded.author_owner_pubkey_hex),
             source_event_id = COALESCE(NULLIF(messages.source_event_id, ''), excluded.source_event_id),
             system_notice_owner_pubkey_hex = COALESCE(messages.system_notice_owner_pubkey_hex, excluded.system_notice_owner_pubkey_hex)",
-        params![
-            chat_id,
-            message.id,
-            serialize_message_kind(&message.kind),
-            message.author,
-            message.author_owner_pubkey_hex,
-            message.body,
-            message.is_outgoing as i64,
-            message.created_at_secs as i64,
-            message.expires_at_secs.map(|secs| secs as i64),
-            if pending_seen { "seen" } else { serialize_delivery(&message.delivery) },
-            serde_json::to_string(&message.attachments)?,
-            serde_json::to_string(&message.reactions)?,
-            serde_json::to_string(&message.reactors)?,
-            message.source_event_id,
-            serde_json::to_string(&message.recipient_deliveries)?,
-            serde_json::to_string(&message.delivery_trace)?,
-            message.call.as_ref().map(serde_json::to_string).transpose()?,
-            message.system_notice_owner_pubkey_hex,
-            serde_json::to_string(&message.edit_history)?,
-            message.deleted_for_everyone as i64,
-        ],
-    )?;
-    tx.execute(
-        "DELETE FROM pending_message_reads WHERE chat_id = ?1 AND id = ?2",
-        params![chat_id, message.id],
-    )?;
+    )?
+    .execute(params![
+        chat_id,
+        message.id,
+        serialize_message_kind(&message.kind),
+        message.author,
+        message.author_owner_pubkey_hex,
+        message.body,
+        message.is_outgoing as i64,
+        message.created_at_secs as i64,
+        message.expires_at_secs.map(|secs| secs as i64),
+        if pending_seen {
+            "seen"
+        } else {
+            serialize_delivery(&message.delivery)
+        },
+        serde_json::to_string(&message.attachments)?,
+        serde_json::to_string(&message.reactions)?,
+        serde_json::to_string(&message.reactors)?,
+        message.source_event_id,
+        serde_json::to_string(&message.recipient_deliveries)?,
+        serde_json::to_string(&message.delivery_trace)?,
+        message
+            .call
+            .as_ref()
+            .map(serde_json::to_string)
+            .transpose()?,
+        message.system_notice_owner_pubkey_hex,
+        serde_json::to_string(&message.edit_history)?,
+        message.deleted_for_everyone as i64,
+    ])?;
+    tx.prepare_cached("DELETE FROM pending_message_reads WHERE chat_id = ?1 AND id = ?2")?
+        .execute(params![chat_id, message.id])?;
     Ok(())
 }
 
@@ -1038,12 +914,30 @@ fn load_chat_ttls(conn: &rusqlite::Connection) -> anyhow::Result<BTreeMap<String
     Ok(map)
 }
 
-fn write_chat_ttls(tx: &Transaction, ttls: &BTreeMap<String, u64>) -> anyhow::Result<()> {
-    tx.execute("DELETE FROM chat_message_ttls", [])?;
-    let mut stmt =
-        tx.prepare_cached("INSERT INTO chat_message_ttls(chat_id, ttl_seconds) VALUES (?1, ?2)")?;
-    for (chat_id, ttl) in ttls {
-        stmt.execute(params![chat_id, *ttl as i64])?;
+fn write_chat_ttls_diff(
+    tx: &Transaction,
+    ttls: &BTreeMap<String, u64>,
+    diff: &MapDiff,
+) -> anyhow::Result<()> {
+    if diff.full_replace {
+        tx.execute("DELETE FROM chat_message_ttls", [])?;
+    } else if !diff.deletes.is_empty() {
+        let mut del = tx.prepare_cached("DELETE FROM chat_message_ttls WHERE chat_id = ?1")?;
+        for chat_id in &diff.deletes {
+            del.execute([chat_id])?;
+        }
+    }
+    if diff.upserts.is_empty() {
+        return Ok(());
+    }
+    let mut stmt = tx.prepare_cached(
+        "INSERT INTO chat_message_ttls(chat_id, ttl_seconds) VALUES (?1, ?2)
+         ON CONFLICT(chat_id) DO UPDATE SET ttl_seconds = excluded.ttl_seconds",
+    )?;
+    for (chat_id, _) in &diff.upserts {
+        if let Some(ttl) = ttls.get(chat_id) {
+            stmt.execute(params![chat_id, *ttl as i64])?;
+        }
     }
     Ok(())
 }
@@ -1071,16 +965,33 @@ fn load_app_keys(conn: &rusqlite::Connection) -> anyhow::Result<Vec<KnownAppKeys
     Ok(entries)
 }
 
-fn write_app_keys(
+fn write_app_keys_diff(
     tx: &Transaction,
     app_keys: &BTreeMap<String, KnownAppKeys>,
+    diff: &MapDiff,
 ) -> anyhow::Result<()> {
-    tx.execute("DELETE FROM app_keys", [])?;
+    if diff.full_replace {
+        tx.execute("DELETE FROM app_keys", [])?;
+    } else if !diff.deletes.is_empty() {
+        let mut del = tx.prepare_cached("DELETE FROM app_keys WHERE owner_pubkey_hex = ?1")?;
+        for owner_pubkey_hex in &diff.deletes {
+            del.execute([owner_pubkey_hex])?;
+        }
+    }
+    if diff.upserts.is_empty() {
+        return Ok(());
+    }
     let mut stmt = tx.prepare_cached(
         "INSERT INTO app_keys(owner_pubkey_hex, created_at_secs, devices_json)
-         VALUES (?1, ?2, ?3)",
+         VALUES (?1, ?2, ?3)
+         ON CONFLICT(owner_pubkey_hex) DO UPDATE SET
+            created_at_secs = excluded.created_at_secs,
+            devices_json = excluded.devices_json",
     )?;
-    for entry in app_keys.values() {
+    for (owner_pubkey_hex, _) in &diff.upserts {
+        let Some(entry) = app_keys.get(owner_pubkey_hex) else {
+            continue;
+        };
         let devices_json = serde_json::to_string(&entry.devices)?;
         stmt.execute(params![
             entry.owner_pubkey_hex,
@@ -1119,17 +1030,37 @@ fn load_group_pictures(conn: &rusqlite::Connection) -> anyhow::Result<BTreeMap<S
     Ok(pictures)
 }
 
-fn write_groups(
+fn write_groups_diff(
     tx: &Transaction,
     groups: &BTreeMap<String, GroupSnapshot>,
     group_pictures: &BTreeMap<String, String>,
+    diff: &MapDiff,
 ) -> anyhow::Result<()> {
-    tx.execute("DELETE FROM groups", [])?;
+    if diff.full_replace {
+        tx.execute("DELETE FROM groups", [])?;
+    } else if !diff.deletes.is_empty() {
+        let mut del = tx.prepare_cached("DELETE FROM groups WHERE group_id = ?1")?;
+        for group_id in &diff.deletes {
+            del.execute([group_id])?;
+        }
+    }
+    if diff.upserts.is_empty() {
+        return Ok(());
+    }
     let mut stmt = tx.prepare_cached(
         "INSERT INTO groups(group_id, name, picture, created_at_ms, updated_at_secs, group_json)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+         ON CONFLICT(group_id) DO UPDATE SET
+            name = excluded.name,
+            picture = excluded.picture,
+            created_at_ms = excluded.created_at_ms,
+            updated_at_secs = excluded.updated_at_secs,
+            group_json = excluded.group_json",
     )?;
-    for group in groups.values() {
+    for (group_id, _) in &diff.upserts {
+        let Some(group) = groups.get(group_id) else {
+            continue;
+        };
         let group_json = serde_json::to_string(group)?;
         stmt.execute(params![
             group.group_id,
@@ -1297,89 +1228,46 @@ pub(crate) fn search_messages_fts(
             kind: parse_message_kind(&row.get::<_, String>(8)?),
         })
     };
+    let mut stmt = conn.prepare_cached(
+        "SELECT messages.chat_id, messages.id,
+                COALESCE(NULLIF(TRIM(author.nickname), ''),
+                         NULLIF(TRIM(json_extract(author.contact_memory_json, '$.accepted_name')), ''),
+                         NULLIF(TRIM(author.display_name), ''),
+                         NULLIF(TRIM(author.name), ''), messages.author), messages.body,
+                messages.is_outgoing, messages.created_at_secs,
+                messages.author_owner_pubkey_hex, author.picture, messages.kind
+         FROM messages_fts
+         JOIN messages ON messages.rowid = messages_fts.rowid
+         LEFT JOIN owner_profiles AS author
+            ON author.owner_pubkey_hex = messages.author_owner_pubkey_hex
+         WHERE messages_fts MATCH ?1 AND (?2 IS NULL OR messages.chat_id = ?2)
+         AND NOT EXISTS (
+             SELECT 1 FROM preferences AS prefs,
+                 json_each(prefs.blocked_owner_pubkeys_json) AS blocked
+             WHERE prefs.id = 1 AND prefs.hide_blocked_group_messages != 0
+               AND messages.chat_id LIKE 'group:%' AND messages.kind = 'user'
+               AND messages.is_outgoing = 0
+               AND blocked.value = messages.author_owner_pubkey_hex
+         )
+         AND NOT EXISTS (
+             SELECT 1 FROM json_each(?4) AS blocked
+             WHERE messages.chat_id LIKE 'group:%' AND messages.kind = 'user'
+               AND messages.is_outgoing = 0
+               AND json_extract(blocked.value, '$.author') = messages.author_owner_pubkey_hex
+               AND messages.created_at_secs >= json_extract(blocked.value, '$.since')
+               AND (json_extract(blocked.value, '$.until') IS NULL
+                    OR messages.created_at_secs < json_extract(blocked.value, '$.until'))
+         )
+         ORDER BY messages.created_at_secs DESC, messages.rowid DESC
+         LIMIT ?3",
+    )?;
+    let rows = stmt.query_map(
+        params![&fts_query, scope_chat_id, limit as i64, &intervals],
+        map_row,
+    )?;
     let mut hits = Vec::new();
-    match scope_chat_id {
-        Some(chat_id) => {
-            let mut stmt = conn.prepare(
-                "SELECT messages.chat_id, messages.id,
-                        COALESCE(NULLIF(TRIM(author.nickname), ''),
-                                 NULLIF(TRIM(json_extract(author.contact_memory_json, '$.accepted_name')), ''),
-                                 NULLIF(TRIM(author.display_name), ''),
-                                 NULLIF(TRIM(author.name), ''), messages.author), messages.body,
-                        messages.is_outgoing, messages.created_at_secs,
-                        messages.author_owner_pubkey_hex, author.picture, messages.kind
-                 FROM messages_fts
-                 JOIN messages ON messages.rowid = messages_fts.rowid
-                 LEFT JOIN owner_profiles AS author
-                    ON author.owner_pubkey_hex = messages.author_owner_pubkey_hex
-                 WHERE messages_fts MATCH ?1 AND messages.chat_id = ?2
-                 AND NOT EXISTS (
-                     SELECT 1 FROM preferences AS prefs,
-                         json_each(prefs.blocked_owner_pubkeys_json) AS blocked
-                     WHERE prefs.id = 1 AND prefs.hide_blocked_group_messages != 0
-                       AND messages.chat_id LIKE 'group:%' AND messages.kind = 'user'
-                       AND messages.is_outgoing = 0
-                       AND blocked.value = messages.author_owner_pubkey_hex
-                 )
-                 AND NOT EXISTS (
-                     SELECT 1 FROM json_each(?4) AS blocked
-                     WHERE messages.chat_id LIKE 'group:%' AND messages.kind = 'user'
-                       AND messages.is_outgoing = 0
-                       AND json_extract(blocked.value, '$.author') = messages.author_owner_pubkey_hex
-                       AND messages.created_at_secs >= json_extract(blocked.value, '$.since')
-                       AND (json_extract(blocked.value, '$.until') IS NULL
-                            OR messages.created_at_secs < json_extract(blocked.value, '$.until'))
-                 )
-                 ORDER BY messages.created_at_secs DESC, messages.rowid DESC
-                 LIMIT ?3",
-            )?;
-            let rows = stmt.query_map(
-                params![&fts_query, chat_id, limit as i64, &intervals],
-                map_row,
-            )?;
-            for row in rows {
-                hits.push(row?);
-            }
-        }
-        None => {
-            let mut stmt = conn.prepare(
-                "SELECT messages.chat_id, messages.id,
-                        COALESCE(NULLIF(TRIM(author.nickname), ''),
-                                 NULLIF(TRIM(json_extract(author.contact_memory_json, '$.accepted_name')), ''),
-                                 NULLIF(TRIM(author.display_name), ''),
-                                 NULLIF(TRIM(author.name), ''), messages.author), messages.body,
-                        messages.is_outgoing, messages.created_at_secs,
-                        messages.author_owner_pubkey_hex, author.picture, messages.kind
-                 FROM messages_fts
-                 JOIN messages ON messages.rowid = messages_fts.rowid
-                 LEFT JOIN owner_profiles AS author
-                    ON author.owner_pubkey_hex = messages.author_owner_pubkey_hex
-                 WHERE messages_fts MATCH ?1
-                 AND NOT EXISTS (
-                     SELECT 1 FROM preferences AS prefs,
-                         json_each(prefs.blocked_owner_pubkeys_json) AS blocked
-                     WHERE prefs.id = 1 AND prefs.hide_blocked_group_messages != 0
-                       AND messages.chat_id LIKE 'group:%' AND messages.kind = 'user'
-                       AND messages.is_outgoing = 0
-                       AND blocked.value = messages.author_owner_pubkey_hex
-                 )
-                 AND NOT EXISTS (
-                     SELECT 1 FROM json_each(?3) AS blocked
-                     WHERE messages.chat_id LIKE 'group:%' AND messages.kind = 'user'
-                       AND messages.is_outgoing = 0
-                       AND json_extract(blocked.value, '$.author') = messages.author_owner_pubkey_hex
-                       AND messages.created_at_secs >= json_extract(blocked.value, '$.since')
-                       AND (json_extract(blocked.value, '$.until') IS NULL
-                            OR messages.created_at_secs < json_extract(blocked.value, '$.until'))
-                 )
-                 ORDER BY messages.created_at_secs DESC, messages.rowid DESC
-                 LIMIT ?2",
-            )?;
-            let rows = stmt.query_map(params![&fts_query, limit as i64, &intervals], map_row)?;
-            for row in rows {
-                hits.push(row?);
-            }
-        }
+    for row in rows {
+        hits.push(row?);
     }
     Ok(hits)
 }

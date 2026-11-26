@@ -86,14 +86,14 @@ pub(super) struct MessageReadState {
     pub(super) expires_at_secs: Option<u64>,
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub(super) struct KnownAppKeys {
     pub(super) owner_pubkey_hex: String,
     pub(super) created_at_secs: u64,
     pub(super) devices: Vec<KnownAppKeyDevice>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub(super) struct KnownAppKeyDevice {
     pub(super) identity_pubkey_hex: String,
     pub(super) created_at_secs: u64,
@@ -201,7 +201,7 @@ pub(super) struct CurrentDeviceLabels {
     pub(super) client_label: Option<String>,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub(super) struct OwnerProfileRecord {
     // Last signed head durably projected into this local profile.
     #[serde(default)]

@@ -226,6 +226,62 @@ pub(in crate::core) struct InviteAcceptanceIntent {
 }
 
 impl AppCore {
+    pub(in crate::core) fn clear_request_decisions_cache(&self) {
+        *self.request_decisions_cache.borrow_mut() = None;
+    }
+
+    pub(in crate::core::device_sync) fn cache_request_decision(&self, state: RequestDecision) {
+        let Some(owner_hex) = self
+            .logged_in
+            .as_ref()
+            .map(|login| login.owner_pubkey.to_hex())
+        else {
+            return;
+        };
+        let mut cache = self.request_decisions_cache.borrow_mut();
+        if let Some((cached_owner, map)) = cache.as_mut() {
+            if cached_owner == &owner_hex {
+                map.insert(state.chat_id.clone(), state);
+            } else {
+                *cache = None;
+            }
+        }
+    }
+
+    fn load_request_decisions_from_db(
+        &self,
+        owner_hex: &str,
+        strict: bool,
+    ) -> anyhow::Result<BTreeMap<String, RequestDecision>> {
+        let start = format!(
+            "iris-chat-sync-record-v1:{owner_hex}:private-state:[\"privateEvent\",\"requestDecision\","
+        );
+        let end = format!("{start}\u{10ffff}");
+        let shared = self.app_store.shared();
+        let conn = shared.lock().map_err(|_| anyhow::anyhow!("Storage lock"))?;
+        let mut query = conn
+            .prepare_cached("SELECT value FROM app_meta WHERE key>=?1 AND key<?2 ORDER BY key")?;
+        let mut decisions = BTreeMap::new();
+        for row in query.query_map([start, end], |row| row.get::<_, String>(0))? {
+            let raw = row?;
+            let record = match serde_json::from_str::<DeviceSyncRecord>(&raw) {
+                Ok(record) => record,
+                Err(error) if strict => return Err(error.into()),
+                Err(_) => continue,
+            };
+            if let DeviceSyncRecord::PrivateEvent { event } = record {
+                match request_decision_state(&event) {
+                    Some(state) => {
+                        decisions.insert(state.chat_id.clone(), state);
+                    }
+                    None if strict => return Err(anyhow::anyhow!("Invalid request decision")),
+                    None => {}
+                }
+            }
+        }
+        Ok(decisions)
+    }
+
     pub(in crate::core) fn capture_invite_acceptance(
         &self,
         target: Option<&str>,
@@ -239,27 +295,13 @@ impl AppCore {
         } else {
             // A private link does not reveal its owner until fetched. Read only
             // request-decision heads, never the message/history record stream.
-            let owner = self
+            let owner_hex = self
                 .logged_in
                 .as_ref()
                 .ok_or_else(|| anyhow::anyhow!("No account"))?
-                .owner_pubkey;
-            let start = format!(
-                "iris-chat-sync-record-v1:{}:private-state:[\"privateEvent\",\"requestDecision\",",
-                owner.to_hex()
-            );
-            let end = format!("{start}\u{10ffff}");
-            let shared = self.app_store.shared();
-            let conn = shared.lock().map_err(|_| anyhow::anyhow!("Storage lock"))?;
-            let mut query =
-                conn.prepare("SELECT value FROM app_meta WHERE key>=?1 AND key<?2 ORDER BY key")?;
-            for row in query.query_map([start, end], |row| row.get::<_, String>(0))? {
-                if let DeviceSyncRecord::PrivateEvent { event } = serde_json::from_str(&row?)? {
-                    let state = request_decision_state(&event)
-                        .ok_or_else(|| anyhow::anyhow!("Invalid request decision"))?;
-                    decisions.insert(state.chat_id.clone(), state);
-                }
-            }
+                .owner_pubkey
+                .to_hex();
+            decisions = self.load_request_decisions_from_db(&owner_hex, true)?;
         }
         Ok(InviteAcceptanceIntent {
             requested_at_ms,
@@ -284,11 +326,18 @@ impl AppCore {
     }
 
     pub(in crate::core) fn request_decision(&self, target: &str) -> Option<RequestDecision> {
-        let key = serde_json::json!(["privateEvent", "requestDecision", target]).to_string();
-        match self.load_sync_record(&records::RecordLocator::Head(key))? {
-            DeviceSyncRecord::PrivateEvent { event } => request_decision_state(&event),
-            _ => None,
+        let owner_hex = self.logged_in.as_ref()?.owner_pubkey.to_hex();
+        let mut cache = self.request_decisions_cache.borrow_mut();
+        let needs_load = cache
+            .as_ref()
+            .is_none_or(|(cached_owner, _)| cached_owner != &owner_hex);
+        if needs_load {
+            let loaded = self
+                .load_request_decisions_from_db(&owner_hex, false)
+                .unwrap_or_default();
+            *cache = Some((owner_hex, loaded));
         }
+        cache.as_ref()?.1.get(target).cloned()
     }
     pub(super) fn project_request_decision(&mut self, state: &RequestDecision) {
         self.preferences

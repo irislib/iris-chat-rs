@@ -39,50 +39,61 @@ impl AppStore {
     }
 }
 
+macro_rules! hash_preference_fields {
+    ($preferences:expr) => {{
+        let preferences = $preferences;
+        let mut hasher = DefaultHasher::new();
+        preferences.voice_calls_enabled.hash(&mut hasher);
+        preferences.video_calls_enabled.hash(&mut hasher);
+        preferences.call_quality.hash(&mut hasher);
+        preferences.call_max_bitrate_bps.hash(&mut hasher);
+        preferences.send_typing_indicators.hash(&mut hasher);
+        preferences.send_read_receipts.hash(&mut hasher);
+        preferences.hide_blocked_group_messages.hash(&mut hasher);
+        preferences
+            .allow_message_deletion_by_others
+            .hash(&mut hasher);
+        preferences.desktop_notifications_enabled.hash(&mut hasher);
+        preferences
+            .invite_acceptance_notifications_enabled
+            .hash(&mut hasher);
+        preferences.startup_at_login_enabled.hash(&mut hasher);
+        preferences.nearby_enabled.hash(&mut hasher);
+        preferences.nearby_bluetooth_enabled.hash(&mut hasher);
+        preferences.nearby_lan_enabled.hash(&mut hasher);
+        preferences.nostr_relay_urls.hash(&mut hasher);
+        preferences.image_proxy_enabled.hash(&mut hasher);
+        preferences.image_proxy_fallback_enabled.hash(&mut hasher);
+        preferences.image_proxy_url.hash(&mut hasher);
+        preferences.image_proxy_key_hex.hash(&mut hasher);
+        preferences.image_proxy_salt_hex.hash(&mut hasher);
+        preferences.mobile_push_server_url.hash(&mut hasher);
+        preferences.muted_chat_ids.hash(&mut hasher);
+        preferences.timed_chat_mutes.hash(&mut hasher);
+        preferences.silent_mention_chat_ids.hash(&mut hasher);
+        preferences.pinned_chat_ids.hash(&mut hasher);
+        preferences.debug_logging_enabled.hash(&mut hasher);
+        preferences.accept_unknown_direct_messages.hash(&mut hasher);
+        preferences
+            .accept_social_graph_direct_messages
+            .hash(&mut hasher);
+        preferences
+            .accept_overmuted_direct_messages
+            .hash(&mut hasher);
+        preferences.blocked_owner_pubkeys.hash(&mut hasher);
+        preferences.accepted_owner_pubkeys.hash(&mut hasher);
+        preferences.nearby_mailbag_enabled.hash(&mut hasher);
+        preferences.nearby_show_in_chat_list.hash(&mut hasher);
+        hasher.finish()
+    }};
+}
+
 pub(super) fn hash_preferences(preferences: &PreferencesSnapshot) -> u64 {
-    let mut hasher = DefaultHasher::new();
-    preferences.voice_calls_enabled.hash(&mut hasher);
-    preferences.video_calls_enabled.hash(&mut hasher);
-    preferences.call_quality.hash(&mut hasher);
-    preferences.call_max_bitrate_bps.hash(&mut hasher);
-    preferences.send_typing_indicators.hash(&mut hasher);
-    preferences.send_read_receipts.hash(&mut hasher);
-    preferences.hide_blocked_group_messages.hash(&mut hasher);
-    preferences
-        .allow_message_deletion_by_others
-        .hash(&mut hasher);
-    preferences.desktop_notifications_enabled.hash(&mut hasher);
-    preferences
-        .invite_acceptance_notifications_enabled
-        .hash(&mut hasher);
-    preferences.startup_at_login_enabled.hash(&mut hasher);
-    preferences.nearby_enabled.hash(&mut hasher);
-    preferences.nearby_bluetooth_enabled.hash(&mut hasher);
-    preferences.nearby_lan_enabled.hash(&mut hasher);
-    preferences.nostr_relay_urls.hash(&mut hasher);
-    preferences.image_proxy_enabled.hash(&mut hasher);
-    preferences.image_proxy_fallback_enabled.hash(&mut hasher);
-    preferences.image_proxy_url.hash(&mut hasher);
-    preferences.image_proxy_key_hex.hash(&mut hasher);
-    preferences.image_proxy_salt_hex.hash(&mut hasher);
-    preferences.mobile_push_server_url.hash(&mut hasher);
-    preferences.muted_chat_ids.hash(&mut hasher);
-    preferences.timed_chat_mutes.hash(&mut hasher);
-    preferences.silent_mention_chat_ids.hash(&mut hasher);
-    preferences.pinned_chat_ids.hash(&mut hasher);
-    preferences.debug_logging_enabled.hash(&mut hasher);
-    preferences.accept_unknown_direct_messages.hash(&mut hasher);
-    preferences
-        .accept_social_graph_direct_messages
-        .hash(&mut hasher);
-    preferences
-        .accept_overmuted_direct_messages
-        .hash(&mut hasher);
-    preferences.blocked_owner_pubkeys.hash(&mut hasher);
-    preferences.accepted_owner_pubkeys.hash(&mut hasher);
-    preferences.nearby_mailbag_enabled.hash(&mut hasher);
-    preferences.nearby_show_in_chat_list.hash(&mut hasher);
-    hasher.finish()
+    hash_preference_fields!(preferences)
+}
+
+pub(super) fn hash_persisted_preferences(preferences: &PersistedPreferences) -> u64 {
+    hash_preference_fields!(preferences)
 }
 
 pub(super) fn load_preferences(
@@ -154,7 +165,7 @@ pub(super) fn write_preferences(
     preferences: &PreferencesSnapshot,
 ) -> anyhow::Result<()> {
     let nostr_relay_urls_json = serde_json::to_string(&preferences.nostr_relay_urls)?;
-    tx.execute(
+    let mut stmt = tx.prepare_cached(
         "INSERT INTO preferences (
             id, send_typing_indicators, send_read_receipts, desktop_notifications_enabled,
             invite_acceptance_notifications_enabled, startup_at_login_enabled,
@@ -199,41 +210,41 @@ pub(super) fn write_preferences(
             accepted_owner_pubkeys_json = excluded.accepted_owner_pubkeys_json,
             nearby_mailbag_enabled = excluded.nearby_mailbag_enabled,
             nearby_show_in_chat_list = excluded.nearby_show_in_chat_list",
-        params![
-            preferences.send_typing_indicators as i64,
-            preferences.send_read_receipts as i64,
-            preferences.desktop_notifications_enabled as i64,
-            preferences.invite_acceptance_notifications_enabled as i64,
-            preferences.startup_at_login_enabled as i64,
-            preferences.nearby_bluetooth_enabled as i64,
-            preferences.nearby_lan_enabled as i64,
-            nostr_relay_urls_json,
-            preferences.image_proxy_enabled as i64,
-            preferences.image_proxy_url,
-            preferences.image_proxy_key_hex,
-            preferences.image_proxy_salt_hex,
-            preferences.mobile_push_server_url,
-            serde_json::to_string(&preferences.muted_chat_ids)?,
-            serde_json::to_string(&preferences.pinned_chat_ids)?,
-            preferences.debug_logging_enabled as i64,
-            preferences.accept_unknown_direct_messages as i64,
-            preferences.nearby_enabled as i64,
-            serde_json::to_string(&preferences.blocked_owner_pubkeys)?,
-            serde_json::to_string(&preferences.accepted_owner_pubkeys)?,
-            preferences.nearby_mailbag_enabled as i64,
-            preferences.nearby_show_in_chat_list as i64,
-            preferences.image_proxy_fallback_enabled as i64,
-            preferences.voice_calls_enabled as i64,
-            preferences.video_calls_enabled as i64,
-            preferences.call_quality,
-            preferences.call_max_bitrate_bps,
-            serde_json::to_string(&preferences.timed_chat_mutes)?,
-            preferences.allow_message_deletion_by_others as i64,
-            preferences.hide_blocked_group_messages as i64,
-            serde_json::to_string(&preferences.silent_mention_chat_ids)?,
-            preferences.accept_social_graph_direct_messages as i64,
-            preferences.accept_overmuted_direct_messages as i64,
-        ],
     )?;
+    stmt.execute(params![
+        preferences.send_typing_indicators as i64,
+        preferences.send_read_receipts as i64,
+        preferences.desktop_notifications_enabled as i64,
+        preferences.invite_acceptance_notifications_enabled as i64,
+        preferences.startup_at_login_enabled as i64,
+        preferences.nearby_bluetooth_enabled as i64,
+        preferences.nearby_lan_enabled as i64,
+        nostr_relay_urls_json,
+        preferences.image_proxy_enabled as i64,
+        preferences.image_proxy_url,
+        preferences.image_proxy_key_hex,
+        preferences.image_proxy_salt_hex,
+        preferences.mobile_push_server_url,
+        serde_json::to_string(&preferences.muted_chat_ids)?,
+        serde_json::to_string(&preferences.pinned_chat_ids)?,
+        preferences.debug_logging_enabled as i64,
+        preferences.accept_unknown_direct_messages as i64,
+        preferences.nearby_enabled as i64,
+        serde_json::to_string(&preferences.blocked_owner_pubkeys)?,
+        serde_json::to_string(&preferences.accepted_owner_pubkeys)?,
+        preferences.nearby_mailbag_enabled as i64,
+        preferences.nearby_show_in_chat_list as i64,
+        preferences.image_proxy_fallback_enabled as i64,
+        preferences.voice_calls_enabled as i64,
+        preferences.video_calls_enabled as i64,
+        preferences.call_quality,
+        preferences.call_max_bitrate_bps,
+        serde_json::to_string(&preferences.timed_chat_mutes)?,
+        preferences.allow_message_deletion_by_others as i64,
+        preferences.hide_blocked_group_messages as i64,
+        serde_json::to_string(&preferences.silent_mention_chat_ids)?,
+        preferences.accept_social_graph_direct_messages as i64,
+        preferences.accept_overmuted_direct_messages as i64,
+    ])?;
     Ok(())
 }

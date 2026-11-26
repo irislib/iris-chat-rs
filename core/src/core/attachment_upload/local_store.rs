@@ -454,7 +454,7 @@ impl AttachmentChunkStore {
         let Ok(state) = self.lock() else {
             return Vec::new();
         };
-        let Ok(mut stmt) = state.db.prepare(
+        let Ok(mut stmt) = state.db.prepare_cached(
             "SELECT server FROM replicas WHERE root=?1 AND complete=1 ORDER BY server LIMIT 8",
         ) else {
             return Vec::new();

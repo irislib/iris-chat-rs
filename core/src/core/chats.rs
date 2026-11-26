@@ -389,6 +389,7 @@ impl AppCore {
         if messages.is_empty() {
             return;
         }
+        self.app_store.seed_loaded_messages(chat_id, &messages);
         let Some(thread) = self.threads.get_mut(chat_id) else {
             return;
         };
@@ -412,6 +413,7 @@ impl AppCore {
                 return false;
             }
         };
+        self.app_store.seed_loaded_thread(&persisted);
         self.merge_persisted_thread(persisted)
     }
 
@@ -1780,7 +1782,16 @@ fn set_transport_delivery(message: &mut ChatMessageSnapshot, delivery: DeliveryS
 }
 
 pub(super) fn chat_message_from_persisted(message: &PersistedMessage) -> ChatMessageSnapshot {
-    let (body, parsed_attachments) = extract_message_attachments(&message.body);
+    let (body, attachments) = if message.attachments.is_empty() {
+        let (extracted_body, parsed_attachments) = extract_message_attachments(&message.body);
+        if parsed_attachments.is_empty() {
+            (message.body.clone(), Vec::new())
+        } else {
+            (extracted_body, parsed_attachments)
+        }
+    } else {
+        (message.body.clone(), message.attachments.clone())
+    };
     // Earlier builds could replay Sent over an outgoing receipt while keeping
     // its per-recipient proof. Restore the same indicator as a live receipt.
     let mut delivery = message.delivery.clone().into();
@@ -1808,11 +1819,7 @@ pub(super) fn chat_message_from_persisted(message: &PersistedMessage) -> ChatMes
         author_owner_pubkey_hex: message.author_owner_pubkey_hex.clone(),
         author_picture_url: None,
         body,
-        attachments: if message.attachments.is_empty() {
-            parsed_attachments
-        } else {
-            message.attachments.clone()
-        },
+        attachments,
         reactions: message.reactions.clone(),
         reactors: message.reactors.clone(),
         is_outgoing: message.is_outgoing,
