@@ -1,6 +1,6 @@
 use super::*;
 
-fn reopen_alias_core(owner: &Keys, device: &Keys, path: &std::path::Path) -> AppCore {
+pub(super) fn reopen_alias_core(owner: &Keys, device: &Keys, path: &std::path::Path) -> AppCore {
     let mut core =
         logged_in_test_core_at_data_dir(owner, device, path.to_string_lossy().into_owned());
     let persisted = core.load_persisted().unwrap().unwrap();
