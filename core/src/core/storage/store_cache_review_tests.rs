@@ -97,9 +97,18 @@ fn fingerprints_follow_loaded_pages_and_temporary_receipt_rows() {
         restored.iter().find(|m| m.id == "m0").unwrap().delivery,
         PersistedDeliveryState::Seen
     ));
-    let changes = store.shared().lock().unwrap().total_changes();
+    let changes = total_changes(&store);
     save(&mut store, &threads).unwrap();
-    assert_eq!(store.shared().lock().unwrap().total_changes(), changes);
+    assert_eq!(total_changes(&store), changes);
+}
+
+fn total_changes(store: &AppStore) -> i64 {
+    store
+        .shared()
+        .lock()
+        .unwrap()
+        .query_row("SELECT total_changes()", [], |row| row.get(0))
+        .unwrap()
 }
 
 #[test]

@@ -91,7 +91,7 @@ class Runner:
         if time.monotonic() >= self.deadline:
             raise RuntimeError("focused run timed out")
 
-    def run(self, label, command, env, echo=False):
+    def run(self, label, command, env, echo=False, check=True):
         self.guard()
         path = self.output / (label + ".log")
         item = {"command": command, "log": str(path), "started_unix": time.time()}
@@ -136,7 +136,7 @@ class Runner:
         self.guard()
         if not item["closure"]["closed"] or item["closure"]["cleanup_needed"]:
             raise RuntimeError(f"{label} left a live process group")
-        if item["exit_code"]:
+        if check and item["exit_code"]:
             raise RuntimeError(f"{label} failed with exit {item['exit_code']}; see {path}")
         return path
 
@@ -244,19 +244,27 @@ def main(argv=None):
         if args.target_dir not in binary.parents or not binary.is_file():
             raise RuntimeError("reported test executable is outside the selected target")
         receipt["binary"] = {"path": str(binary), "sha256": sha256(binary)}
+        failures = []
         for index, arguments in enumerate(test_args):
-            log = runner.run(f"test-{index + 1:03d}", [str(binary), *arguments], env, echo=True)
+            # Selected regressions run in independent processes. Retain every
+            # result from this build; time/disk/process-closure guards still
+            # abort immediately, and any failed assertion fails the whole run.
+            log = runner.run(f"test-{index + 1:03d}", [str(binary), *arguments], env, echo=True, check=False)
             counts = SUMMARY.findall(log.read_text())
             runner.runs[-1]["test_summary"] = counts
+            if runner.runs[-1]["exit_code"]:
+                failures.append(f"{arguments[0]} failed with exit {runner.runs[-1]['exit_code']}; see {log}")
             # Isolated regressions can print their owned child harness output.
             # Require every child result and the final outer result to pass one test.
             if not counts or any(count != ("ok", "1", "0", "0") for count in counts):
-                raise RuntimeError(f"{arguments[0]} did not execute exactly one passing, nonignored test in every reported result")
+                failures.append(f"{arguments[0]} did not execute exactly one passing, nonignored test in every reported result")
         if source_state(args.crate) != receipt["source"]:
             raise RuntimeError("source changed during the focused run")
         if sha256(binary) != receipt["binary"]["sha256"]:
             raise RuntimeError("test executable changed during the focused run")
         runner.guard()
+        if failures:
+            raise RuntimeError("; ".join(failures))
         receipt["passed"] = True
     except (Exception, KeyboardInterrupt) as error:
         receipt["error"] = str(error) or type(error).__name__
