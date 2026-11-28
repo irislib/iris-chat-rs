@@ -126,6 +126,7 @@ mod startup_restore;
 mod synthetic_history_scale;
 mod synthetic_protocol_checkpoint;
 mod synthetic_vm_profile;
+mod thread_alias_history;
 mod timed_mute;
 
 use app_keys_invites_requests::*;
