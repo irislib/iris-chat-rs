@@ -277,3 +277,5 @@ fn protocol_targeted_payload_count(effects: &[ProtocolEffect], _owner_pubkey_hex
         })
         .count()
 }
+
+mod thread_alias_history;

@@ -294,6 +294,17 @@ class FocusedRunnerTests(unittest.TestCase):
         self.assertEqual(receipt["runs"][-1]["exit_code"], 101)
         self.assertIn("test diagnostic: tests::failure", (self.output / "test-001.log").read_text())
 
+    def test_failed_test_does_not_skip_other_selected_regressions(self):
+        result = self.run_fixture("--tests", "tests::failure tests::one")
+        self.assertEqual(result.returncode, 1)
+        receipt = self.receipt()
+        self.assertFalse(receipt["passed"])
+        runs = [run for run in receipt["runs"] if Path(run["log"]).name.startswith("test-")]
+        self.assertEqual([run["exit_code"] for run in runs], [101, 0])
+        self.assertEqual(runs[0]["test_summary"], [["FAILED", "0", "1", "0"]])
+        self.assertTrue(all(run["closure"]["closed"] for run in runs))
+        self.assertIn("tests::failure", receipt["error"])
+
     def test_build_failure_keeps_diagnostics_without_running_binary(self):
         self.env["FAKE_SCENARIO"] = "build-failure"
         result = self.run_fixture("--test", "tests::one")
