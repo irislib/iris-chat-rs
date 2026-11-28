@@ -2,6 +2,7 @@ use super::*;
 
 pub(crate) struct MigratedThreadHistory {
     pub(crate) skipped_loaded_ids: HashSet<String>,
+    pub(crate) removed_target_loaded_ids: HashSet<String>,
     pub(crate) unread_count: u64,
     pub(crate) updated_at_secs: u64,
     pub(crate) draft: String,
@@ -60,6 +61,25 @@ impl AppStore {
             )?;
         }
         tx.execute("INSERT OR IGNORE INTO threads(chat_id) VALUES (?1)", [to])?;
+        store_message_deletions::purge_marked_alias_copies(&tx, to)?;
+        // Return only IDs already loaded by the caller, never the full history.
+        let removed_target_loaded_ids = if let Some(target) = target {
+            let ids = target
+                .messages
+                .iter()
+                .map(|message| &message.id)
+                .collect::<Vec<_>>();
+            let mut query = tx.prepare(
+                "SELECT value FROM json_each(?2) WHERE NOT EXISTS (
+                SELECT 1 FROM messages WHERE chat_id=?1 AND id=json_each.value)",
+            )?;
+            let rows = query.query_map(params![to, serde_json::to_string(&ids)?], |row| {
+                row.get::<_, String>(0)
+            })?;
+            rows.collect::<Result<HashSet<_>, _>>()?
+        } else {
+            HashSet::new()
+        };
         let (target_unread, target_updated, draft): (u64, u64, String) = tx.query_row(
             "SELECT unread_count, updated_at_secs, draft FROM threads WHERE chat_id=?1",
             [to],
@@ -167,6 +187,7 @@ impl AppStore {
         self.cache.chat_ttls = None;
         Ok(MigratedThreadHistory {
             skipped_loaded_ids,
+            removed_target_loaded_ids,
             unread_count,
             updated_at_secs,
             draft,

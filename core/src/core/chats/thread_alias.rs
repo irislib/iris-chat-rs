@@ -52,6 +52,9 @@ impl AppCore {
                 messages: Vec::new(),
                 draft: String::new(),
             });
+        target
+            .messages
+            .retain(|message| !migrated.removed_target_loaded_ids.contains(&message.id));
 
         for mut message in source.messages.drain(..) {
             if migrated.skipped_loaded_ids.contains(&message.id) {

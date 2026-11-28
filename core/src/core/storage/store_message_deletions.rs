@@ -53,6 +53,82 @@ const MESSAGE_CONTROL_RECORDS: &str = "WITH message_controls AS (
     WHERE key >= 'iris-chat-sync-record-v1:' AND key < 'iris-chat-sync-record-v1;'
 ) ";
 
+/// Reconcile copies which arrived under the owner before its device alias was
+/// known. Keep all work in the caller's migration transaction and in SQLite.
+pub(super) fn purge_marked_alias_copies(tx: &Transaction, chat_id: &str) -> anyhow::Result<()> {
+    let prefix = format!("message_deleted:{}:{chat_id}:", chat_id.len());
+    let marked = "EXISTS (SELECT 1 FROM app_meta WHERE key IN (
+        ?2 || 'id:' || m.id, ?2 || 'source:' || m.source_event_id))";
+    let present: bool = tx.query_row(
+        &format!("SELECT EXISTS(SELECT 1 FROM messages AS m WHERE chat_id=?1 AND {marked})"),
+        params![chat_id, prefix],
+        |row| row.get(0),
+    )?;
+    if !present {
+        return Ok(());
+    }
+
+    // A stored copy can have a different local ID or outer event. Guard both
+    // identifiers before erasing it so re-encapsulation cannot bring it back.
+    // Source guards first also find any other local IDs for that exact event.
+    tx.execute(
+        &format!(
+            "INSERT OR IGNORE INTO app_meta(key,value)
+        SELECT ?2 || 'source:' || m.source_event_id,'1' FROM messages AS m
+        WHERE chat_id=?1 AND m.source_event_id IS NOT NULL AND {marked}"
+        ),
+        params![chat_id, prefix],
+    )?;
+    tx.execute(
+        &format!(
+            "INSERT OR IGNORE INTO app_meta(key,value)
+        SELECT ?2 || 'id:' || m.id,'1' FROM messages AS m
+        WHERE chat_id=?1 AND {marked}"
+        ),
+        params![chat_id, prefix],
+    )?;
+    let removed = format!(
+        "removed AS (SELECT m.id,m.source_event_id FROM messages AS m
+        WHERE chat_id=?1 AND {marked})"
+    );
+    tx.execute(
+        &format!(
+            "{MESSAGE_CONTROL_RECORDS}, {removed}
+        DELETE FROM app_meta WHERE key IN (SELECT key FROM message_controls
+            WHERE json_extract(record,'$.chatId')=?1 AND (
+                json_extract(record,'$.messageId') IN (SELECT id FROM removed)
+                OR json_extract(record,'$.messageId') IN (SELECT source_event_id FROM removed)
+                OR EXISTS(SELECT 1 FROM app_meta AS guard WHERE guard.key IN (
+                    ?2 || 'id:' || json_extract(record,'$.messageId'),
+                    ?2 || 'source:' || json_extract(record,'$.messageId')))))"
+        ),
+        params![chat_id, prefix],
+    )?;
+    // Only the recent counted unread window contributes to the existing badge.
+    tx.execute(
+        &format!(
+            "WITH {removed}
+        UPDATE threads SET unread_count=MAX(0,unread_count-(SELECT count(*) FROM (
+            SELECT id FROM messages WHERE chat_id=?1 AND is_outgoing=0 AND delivery!='seen'
+            ORDER BY created_at_secs DESC,rowid DESC
+            LIMIT (SELECT MAX(0,unread_count) FROM threads WHERE chat_id=?1)
+        ) WHERE id IN (SELECT id FROM removed))) WHERE chat_id=?1"
+        ),
+        params![chat_id, prefix],
+    )?;
+    tx.execute(
+        "DELETE FROM pending_message_reads WHERE chat_id=?1 AND EXISTS(
+        SELECT 1 FROM app_meta WHERE key=?2 || 'id:' || pending_message_reads.id)",
+        params![chat_id, prefix],
+    )?;
+    // Existing DELETE triggers erase the matching FTS and envelope rows.
+    tx.execute(
+        &format!("DELETE FROM messages AS m WHERE chat_id=?1 AND {marked}"),
+        params![chat_id, prefix],
+    )?;
+    Ok(())
+}
+
 fn purge_message_controls(
     conn: &rusqlite::Connection,
     chat_id: &str,

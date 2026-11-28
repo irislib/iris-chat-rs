@@ -50,9 +50,27 @@ fn assert_removed(core: &AppCore, target: &str, unrelated: &str, stage: &str) {
         ),
         "stale owner copy survived {stage}"
     );
+    let shared = core.app_store.shared();
+    let conn = shared.lock().unwrap();
+    let count_controls = |chat: &str| {
+        conn.query_row("SELECT count(*) FROM app_meta
+        WHERE key LIKE 'iris-chat-sync-record-v1:%' AND CASE WHEN json_valid(value)
+            THEN COALESCE(json_extract(value,'$.mutation.chatId'),json_extract(value,'$.reaction.chatId')) END=?1",
+        [chat], |row| row.get::<_,i64>(0)).unwrap()
+    };
+    assert_eq!(
+        count_controls(target),
+        0,
+        "removed copy retained controls at {stage}"
+    );
+    assert_eq!(
+        count_controls(unrelated),
+        2,
+        "unrelated controls changed at {stage}"
+    );
 }
 
-fn preexisting_owner_copy_is_removed(unloaded: bool, match_source: bool) {
+fn preexisting_owner_copy_is_removed(unloaded: bool, match_source: bool, fail_once: bool) {
     let owner = Keys::generate();
     let device = Keys::generate();
     let peer = Keys::generate();
@@ -116,6 +134,27 @@ fn preexisting_owner_copy_is_removed(unloaded: bool, match_source: bool) {
         "stalealiasneedle",
         at,
     );
+    let prefix = core.sync_record_prefix().unwrap();
+    for chat in [&target, &unrelated] {
+        for (kind, inner) in [("messageMutation", "mutation"), ("reaction", "reaction")] {
+            let key = format!(
+                "{prefix}{}",
+                serde_json::json!([kind, chat, copy_id, "old-control"])
+            );
+            let value = serde_json::json!({"type":kind,inner:{"chatId":chat,"messageId":copy_id,
+                "id":"old-control","author":peer.public_key().to_hex(),"createdAt":at,
+                "createdAtMs":at*1000,"operation":"edit","content":"erased edit body","emoji":"👍"}});
+            core.app_store
+                .shared()
+                .lock()
+                .unwrap()
+                .execute(
+                    "INSERT INTO app_meta(key,value) VALUES (?1,?2)",
+                    rusqlite::params![key, value.to_string()],
+                )
+                .unwrap();
+        }
+    }
     core.persist_app_state().unwrap();
     if unloaded {
         core.shutdown();
@@ -124,6 +163,44 @@ fn preexisting_owner_copy_is_removed(unloaded: bool, match_source: bool) {
         assert_eq!(core.threads[&target].messages.len(), 1);
     } else {
         assert_eq!(core.threads[&target].messages.len(), 2);
+    }
+    if fail_once {
+        core.app_store
+            .shared()
+            .lock()
+            .unwrap()
+            .execute_batch(
+                "CREATE TEMP TRIGGER reject_alias_delete BEFORE DELETE ON threads
+             BEGIN SELECT RAISE(ABORT, 'alias copy rollback fault'); END;",
+            )
+            .unwrap();
+        prove_alias(&mut core, &peer, &peer_device);
+        assert!(core.threads.contains_key(&alias));
+        assert!(core.threads[&target]
+            .messages
+            .iter()
+            .any(|m| m.id == copy_id));
+        assert!(core
+            .app_store
+            .message_exists(&target, Some(copy_id), None)
+            .unwrap());
+        assert!(!core
+            .app_store
+            .message_was_locally_deleted(&target, Some(copy_id), Some(copy_source))
+            .unwrap());
+        assert_eq!(
+            core.app_store
+                .search_messages_fts("stalealiasneedle", Some(&target), 10)
+                .unwrap()
+                .len(),
+            1
+        );
+        core.app_store
+            .shared()
+            .lock()
+            .unwrap()
+            .execute_batch("DROP TRIGGER reject_alias_delete")
+            .unwrap();
     }
     prove_alias(&mut core, &peer, &peer_device);
     assert_removed(&core, &target, &unrelated, "immediate migration");
@@ -181,17 +258,22 @@ fn preexisting_owner_copy_is_removed(unloaded: bool, match_source: bool) {
 
 #[test]
 fn alias_deletion_removes_loaded_owner_copy_with_same_id() {
-    preexisting_owner_copy_is_removed(false, false);
+    preexisting_owner_copy_is_removed(false, false, false);
 }
 #[test]
 fn alias_deletion_removes_loaded_owner_copy_with_same_source() {
-    preexisting_owner_copy_is_removed(false, true);
+    preexisting_owner_copy_is_removed(false, true, false);
 }
 #[test]
 fn alias_deletion_removes_unloaded_owner_copy_with_same_id() {
-    preexisting_owner_copy_is_removed(true, false);
+    preexisting_owner_copy_is_removed(true, false, false);
 }
 #[test]
 fn alias_deletion_removes_unloaded_owner_copy_with_same_source() {
-    preexisting_owner_copy_is_removed(true, true);
+    preexisting_owner_copy_is_removed(true, true, false);
+}
+
+#[test]
+fn alias_deletion_of_existing_owner_copy_rolls_back_then_retries() {
+    preexisting_owner_copy_is_removed(false, true, true);
 }
