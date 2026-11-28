@@ -6,6 +6,22 @@ fn deletion_key(chat_id: &str, kind: &str, id: &str) -> String {
     format!("message_deleted:{}:{chat_id}:{kind}:{id}", chat_id.len())
 }
 
+/// A verified device alias and its canonical owner share exact replay guards.
+/// Retain the alias keys as well: an old queued delivery may still use that ID.
+pub(super) fn copy_alias_markers(tx: &Transaction, from: &str, to: &str) -> anyhow::Result<()> {
+    for kind in ["id", "source"] {
+        let prefix = deletion_key(from, kind, "");
+        let end = format!("{};", prefix.trim_end_matches(':'));
+        tx.execute(
+            "INSERT OR IGNORE INTO app_meta(key,value)
+            SELECT ?3 || substr(key,length(?1)+1),value FROM app_meta
+            WHERE key>=?1 AND key<?2",
+            params![prefix, end, deletion_key(to, kind, "")],
+        )?;
+    }
+    Ok(())
+}
+
 pub(super) fn contains(
     conn: &rusqlite::Connection,
     chat_id: &str,

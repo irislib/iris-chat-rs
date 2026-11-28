@@ -61,6 +61,7 @@ fn late_alias_migration_respects_deleted_owner_cutoff_after_cold_reopen() {
     core.shutdown();
     drop(core);
     let mut core = reopen_alias_core(&owner, &device, directory.path());
+    assert_eq!(core.threads[&target].unread_count, 1);
     core.open_chat(&target);
     core.open_chat_finalize(&target);
     let stored = core.app_store.load_recent_messages(&target, 80).unwrap();
@@ -158,5 +159,181 @@ fn alias_individual_deletions_reject_resolved_owner_id_and_source_replays() {
             Some("removed-source")
         )
         .unwrap());
+    core.shutdown();
+}
+
+#[test]
+fn alias_deleted_id_stays_removed_after_authenticated_ciphertext_replay() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer = Keys::generate();
+    let peer_device = Keys::generate();
+    let alias = peer_device.public_key().to_hex();
+    let target = peer.public_key().to_hex();
+    let (mut core, _, directory) =
+        logged_in_test_core_with_updates("alias-encrypted-replay", &owner, &device);
+    let at = unix_now().get() - 10;
+    let (content, removed_id) = runtime_rumor_json(
+        peer_device.public_key(),
+        CHAT_MESSAGE_KIND,
+        "removed encrypted message",
+        at,
+        Vec::new(),
+    );
+    let original = appcore_direct_message_event_for_test(
+        core.protocol_engine.as_mut().unwrap(),
+        &peer_device,
+        "removed encrypted message",
+        at,
+    );
+    core.handle_relay_event(original.clone());
+    assert!(core.threads[&alias]
+        .messages
+        .iter()
+        .any(|m| m.id == removed_id));
+    core.delete_local_message(&alias, &removed_id);
+    incoming(
+        &mut core,
+        &peer_device,
+        "survivor",
+        "survivor-source",
+        at + 1,
+    );
+    core.persist_app_state().unwrap();
+    core.shutdown();
+    drop(core);
+    let mut core = reopen_alias_core(&owner, &device, directory.path());
+    prove_alias(&mut core, &peer, &peer_device);
+    core.shutdown();
+    drop(core);
+    let mut core = reopen_alias_core(&owner, &device, directory.path());
+    prove_alias(&mut core, &peer, &peer_device);
+
+    // Re-encrypt the identical rumor in a new real ratchet whose device has
+    // the signed owner proof. Relay/event dedup cannot suppress this new outer.
+    let engine = core.protocol_engine.as_mut().unwrap();
+    let invite = engine.local_invite().unwrap();
+    let (mut session, response) = invite
+        .accept_with_owner(
+            peer_device.public_key(),
+            peer_device.secret_key().to_secret_bytes(),
+            Some(peer.public_key().to_hex()),
+            Some(peer.public_key()),
+        )
+        .unwrap();
+    engine
+        .observe_invite_response_event(&invite_response_event(&response).unwrap())
+        .unwrap();
+    let plan = session
+        .plan_send(content.as_bytes(), NdrUnixSeconds(at))
+        .unwrap();
+    let replay = message_event(&session.apply_send(plan).envelope).unwrap();
+    assert_ne!(replay.id, original.id);
+    core.handle_relay_event(replay);
+    // A positive control on the same authenticated session proves that the
+    // removed replay was filtered after delivery, rather than left pending.
+    let (fresh, fresh_id) = runtime_rumor_json(
+        peer_device.public_key(),
+        CHAT_MESSAGE_KIND,
+        "fresh encrypted survivor",
+        at + 2,
+        Vec::new(),
+    );
+    let plan = session
+        .plan_send(fresh.as_bytes(), NdrUnixSeconds(at + 2))
+        .unwrap();
+    core.handle_relay_event(message_event(&session.apply_send(plan).envelope).unwrap());
+    core.persist_app_state().unwrap();
+    let messages = core.app_store.load_recent_messages(&target, 80).unwrap();
+    assert!(
+        messages.iter().any(|m| m.id == fresh_id),
+        "fresh ciphertext must reach the resolved owner"
+    );
+    assert!(
+        messages.iter().all(|m| m.id != removed_id),
+        "removed rumor returned under the canonical owner"
+    );
+    assert!(!core.threads.contains_key(&alias));
+    core.shutdown();
+}
+
+#[test]
+fn alias_deletion_guards_and_cutoff_changes_roll_back_together() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer = Keys::generate();
+    let peer_device = Keys::generate();
+    let alias = peer_device.public_key().to_hex();
+    let target = peer.public_key().to_hex();
+    let (mut core, _, _directory) =
+        logged_in_test_core_with_updates("alias-deletion-rollback", &owner, &device);
+    let old = unix_now().get() - 10;
+    incoming(&mut core, &peer, "owner-old", "owner-source", old);
+    core.delete_chat(&target);
+    let cutoff = core.chat_deletions[&target];
+    incoming(
+        &mut core,
+        &peer_device,
+        "alias-old",
+        "alias-old-source",
+        old,
+    );
+    incoming(&mut core, &peer_device, "removed", "removed-source", old);
+    incoming(
+        &mut core,
+        &peer_device,
+        "survivor",
+        "survivor-source",
+        cutoff + 1,
+    );
+    core.delete_local_message(&alias, "removed");
+    core.persist_app_state().unwrap();
+    core.app_store
+        .shared()
+        .lock()
+        .unwrap()
+        .execute_batch(
+            "CREATE TEMP TRIGGER reject_alias_delete BEFORE DELETE ON threads
+         BEGIN SELECT RAISE(ABORT, 'alias deletion fault'); END;",
+        )
+        .unwrap();
+    prove_alias(&mut core, &peer, &peer_device);
+    assert!(core.threads.contains_key(&alias));
+    assert!(core
+        .app_store
+        .message_exists(&alias, Some("alias-old"), None)
+        .unwrap());
+    assert!(!core
+        .app_store
+        .message_was_locally_deleted(&target, Some("removed"), None)
+        .unwrap());
+    assert!(core
+        .app_store
+        .message_was_locally_deleted(&alias, Some("removed"), None)
+        .unwrap());
+    core.app_store
+        .shared()
+        .lock()
+        .unwrap()
+        .execute_batch("DROP TRIGGER reject_alias_delete")
+        .unwrap();
+    prove_alias(&mut core, &peer, &peer_device);
+    assert!(core
+        .app_store
+        .message_was_locally_deleted(&target, Some("removed"), None)
+        .unwrap());
+    assert!(core
+        .app_store
+        .message_was_locally_deleted(&target, None, Some("removed-source"))
+        .unwrap());
+    assert!(core
+        .app_store
+        .message_was_locally_deleted(&alias, Some("removed"), None)
+        .unwrap());
+    assert!(!core
+        .app_store
+        .message_exists(&target, Some("alias-old"), None)
+        .unwrap());
+    assert_eq!(core.threads[&target].unread_count, 1);
     core.shutdown();
 }

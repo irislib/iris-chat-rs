@@ -27,9 +27,37 @@ impl AppStore {
             .lock()
             .map_err(|_| anyhow::anyhow!("storage connection mutex poisoned"))?;
         let tx = conn.transaction()?;
+        store_message_deletions::copy_alias_markers(&tx, from, to)?;
         upsert_unsaved_thread_rows(&tx, self.cache.threads.get(from), from, source)?;
         if let Some(target) = target {
             upsert_unsaved_thread_rows(&tx, self.cache.threads.get(to), to, target)?;
+        }
+        let cutoff = store_chat_deletions::deletion_cutoff(&tx, to)?;
+        let mut source_unread = source.unread_count;
+        if let Some(cutoff) = cutoff {
+            // An alias can contain older history that arrived after deletion
+            // but before its owner was known. Apply the owner's existing scope
+            // before moving it, including deferred edits/reactions and reads.
+            let cutoff_sql = cutoff.min(i64::MAX as u64) as i64;
+            let removed_unread: u64 = tx.query_row(
+                "SELECT count(*) FROM (
+                SELECT created_at_secs FROM messages WHERE chat_id=?1
+                    AND is_outgoing=0 AND delivery!='seen'
+                    ORDER BY created_at_secs DESC,rowid DESC LIMIT ?2
+                ) WHERE created_at_secs<=?3",
+                params![from, source_unread.min(i64::MAX as u64) as i64, cutoff_sql],
+                |row| row.get(0),
+            )?;
+            source_unread = source_unread.saturating_sub(removed_unread);
+            store_message_deletions::purge_deleted_chat_controls(&tx, from, cutoff, true)?;
+            tx.execute(
+                "DELETE FROM messages WHERE chat_id=?1 AND created_at_secs<=?2",
+                params![from, cutoff_sql],
+            )?;
+            tx.execute(
+                "DELETE FROM pending_message_reads WHERE chat_id=?1 AND created_at_secs<=?2",
+                params![from, cutoff_sql],
+            )?;
         }
         tx.execute("INSERT OR IGNORE INTO threads(chat_id) VALUES (?1)", [to])?;
         let (target_unread, target_updated, draft): (u64, u64, String) = tx.query_row(
@@ -37,7 +65,7 @@ impl AppStore {
             [to],
             |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
         )?;
-        let mut unread_count = target_unread.saturating_add(source.unread_count);
+        let mut unread_count = target_unread.saturating_add(source_unread);
         let updated_at_secs = target_updated.max(source.updated_at_secs);
         tx.execute(
             "UPDATE threads SET unread_count=?2, updated_at_secs=?3 WHERE chat_id=?1",

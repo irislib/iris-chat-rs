@@ -85,12 +85,19 @@ pub(super) fn message_was_deleted(
     chat_id: &str,
     created_at: u64,
 ) -> anyhow::Result<bool> {
+    Ok(deletion_cutoff(conn, chat_id)?.is_some_and(|at| created_at <= at))
+}
+
+pub(super) fn deletion_cutoff(
+    conn: &rusqlite::Connection,
+    chat_id: &str,
+) -> anyhow::Result<Option<u64>> {
     let value: Option<String> = conn
         .prepare_cached("SELECT value FROM app_meta WHERE key = ?1")?
         .query_row([format!("{DELETION_PREFIX}{chat_id}")], |row| row.get(0))
         .optional()?;
-    Ok(value
+    value
         .map(|at| at.parse::<u64>())
-        .transpose()?
-        .is_some_and(|at| created_at <= at))
+        .transpose()
+        .map_err(Into::into)
 }
