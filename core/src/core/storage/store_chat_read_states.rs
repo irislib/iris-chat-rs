@@ -432,6 +432,7 @@ mod tests {
         store.cache.threads.insert(
             "chat".to_string(),
             ThreadPersistCache {
+                in_snapshot: false,
                 header_hash: Some(123),
                 messages: [("boundary-seen".to_string(), 1), ("older".to_string(), 2)]
                     .into_iter()

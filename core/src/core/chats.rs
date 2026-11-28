@@ -389,10 +389,10 @@ impl AppCore {
         if messages.is_empty() {
             return;
         }
-        self.app_store.seed_loaded_messages(chat_id, &messages);
         let Some(thread) = self.threads.get_mut(chat_id) else {
             return;
         };
+        self.app_store.seed_loaded_messages(chat_id, &messages);
         let page = messages.iter().map(chat_message_from_persisted).collect();
         thread.messages = page_merge::merge_stored_page(std::mem::take(&mut thread.messages), page);
         self.restore_device_sync_chat_reactions(chat_id);

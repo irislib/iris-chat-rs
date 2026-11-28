@@ -132,3 +132,26 @@ fn intentional_snapshot_deletion_retries_after_transaction_failure() {
     assert!(!store.cache.threads.contains_key("chat"));
     assert!(store.load_thread("chat", 200).unwrap().is_none());
 }
+
+#[test]
+fn reading_storage_does_not_create_snapshot_deletion_intent() {
+    let directory = tempfile::TempDir::new().unwrap();
+    let mut writer = AppStore::new(open_database(directory.path()).unwrap());
+    let mut threads = threads();
+    threads.get_mut("chat").unwrap().messages = vec![message(127)];
+    save(&mut writer, &threads).unwrap();
+
+    let mut partial = AppStore::new(writer.shared());
+    partial.load_state().unwrap().unwrap();
+    save(&mut partial, &BTreeMap::new()).unwrap();
+    assert!(partial.load_thread("chat", 1).unwrap().is_some());
+    assert!(partial.cache.threads.is_empty());
+
+    partial.load_state().unwrap().unwrap();
+    save(&mut partial, &threads).unwrap();
+    let changes = total_changes(&partial);
+    save(&mut partial, &threads).unwrap();
+    assert_eq!(total_changes(&partial), changes);
+    save(&mut partial, &BTreeMap::new()).unwrap();
+    assert!(partial.load_thread("chat", 1).unwrap().is_none());
+}

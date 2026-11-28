@@ -129,10 +129,6 @@ impl AppCore {
         let key = serde_json::json!(["reaction", chat, message]).to_string();
         self.reaction_records_with_prefix(&key)
     }
-    pub(super) fn reaction_records_for_chat(&self, chat: &str) -> Vec<DeviceSyncRecord> {
-        let key = serde_json::json!(["reaction", chat]).to_string();
-        self.reaction_records_with_prefix(&key)
-    }
     pub(in crate::core::device_sync) fn sync_record_page(
         &self,
         after: &str,

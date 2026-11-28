@@ -181,13 +181,22 @@ impl AppCore {
                 }
             }
         }
-        for record in self.reaction_records_for_chat(chat) {
-            if let DeviceSyncRecord::Reaction { reaction: r } = record {
-                if r.chat_id == chat
-                    && loaded_ids.contains(&r.message_id)
-                    && self.sync_record_author_allowed(chat, &r.author, false)
-                {
-                    self.apply_incoming_reaction_to_chat(chat, &r.message_id, &r.author, &r.emoji);
+        // Keep the existing per-message bound. A chat-wide limit lets unloaded
+        // history starve visible rows, and materializes unrelated history.
+        for id in loaded_ids {
+            for record in self.reaction_records_for_message(chat, &id) {
+                if let DeviceSyncRecord::Reaction { reaction: r } = record {
+                    if r.chat_id == chat
+                        && r.message_id == id
+                        && self.sync_record_author_allowed(chat, &r.author, false)
+                    {
+                        self.apply_incoming_reaction_to_chat(
+                            chat,
+                            &r.message_id,
+                            &r.author,
+                            &r.emoji,
+                        );
+                    }
                 }
             }
         }

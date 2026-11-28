@@ -2,6 +2,9 @@ use super::*;
 
 #[derive(Default)]
 pub(super) struct ThreadPersistCache {
+    /// Only a successfully saved app snapshot can establish deletion intent.
+    /// A page read, receipt or DB-only edit must not materialize a thread here.
+    pub(super) in_snapshot: bool,
     pub(super) header_hash: Option<u64>,
     pub(super) messages: HashMap<String, u64>,
 }
@@ -29,6 +32,32 @@ pub(super) struct PersistCache {
     /// they need to grow but don't need to be dense.
     pub(super) seen_events_next_seq: i64,
     pub(super) threads: HashMap<String, ThreadPersistCache>,
+}
+
+impl PersistCache {
+    pub(super) fn retain_snapshot(&mut self, snapshot: &SaveSnapshot<'_>) {
+        self.threads.retain(|chat_id, entry| {
+            let Some(thread) = snapshot.threads.get(chat_id) else {
+                // Drop fingerprints for temporary DB-only work, never its rows.
+                return false;
+            };
+            entry.in_snapshot = true;
+            // After a successful save every loaded message has a fingerprint.
+            // Avoid allocating a set on the usual unchanged-page hot path.
+            if entry.messages.len() > thread.messages.len() {
+                let loaded: HashSet<&str> = thread
+                    .messages
+                    .iter()
+                    .map(|message| message.id.as_str())
+                    .collect();
+                entry.messages.retain(|id, _| loaded.contains(id.as_str()));
+                entry
+                    .messages
+                    .shrink_to(thread.messages.len().saturating_mul(2));
+            }
+            true
+        });
+    }
 }
 
 /// View into `AppCore` fields used to drive a single `save_state` call.
@@ -94,7 +123,7 @@ pub(super) struct SavePlan {
     pub(super) seen_events: Option<SeenEventsPlan>,
     /// chat_id -> incremental thread/message writes; only changed threads are listed here.
     pub(super) threads_to_write: HashMap<String, ThreadWritePlan>,
-    /// chat_ids cached previously but no longer present in the snapshot.
+    /// chat_ids in the previous successful app snapshot, now explicitly omitted.
     pub(super) threads_to_delete: Vec<String>,
 }
 
@@ -128,9 +157,11 @@ impl SavePlan {
         }
         let threads_to_delete: Vec<String> = cache
             .threads
-            .keys()
-            .filter(|chat_id| !snapshot.threads.contains_key(chat_id.as_str()))
-            .cloned()
+            .iter()
+            .filter(|(chat_id, entry)| {
+                entry.in_snapshot && !snapshot.threads.contains_key(chat_id.as_str())
+            })
+            .map(|(chat_id, _)| chat_id.clone())
             .collect();
 
         Self {

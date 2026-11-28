@@ -187,6 +187,11 @@ impl AppStore {
                 (
                     thread.chat_id.clone(),
                     ThreadPersistCache {
+                        in_snapshot: self
+                            .cache
+                            .threads
+                            .get(&thread.chat_id)
+                            .is_some_and(|entry| entry.in_snapshot),
                         header_hash: Some(hash_thread_header_fields(
                             thread.unread_count,
                             thread.updated_at_secs,
@@ -259,6 +264,7 @@ impl AppStore {
     pub(crate) fn save_state(&mut self, snapshot: &SaveSnapshot<'_>) -> anyhow::Result<()> {
         let plan = SavePlan::compute(&self.cache, snapshot);
         if plan.is_empty() {
+            self.cache.retain_snapshot(snapshot);
             return Ok(());
         }
 
@@ -273,6 +279,7 @@ impl AppStore {
         }
 
         plan.update_cache(&mut self.cache);
+        self.cache.retain_snapshot(snapshot);
         Ok(())
     }
 
