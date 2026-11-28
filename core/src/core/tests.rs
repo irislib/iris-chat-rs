@@ -82,6 +82,7 @@ mod open_chat_finalize;
 mod pairwise_delivery_support;
 mod pending_device_link;
 mod pending_publish_replay;
+mod persistence_review;
 #[cfg(target_os = "linux")]
 mod populated_discovery_idle;
 mod populated_retry_idle;
