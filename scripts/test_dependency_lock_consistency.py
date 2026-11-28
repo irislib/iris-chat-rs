@@ -22,12 +22,12 @@ EXPECTED = {
     "hashtree-lmdb": "0.3.0",
     "hashtree-fips-transport": "0.5.0",
     "hashtree-network": "0.3.0",
-    "nostr-pubsub": "0.1.22",
+    "nostr-pubsub": "0.1.24",
     "nostr-pubsub-fips": "0.6.5",
     "nostr-pubsub-reconcile": "0.1.3",
     "nostr-pubsub-relay": "0.1.16",
-    "nostr-pubsub-social-graph": "0.3.1",
-    "nostr-social-graph": "0.2.2",
+    "nostr-pubsub-social-graph": "0.3.2",
+    "nostr-social-graph": "0.2.4",
     "nostr-social-memory": "0.2.1",
 }
 
@@ -163,19 +163,20 @@ class DependencyLockConsistencyTests(unittest.TestCase):
         self.assertRegex(manifest, r'(?m)^nostr-pubsub-fips = "=0\.6\.5"$', "nostr-pubsub-fips must stay on the gated release")
         self.assertRegex(manifest, r'(?m)^nostr-pubsub-reconcile = "=0\.1\.3"$', "nostr-pubsub-reconcile must stay on the gated release")
         self.assertRegex(manifest, r'(?m)^nostr-pubsub-relay = "=0\.1\.16"$', "nostr-pubsub-relay must stay on the gated release")
-        self.assertRegex(manifest, r'(?m)^nostr-social-graph = "=0\.2\.2"$', "Direct graph consumer needs revision-aware lists")
+        self.assertRegex(manifest, r'(?m)^nostr-social-graph = "=0\.2\.4"$', "Direct graph consumer needs the accepted graph release")
         # Direct and pubsub/memory consumers share the reviewed revision-aware graph.
         for lock_path in PLATFORM_LOCKS:
             entries = [block for block in lock_path.read_text().split("[[package]]")
                        if re.search(r'(?m)^name = "nostr-social-graph"$', block)
-                       and re.search(r'(?m)^version = "0\.2\.2"$', block)]
+                       and re.search(r'(?m)^version = "0\.2\.4"$', block)]
             self.assertEqual(len(entries), 1)
-            self.assertIn('checksum = "94ad34129aa71f3cb8344e39d3a690c08c7d84b5a230a42e146efc0aaa3f2d22"', entries[0])
+            self.assertIn('checksum = "89114d095777d8a8f74f420162b79637a12c1518135fde5fa04f1ec95c014272"', entries[0])
 
     def test_revision_aware_provider_archives_are_the_accepted_tuple(self):
         checksums = {
+            "nostr-pubsub": "aaf0527b041e92a7c1c5a404e07457cd917e85644dae2f1ca43b9f5c2ea498f5",
             "nostr-pubsub-fips": "3ed00bcf7627f4b9ab1c4185d72d130637b32a9e9270c11edcc113208eacdea6",
-            "nostr-pubsub-social-graph": "6f7f5d8b5ae252baf6bba6f1fafcd4d0df80a2a9b31eaccc3786016e35f25abd",
+            "nostr-pubsub-social-graph": "d5f30fb3320c0c24c66763a2aafa06b79f300611003e733f5268fbe5c5c00539",
             "nostr-social-memory": "4b28fbf489df058c877fba6d660d041883683d40272b5dbb8cf56679f1c105a1",
         }
         for lock_path in PLATFORM_LOCKS:
