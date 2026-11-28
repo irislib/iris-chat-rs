@@ -16,15 +16,6 @@ impl ChatReadState {
         reads
     }
 
-    pub(super) fn includes(&self, other: &Self) -> bool {
-        let ours = self.exact_messages();
-        (self.updated_at_ms, &self.device_id) >= (other.updated_at_ms, &other.device_id)
-            && other
-                .exact_messages()
-                .iter()
-                .all(|(id, read)| ours.get(id) == Some(read))
-    }
-
     pub(super) fn covers(&self, created_at_secs: u64, id: &str) -> bool {
         self.seen_messages
             .get(id)

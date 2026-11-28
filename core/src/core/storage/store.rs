@@ -29,6 +29,9 @@ mod store_message_deletions;
 #[path = "store_chat_read_states.rs"]
 mod store_chat_read_states;
 
+#[path = "store_thread_alias.rs"]
+mod store_thread_alias;
+
 #[path = "store_chat_mutes.rs"]
 mod store_chat_mutes;
 #[path = "store_chat_pins.rs"]

@@ -267,3 +267,192 @@ fn verified_alias_deduplicates_against_unloaded_target_history() {
     assert!(core.app_store.load_thread(&alias, 80).unwrap().is_none());
     core.shutdown();
 }
+
+#[test]
+fn alias_transaction_preserves_unloaded_columns_and_unsaved_rows_without_snapshot() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer = Keys::generate();
+    let peer_device = Keys::generate();
+    let alias = peer_device.public_key().to_hex();
+    let target = peer.public_key().to_hex();
+    let (mut core, _, directory) =
+        logged_in_test_core_with_updates("alias-durable-columns", &owner, &device);
+    let now = unix_now().get();
+    core.persist_app_state().unwrap();
+    let mut old = test_chat_message(&alias, "old", "old body", now, false);
+    old.author = alias.clone();
+    old.recipient_deliveries
+        .push(crate::state::MessageRecipientDeliverySnapshot {
+            owner_pubkey_hex: alias.clone(),
+            display_name: "recipient".into(),
+            picture_url: None,
+            delivery: crate::state::DeliveryState::Received,
+            updated_at_secs: now,
+        });
+    old.reactors.push(crate::state::MessageReactor {
+        author: alias.clone(),
+        display_name: "reactor".into(),
+        picture_url: None,
+        emoji: "👍".into(),
+    });
+    core.app_store
+        .save_message_mutation_projection(&old)
+        .unwrap();
+    let state = ChatReadState {
+        updated_at_ms: now * 1000,
+        device_id: device.public_key().to_hex(),
+        seen_messages: [
+            (
+                "old".into(),
+                MessageReadState {
+                    created_at_secs: now,
+                    expires_at_secs: None,
+                },
+            ),
+            (
+                "unsaved".into(),
+                MessageReadState {
+                    created_at_secs: now + 1,
+                    expires_at_secs: None,
+                },
+            ),
+        ]
+        .into_iter()
+        .collect(),
+        ..Default::default()
+    };
+    core.app_store
+        .save_chat_read_state(&alias, &state, None)
+        .unwrap();
+    core.app_store
+        .shared()
+        .lock()
+        .unwrap()
+        .execute(
+            "UPDATE messages SET outgoing_event_json=?2 WHERE chat_id=?1",
+            rusqlite::params![alias, "opaque original retry bytes"],
+        )
+        .unwrap();
+    let mut source = ThreadRecord {
+        chat_id: alias.clone(),
+        unread_count: 1,
+        updated_at_secs: now + 1,
+        messages: vec![test_chat_message(
+            &alias,
+            "unsaved",
+            "unsaved body",
+            now + 1,
+            false,
+        )],
+        draft: String::new(),
+    };
+    // The source row is not loaded, and the new row has never reached SQLite.
+    let result = core
+        .app_store
+        .migrate_direct_thread_history(&source, None, &target, &alias, "owner label")
+        .unwrap();
+    assert!(result.skipped_loaded_ids.is_empty());
+    let reader = AppStore::new(open_database(directory.path()).unwrap());
+    let messages = reader.load_recent_messages(&target, 80).unwrap();
+    assert_eq!(messages.len(), 2);
+    let old = messages.iter().find(|m| m.id == "old").unwrap();
+    assert_eq!(old.body, "old body");
+    assert_eq!(old.author, "owner label");
+    assert_eq!(old.recipient_deliveries[0].owner_pubkey_hex, target);
+    assert_eq!(old.recipient_deliveries[0].display_name, "recipient");
+    assert_eq!(old.reactors[0].author, target);
+    assert_eq!(old.reactors[0].emoji, "👍");
+    assert!(matches!(old.delivery, PersistedDeliveryState::Seen));
+    assert!(matches!(
+        messages
+            .iter()
+            .find(|m| m.id == "unsaved")
+            .unwrap()
+            .delivery,
+        PersistedDeliveryState::Seen
+    ));
+    let reads = reader.load_chat_read_states().unwrap();
+    assert!(!reads.contains_key(&alias));
+    assert_eq!(reads[&target], state);
+    assert!(reader.load_thread(&alias, 80).unwrap().is_none());
+    let stored: String = reader
+        .shared()
+        .lock()
+        .unwrap()
+        .query_row(
+            "SELECT outgoing_event_json FROM messages WHERE chat_id=?1 AND id='old'",
+            [&target],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(stored, "opaque original retry bytes");
+    let indexed: i64 = reader
+        .shared()
+        .lock()
+        .unwrap()
+        .query_row(
+            "SELECT count(*) FROM messages_fts WHERE chat_id=?1 AND body MATCH 'body'",
+            [&target],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(indexed, 2);
+    // Reflect the committed transaction before normal fixture shutdown.
+    source.chat_id = target.clone();
+    source.messages.clear();
+    core.threads.insert(target, source);
+    core.shutdown();
+}
+
+#[test]
+fn verified_alias_large_history_keeps_only_loaded_page_in_memory() {
+    let owner = Keys::generate();
+    let device = Keys::generate();
+    let peer = Keys::generate();
+    let peer_device = Keys::generate();
+    let alias = peer_device.public_key().to_hex();
+    let target = peer.public_key().to_hex();
+    let (mut core, _, directory) =
+        logged_in_test_core_with_updates("alias-large-history", &owner, &device);
+    core.persist_app_state().unwrap();
+    {
+        let shared = core.app_store.shared();
+        let mut conn = shared.lock().unwrap();
+        let tx = conn.transaction().unwrap();
+        tx.execute("INSERT INTO threads(chat_id) VALUES (?1)", [&alias])
+            .unwrap();
+        tx.execute(
+            "WITH RECURSIVE n(x) AS (VALUES(1) UNION ALL SELECT x+1 FROM n WHERE x<10000)
+            INSERT INTO messages(chat_id,id,kind,author,body,is_outgoing,created_at_secs,delivery)
+            SELECT ?1,'history-'||x,'user',?1,'body-'||x,0,x,'received' FROM n",
+            [&alias],
+        )
+        .unwrap();
+        tx.commit().unwrap();
+    }
+    core.shutdown();
+    drop(core);
+    let mut core = reopen_alias_core(&owner, &device, directory.path());
+    assert_eq!(core.threads[&alias].messages.len(), 1);
+    let proof = AppKeys::new(vec![DeviceEntry::new(peer_device.public_key(), 1)])
+        .get_event(peer.public_key())
+        .sign_with_keys(&peer)
+        .unwrap();
+    core.apply_app_keys_event(&proof).unwrap();
+    assert_eq!(core.threads[&target].messages.len(), 1);
+    let shared = core.app_store.shared();
+    let conn = shared.lock().unwrap();
+    let counts: (i64, i64) = conn
+        .query_row(
+            "SELECT count(*),sum(CASE WHEN body='body-'||substr(id,9) THEN 1 ELSE 0 END)
+        FROM messages WHERE chat_id=?1",
+            [&target],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(counts, (10000, 10000));
+    drop(conn);
+    assert!(core.app_store.load_thread(&alias, 1).unwrap().is_none());
+    core.shutdown();
+}

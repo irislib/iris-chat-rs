@@ -170,6 +170,9 @@ impl AppCore {
             account_app_keys::merge_known_device_labels(&mut known, &label_source);
             let effective = known_app_keys_to_ndr(&known);
             if current.as_ref() == Some(&known) {
+                // A prior proof may have been cached while the durable alias
+                // transaction failed. An unchanged proof must still retry it.
+                changed |= self.migrate_verified_device_owner_threads(owner, &effective);
                 continue;
             }
             if let Err(error) =

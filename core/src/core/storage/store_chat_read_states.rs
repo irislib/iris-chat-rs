@@ -4,6 +4,100 @@ use crate::core::{unix_now, MessageReadState};
 
 const READ_STATE_PREFIX: &str = "chat_read_state:";
 
+/// Move the bounded read head with its history so a crash cannot export the
+/// removed alias again. Durable seen flags and pending exact IDs stay authoritative.
+pub(super) fn migrate_alias_read_state(
+    tx: &Transaction,
+    from: &str,
+    to: &str,
+) -> anyhow::Result<Option<ChatReadState>> {
+    let load = |chat: &str| -> anyhow::Result<Option<ChatReadState>> {
+        let json: Option<String> = tx
+            .query_row(
+                "SELECT value FROM app_meta WHERE key=?1",
+                [format!("{READ_STATE_PREFIX}{chat}")],
+                |row| row.get(0),
+            )
+            .optional()?;
+        json.map(|value| serde_json::from_str(&value).map_err(Into::into))
+            .transpose()
+    };
+    let Some(incoming) = load(from)? else {
+        return Ok(None);
+    };
+    let previous = load(to)?.unwrap_or_default();
+    let mut merged = if (incoming.updated_at_ms, &incoming.device_id)
+        > (previous.updated_at_ms, &previous.device_id)
+    {
+        incoming.clone()
+    } else {
+        previous.clone()
+    };
+    merged.seen_messages = previous.exact_messages();
+    merged.seen_messages.extend(incoming.exact_messages());
+    merged.seen_through_secs = 0;
+    merged.seen_at_boundary.clear();
+    merged.bound_recent_batch();
+
+    // Match the existing exact-read application rules, including deletion and
+    // expiry guards. Never reinterpret a legacy timestamp as a range receipt.
+    let mut reads = BTreeMap::new();
+    for (id, read) in incoming.exact_messages() {
+        if read
+            .expires_at_secs
+            .is_some_and(|at| at <= unix_now().get())
+            || store_chat_deletions::message_was_deleted(tx, to, read.created_at_secs)?
+            || store_message_deletions::contains(tx, to, Some(&id), None)?
+        {
+            continue;
+        }
+        reads.insert(id, read);
+    }
+    let prior: i64 = tx.query_row(
+        "SELECT unread_count FROM threads WHERE chat_id=?1",
+        [to],
+        |row| row.get(0),
+    )?;
+    let mut remaining = prior.max(0);
+    {
+        let mut query=tx.prepare("SELECT id,created_at_secs FROM messages WHERE chat_id=?1
+            AND is_outgoing=0 AND delivery!='seen' ORDER BY created_at_secs DESC,rowid DESC LIMIT ?2")?;
+        let rows = query.query_map(params![to, prior.max(0)], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+        })?;
+        for row in rows {
+            let (id, at) = row?;
+            if reads
+                .get(&id)
+                .is_some_and(|read| read.created_at_secs == at.max(0) as u64)
+            {
+                remaining = remaining.saturating_sub(1);
+            }
+        }
+    }
+    for (id, read) in reads {
+        tx.execute(
+            "UPDATE messages SET delivery='seen' WHERE chat_id=?1 AND id=?2
+            AND is_outgoing=0 AND created_at_secs=?3 AND delivery!='seen'",
+            params![to, id, read.created_at_secs as i64],
+        )?;
+        tx.execute("INSERT OR IGNORE INTO pending_message_reads(chat_id,id,created_at_secs,expires_at_secs)
+            SELECT ?1,?2,?3,?4 WHERE NOT EXISTS(SELECT 1 FROM messages WHERE chat_id=?1 AND id=?2)",
+            params![to,id,read.created_at_secs as i64,read.expires_at_secs.map(|at| at as i64)])?;
+    }
+    tx.execute(
+        "UPDATE threads SET unread_count=?2 WHERE chat_id=?1 AND unread_count!=?2",
+        params![to, remaining],
+    )?;
+    tx.execute("INSERT INTO app_meta(key,value) VALUES (?1,?2) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+        params![format!("{READ_STATE_PREFIX}{to}"),serde_json::to_string(&merged)?])?;
+    tx.execute(
+        "DELETE FROM app_meta WHERE key=?1",
+        [format!("{READ_STATE_PREFIX}{from}")],
+    )?;
+    Ok(Some(merged))
+}
+
 impl AppStore {
     pub(crate) fn acknowledge_group_notices(
         &mut self,
@@ -278,6 +372,7 @@ impl AppStore {
             .map_err(Into::into)
     }
 
+    #[cfg(test)]
     pub(crate) fn remove_chat_read_state(&mut self, chat_id: &str) -> anyhow::Result<()> {
         let conn = self
             .conn
@@ -287,27 +382,6 @@ impl AppStore {
             "DELETE FROM app_meta WHERE key = ?1",
             [format!("{READ_STATE_PREFIX}{chat_id}")],
         )?;
-        Ok(())
-    }
-
-    pub(crate) fn migrate_pending_message_reads(
-        &mut self,
-        from: &str,
-        to: &str,
-    ) -> anyhow::Result<()> {
-        let mut conn = self
-            .conn
-            .lock()
-            .map_err(|_| anyhow::anyhow!("storage connection mutex poisoned"))?;
-        let tx = conn.transaction()?;
-        tx.execute("INSERT OR IGNORE INTO pending_message_reads(chat_id, id, created_at_secs, expires_at_secs)
-            SELECT ?2, id, created_at_secs, expires_at_secs FROM pending_message_reads WHERE chat_id = ?1",
-            params![from, to])?;
-        tx.execute(
-            "DELETE FROM pending_message_reads WHERE chat_id = ?1",
-            [from],
-        )?;
-        tx.commit()?;
         Ok(())
     }
 }
