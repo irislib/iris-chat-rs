@@ -127,6 +127,7 @@ mod synthetic_history_scale;
 mod synthetic_protocol_checkpoint;
 mod synthetic_vm_profile;
 mod thread_alias_deletion;
+mod thread_alias_existing_copy;
 mod thread_alias_history;
 mod timed_mute;
 

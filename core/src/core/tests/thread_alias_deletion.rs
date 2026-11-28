@@ -13,7 +13,7 @@ fn incoming(core: &mut AppCore, sender: &Keys, id: &str, source: &str, at: u64) 
     );
 }
 
-fn prove_alias(core: &mut AppCore, peer: &Keys, peer_device: &Keys) {
+pub(super) fn prove_alias(core: &mut AppCore, peer: &Keys, peer_device: &Keys) {
     let proof = AppKeys::new(vec![DeviceEntry::new(peer_device.public_key(), 1)])
         .get_event(peer.public_key())
         .sign_with_keys(peer)
