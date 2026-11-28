@@ -37,6 +37,9 @@ mod store_chat_pins;
 #[path = "store_outgoing_events.rs"]
 mod store_outgoing_events;
 
+#[cfg(test)]
+#[path = "store_cache_review_tests.rs"]
+mod store_cache_review_tests;
 #[path = "store_message_pages.rs"]
 mod store_message_pages;
 #[path = "store_persist_cache.rs"]
